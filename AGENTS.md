@@ -54,6 +54,14 @@ mod = Mod("/path/to/my_mod", hoi4_install="/path/to/hoi4")
 
 All mutations are **batched** — nothing touches disk until you call `save()`. The standard loop:
 
+For one-off agent automation, create the Python driver script outside this SDK repository. Use `/tmp/hoi4-agent-scripts/` for temporary scripts and run them with the working directory set to the mod project/config directory containing `.hoi4.json`. If a reusable script is explicitly requested, put it in that mod project's own `scripts/` or `tools/` directory, not in `/home/ransom/Projekte/hoi4-agent-sdk`.
+
+```bash
+mkdir -p /tmp/hoi4-agent-scripts
+cd /path/to/mod-project-with-hoi4-json
+/home/ransom/Projekte/hoi4-agent-sdk/venv/bin/python /tmp/hoi4-agent-scripts/add_focus_branch.py
+```
+
 ```python
 mod = Mod("/path/to/my_mod", hoi4_install="/opt/steam/hoi4")
 
