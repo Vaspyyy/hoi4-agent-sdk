@@ -1,0 +1,54 @@
+focus_tree = {
+	id = german_focus
+
+	country = {
+		factor = 0
+		modifier = {
+			add = 10
+			tag = GER
+		}
+	}
+
+	focus = {
+		id = GER_anschluss
+		icon = GFX_goal_anschluss
+		x = 5
+		y = 3
+		cost = 10
+
+		prerequisite = { focus = GER_rhineland }
+
+		completion_reward = {
+			add_political_power = 100
+		}
+	}
+
+	focus = {
+		id = GER_rhineland
+		icon = GFX_goal_rhineland
+		x = 3
+		y = 1
+		cost = 10
+
+		completion_reward = {
+			add_political_power = 50
+		}
+	}
+
+	focus = {
+		id = GER_danzig
+		icon = GFX_goal_generic_territory_or_war
+		x = 7
+		y = 5
+		cost = 10
+
+		prerequisite = { focus = GER_anschluss }
+		prerequisite = { focus = GER_other_path }
+
+		mutually_exclusive = { focus = GER_peace }
+
+		completion_reward = {
+			add_war_support = 0.1
+		}
+	}
+}

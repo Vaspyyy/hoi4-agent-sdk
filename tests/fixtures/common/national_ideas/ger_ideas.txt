@@ -1,0 +1,16 @@
+country_ideas = {
+	GER_spirit_1 = {
+		icon = GFX_idea_generic_army
+		modifier = {
+			army_morale_factor = 0.10
+			popularity_gain_support_factor = 0.05
+		}
+	}
+
+	GER_spirit_2 = {
+		icon = GFX_idea_generic_infantry
+		modifier = {
+			infantry_equipment_manpower_factor = -0.1
+		}
+	}
+}

@@ -1,0 +1,365 @@
+"""
+Country creation, reading, and serialization.
+
+A Country in HOI4 spans multiple files:
+  - common/country_tags/*.txt       (tag registration)
+  - common/countries/{TAG}.txt      (color, graphical culture)
+  - history/countries/{TAG} -*.txt  (capital, politics, leader)
+  - common/characters/{TAG}*.txt    (character definitions)
+  - localisation/english/*.yml      (name, adjective)
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Optional
+
+from .tags import resolve_country_filename
+from .types import Country, Leader
+
+COLOR_RE = re.compile(r"\bcolor\s*=\s*\{\s*(\d+)\s+(\d+)\s+(\d+)\s*\}")
+CAPITAL_RE = re.compile(r"\bcapital\s*=\s*(\d+)")
+POP_RE = re.compile(r"\b(democratic|fascism|communism|neutrality)\s*=\s*(\d+)")
+RULING_PARTY_RE = re.compile(r"\bruling_party\s*=\s*(\w+)")
+IDEOLOGY_RE = re.compile(r"\bideology\s*=\s*(\w+)")
+
+
+def read_country(
+    mod_root: Path,
+    tag: str,
+    hoi4_install: Optional[Path] = None,
+    _loc_cache: Optional[dict[str, dict[str, str]]] = None,
+) -> Country:
+    country = Country(tag=tag)
+
+    _read_definition(country, mod_root, hoi4_install)
+    _read_history(country, mod_root, hoi4_install)
+    _read_character(country, mod_root, hoi4_install)
+
+    if _loc_cache is not None:
+        _read_loc_from_cache(country, _loc_cache)
+    else:
+        _read_localisation(country, mod_root, hoi4_install)
+
+    return country
+
+
+def _read_definition(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+    for base in [mod_root, hoi4_install]:
+        if base is None:
+            continue
+        p = resolve_country_filename(base, country.tag)
+        if p and p.exists():
+            txt = p.read_text(encoding="utf-8", errors="ignore")
+            m = COLOR_RE.search(txt)
+            if m:
+                country.color = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            return
+
+
+def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+    for base in [mod_root, hoi4_install]:
+        if base is None:
+            continue
+        d = base / "history" / "countries"
+        if not d.exists():
+            continue
+        f = _find_history_file(d, country.tag)
+        if not f:
+            continue
+        txt = f.read_text(encoding="utf-8", errors="ignore")
+
+        cap = CAPITAL_RE.search(txt)
+        if cap:
+            country.capital = int(cap.group(1))
+
+        pops: dict[str, int] = {}
+        for m in POP_RE.finditer(txt):
+            pops[m.group(1)] = int(m.group(2))
+        if pops:
+            country.popularities = pops
+
+        rp = RULING_PARTY_RE.search(txt)
+        if rp:
+            country.ruling_party = rp.group(1)
+            country.elections_allowed = rp.group(1) == "democratic"
+
+        leader_name = _extract_leader_name(txt)
+        if leader_name:
+            country.leader = Leader(
+                name=leader_name,
+                character_id=f"{country.tag}_leader_1",
+            )
+
+        return
+
+
+def _read_localisation(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+    for base in [mod_root, hoi4_install]:
+        if base is None:
+            continue
+        loc_dir = base / "localisation" / "english"
+        if not loc_dir.exists():
+            continue
+        candidates = [
+            loc_dir / "countries_l_english.yml",
+            loc_dir / "countries_cosmetic_l_english.yml",
+        ]
+        candidates.extend(f for f in loc_dir.rglob("*.yml") if f not in candidates)
+        for f in candidates:
+            if not f.exists():
+                continue
+            raw = f.read_bytes()
+            try:
+                txt = raw.decode("utf-8-sig")
+            except Exception:
+                txt = raw.decode("utf-8", errors="ignore")
+            if f"{country.tag}:" not in txt:
+                continue
+            for line in txt.splitlines():
+                s = line.strip()
+                if s.startswith(f"{country.tag}:"):
+                    country.name = s.split(" ", 1)[-1].strip().strip('"')
+                if s.startswith(f"{country.tag}_ADJ:"):
+                    country.adjective = s.split(" ", 1)[-1].strip().strip('"')
+            return
+
+
+def _build_loc_cache(mod_root: Path) -> dict[str, dict[str, str]]:
+    cache: dict[str, dict[str, str]] = {}
+    loc_dir = mod_root / "localisation" / "english"
+    if not loc_dir.exists():
+        return cache
+    for f in loc_dir.rglob("*.yml"):
+        raw = f.read_bytes()
+        try:
+            txt = raw.decode("utf-8-sig")
+        except Exception:
+            txt = raw.decode("utf-8", errors="ignore")
+        for line in txt.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or s.startswith("l_"):
+                continue
+            m = re.match(r'^\s*([A-Z0-9]{3}[A-Z0-9_]*):', s)
+            if m:
+                tag_key = m.group(1)
+                tag = tag_key[:3] if len(tag_key) >= 3 and tag_key[:3].isupper() else None
+                if tag and tag not in cache:
+                    cache[tag] = {}
+                if tag:
+                    val = s.split(" ", 1)[-1].strip().strip('"')
+                    cache[tag][tag_key] = val
+    return cache
+
+
+def _read_loc_from_cache(country: Country, cache: dict[str, dict[str, str]]) -> None:
+    entries = cache.get(country.tag)
+    if not entries:
+        return
+    for key, val in entries.items():
+        if key == country.tag or key == f"{country.tag}:0":
+            country.name = val
+        elif key.startswith(f"{country.tag}_ADJ"):
+            country.adjective = val
+
+
+def _read_character(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+    for base in [mod_root, hoi4_install]:
+        if base is None:
+            continue
+        p = base / f"common/characters/{country.tag}_characters.txt"
+        if not p.exists():
+            p = base / f"common/characters/{country.tag}.txt"
+        if not p.exists():
+            continue
+        txt = p.read_text(encoding="utf-8", errors="ignore")
+
+        ideology_m = IDEOLOGY_RE.search(txt)
+        name_m = re.search(r'name\s*=\s*"([^"]*)"', txt)
+
+        if country.leader is None:
+            country.leader = Leader(
+                name=name_m.group(1) if name_m else "",
+                character_id=f"{country.tag}_leader_1",
+                ideology=ideology_m.group(1) if ideology_m else "liberalism",
+            )
+        else:
+            if ideology_m:
+                country.leader.ideology = ideology_m.group(1)
+            if name_m:
+                country.leader.name = name_m.group(1)
+        return
+
+
+def _find_history_file(history_dir: Path, tag: str) -> Optional[Path]:
+    for f in history_dir.glob(f"{tag} - *.txt"):
+        return f
+    for f in history_dir.glob(f"{tag}*.txt"):
+        return f
+    return None
+
+
+def _extract_leader_name(txt: str) -> Optional[str]:
+    lines = txt.splitlines()
+    for idx, line in enumerate(lines):
+        if "create_country_leader" in line or "recruit_character" in line:
+            for j in range(idx + 1, min(idx + 12, len(lines))):
+                name_match = re.search(r'name\s*=\s*"([^"]*)"', lines[j])
+                if name_match:
+                    return name_match.group(1)
+    return None
+
+
+def write_country_tag(mod_root: Path, tag: str) -> None:
+    p = mod_root / "common" / "country_tags" / "00_generated_tags.txt"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    line = f'{tag} = "countries/{tag}.txt"\n'
+    if p.exists():
+        content = p.read_text(encoding="utf-8", errors="ignore")
+        if re.search(rf"^{re.escape(tag)}\s*=", content, re.MULTILINE):
+            return
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+
+
+def write_country_definition(mod_root: Path, country: Country) -> None:
+    p = mod_root / f"common/countries/{country.tag}.txt"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    content = serialize_country_files(mod_root, country)[p]
+    p.write_text(content, encoding="utf-8")
+
+
+def write_country_history(mod_root: Path, country: Country) -> None:
+    tag = country.tag
+    safe_name = re.sub(r'[\\/:*?"<>|]', "_", country.name or tag)
+    p = mod_root / f"history/countries/{tag} - {safe_name}.txt"
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+    for old in p.parent.glob(f"{tag} - *.txt"):
+        if old != p:
+            old.unlink()
+
+    serialized = serialize_country_files(mod_root, country)
+    p.write_text(serialized[p], encoding="utf-8")
+
+
+def write_country_localisation(mod_root: Path, country: Country) -> None:
+    loc = mod_root / f"localisation/english/{country.tag}_country_l_english.yml"
+    loc.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["l_english:"]
+    name = country.name or country.tag
+    adj = country.adjective or name
+    for suffix in ["", "_neutrality", "_democratic", "_fascism", "_communism"]:
+        lines.append(f' {country.tag}{suffix}:0 "{name}"')
+        lines.append(f' {country.tag}{suffix}_DEF:0 "{name}"')
+    lines.append(f' {country.tag}_ADJ:0 "{adj}"')
+    lines.append("")
+    loc.write_text("\n".join(lines), encoding="utf-8-sig")
+
+
+def write_character_file(mod_root: Path, country: Country) -> None:
+    if not country.leader:
+        return
+    serialized = serialize_country_files(mod_root, country)
+    tag = country.tag
+    p = mod_root / f"common/characters/{tag}_characters.txt"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(serialized[p], encoding="utf-8")
+
+
+def write_all_country_files(mod_root: Path, country: Country) -> None:
+    write_country_tag(mod_root, country.tag)
+    write_country_definition(mod_root, country)
+    write_country_history(mod_root, country)
+    write_country_localisation(mod_root, country)
+    write_character_file(mod_root, country)
+
+
+def country_file_paths(mod_root: Path, country: Country) -> list[Path]:
+    tag = country.tag
+    safe_name = re.sub(r'[\\/:*?"<>|]', "_", country.name or tag)
+    paths = [
+        mod_root / f"common/countries/{tag}.txt",
+        mod_root / f"history/countries/{tag} - {safe_name}.txt",
+    ]
+    if country.leader:
+        paths.append(mod_root / f"common/characters/{tag}_characters.txt")
+    return paths
+
+
+def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]:
+    tag = country.tag
+    files: dict[Path, str] = {}
+
+    def_path = mod_root / f"common/countries/{tag}.txt"
+    try:
+        r, g, b = country.color
+    except (TypeError, ValueError):
+        r, g, b = 128, 128, 128
+    files[def_path] = (
+        f"graphical_culture = {country.graphical_culture}\n"
+        f"graphical_culture_2d = {country.graphical_culture_2d}\n"
+        f"color = {{ {r} {g} {b} }}\n"
+    )
+
+    safe_name = re.sub(r'[\\/:*?"<>|]', "_", country.name or tag)
+    hist_path = mod_root / f"history/countries/{tag} - {safe_name}.txt"
+    leader = country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1")
+    elections = "yes" if country.elections_allowed else "no"
+    pops = country.popularities
+    ideas_block = ""
+    if country.ideas:
+        ideas_lines = "\n".join(f" {idea}" for idea in country.ideas)
+        ideas_block = f"\nadd_ideas = {{\n{ideas_lines}\n}}\n"
+    files[hist_path] = (
+        f"capital = {country.capital}\n"
+        f"\n"
+        f"recruit_character = {leader.character_id}\n"
+        f"\n"
+        f"set_popularities = {{\n"
+        f" democratic = {pops.get('democratic', 0)}\n"
+        f" fascism = {pops.get('fascism', 0)}\n"
+        f" communism = {pops.get('communism', 0)}\n"
+        f" neutrality = {pops.get('neutrality', 0)}\n"
+        f"}}\n"
+        f"\n"
+        f"set_politics = {{\n"
+        f" ruling_party = {country.ruling_party}\n"
+        f' last_election = "1936.1.1"\n'
+        f" elections_allowed = {elections}\n"
+        f"}}\n"
+        f"\n"
+        f"set_country_leader = {{\n"
+        f"  character = {leader.character_id}\n"
+        f" }}\n"
+        f"{ideas_block}"
+    )
+
+    if country.leader:
+        char_path = mod_root / f"common/characters/{tag}_characters.txt"
+        ld = country.leader
+        files[char_path] = (
+            f"characters = {{\n"
+            f" {ld.character_id} = {{\n"
+            f'  name = "{ld.name}"\n'
+            f"\n"
+            f"  roles = {{ country_leader }}\n"
+            f"\n"
+            f"  portraits = {{\n"
+            f"   civilian = {{\n"
+            f"    large = GFX_portrait_{tag}_{ld.portrait_slug or ld.character_id}\n"
+            f"   }}\n"
+            f"  }}\n"
+            f"\n"
+            f"  country_leader = {{\n"
+            f"   ideology = {ld.ideology}\n"
+            f"   desc = {ld.character_id}_desc\n"
+            f'   expire = "1965.1.1"\n'
+            f"   traits = {{ }}\n"
+            f"  }}\n"
+            f" }}\n"
+            f"}}\n"
+        )
+
+    return files

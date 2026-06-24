@@ -1,0 +1,20 @@
+capital = 123
+
+recruit_character = WST_leader_1
+
+set_popularities = {
+ democratic = 60
+ fascism = 20
+ communism = 10
+ neutrality = 10
+}
+
+set_politics = {
+ ruling_party = democratic
+ last_election = "1936.1.1"
+ elections_allowed = yes
+}
+
+set_country_leader = {
+  character = WST_leader_1
+ }

@@ -1,0 +1,42 @@
+add_namespace = mymod.1
+
+country_event = {
+	id = mymod.1.1
+	title = mymod.1.1.t
+	desc = mymod.1.1.d
+	picture = GFX_report_event_generic
+
+	is_triggered_only = yes
+
+	trigger = {
+		tag = GER
+	}
+
+	mean_time_to_happen = {
+		days = 1
+	}
+
+	option = {
+		name = mymod.1.1.a
+		add_political_power = 100
+	}
+
+	option = {
+		name = mymod.1.1.b
+		trigger = {
+			has_war = yes
+		}
+		add_stability = 0.05
+	}
+}
+
+country_event = {
+	id = mymod.1.2
+	title = mymod.1.2.t
+	desc = mymod.1.2.d
+	picture = GFX_report_event_generic
+
+	option = {
+		name = mymod.1.2.a
+	}
+}

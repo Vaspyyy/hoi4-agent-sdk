@@ -1,0 +1,20 @@
+characters = {
+ WST_leader_1 = {
+  name = "John Westralia"
+
+  roles = { country_leader }
+
+  portraits = {
+   civilian = {
+    large = GFX_portrait_WST_leader_1
+   }
+  }
+
+  country_leader = {
+   ideology = conservatism
+   desc = WST_leader_1_desc
+   expire = "1965.1.1"
+   traits = { }
+  }
+ }
+}
