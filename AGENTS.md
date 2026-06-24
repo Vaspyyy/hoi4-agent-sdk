@@ -64,7 +64,7 @@ if any(error.severity == "error" for error in errors):
 print(mod.preview())
 
 # Save and inspect the result.
-result = mod.save()
+result = mod.save(require_changes=True)
 print(result)
 print(result.written_files)
 ```
@@ -81,7 +81,7 @@ with mod.transaction():
 
 1. Mutate and save using the same `Mod` instance. Dirty state is process-local. Loading a fresh `Mod` and calling `save()` will not save changes made by another process.
 
-2. Inspect the returned `SaveResult` and print it. A clean save returns `no_changes=True`, sets `message`, and emits a warning.
+2. Inspect the returned `SaveResult` and print it. Use `save(require_changes=True)` for agent scripts that are expected to write files.
 
 3. `create_country(capital=...)` only writes the country's capital field. It does not transfer ownership, add cores, or modify the state file. Use `mod.set_state_owner(state_id, tag)` and `mod.add_state_core(state_id, tag)` explicitly.
 
@@ -102,7 +102,7 @@ with mod.transaction():
    Mod.effect_remove_state_core(state_id, tag)
    ```
 
-7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
+7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
 
 8. Search rather than guess:
 
@@ -120,7 +120,7 @@ with mod.transaction():
 
    This means `(FOCUS_A OR FOCUS_B) AND FOCUS_C`.
 
-10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Known false-positive warnings can be hidden with stable codes, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
+10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Known false-positive warnings can be hidden with stable codes from `VALIDATION_WARNING_CODES`, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
 
 11. Use patch-style focus helpers when editing existing trees: `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
 
@@ -128,7 +128,11 @@ with mod.transaction():
 
 13. Use `create_event(..., overwrite=True)` only when replacing an existing event. Use `update_event()` or `update_event_option()` for targeted edits.
 
-14. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
+14. `create_focus_tree()`, `create_decision_category()`, `create_decision()`, and `create_idea()` also raise on existing IDs unless `overwrite=True`.
+
+15. Use `Focus(..., requires="FOCUS_ID")` for a single prerequisite instead of manually writing `prerequisites=[["FOCUS_ID"]]`.
+
+16. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
 
 ## Documentation
 

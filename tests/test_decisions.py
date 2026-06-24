@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from hoi4 import Mod
 from hoi4.decisions import load_decisions_file, serialize_decisions_file
 
@@ -43,6 +45,27 @@ def test_serialize_decision_file():
     assert "test_category = {" in text
     assert "test_decision = {" in text
     assert "add_stability = 0.05" in text
+
+
+def test_create_decision_requires_explicit_overwrite(tmp_path):
+    mod = Mod(tmp_path)
+    mod.create_decision_category("test_category", icon="old_icon")
+    with pytest.raises(ValueError, match="overwrite=True"):
+        mod.create_decision_category("test_category", icon="new_icon")
+    category = mod.create_decision_category("test_category", icon="new_icon", overwrite=True)
+    assert category.icon == "new_icon"
+
+    mod.create_decision("test_category", "test_decision", complete_effect="old_effect = yes")
+    with pytest.raises(ValueError, match="overwrite=True"):
+        mod.create_decision("test_category", "test_decision", complete_effect="new_effect = yes")
+    decision = mod.create_decision(
+        "test_category",
+        "test_decision",
+        complete_effect="new_effect = yes",
+        overwrite=True,
+    )
+    assert decision.complete_effect == "new_effect = yes"
+    assert [candidate.id for candidate in category.decisions] == ["test_decision"]
 
 
 def test_mod_saves_and_loads_decision(tmp_path):

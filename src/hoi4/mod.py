@@ -102,6 +102,16 @@ def _normalize_name_token(name: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", name.upper())
 
 
+RULING_PARTIES = ("democratic", "fascism", "communism", "neutrality")
+
+LEADER_IDEOLOGIES_BY_PARTY: dict[str, tuple[str, ...]] = {
+    "democratic": ("liberalism", "conservatism", "socialism"),
+    "communism": ("marxism", "leninism", "stalinism", "anti_revisionism", "anarchist_communism"),
+    "fascism": ("nazism", "fascism_ideology", "falangism", "rexism"),
+    "neutrality": ("despotism", "oligarchism", "moderate", "centrism"),
+}
+
+
 def _filter_validation_errors(
     errors: list[ValidationError],
     suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
@@ -369,7 +379,7 @@ class Mod:
         ruling_party: str = "democratic",
         popularities: dict[str, int] | None = None,
         leader_name: str = "Leader",
-        leader_ideology: str = "liberalism",
+        leader_ideology: str | None = None,
         ideas: list[str] | None = None,
         overwrite: bool = False,
         allow_vanilla_override: bool = False,
@@ -385,6 +395,8 @@ class Mod:
                 f"Country tag '{tag}' is already used by vanilla HOI4. "
                 "Choose an unused tag or pass allow_vanilla_override=True intentionally."
             )
+        if leader_ideology is None:
+            leader_ideology = self.default_leader_ideology(ruling_party)
         leader = Leader(
             name=leader_name,
             character_id=f"{tag}_leader_1",
@@ -706,7 +718,13 @@ class Mod:
         allowed: str = "",
         visible: str = "",
         path: str | Path | None = None,
+        overwrite: bool = False,
     ) -> DecisionCategory:
+        if category_id in self._decision_categories and not overwrite:
+            raise ValueError(
+                f"Decision category '{category_id}' already exists. "
+                "Use overwrite=True to replace it or update existing decisions."
+            )
         target = Path(path) if path is not None else self.mod_root / "common" / "decisions" / "mod_decisions.txt"
         category = DecisionCategory(id=category_id, icon=icon, allowed=allowed, visible=visible, path=target)
         self._decision_categories[category_id] = category
@@ -729,12 +747,24 @@ class Mod:
         remove_effect: str = "",
         ai_will_do: str = "",
         path: str | Path | None = None,
+        overwrite: bool = False,
     ) -> Decision:
+        existing = self._decisions.get(decision_id)
+        if existing is not None and not overwrite:
+            raise ValueError(
+                f"Decision '{decision_id}' already exists. "
+                "Use overwrite=True to replace it or update_decision() to patch it."
+            )
         category = self._decision_categories.get(category_id)
         if category is None:
             category = self.create_decision_category(category_id, path=path)
         elif path is not None:
             category.path = Path(path)
+        if existing is not None:
+            old_category = self._decision_categories.get(existing.category)
+            if old_category is not None:
+                old_category.decisions = [candidate for candidate in old_category.decisions if candidate.id != decision_id]
+                self._dirty_decision_categories.add(old_category.id)
         decision = Decision(
             id=decision_id,
             category=category_id,
@@ -792,10 +822,16 @@ class Mod:
         icon: str = "GFX_idea_generic",
         modifier: dict[str, str | int | float | bool] | None = None,
         path: str | Path | None = None,
+        overwrite: bool = False,
     ) -> Idea:
+        existing = self._ideas.get(idea_id)
+        if existing is not None and not overwrite:
+            raise ValueError(f"Idea '{idea_id}' already exists. Use overwrite=True to replace it or update_idea() to patch it.")
         idea = Idea(id=idea_id, icon=icon, modifier=modifier or {})
         if path is not None:
             idea.path = Path(path) if not isinstance(path, Path) else path
+        elif existing is not None and existing.path is not None:
+            idea.path = existing.path
         else:
             prefix = idea_id.split("_")[0] if "_" in idea_id else idea_id
             if prefix in self._cached_idea_file:
@@ -842,9 +878,15 @@ class Mod:
             raise KeyError(f"Focus tree '{tree_id}' not found. Available: {self.list_focus_trees()}")
         return self._focus_trees[tree_id]
 
-    def create_focus_tree(self, tree_id: str, country_tag: str) -> FocusTree:
+    def create_focus_tree(self, tree_id: str, country_tag: str, overwrite: bool = False) -> FocusTree:
+        existing = self._focus_trees.get(tree_id)
+        if existing is not None and not overwrite:
+            raise ValueError(
+                f"Focus tree '{tree_id}' already exists. "
+                "Use overwrite=True to replace it or update_focus_tree()/add_focus() to patch it."
+            )
         tag = country_tag.upper()
-        path = self.mod_root / "common" / "national_focus" / f"{tag}_focus.txt"
+        path = existing.path if existing is not None and existing.path is not None else self.mod_root / "common" / "national_focus" / f"{tag}_focus.txt"
         tree = FocusTree(id=tree_id, country_tag=tag, path=path)
         self._focus_trees[tree_id] = tree
         self._original_files.setdefault(path, "")
@@ -1079,6 +1121,29 @@ class Mod:
     def effect_transfer_state(state_id: int, target: str) -> str:
         return f"{target.upper()} = {{ transfer_state = {state_id} }}"
 
+    @classmethod
+    def effect_transfer_state_with_core(cls, state_id: int, target: str) -> str:
+        return "\n".join([
+            cls.effect_transfer_state(state_id, target),
+            cls.effect_add_state_core(state_id, target),
+        ])
+
+    @staticmethod
+    def effect_add_political_power(amount: int) -> str:
+        return f"add_political_power = {amount}"
+
+    @staticmethod
+    def effect_add_war_support(amount: float) -> str:
+        return f"add_war_support = {amount}"
+
+    @staticmethod
+    def effect_add_stability(amount: float) -> str:
+        return f"add_stability = {amount}"
+
+    @staticmethod
+    def effect_add_manpower(amount: int) -> str:
+        return f"add_manpower = {amount}"
+
     @staticmethod
     def effect_add_equipment(
         equipment_type: str,
@@ -1131,6 +1196,18 @@ class Mod:
         if capital is not None:
             parts.append(f"capital = {capital}")
         return f"start_civil_war = {{ {' '.join(parts)} }}"
+
+    @staticmethod
+    def default_leader_ideology(ruling_party: str) -> str:
+        return LEADER_IDEOLOGIES_BY_PARTY.get(ruling_party, LEADER_IDEOLOGIES_BY_PARTY["democratic"])[0]
+
+    @staticmethod
+    def leader_ideologies_for_party(ruling_party: str) -> tuple[str, ...]:
+        return LEADER_IDEOLOGIES_BY_PARTY.get(ruling_party, ())
+
+    @staticmethod
+    def ruling_parties() -> tuple[str, ...]:
+        return RULING_PARTIES
 
     def create_wargoal(self, target: str, war_goal_type: str = "annex_everything") -> str:
         return self.effect_create_wargoal(target, war_goal_type)
@@ -1505,10 +1582,12 @@ class Mod:
 
         return "\n".join(diffs)
 
-    def save(self) -> SaveResult:
+    def save(self, require_changes: bool = False) -> SaveResult:
         if not self._dirty:
             message = "No changes written: save() was called with no dirty changes"
             warnings.warn(message, RuntimeWarning, stacklevel=2)
+            if require_changes:
+                raise RuntimeError(message)
             return SaveResult(written_files=[], dirty_sections=[], no_changes=True, message=message)
 
         dirty_sections = sorted(self._dirty)
@@ -1584,7 +1663,7 @@ class Mod:
         self._dirty_decision_categories.clear()
         self._dirty_ideas.clear()
 
-        return SaveResult(
+        result = SaveResult(
             written_files=sorted(set(written_files)),
             dirty_sections=dirty_sections,
             no_changes=not written_files,
@@ -1594,6 +1673,9 @@ class Mod:
                 else f"Saved {len(set(written_files))} file(s)"
             ),
         )
+        if require_changes and result.no_changes:
+            raise RuntimeError(result.message)
+        return result
 
     @contextmanager
     def transaction(self, *, save: bool = False):

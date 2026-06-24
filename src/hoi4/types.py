@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 from typing import Optional
 
 
-def _ensure_nested(value: list) -> list[list[str]]:
+def _ensure_nested(value) -> list[list[str]]:
     if not value:
-        return value
+        return []
+    if isinstance(value, str):
+        return [[value]]
     if isinstance(value[0], str):
         return [value]
     return value
@@ -21,6 +23,7 @@ class Focus:
     y: int = 0
     cost: int = 10
     prerequisites: list[list[str]] = field(default_factory=list)
+    requires: InitVar[str | list[str] | list[list[str]] | None] = None
     mutually_exclusive: list[list[str]] = field(default_factory=list)
     relative_position_id: str = ""
     search_filters: list[str] = field(default_factory=list)
@@ -38,7 +41,9 @@ class Focus:
     raw_block: str = ""
     touched: bool = False
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, requires) -> None:
+        if requires:
+            self.prerequisites.extend(_ensure_nested(requires))
         self.prerequisites = _ensure_nested(self.prerequisites)
         self.mutually_exclusive = _ensure_nested(self.mutually_exclusive)
 

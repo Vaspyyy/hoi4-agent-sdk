@@ -47,7 +47,7 @@ Country data spans 5 files: tag registration, definition (color/culture), histor
 | `suggest_tag(name: str) -> str` | `str` | Pick an available 3-character tag from a country/place name |
 | `suggest_tags(name: str, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
-| `create_country(tag, name, adjective="", color=(128,128,128), capital=1, ruling_party="democratic", popularities=None, leader_name="Leader", leader_ideology="liberalism", ideas=None, overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader, caches, marks dirty. Raises `ValueError` for existing mod tags or vanilla tags unless explicitly allowed. |
+| `create_country(tag, name, adjective="", color=(128,128,128), capital=1, ruling_party="democratic", popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader, caches, marks dirty. If omitted, `leader_ideology` is picked from `ruling_party`. Raises `ValueError` for existing mod tags or vanilla tags unless explicitly allowed. |
 | `update_country(tag: str, **kwargs) -> bool` | `bool` | Update any Country/Leader field. Use `leader_name`, `leader_ideology` for leader. |
 | `delete_country(tag: str) -> bool` | `bool` | Remove from cache |
 
@@ -72,6 +72,8 @@ tag = mod.suggest_tag("Sicily")
 ```
 
 `create_country()` never changes state ownership, cores, controller, or capital state files. The `capital` argument only writes `capital = <state_id>` in `history/countries/{TAG} - {Name}.txt`.
+
+`ruling_party` uses party groups: `democratic`, `fascism`, `communism`, `neutrality`. `leader_ideology` uses sub-ideologies. If `leader_ideology` is omitted, the SDK picks a matching default for the chosen ruling party. Use `Mod.leader_ideologies_for_party("communism")` or `Mod.default_leader_ideology("communism")` instead of guessing.
 
 `set_state_owner()` and `batch_set_owner()` patch state history files. In event options, event immediate blocks, decisions, and focus rewards, use the runtime effect helper instead:
 
@@ -176,8 +178,8 @@ Decisions live in `common/decisions/*.txt` and are grouped by category.
 | `list_decisions() -> list[str]` | Sorted decision IDs | Loaded decisions |
 | `get_decision(decision_id: str) -> Decision` | `Decision` | Get a decision |
 | `get_decision_category(category_id: str) -> DecisionCategory` | `DecisionCategory` | Get a category |
-| `create_decision_category(category_id, icon="", allowed="", visible="", path=None) -> DecisionCategory` | `DecisionCategory` | Create or route a category |
-| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None) -> Decision` | `Decision` | Create a decision in a category |
+| `create_decision_category(category_id, icon="", allowed="", visible="", path=None, overwrite=False) -> DecisionCategory` | `DecisionCategory` | Create or route a category. Raises if it exists unless `overwrite=True`. |
+| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. |
 | `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update a decision |
 | `delete_decision(decision_id: str) -> bool` | `bool` | Remove a decision |
 
@@ -215,7 +217,7 @@ Without an explicit `path`, new ideas write to `common/national_ideas/mod_ideas.
 |--------|---------|-------------|
 | `list_ideas() -> list[str]` | Sorted idea IDs | All loaded ideas |
 | `get_idea(idea_id: str) -> Idea` | `Idea` | Raises `KeyError` if not found |
-| `create_idea(idea_id, icon="GFX_idea_generic", modifier=None, path=None) -> Idea` | `Idea` | Creates idea. `modifier` is `dict[str, str|int|float|bool]`. Optional `path` sets target file. |
+| `create_idea(idea_id, icon="GFX_idea_generic", modifier=None, path=None, overwrite=False) -> Idea` | `Idea` | Creates idea. Raises if it exists unless `overwrite=True`. `modifier` is `dict[str, str|int|float|bool]`. Optional `path` sets target file. |
 | `update_idea(idea_id: str, **kwargs) -> bool` | `bool` | Update fields. `modifier` kwarg **merges** into existing dict. |
 | `delete_idea(idea_id: str) -> bool` | `bool` | Remove from cache |
 
@@ -245,7 +247,7 @@ Focus trees are collections of focuses. Each focus has a position (x, y), cost, 
 |--------|---------|-------------|
 | `list_focus_trees() -> list[str]` | Sorted tree IDs | All loaded tree IDs |
 | `get_focus_tree(tree_id: str) -> FocusTree` | `FocusTree` | Raises `KeyError` if not found |
-| `create_focus_tree(tree_id: str, country_tag: str) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag |
+| `create_focus_tree(tree_id: str, country_tag: str, overwrite=False) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
 | `update_focus_tree(tree_id: str, **kwargs) -> bool` | `bool` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id: str) -> bool` | `bool` | Remove tree |
 | `add_focus(tree_id: str, focus: Focus) -> None` | `None` | Append focus to tree |
@@ -268,6 +270,8 @@ Focus(
     id="GER_anschluss",
     x=10, y=5, cost=10,
     prerequisites=[["GER_rhineland"]],            # requires Rhineland
+    # Equivalent shortcut for one common prerequisite:
+    # requires="GER_rhineland",
     mutually_exclusive=[["GER_other_option"]],     # mutually exclusive with
     relative_position_id="GER_rhineland",
     search_filters=["FOCUS_FILTER_INDUSTRY"],
@@ -342,8 +346,13 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | Helper | Output shape |
 |--------|--------------|
 | `Mod.effect_transfer_state(state_id, tag)` | `TAG = { transfer_state = 115 }` |
+| `Mod.effect_transfer_state_with_core(state_id, tag)` | Transfer plus `115 = { add_core_of = TAG }` |
 | `Mod.effect_add_state_core(state_id, tag)` | `115 = { add_core_of = TAG }` |
 | `Mod.effect_remove_state_core(state_id, tag)` | `115 = { remove_core_of = TAG }` |
+| `Mod.effect_add_political_power(amount)` | `add_political_power = 100` |
+| `Mod.effect_add_war_support(amount)` | `add_war_support = 0.1` |
+| `Mod.effect_add_stability(amount)` | `add_stability = 0.05` |
+| `Mod.effect_add_manpower(amount)` | `add_manpower = 15000` |
 | `Mod.effect_add_civilian_factory(state_id, level=1)` | State-scoped `industrial_complex` construction |
 | `Mod.effect_add_military_factory(state_id, level=1)` | State-scoped `arms_factory` construction |
 | `Mod.effect_add_infrastructure(state_id, level=1)` | State-scoped infrastructure construction |
@@ -362,8 +371,8 @@ Examples:
 
 ```python
 reward = "\n".join([
-    Mod.effect_transfer_state(115, "SCL"),
-    Mod.effect_add_state_core(115, "SCL"),
+    Mod.effect_transfer_state_with_core(115, "SCL"),
+    Mod.effect_add_political_power(100),
     Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="GER"),
     Mod.effect_set_technology("infantry_weapons", 1, popup=False),
 ])
@@ -402,9 +411,12 @@ class ValidationError:
 
 **Errors** mean the mod will crash or behave incorrectly. **Warnings** mean potential issues (missing localization, etc.).
 
-Suppress known false-positive warnings by stable code:
+Discover and suppress known false-positive warnings by stable code:
 
 ```python
+from hoi4 import VALIDATION_WARNING_CODES
+
+print(VALIDATION_WARNING_CODES)
 errors = mod.validate(suppress_warnings=["country_scope_core_effect"])
 errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
 ```
@@ -437,7 +449,7 @@ Only dirty sections produce diffs. After `save()`, `preview()` returns empty unt
 `mod.save()` returns `SaveResult`:
 
 ```python
-result = mod.save()
+result = mod.save(require_changes=True)
 print(result)               # "Saved N file(s)" or "No changes written: ..."
 print(result.written_files)
 print(result.no_changes)

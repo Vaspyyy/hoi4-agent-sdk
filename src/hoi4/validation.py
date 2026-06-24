@@ -14,6 +14,23 @@ from .types import Country, Event, FocusTree, Idea, State, ValidationError
 TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
 _UNSET = object()
 
+VALIDATION_CODES: dict[str, str] = {
+    "script_syntax": "Raw Paradox script has mismatched braces or quotes.",
+    "country_scope_core_effect": "Core add/remove effect appears outside an explicit state scope.",
+    "history_set_owner_in_effect": "State history owner directive appears in runtime effect script.",
+    "unknown_tech_bonus_category": "add_tech_bonus category is not in the technology category catalog.",
+    "missing_effect_target": "War goal or war declaration block is missing target = TAG.",
+    "missing_wargoal_type": "War goal or war declaration block is missing type = <wargoal_type>.",
+    "unknown_country_scope": "Script scopes into a tag not known from vanilla or the mod.",
+    "leader_party_mismatch": "Country ruling party group does not match leader sub-ideology.",
+}
+
+VALIDATION_WARNING_CODES: dict[str, str] = {
+    code: description
+    for code, description in VALIDATION_CODES.items()
+    if code != "script_syntax" and code != "missing_effect_target"
+}
+
 
 def _script_warnings(
     script: str,
@@ -43,6 +60,18 @@ def _script_warnings(
                 message=(
                     f"'{effect_name}' appears at country scope. Use a state scope such as "
                     f"'115 = {{ {effect_name} = TAG }}' to avoid changing every owned state."
+                ),
+                severity="warning",
+                code="country_scope_core_effect",
+                file_path=file_path,
+                focus_id=focus_id,
+                event_id=event_id,
+            ))
+        for scope, value in re.findall(rf"\b([A-Z][A-Z0-9]{{2}})\s*=\s*\{{[^{{}}]*\b{effect_name}\s*=\s*([0-9]+)\b", script):
+            errors.append(ValidationError(
+                message=(
+                    f"'{scope} = {{ {effect_name} = {value} }}' looks country-scoped. "
+                    f"Use '{value} = {{ {effect_name} = {scope} }}' for a state-scoped core change."
                 ),
                 severity="warning",
                 code="country_scope_core_effect",
@@ -169,9 +198,12 @@ def validate_country(country: Country) -> list[ValidationError]:
             errors.append(ValidationError(
                 message=(
                     f"Country '{country.tag}' ruling party '{country.ruling_party}' does not match "
-                    f"leader ideology '{country.leader.ideology}'"
+                    f"leader ideology '{country.leader.ideology}'. ruling_party uses party groups "
+                    "(democratic, fascism, communism, neutrality); leader_ideology uses sub-ideologies "
+                    "such as liberalism, stalinism, nazism, or despotism."
                 ),
                 severity="warning",
+                code="leader_party_mismatch",
                 country_tag=country.tag,
             ))
 

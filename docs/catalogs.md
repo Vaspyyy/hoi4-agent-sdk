@@ -40,6 +40,7 @@ Use runtime state transfer effects in events, decisions, and focus rewards:
 
 ```python
 Mod.effect_transfer_state(115, "SIC")      # SIC = { transfer_state = 115 }
+Mod.effect_transfer_state_with_core(115, "SIC")
 ```
 
 Do not use `set_owner = 115` in event/focus script. `set_owner` belongs in `history/states` files; it is not a runtime effect.

@@ -15,6 +15,7 @@ from .mod import Mod
 from .config import Config, find_config
 from .parser import PdxNode, parse_pdx, serialize_pdx
 from .script import effect_block, normalize_block_body, pdx_value, scope_block, validate_script_syntax
+from .validation import VALIDATION_CODES, VALIDATION_WARNING_CODES
 from .types import (
     Country,
     Decision,
@@ -62,6 +63,8 @@ __all__ = [
     "pdx_value",
     "scope_block",
     "validate_script_syntax",
+    "VALIDATION_CODES",
+    "VALIDATION_WARNING_CODES",
     "EFFECT_CATEGORIES",
     "TECHNOLOGY_CATEGORIES",
     "MODIFIER_CATEGORIES",

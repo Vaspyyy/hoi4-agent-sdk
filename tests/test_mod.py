@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from hoi4 import Mod, Focus, Country, State, Event, EventOption, Idea, Leader
+from hoi4 import Mod, Focus, Country, State, Event, EventOption, Idea, Leader, VALIDATION_WARNING_CODES
 from hoi4 import TECHNOLOGY_CATEGORIES, effect_block, scope_block
 from hoi4.config import Config, find_config
 from hoi4.validation import validate_focus_tree, validate_country, validate_state, validate_event, validate_idea
@@ -49,6 +49,14 @@ class TestModFocusTrees:
         assert tree.id == "soviet_focus"
         assert tree.country_tag == "SOV"
         assert "soviet_focus" in mod.list_focus_trees()
+
+    def test_create_focus_tree_requires_explicit_overwrite(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_focus_tree("soviet_focus", "SOV")
+        with pytest.raises(ValueError, match="overwrite=True"):
+            mod.create_focus_tree("soviet_focus", "SOV")
+        tree = mod.create_focus_tree("soviet_focus", "SOV", overwrite=True)
+        assert tree.focuses == []
 
     def test_delete_focus_tree(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
@@ -135,6 +143,11 @@ class TestModSave:
         assert "No changes written" in result.message
         assert str(result) == result.message
 
+    def test_save_require_changes_raises_on_noop(self, tmp_mod):
+        with pytest.warns(RuntimeWarning, match="no dirty changes"):
+            with pytest.raises(RuntimeError, match="No changes written"):
+                tmp_mod.mod.save(require_changes=True)
+
     def test_discard_reverts_changes(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         mod.add_focus("german_focus", Focus(id="GER_temp", x=1, y=1))
@@ -175,6 +188,10 @@ class TestValidation:
         tree.focuses.append(Focus(id="A", x=1, y=1, mutually_exclusive=[["ghost"]]))
         errors = validate_focus_tree(tree)
         assert any("ghost" in e.message for e in errors)
+
+    def test_focus_requires_wraps_single_prerequisite(self):
+        assert Focus(id="A", requires="ROOT").prerequisites == [["ROOT"]]
+        assert Focus(id="B", requires=["A", "C"]).prerequisites == [["A", "C"]]
 
     def test_validate_knows_unsaved_created_country_tags(self, tmp_mod):
         mod = tmp_mod.mod
@@ -580,12 +597,19 @@ class TestAgentFacingApis:
         assert Mod.effect_add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
         assert Mod.effect_remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
         assert Mod.effect_transfer_state(115, "scl") == "SCL = { transfer_state = 115 }"
+        assert Mod.effect_transfer_state_with_core(115, "scl") == (
+            "SCL = { transfer_state = 115 }\n115 = { add_core_of = SCL }"
+        )
         assert "type = bunker" in Mod.effect_add_bunker(115, level=3)
         assert scope_block("SCL", effect_block("declare_war_on", {"type": "annex_everything", "target": "ITA"})) == (
             "SCL = { declare_war_on = { type = annex_everything target = ITA } }"
         )
 
     def test_equipment_and_technology_effect_helpers(self):
+        assert Mod.effect_add_political_power(100) == "add_political_power = 100"
+        assert Mod.effect_add_war_support(0.1) == "add_war_support = 0.1"
+        assert Mod.effect_add_stability(0.05) == "add_stability = 0.05"
+        assert Mod.effect_add_manpower(15000) == "add_manpower = 15000"
         equipment = Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="ger")
         assert equipment == "add_equipment_to_stockpile = { type = infantry_equipment_0 amount = 1000 producer = GER }"
         variant_equipment = Mod.effect_add_equipment("light_tank_chassis_2", 100, "GER", "Panzer II Ausf. a")
@@ -663,6 +687,12 @@ class TestModCountries:
         assert country.tag == "WST"
         assert country.name == "Westralia"
         assert "WST" in mod.list_countries()
+
+    def test_create_country_defaults_leader_ideology_to_ruling_party(self, tmp_mod):
+        country = tmp_mod.mod.create_country("RED", "Redland", ruling_party="communism")
+        assert country.leader.ideology == "marxism"
+        assert tmp_mod.mod.validate() == []
+        assert "stalinism" in Mod.leader_ideologies_for_party("communism")
 
     def test_create_country_rejects_existing_mod_tag(self, tmp_mod):
         mod = tmp_mod.mod
@@ -972,6 +1002,7 @@ class TestModEvents:
         assert any(error.code == "country_scope_core_effect" for error in all_errors)
         suppressed = mod.validate(suppress_warnings=["country_scope_core_effect"])
         assert not any(error.code == "country_scope_core_effect" for error in suppressed)
+        assert "country_scope_core_effect" in VALIDATION_WARNING_CODES
 
     def test_validate_effect_warns_for_history_set_owner_runtime_effect(self, tmp_mod):
         tmp_mod.mod.create_country("SCL", "Sicily")
@@ -982,6 +1013,14 @@ class TestModEvents:
             suppress_warnings=["history_set_owner_in_effect"],
         )
         assert suppressed == []
+
+    def test_validate_effect_warns_for_inverted_country_scoped_core_effect(self, tmp_mod):
+        tmp_mod.mod.create_country("SCL", "Sicily")
+        errors = tmp_mod.mod.validate_effect("SCL = { add_core_of = 115 }")
+        assert any(
+            error.code == "country_scope_core_effect" and "115 = { add_core_of = SCL }" in error.message
+            for error in errors
+        )
 
     def test_validate_warns_for_triggered_only_mtth_and_immediate_war(self, tmp_mod):
         mod = tmp_mod.mod
@@ -1077,6 +1116,14 @@ class TestModIdeas:
         idea = mod.create_idea("TST_spirit", icon="GFX_test", modifier={"army_morale_factor": 0.2})
         assert idea.id == "TST_spirit"
         assert "TST_spirit" in mod.list_ideas()
+
+    def test_create_idea_requires_explicit_overwrite(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_idea("TST_spirit", icon="GFX_old")
+        with pytest.raises(ValueError, match="overwrite=True"):
+            mod.create_idea("TST_spirit", icon="GFX_new")
+        idea = mod.create_idea("TST_spirit", icon="GFX_new", overwrite=True)
+        assert idea.icon == "GFX_new"
 
     def test_update_idea(self, tmp_mod):
         mod = tmp_mod.with_ideas()

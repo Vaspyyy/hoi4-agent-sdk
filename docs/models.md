@@ -11,6 +11,7 @@ Focus(id: str,                          # Required. Unique within tree.
       x: int = 0, y: int = 0,          # Grid position. Must be unique in tree.
       cost: int = 10,                   # Political power cost
       prerequisites: list[list[str]] = [],      # AND of OR groups
+      requires: str | list[str] | list[list[str]] | None = None,
       mutually_exclusive: list[list[str]] = [], # Same structure
       relative_position_id: str = "",   # Vanilla relative layout anchor
       search_filters: list[str] = [],   # FOCUS_FILTER_* entries
@@ -27,6 +28,8 @@ Focus(id: str,                          # Required. Unique within tree.
       will_lead_to_war_with: str = "",
 )
 ```
+
+`requires` is constructor-only sugar for prerequisites. `Focus(id="B", requires="A")` becomes `prerequisites=[["A"]]`; `requires=["A", "C"]` becomes one OR group.
 
 ### FocusTree
 ```python
