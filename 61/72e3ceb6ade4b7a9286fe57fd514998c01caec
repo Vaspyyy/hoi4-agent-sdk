@@ -1,0 +1,57 @@
+AGENTS.md
+  s_318419a5e355fc::t_d286b864702744 131,133,135-139
+src/hoi4/mod.py
+  s_318419a5e355fc::t_f6a2f25cac36bf 39,60
+  s_318419a5e355fc::t_3d34784dc989dd 1884,1893,1916-1917
+  s_318419a5e355fc::t_dfe362cb997c52 154,738-739,754,761,768-770,774-775,780,1841,1894,1918,1998
+  s_318419a5e355fc::t_edaf11b0b82336 397,430
+  s_318419a5e355fc::t_96953864c66708 2005-2006
+  s_318419a5e355fc::t_8cd052442a0ff8 1588-1594,1598-1620,1700-1708,1795-1800,1840
+  s_318419a5e355fc::t_37489d3c4da77c 152-153,191,251-258
+  s_318419a5e355fc::t_1fcfdce6fab424 713-737,740-753,755-760,762-767,771-773,776-779,781-782
+  s_318419a5e355fc::t_9a8ff36ab078bf 914,921,930-935
+  s_318419a5e355fc::t_1edb7b068b1f83 1297-1331
+  s_318419a5e355fc::t_925b329fd80cfb 261,1995-1997,1999-2004,2007-2015,2044,2046
+docs/models.md
+  s_318419a5e355fc::t_29776f419ad86d 54-55,123-129
+src/hoi4/validation.py
+  s_318419a5e355fc::t_cba4b91f2b107a 26-27
+src/hoi4/countries.py
+  s_318419a5e355fc::t_28832d3ad46456 23,78-81,320,324
+tests/test_events.py
+  s_318419a5e355fc::t_e0016960dbcdf4 126-156
+docs/api.md
+  s_318419a5e355fc::t_4676d8cf8b1c40 50,58,169-194,236,238,246,261-263,390-392
+src/hoi4/events.py
+  s_318419a5e355fc::t_4a617a46408679 136
+src/hoi4/__init__.py
+  s_318419a5e355fc::t_aebeb7f7a2bbf8 29,56
+src/hoi4/on_actions.py
+  s_318419a5e355fc::t_cc44f3a254ad15 1-12,14-140
+  s_318419a5e355fc::t_289cd9a730ec82 13
+src/hoi4/types.py
+  s_318419a5e355fc::t_9465af938c0d1f 84
+  s_318419a5e355fc::t_7ba64208c5b7c0 154-159
+tests/test_mod.py
+  s_318419a5e355fc::t_bf85862a9de770 1169-1170,1221,1226,1257,1283-1293
+  s_318419a5e355fc::t_c7c6ca28c5f006 613-620
+  s_318419a5e355fc::t_743eb653f631fa 1086-1098
+  s_318419a5e355fc::t_af7c1c24c08cda 1065-1085
+  s_318419a5e355fc::t_e2f67d5e3f7f61 705-713
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.11",
+  "base_commit_sha": "6172e3ceb6ade4b7a9286fe57fd514998c01caec",
+  "prompts": {},
+  "sessions": {
+    "s_318419a5e355fc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ef6ef-7409-7ba3-b58e-2aadc0b67d4e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Vaspyyy <lolbautz2@gmail.com>"
+    }
+  }
+}
