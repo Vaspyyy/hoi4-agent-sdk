@@ -65,6 +65,7 @@ print(mod.preview())
 
 # Save and inspect the result.
 result = mod.save()
+print(result)
 print(result.written_files)
 ```
 
@@ -80,13 +81,15 @@ with mod.transaction():
 
 1. Mutate and save using the same `Mod` instance. Dirty state is process-local. Loading a fresh `Mod` and calling `save()` will not save changes made by another process.
 
-2. Inspect the returned `SaveResult`. A clean save returns `no_changes=True` and emits a warning.
+2. Inspect the returned `SaveResult` and print it. A clean save returns `no_changes=True`, sets `message`, and emits a warning.
 
 3. `create_country(capital=...)` only writes the country's capital field. It does not transfer ownership, add cores, or modify the state file. Use `mod.set_state_owner(state_id, tag)` and `mod.add_state_core(state_id, tag)` explicitly.
 
 4. Event and focus block fields contain the block body without outer braces: `mean_time_to_happen="days = 1"`.
 
-5. Never use bare country-scope core effects such as:
+5. `set_state_owner()` writes state history files. Event and focus rewards are runtime effects; use `Mod.effect_transfer_state(state_id, tag)` there, not `set_owner = ...`.
+
+6. Never use bare country-scope core effects such as:
 
    ```text
    add_core_of = TAG
@@ -99,9 +102,9 @@ with mod.transaction():
    Mod.effect_remove_state_core(state_id, tag)
    ```
 
-6. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
+7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
 
-7. Search rather than guess:
+8. Search rather than guess:
 
    ```python
    mod.find_state("Sicily")
@@ -109,7 +112,7 @@ with mod.transaction():
    mod.is_country_tag_available("SIC")
    ```
 
-8. Focus prerequisites use `list[list[str]]`:
+9. Focus prerequisites use `list[list[str]]`:
 
    ```python
    prerequisites=[["FOCUS_A", "FOCUS_B"], ["FOCUS_C"]]
@@ -117,13 +120,15 @@ with mod.transaction():
 
    This means `(FOCUS_A OR FOCUS_B) AND FOCUS_C`.
 
-9. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present.
+10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Known false-positive warnings can be hidden with stable codes, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
 
-10. Use patch-style focus helpers when editing existing trees: `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
+11. Use patch-style focus helpers when editing existing trees: `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
 
-11. Use `get_country_context(tag)` before generating country-specific content. Pass `copy_states=True` before directly modifying vanilla states.
+12. Use `get_country_context(tag)` before generating country-specific content. Pass `copy_states=True` before directly modifying vanilla states.
 
-12. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
+13. Use `create_event(..., overwrite=True)` only when replacing an existing event. Use `update_event()` or `update_event_option()` for targeted edits.
+
+14. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
 
 ## Documentation
 

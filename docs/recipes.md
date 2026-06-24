@@ -169,8 +169,11 @@ Mod.effect_add_military_factory(8, 1)
 Mod.effect_add_infrastructure(8, 1)
 Mod.effect_add_bunker(8, 3)
 Mod.effect_add_state_building(8, "bunker", level=3, province=1234)
+Mod.effect_transfer_state(8, "LUX")
 Mod.effect_add_state_core(8, "LUX")
 Mod.effect_remove_state_core(8, "GER")
+Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="GER")
+Mod.effect_set_technology("infantry_weapons", 1, popup=False)
 Mod.effect_add_industry_bonus("LUX_industry_bonus", uses=1, bonus=0.5)
 Mod.effect_add_tech_bonus("LUX_rifle_bonus", category="infantry_weapons", uses=1, bonus=0.5)
 Mod.effect_add_timed_idea("LUX_recovery_spirit", days=365)
@@ -182,3 +185,5 @@ Mod.scope_block("LUX", Mod.effect_declare_war("GER"))
 Mod.effect_block("declare_war_on", {"type": "annex_everything", "target": "GER"})
 mod.validate_effect("LUX = { declare_war_on = { target = GER } }")
 ```
+
+`set_state_owner()` modifies state history files before game start. In event, decision, and focus effects, use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`; `set_owner = ...` is not a runtime effect.

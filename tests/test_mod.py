@@ -132,6 +132,8 @@ class TestModSave:
             result = tmp_mod.mod.save()
         assert result.no_changes is True
         assert result.written_files == []
+        assert "No changes written" in result.message
+        assert str(result) == result.message
 
     def test_discard_reverts_changes(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
@@ -577,9 +579,23 @@ class TestAgentFacingApis:
         assert "start_civil_war" in Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
         assert Mod.effect_add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
         assert Mod.effect_remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
+        assert Mod.effect_transfer_state(115, "scl") == "SCL = { transfer_state = 115 }"
         assert "type = bunker" in Mod.effect_add_bunker(115, level=3)
         assert scope_block("SCL", effect_block("declare_war_on", {"type": "annex_everything", "target": "ITA"})) == (
             "SCL = { declare_war_on = { type = annex_everything target = ITA } }"
+        )
+
+    def test_equipment_and_technology_effect_helpers(self):
+        equipment = Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="ger")
+        assert equipment == "add_equipment_to_stockpile = { type = infantry_equipment_0 amount = 1000 producer = GER }"
+        variant_equipment = Mod.effect_add_equipment("light_tank_chassis_2", 100, "GER", "Panzer II Ausf. a")
+        assert 'variant_name = "Panzer II Ausf. a"' in variant_equipment
+        assert Mod.effect_set_technology("infantry_weapons", 1) == "set_technology = { infantry_weapons = 1 }"
+        assert Mod.effect_set_technology("infantry_weapons", 1, popup=False) == (
+            "set_technology = { infantry_weapons = 1 popup = no }"
+        )
+        assert Mod.effect_set_technologies({"infantry_weapons": 1, "tech_support": 1}) == (
+            "set_technology = { infantry_weapons = 1 tech_support = 1 }"
         )
 
     def test_tech_bonus_helper_validates_categories(self):
@@ -664,11 +680,30 @@ class TestModCountries:
         )
         mod = Mod(mod_root, hoi4_install=hoi4_root)
         assert not mod.is_country_tag_available("SIC")
-        assert mod.country_tag_conflicts("SIC") == ["vanilla"]
+        assert mod.country_tag_conflicts("SIC") == ["vanilla: SIC (SIC)"]
         with pytest.raises(ValueError, match="vanilla HOI4"):
             mod.create_country("SIC", "Sicily")
         country = mod.create_country("SIC", "Sicily", allow_vanilla_override=True)
         assert country.tag == "SIC"
+
+    def test_country_tag_conflicts_include_vanilla_country_name(self, tmp_path):
+        mod_root = tmp_path / "mod"
+        hoi4_root = tmp_path / "hoi4"
+        (hoi4_root / "common" / "country_tags").mkdir(parents=True)
+        (hoi4_root / "common" / "country_tags" / "00_countries.txt").write_text(
+            'SAR = "countries/SAR.txt"\n',
+            encoding="utf-8",
+        )
+        (hoi4_root / "common" / "countries").mkdir(parents=True)
+        (hoi4_root / "common" / "countries" / "SAR.txt").write_text("color = { 1 2 3 }\n", encoding="utf-8")
+        (hoi4_root / "localisation" / "english").mkdir(parents=True)
+        (hoi4_root / "localisation" / "english" / "countries_l_english.yml").write_text(
+            'l_english:\n SAR:0 "Sarawak"\n',
+            encoding="utf-8-sig",
+        )
+        mod = Mod(mod_root, hoi4_install=hoi4_root)
+
+        assert mod.country_tag_conflicts("SAR") == ["vanilla: SAR (Sarawak)"]
 
     def test_suggest_tag_avoids_mod_and_vanilla_conflicts(self, tmp_path):
         mod_root = tmp_path / "mod"
@@ -857,6 +892,51 @@ class TestModEvents:
         assert len(event.options) == 1
         assert event.options[0].effect == "add_pp = 100"
 
+    def test_create_event_requires_explicit_overwrite(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_event(
+            "sic.1",
+            title="sic.1.t",
+            options=[EventOption(name="sic.1.a", effect="old_effect = yes")],
+        )
+
+        with pytest.raises(ValueError, match="overwrite=True"):
+            mod.create_event(
+                "sic.1",
+                title="sic.1.t",
+                options=[EventOption(name="sic.1.a", effect="new_effect = yes")],
+            )
+
+        event = mod.create_event(
+            "sic.1",
+            title="sic.1.t",
+            options=[EventOption(name="sic.1.a", effect="new_effect = yes")],
+            overwrite=True,
+        )
+        assert event.options[0].effect == "new_effect = yes"
+
+    def test_create_event_overwrite_replaces_loaded_event_on_disk(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_event(
+            "sic.1",
+            title="sic.1.t",
+            options=[EventOption(name="sic.1.a", effect="old_effect = yes")],
+        )
+        mod.save()
+
+        mod2 = Mod(tmp_mod.root)
+        mod2.create_event(
+            "sic.1",
+            title="sic.1.t",
+            options=[EventOption(name="sic.1.a", effect=Mod.effect_transfer_state(115, "SCL"))],
+            overwrite=True,
+        )
+        mod2.save()
+
+        content = (tmp_mod.root / "events" / "sic_events.txt").read_text(encoding="utf-8")
+        assert "old_effect = yes" not in content
+        assert "SCL = { transfer_state = 115 }" in content
+
     def test_create_event_accepts_fire_once_and_immediate(self, tmp_mod):
         event = tmp_mod.mod.create_event(
             "test.1",
@@ -880,6 +960,28 @@ class TestModEvents:
         messages = [e.message for e in mod.validate()]
         assert any("country scope" in message for message in messages)
         assert any("Unknown add_tech_bonus category 'infantry'" in message for message in messages)
+
+    def test_validate_warnings_can_be_suppressed_by_code(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_event(
+            "sic.1",
+            options=[EventOption(name="sic.1.a", effect="add_core_of = SIC")],
+        )
+
+        all_errors = mod.validate()
+        assert any(error.code == "country_scope_core_effect" for error in all_errors)
+        suppressed = mod.validate(suppress_warnings=["country_scope_core_effect"])
+        assert not any(error.code == "country_scope_core_effect" for error in suppressed)
+
+    def test_validate_effect_warns_for_history_set_owner_runtime_effect(self, tmp_mod):
+        tmp_mod.mod.create_country("SCL", "Sicily")
+        errors = tmp_mod.mod.validate_effect("SCL = { set_owner = 115 }")
+        assert any(error.code == "history_set_owner_in_effect" for error in errors)
+        suppressed = tmp_mod.mod.validate_effect(
+            "SCL = { set_owner = 115 }",
+            suppress_warnings=["history_set_owner_in_effect"],
+        )
+        assert suppressed == []
 
     def test_validate_warns_for_triggered_only_mtth_and_immediate_war(self, tmp_mod):
         mod = tmp_mod.mod
@@ -909,6 +1011,24 @@ class TestModEvents:
         mod.update_event("mymod.1.1", is_triggered_only=False)
         event = mod.get_event("mymod.1.1")
         assert event.is_triggered_only is False
+
+    def test_update_event_option_by_index_and_name(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_event(
+            "sic.1",
+            options=[
+                EventOption(name="sic.1.a", effect="old_a = yes"),
+                EventOption(name="sic.1.b", effect="old_b = yes"),
+            ],
+        )
+
+        assert mod.update_event_option("sic.1", 0, effect=Mod.effect_transfer_state(115, "SCL"))
+        assert mod.update_event_option("sic.1", "sic.1.b", trigger="{ has_war = no }", effect="add_stability = 0.05")
+        assert mod.update_event_option("sic.1", "missing", effect="noop = yes") is False
+        event = mod.get_event("sic.1")
+        assert event.options[0].effect == "SCL = { transfer_state = 115 }"
+        assert event.options[1].trigger == "has_war = no"
+        assert event.options[1].effect == "add_stability = 0.05"
 
     def test_delete_event(self, tmp_mod):
         mod = tmp_mod.with_events()

@@ -31,6 +31,7 @@ def _script_warnings(
         errors.append(ValidationError(
             message=f"Script syntax issue: {issue}",
             severity="error",
+            code="script_syntax",
             file_path=file_path,
             focus_id=focus_id,
             event_id=event_id,
@@ -44,10 +45,21 @@ def _script_warnings(
                     f"'115 = {{ {effect_name} = TAG }}' to avoid changing every owned state."
                 ),
                 severity="warning",
+                code="country_scope_core_effect",
                 file_path=file_path,
                 focus_id=focus_id,
                 event_id=event_id,
             ))
+
+    if re.search(r"\bset_owner\s*=", script):
+        errors.append(ValidationError(
+            message="'set_owner' is a state history directive, not a runtime effect; use transfer_state in event/focus effects",
+            severity="warning",
+            code="history_set_owner_in_effect",
+            file_path=file_path,
+            focus_id=focus_id,
+            event_id=event_id,
+        ))
 
     if "add_tech_bonus" in script:
         for category in re.findall(r"\bcategory\s*=\s*([A-Za-z0-9_]+)", script):
@@ -58,6 +70,7 @@ def _script_warnings(
                         f"Unknown add_tech_bonus category '{category}'. Common valid categories: {examples}."
                     ),
                     severity="warning",
+                    code="unknown_tech_bonus_category",
                     file_path=file_path,
                     focus_id=focus_id,
                     event_id=event_id,
@@ -69,6 +82,7 @@ def _script_warnings(
                 errors.append(ValidationError(
                     message=f"'{effect_name}' is missing required target = TAG",
                     severity="error",
+                    code="missing_effect_target",
                     file_path=file_path,
                     focus_id=focus_id,
                     event_id=event_id,
@@ -77,6 +91,7 @@ def _script_warnings(
                 errors.append(ValidationError(
                     message=f"'{effect_name}' is missing required type = <wargoal_type>",
                     severity="warning",
+                    code="missing_wargoal_type",
                     file_path=file_path,
                     focus_id=focus_id,
                     event_id=event_id,
@@ -88,6 +103,7 @@ def _script_warnings(
                 errors.append(ValidationError(
                     message=f"Script scopes into unknown country tag '{tag}'",
                     severity="warning",
+                    code="unknown_country_scope",
                     file_path=file_path,
                     focus_id=focus_id,
                     event_id=event_id,

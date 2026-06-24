@@ -102,6 +102,22 @@ def _normalize_name_token(name: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", name.upper())
 
 
+def _filter_validation_errors(
+    errors: list[ValidationError],
+    suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
+) -> list[ValidationError]:
+    if not suppress_warnings:
+        return errors
+    suppress = set(suppress_warnings)
+    return [
+        error for error in errors
+        if not (
+            error.severity == "warning"
+            and (error.code in suppress or any(token in error.message for token in suppress))
+        )
+    ]
+
+
 class Mod:
     def __init__(
         self,
@@ -280,9 +296,13 @@ class Mod:
         tag = tag.upper()
         conflicts: list[str] = []
         if tag in self._countries:
-            conflicts.append("mod")
+            country = self._countries[tag]
+            label = country.name or tag
+            conflicts.append(f"mod: {tag} ({label})")
         if tag in self._vanilla_tags:
-            conflicts.append("vanilla")
+            country = read_country(self.mod_root, tag, self.hoi4_install)
+            label = country.name or tag
+            conflicts.append(f"vanilla: {tag} ({label})")
         return conflicts
 
     def suggest_tag(self, name: str) -> str:
@@ -567,7 +587,15 @@ class Mod:
         immediate: str = "",
         mean_time_to_happen: str = "",
         options: list[EventOption] | None = None,
+        overwrite: bool = False,
     ) -> Event:
+        existing = self._events.get(event_id)
+        if existing is not None and not overwrite:
+            raise ValueError(
+                f"Event '{event_id}' already exists. Use overwrite=True to replace it, "
+                "or update_event()/update_event_option() to patch it."
+            )
+        existing_namespace = self._event_namespaces.get(event_id)
         event = Event(
             id=event_id,
             title=title or f"{event_id}.t",
@@ -580,9 +608,10 @@ class Mod:
             immediate=normalize_block_body(immediate),
             mean_time_to_happen=normalize_block_body(mean_time_to_happen),
             options=[_normalize_event_option(option) for option in (options or [EventOption(name=f"{event_id}.a", effect="")])],
+            path=existing.path if existing is not None else None,
         )
         self._events[event_id] = event
-        self._event_namespaces[event_id] = _infer_event_namespace(event_id)
+        self._event_namespaces[event_id] = existing_namespace if existing_namespace is not None else _infer_event_namespace(event_id)
         self._dirty.add("events")
         self._dirty_events.add(event_id)
         return event
@@ -623,6 +652,28 @@ class Mod:
             return False
         event.raw_block = ""
         event.options.append(_normalize_event_option(option))
+        self._dirty.add("events")
+        self._dirty_events.add(event_id)
+        return True
+
+    def update_event_option(self, event_id: str, option: int | str, **kwargs) -> bool:
+        event = self._events.get(event_id)
+        if event is None:
+            return False
+        if isinstance(option, int):
+            if option < 0 or option >= len(event.options):
+                return False
+            event_option = event.options[option]
+        else:
+            event_option = next((candidate for candidate in event.options if candidate.name == option), None)
+            if event_option is None:
+                return False
+        for key in ("trigger", "ai_chance"):
+            if key in kwargs and isinstance(kwargs[key], str):
+                kwargs[key] = normalize_block_body(kwargs[key])
+        _set_fields(event_option, kwargs)
+        _normalize_event_option(event_option)
+        event.raw_block = ""
         self._dirty.add("events")
         self._dirty_events.add(event_id)
         return True
@@ -1029,6 +1080,31 @@ class Mod:
         return f"{target.upper()} = {{ transfer_state = {state_id} }}"
 
     @staticmethod
+    def effect_add_equipment(
+        equipment_type: str,
+        amount: int,
+        producer: str | None = None,
+        variant_name: str | None = None,
+    ) -> str:
+        fields: dict[str, object] = {"type": equipment_type, "amount": amount}
+        if producer:
+            fields["producer"] = producer.upper()
+        if variant_name:
+            fields["variant_name"] = variant_name
+        return effect_block("add_equipment_to_stockpile", fields)
+
+    @staticmethod
+    def effect_set_technology(technology: str, level: int = 1, popup: bool | None = None) -> str:
+        fields: dict[str, object] = {technology: level}
+        if popup is not None:
+            fields["popup"] = popup
+        return effect_block("set_technology", fields)
+
+    @classmethod
+    def effect_set_technologies(cls, technologies: dict[str, int]) -> str:
+        return effect_block("set_technology", technologies)
+
+    @staticmethod
     def effect_add_timed_idea(idea_id: str, days: int) -> str:
         return f"add_timed_idea = {{ idea = {idea_id} days = {days} }}"
 
@@ -1065,13 +1141,20 @@ class Mod:
     def start_civil_war(self, ideology: str, size: float = 0.5, capital: int | None = None) -> str:
         return self.effect_start_civil_war(ideology, size, capital)
 
-    def validate_effect(self, script: str) -> list[ValidationError]:
+    def validate_effect(
+        self,
+        script: str,
+        suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
+    ) -> list[ValidationError]:
         known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
         known_tags.update(self._countries.keys())
         probe = Event(id="effect_probe.1", title="Effect Probe", description="Effect Probe", options=[
             EventOption(name="effect_probe.1.a", effect=script),
         ])
-        return validate_event(probe, namespace="effect_probe", known_tags=known_tags)
+        return _filter_validation_errors(
+            validate_event(probe, namespace="effect_probe", known_tags=known_tags),
+            suppress_warnings=suppress_warnings,
+        )
 
     def create_industrial_branch(
         self,
@@ -1277,7 +1360,10 @@ class Mod:
 
     # ── Validation ───────────────────────────────────────────────
 
-    def validate(self) -> list[ValidationError]:
+    def validate(
+        self,
+        suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
+    ) -> list[ValidationError]:
         errors: list[ValidationError] = []
 
         known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
@@ -1330,7 +1416,7 @@ class Mod:
                         file_path=str(tree.path) if tree.path else None,
                     ))
 
-        return errors
+        return _filter_validation_errors(errors, suppress_warnings=suppress_warnings)
 
     # ── Preview & Save ───────────────────────────────────────────
 
@@ -1421,8 +1507,9 @@ class Mod:
 
     def save(self) -> SaveResult:
         if not self._dirty:
-            warnings.warn("save() called with no dirty changes; no files were written", RuntimeWarning, stacklevel=2)
-            return SaveResult(written_files=[], dirty_sections=[], no_changes=True)
+            message = "No changes written: save() was called with no dirty changes"
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+            return SaveResult(written_files=[], dirty_sections=[], no_changes=True, message=message)
 
         dirty_sections = sorted(self._dirty)
         written_files: list[Path] = []
@@ -1501,6 +1588,11 @@ class Mod:
             written_files=sorted(set(written_files)),
             dirty_sections=dirty_sections,
             no_changes=not written_files,
+            message=(
+                "No files written after processing dirty sections"
+                if not written_files
+                else f"Saved {len(set(written_files))} file(s)"
+            ),
         )
 
     @contextmanager

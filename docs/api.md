@@ -43,7 +43,7 @@ Country data spans 5 files: tag registration, definition (color/culture), histor
 |--------|---------|-------------|
 | `list_countries() -> list[str]` | Sorted tag list | All loaded country tags |
 | `is_country_tag_available(tag: str) -> bool` | `bool` | False if the tag exists in the mod or vanilla install |
-| `country_tag_conflicts(tag: str) -> list[str]` | `list[str]` | Returns conflict sources: `"mod"`, `"vanilla"` |
+| `country_tag_conflicts(tag: str) -> list[str]` | `list[str]` | Returns conflict details such as `"mod: TAG (Name)"` or `"vanilla: TAG (Name)"` |
 | `suggest_tag(name: str) -> str` | `str` | Pick an available 3-character tag from a country/place name |
 | `suggest_tags(name: str, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
@@ -72,6 +72,12 @@ tag = mod.suggest_tag("Sicily")
 ```
 
 `create_country()` never changes state ownership, cores, controller, or capital state files. The `capital` argument only writes `capital = <state_id>` in `history/countries/{TAG} - {Name}.txt`.
+
+`set_state_owner()` and `batch_set_owner()` patch state history files. In event options, event immediate blocks, decisions, and focus rewards, use the runtime effect helper instead:
+
+```python
+Mod.effect_transfer_state(115, "SCL")  # SCL = { transfer_state = 115 }
+```
 
 ### Country File Layout
 
@@ -131,8 +137,9 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 |--------|---------|-------------|
 | `list_events() -> list[str]` | Sorted event IDs | All loaded events |
 | `get_event(event_id: str) -> Event` | `Event` | Raises `KeyError` with available IDs if not found |
-| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None) -> Event` | `Event` | Creates event. Default option auto-generated if none provided. Dotted IDs infer namespace from the ID prefix. |
+| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer namespace from the ID prefix. |
 | `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field |
+| `update_event_option(event_id: str, option: int \| str, **kwargs) -> bool` | `bool` | Update one option by zero-based index or option name. Supports `name`, `effect`, `trigger`, and `ai_chance`. |
 | `delete_event(event_id: str) -> bool` | `bool` | Remove event and its namespace mapping |
 | `set_event_namespace(event_id: str, namespace: str) -> None` | `None` | Set which file this event writes to (`{namespace}_events.txt`) |
 | `add_event_option(event_id: str, option: EventOption) -> bool` | `bool` | Append an option to an event |
@@ -146,8 +153,16 @@ mod.add_event_option("my_mod.1", EventOption(
     name="my_mod.1.a",
     effect="add_political_power = 100"
 ))
+mod.update_event_option("my_mod.1", "my_mod.1.a",
+                        effect=Mod.effect_transfer_state(115, "SCL"))
 # Optional; already inferred for "my_mod.1".
 mod.set_event_namespace("my_mod.1", "my_mod")
+```
+
+To replace an existing event loaded from disk, be explicit:
+
+```python
+mod.create_event("my_mod.1", options=[...], overwrite=True)
 ```
 ## Decisions
 
@@ -319,6 +334,41 @@ mod.search_loc("independence")
 ```
 
 Default file: `localisation/english/mod_l_english.yml`.
+
+## Effect Builders
+
+Prefer these helpers when generating event effects, decision effects, or focus rewards. They avoid Python f-string brace escaping and encode common HOI4 scoping rules.
+
+| Helper | Output shape |
+|--------|--------------|
+| `Mod.effect_transfer_state(state_id, tag)` | `TAG = { transfer_state = 115 }` |
+| `Mod.effect_add_state_core(state_id, tag)` | `115 = { add_core_of = TAG }` |
+| `Mod.effect_remove_state_core(state_id, tag)` | `115 = { remove_core_of = TAG }` |
+| `Mod.effect_add_civilian_factory(state_id, level=1)` | State-scoped `industrial_complex` construction |
+| `Mod.effect_add_military_factory(state_id, level=1)` | State-scoped `arms_factory` construction |
+| `Mod.effect_add_infrastructure(state_id, level=1)` | State-scoped infrastructure construction |
+| `Mod.effect_add_bunker(state_id, level=1, province=None)` | State/province-scoped bunker construction |
+| `Mod.effect_add_equipment(equipment_type, amount, producer=None, variant_name=None)` | `add_equipment_to_stockpile = { type = ... amount = ... }` |
+| `Mod.effect_set_technology(technology, level=1, popup=None)` | `set_technology = { tech = 1 }` |
+| `Mod.effect_set_technologies({technology: level, ...})` | Multi-entry `set_technology` block |
+| `Mod.effect_add_tech_bonus(name, category, uses=1, bonus=0.5)` | Validated `add_tech_bonus` block |
+| `Mod.effect_create_wargoal(target, wargoal_type="annex_everything")` | `create_wargoal = { type = ... target = TAG }` |
+| `Mod.effect_declare_war(target, wargoal_type="annex_everything")` | Current-scope `declare_war_on` block |
+| `Mod.effect_declare_war_from(attacker, target, wargoal_type="annex_everything")` | Attacker-scoped war declaration |
+| `Mod.scope_block(scope, *effects)` | Generic scoped effect block |
+| `Mod.effect_block(name, fields)` | Generic `effect = { key = value }` block |
+
+Examples:
+
+```python
+reward = "\n".join([
+    Mod.effect_transfer_state(115, "SCL"),
+    Mod.effect_add_state_core(115, "SCL"),
+    Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="GER"),
+    Mod.effect_set_technology("infantry_weapons", 1, popup=False),
+])
+mod.validate_effect(reward)
+```
 ## Validation
 
 `mod.validate()` runs all validators and returns `list[ValidationError]`. Does **not** raise — returns empty list if all valid.
@@ -341,6 +391,7 @@ Default file: `localisation/english/mod_l_english.yml`.
 class ValidationError:
     message: str            # Human-readable description
     severity: str = "error" # "error" or "warning"
+    code: str = ""          # Stable suppression/matching code when available
     file_path: str | None   # Source file if known
     focus_id: str | None    # Focus ID if relevant
     country_tag: str | None # Country tag if relevant
@@ -350,6 +401,17 @@ class ValidationError:
 ```
 
 **Errors** mean the mod will crash or behave incorrectly. **Warnings** mean potential issues (missing localization, etc.).
+
+Suppress known false-positive warnings by stable code:
+
+```python
+errors = mod.validate(suppress_warnings=["country_scope_core_effect"])
+errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
+```
+
+Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, and `script_syntax`.
+
+The `history_set_owner_in_effect` warning catches a common HOI4 boundary mistake: `set_owner` is a state history directive, not a runtime event/focus effect. Use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`.
 ## Preview & Diff
 
 `mod.preview()` returns a unified diff string comparing in-memory state against the last-saved or originally-loaded file contents. Returns empty string if nothing is dirty.
@@ -371,6 +433,17 @@ if diff:
 ```
 
 Only dirty sections produce diffs. After `save()`, `preview()` returns empty until further changes.
+
+`mod.save()` returns `SaveResult`:
+
+```python
+result = mod.save()
+print(result)               # "Saved N file(s)" or "No changes written: ..."
+print(result.written_files)
+print(result.no_changes)
+```
+
+If there is no dirty in-memory state, `save()` emits a warning, returns `no_changes=True`, writes no files, and sets a loud `message`.
 ## File Path Conventions
 
 All paths relative to `mod_root`:

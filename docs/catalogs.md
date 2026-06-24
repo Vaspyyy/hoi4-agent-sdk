@@ -36,6 +36,14 @@ Mod.effect_add_state_core(115, "SIC")      # 115 = { add_core_of = SIC }
 Mod.effect_remove_state_core(115, "SIC")   # 115 = { remove_core_of = SIC }
 ```
 
+Use runtime state transfer effects in events, decisions, and focus rewards:
+
+```python
+Mod.effect_transfer_state(115, "SIC")      # SIC = { transfer_state = 115 }
+```
+
+Do not use `set_owner = 115` in event/focus script. `set_owner` belongs in `history/states` files; it is not a runtime effect.
+
 ### TECHNOLOGY_CATEGORIES
 
 ```python
@@ -45,6 +53,7 @@ print("infantry_weapons" in TECHNOLOGY_CATEGORIES)  # True
 print("infantry" in TECHNOLOGY_CATEGORIES)          # False; this is not a tech bonus category
 
 Mod.effect_add_tech_bonus("rifle_bonus", category="infantry_weapons", uses=1, bonus=0.5)
+Mod.effect_set_technology("infantry_weapons", 1, popup=False)
 ```
 
 Common valid `add_tech_bonus` categories include `industry`, `infantry_weapons`, `artillery`, `armor`, `electronics`, and `land_doctrine`.
