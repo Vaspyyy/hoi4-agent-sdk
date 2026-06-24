@@ -1,0 +1,40 @@
+src/hoi4/mod.py
+  s_318419a5e355fc::t_56963700c5336f 105-120,1144-1148,1154-1157,1363-1366,1419
+  s_318419a5e355fc::t_4bec4736800b61 1083-1091,1097-1101,1105
+  s_318419a5e355fc::t_56a4e7f0c63bbd 1510-1512,1591-1595
+  s_318419a5e355fc::t_305fde28f9ee93 1082,1092-1096,1102-1104,1106
+  s_318419a5e355fc::t_389e5f0d638bd1 299-301,303-305,590,592-598,611,614,659-676
+AGENTS.md
+  s_318419a5e355fc::t_c480ce6f8d5245 68,84,90-92,105,107,115,123-125,127,129,131
+docs/catalogs.md
+  s_318419a5e355fc::t_1f99e3a662eab7 39-46,56
+tests/test_mod.py
+  s_318419a5e355fc::t_cbaecd48bc9ea1 135-136,582,588-600,683,689-707,895-939,964-976,978-985,1015-1031
+  s_318419a5e355fc::t_149ed7191f6343 977
+docs/api.md
+  s_318419a5e355fc::t_38546fa73ca2c6 46,76-81,140,142,156-157,161-166,394,404-414,436-446
+  s_318419a5e355fc::t_65884c02a9a073 337-371
+src/hoi4/validation.py
+  s_318419a5e355fc::t_4bec4736800b61 54
+  s_318419a5e355fc::t_8ce4198d82c3b6 34,48,55-63,73,85,94,106
+docs/recipes.md
+  s_318419a5e355fc::t_e65ee9944a3547 172,175-176,188-189
+src/hoi4/types.py
+  s_318419a5e355fc::t_7f78e30465e2c9 94,108,114-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.11",
+  "base_commit_sha": "04eb7ba6c0fc0651fc9ae813a8ef42dff96bcc79",
+  "prompts": {},
+  "sessions": {
+    "s_318419a5e355fc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ef6ef-7409-7ba3-b58e-2aadc0b67d4e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Vaspyyy <lolbautz2@gmail.com>"
+    }
+  }
+}
