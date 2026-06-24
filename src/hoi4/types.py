@@ -131,13 +131,46 @@ class State:
     name: str = ""
     owner: str = ""
     cores: list[str] = field(default_factory=list)
+    resources: dict[str, str | int | float] = field(default_factory=dict)
+    buildings: str = ""
+    local_supplies: str = ""
     manpower: str = "0"
     state_category: str = "large_city"
     victory_points: str = ""
     buildings_max_level_factor: str = "1.0"
     is_demilitarized_zone: bool = False
     provinces: list[int] = field(default_factory=list)
+    history: str = ""
     path: Optional[Path] = None
+    raw_text: str = ""
+
+
+@dataclass
+class Decision:
+    id: str
+    category: str = ""
+    icon: str = ""
+    cost: int | None = None
+    days_remove: int | None = None
+    fire_only_once: Optional[bool] = None
+    available: str = ""
+    visible: str = ""
+    complete_effect: str = ""
+    remove_effect: str = ""
+    ai_will_do: str = ""
+    path: Optional[Path] = None
+    raw_block: str = ""
+
+
+@dataclass
+class DecisionCategory:
+    id: str
+    icon: str = ""
+    allowed: str = ""
+    visible: str = ""
+    decisions: list[Decision] = field(default_factory=list)
+    path: Optional[Path] = None
+    raw_block: str = ""
 
 
 @dataclass

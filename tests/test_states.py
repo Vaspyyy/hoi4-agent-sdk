@@ -46,6 +46,15 @@ class TestReadState:
         state = read_state(STATES_DIR / "2 - Paris.txt")
         assert state.victory_points == ""
 
+    def test_reads_rich_state_fields(self, tmp_path):
+        p = tmp_path / "8-Luxemburg.txt"
+        p.write_text(RICH_STATE_TEXT, encoding="utf-8")
+        state = read_state(p)
+        assert state.resources["steel"] == 8
+        assert "industrial_complex = 1" in state.buildings
+        assert state.local_supplies == "2.0"
+        assert "resistance" in state.history
+
 
 class TestSerializeState:
     def test_roundtrip_id_and_owner(self):
@@ -62,6 +71,23 @@ class TestSerializeState:
         assert "id = 99" in text
         assert "owner = TST" in text
         assert "9001" in text
+
+    def test_preserves_unknown_rich_state_data_when_owner_changes(self, tmp_path):
+        p = tmp_path / "8-Luxemburg.txt"
+        p.write_text(RICH_STATE_TEXT, encoding="utf-8")
+        state = read_state(p)
+        state.owner = "GER"
+        if "GER" not in state.cores:
+            state.cores.append("GER")
+        text = serialize_state(state)
+        assert "owner = GER" in text
+        assert "resources = {" in text
+        assert "steel = 8" in text
+        assert "buildings = {" in text
+        assert "industrial_complex = 1" in text
+        assert "local_supplies = 2.0" in text
+        assert "1939.1.1 = {" in text
+        assert "resistance = 10" in text
 
 
 class TestPatchStateOwner:
@@ -93,3 +119,34 @@ def read_state_from_string(text: str) -> State:
         f.write(text)
         f.flush()
         return read_state(Path(f.name))
+
+
+RICH_STATE_TEXT = """
+state = {
+    id = 8
+    name = STATE_8
+    manpower = 294748
+    state_category = town
+    local_supplies = 2.0
+    resources = {
+        steel = 8
+    }
+    buildings = {
+        infrastructure = 3
+        industrial_complex = 1
+    }
+    provinces = { 6583 13375 }
+    history = {
+        owner = LUX
+        add_core_of = LUX
+        victory_points = { 6583 5 }
+        resistance = 10
+        compliance = 20
+        1939.1.1 = {
+            buildings = {
+                arms_factory = 1
+            }
+        }
+    }
+}
+"""

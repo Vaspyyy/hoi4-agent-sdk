@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from hoi4 import Mod, Focus, Country, State, Event, EventOption, Idea
+from hoi4 import Mod, Focus, Country, State, Event, EventOption, Idea, Leader
 from hoi4.config import Config, find_config
 from hoi4.validation import validate_focus_tree, validate_country, validate_state, validate_event, validate_idea
 from hoi4.types import FocusTree
@@ -166,6 +166,14 @@ class TestValidation:
         tree.focuses.append(Focus(id="A", x=1, y=1, mutually_exclusive=[["ghost"]]))
         errors = validate_focus_tree(tree)
         assert any("ghost" in e.message for e in errors)
+
+    def test_validate_knows_unsaved_created_country_tags(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_country("SCL", "San Celeste")
+        state = State(id=99, owner="SCL", cores=["SCL"])
+        mod._states[99] = state
+        errors = mod.validate()
+        assert not any("SCL" in e.message and "known country tag" in e.message for e in errors)
 
 
 class TestPreview:
@@ -477,6 +485,7 @@ class TestPass2Fixes:
         assert mod.list_states() == []
         assert mod.list_focus_trees() == []
         assert mod.list_events() == []
+        assert mod.list_decisions() == []
         assert mod.list_ideas() == []
         assert mod.preview() == ""
         assert mod.validate() == []
@@ -552,6 +561,43 @@ class TestAgentFacingApis:
         assert all(mod.get_loc(f"{focus.id}_desc") for focus in focuses)
         assert "FOCUS_FILTER_INDUSTRY" in focuses[0].search_filters
         assert "add_tech_bonus" in focuses[-1].completion_reward
+
+    def test_war_effect_helpers(self):
+        assert Mod.effect_create_wargoal("fra") == "create_wargoal = { type = annex_everything target = FRA }"
+        assert Mod.effect_declare_war("ger") == "declare_war_on = { type = annex_everything target = GER }"
+        assert "start_civil_war" in Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
+
+    def test_update_focus_tree(self, tmp_mod):
+        mod = tmp_mod.with_focus_tree("GER_focus.txt")
+        assert mod.update_focus_tree("german_focus", continuous_focus_position="x = 0 y = 1000")
+        assert mod.get_focus_tree("german_focus").continuous_focus_position == "x = 0 y = 1000"
+
+    def test_get_country_context_can_copy_states(self, tmp_path):
+        mod_root = tmp_path / "mod"
+        hoi4_root = tmp_path / "hoi4"
+        mod_root.mkdir()
+        country_tags = mod_root / "common" / "country_tags"
+        country_tags.mkdir(parents=True)
+        country_tags.joinpath("tags.txt").write_text('TST = "countries/TST.txt"\n', encoding="utf-8")
+        countries = mod_root / "common" / "countries"
+        countries.mkdir(parents=True)
+        countries.joinpath("TST.txt").write_text("color = { 1 2 3 }\n", encoding="utf-8")
+        history_countries = mod_root / "history" / "countries"
+        history_countries.mkdir(parents=True)
+        history_countries.joinpath("TST - Testland.txt").write_text(
+            "capital = 1\nset_politics = { ruling_party = democratic }\n", encoding="utf-8"
+        )
+        vanilla_states = hoi4_root / "history" / "states"
+        vanilla_states.mkdir(parents=True)
+        vanilla_states.joinpath("1-Testland.txt").write_text(
+            "state = { id = 1 name = STATE_1 manpower = 10 state_category = town "
+            "provinces = { 1 } history = { owner = TST add_core_of = TST } }",
+            encoding="utf-8",
+        )
+        mod = Mod(mod_root, hoi4_install=hoi4_root)
+        context = mod.get_country_context("TST", copy_states=True)
+        assert context["states"][0]["id"] == 1
+        assert (mod_root / "history" / "states" / "1-Testland.txt").exists()
 
 
 class TestModCountries:
@@ -635,6 +681,21 @@ class TestModStates:
         state = mod.get_state(1)
         assert state.manpower == "9999999"
 
+    def test_set_state_properties_appends_cores(self, tmp_mod):
+        mod = tmp_mod.with_states()
+        original = list(mod.get_state(1).cores)
+        mod.set_state_properties(1, cores=["SOV"])
+        state = mod.get_state(1)
+        assert all(core in state.cores for core in original)
+        assert "SOV" in state.cores
+
+    def test_add_and_remove_state_core(self, tmp_mod):
+        mod = tmp_mod.with_states()
+        mod.add_state_core(1, "SOV")
+        assert "SOV" in mod.get_state(1).cores
+        mod.remove_state_core(1, "SOV")
+        assert "SOV" not in mod.get_state(1).cores
+
     def test_batch_set_owner(self, tmp_mod):
         mod = tmp_mod.with_states()
         results = mod.batch_set_owner([1, 2], "USA")
@@ -685,6 +746,15 @@ class TestModEvents:
         event = mod.create_event("test.1", options=opts)
         assert len(event.options) == 1
         assert event.options[0].effect == "add_pp = 100"
+
+    def test_create_event_accepts_fire_once_and_immediate(self, tmp_mod):
+        event = tmp_mod.mod.create_event(
+            "test.1",
+            fire_only_once=True,
+            immediate="add_political_power = 10",
+        )
+        assert event.fire_only_once is True
+        assert event.immediate == "add_political_power = 10"
 
     def test_update_event(self, tmp_mod):
         mod = tmp_mod.with_events()
@@ -934,6 +1004,12 @@ class TestCountryValidation:
         country = Country(tag="TST", name="T", ruling_party="anarchism")
         errors = validate_country(country)
         assert any("ruling party" in e.message for e in errors)
+
+    def test_leader_party_mismatch_warns(self):
+        country = Country(tag="TST", name="T", ruling_party="democratic",
+                          leader=Leader(name="Boss", ideology="nazism"))
+        errors = validate_country(country)
+        assert any("does not match" in e.message for e in errors)
 
 
 class ModHelper:

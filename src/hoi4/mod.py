@@ -20,6 +20,7 @@ from typing import Optional
 
 from .config import find_config
 from .countries import country_file_paths, read_country, serialize_country_files, write_all_country_files
+from .decisions import load_decisions_file, serialize_decisions_file, write_decisions_file
 from .diff import unified_diff
 from .events import load_events_file, serialize_events_file, write_events_file
 from .focus import load_focus_tree, serialize_focus_tree, write_focus_tree
@@ -38,7 +39,19 @@ from .states import (
     write_state,
 )
 from .tags import load_all_tags, load_mod_tags
-from .types import Country, Event, EventOption, Focus, FocusTree, Idea, Leader, State, ValidationError
+from .types import (
+    Country,
+    Decision,
+    DecisionCategory,
+    Event,
+    EventOption,
+    Focus,
+    FocusTree,
+    Idea,
+    Leader,
+    State,
+    ValidationError,
+)
 from .validation import validate_country, validate_event, validate_focus_tree, validate_idea, validate_state
 
 
@@ -52,6 +65,14 @@ def _set_fields(obj: object, kwargs: dict) -> None:
         if key in ("prerequisites", "mutually_exclusive") and isinstance(value, list):
             value = _ensure_nested(value)
         setattr(obj, key, value)
+
+
+def _append_unique(existing: list, values: list) -> list:
+    out = list(existing)
+    for value in values:
+        if value not in out:
+            out.append(value)
+    return out
 
 
 class Mod:
@@ -73,6 +94,9 @@ class Mod:
         self._events: dict[str, Event] = {}
         self._event_namespaces: dict[str, Optional[str]] = {}
         self._dirty_events: set[str] = set()
+        self._decisions: dict[str, Decision] = {}
+        self._decision_categories: dict[str, DecisionCategory] = {}
+        self._dirty_decision_categories: set[str] = set()
         self._ideas: dict[str, Idea] = {}
         self._dirty_ideas: set[str] = set()
         self._idea_file_containers: dict[Path, str] = {}
@@ -105,6 +129,7 @@ class Mod:
         self._load_states()
         self._load_focus_trees()
         self._load_events()
+        self._load_decisions()
         self._load_ideas()
         self._load_localization()
 
@@ -159,6 +184,21 @@ class Mod:
                 for event in events:
                     self._events[event.id] = event
                     self._event_namespaces[event.id] = namespace
+                self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+    def _load_decisions(self) -> None:
+        decisions_dir = self.mod_root / "common" / "decisions"
+        if not decisions_dir.exists():
+            return
+        for f in sorted(decisions_dir.glob("*.txt")):
+            try:
+                categories = load_decisions_file(f)
+                for category in categories:
+                    self._decision_categories[category.id] = category
+                    for decision in category.decisions:
+                        self._decisions[decision.id] = decision
                 self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
             except Exception:
                 continue
@@ -327,10 +367,30 @@ class Mod:
 
     def set_state_properties(self, state_id: int, **kwargs) -> bool:
         state = self.get_state(state_id)
+        for list_key in ("cores", "provinces"):
+            if list_key in kwargs and isinstance(kwargs[list_key], list):
+                kwargs[list_key] = _append_unique(getattr(state, list_key), kwargs[list_key])
         _set_fields(state, kwargs)
         self._dirty.add("states")
         self._dirty_states.add(state_id)
         return True
+
+    def add_state_core(self, state_id: int, tag: str) -> State:
+        state = self.get_state(state_id)
+        tag = tag.upper()
+        if tag not in state.cores:
+            state.cores.append(tag)
+        self._dirty.add("states")
+        self._dirty_states.add(state_id)
+        return state
+
+    def remove_state_core(self, state_id: int, tag: str) -> State:
+        state = self.get_state(state_id)
+        tag = tag.upper()
+        state.cores = [core for core in state.cores if core != tag]
+        self._dirty.add("states")
+        self._dirty_states.add(state_id)
+        return state
 
     def batch_set_owner(self, state_ids: list[int], tag: str, add_core: bool = True) -> list[State]:
         results = []
@@ -356,7 +416,9 @@ class Mod:
         event_type: str = "country_event",
         picture: str = "GFX_report_event_generic",
         is_triggered_only: bool = False,
+        fire_only_once: bool | None = None,
         trigger: str = "",
+        immediate: str = "",
         mean_time_to_happen: str = "",
         options: list[EventOption] | None = None,
     ) -> Event:
@@ -367,7 +429,9 @@ class Mod:
             event_type=event_type,
             picture=picture,
             is_triggered_only=is_triggered_only,
+            fire_only_once=fire_only_once,
             trigger=trigger,
+            immediate=immediate,
             mean_time_to_happen=mean_time_to_happen,
             options=options or [EventOption(name=f"{event_id}.a", effect="")],
         )
@@ -410,6 +474,104 @@ class Mod:
         event.options.append(option)
         self._dirty.add("events")
         self._dirty_events.add(event_id)
+        return True
+
+    # ── Decisions ────────────────────────────────────────────────
+
+    def list_decision_categories(self) -> list[str]:
+        return sorted(self._decision_categories.keys())
+
+    def list_decisions(self) -> list[str]:
+        return sorted(self._decisions.keys())
+
+    def get_decision(self, decision_id: str) -> Decision:
+        if decision_id not in self._decisions:
+            raise KeyError(f"Decision '{decision_id}' not found. Available: {self.list_decisions()}")
+        return self._decisions[decision_id]
+
+    def get_decision_category(self, category_id: str) -> DecisionCategory:
+        if category_id not in self._decision_categories:
+            raise KeyError(
+                f"Decision category '{category_id}' not found. Available: {self.list_decision_categories()}"
+            )
+        return self._decision_categories[category_id]
+
+    def create_decision_category(
+        self,
+        category_id: str,
+        *,
+        icon: str = "",
+        allowed: str = "",
+        visible: str = "",
+        path: str | Path | None = None,
+    ) -> DecisionCategory:
+        target = Path(path) if path is not None else self.mod_root / "common" / "decisions" / "mod_decisions.txt"
+        category = DecisionCategory(id=category_id, icon=icon, allowed=allowed, visible=visible, path=target)
+        self._decision_categories[category_id] = category
+        self._dirty.add("decisions")
+        self._dirty_decision_categories.add(category_id)
+        return category
+
+    def create_decision(
+        self,
+        category_id: str,
+        decision_id: str,
+        *,
+        icon: str = "",
+        cost: int | None = None,
+        days_remove: int | None = None,
+        fire_only_once: bool | None = None,
+        available: str = "",
+        visible: str = "",
+        complete_effect: str = "",
+        remove_effect: str = "",
+        ai_will_do: str = "",
+        path: str | Path | None = None,
+    ) -> Decision:
+        category = self._decision_categories.get(category_id)
+        if category is None:
+            category = self.create_decision_category(category_id, path=path)
+        elif path is not None:
+            category.path = Path(path)
+        decision = Decision(
+            id=decision_id,
+            category=category_id,
+            icon=icon,
+            cost=cost,
+            days_remove=days_remove,
+            fire_only_once=fire_only_once,
+            available=available,
+            visible=visible,
+            complete_effect=complete_effect,
+            remove_effect=remove_effect,
+            ai_will_do=ai_will_do,
+            path=category.path,
+        )
+        category.decisions.append(decision)
+        self._decisions[decision_id] = decision
+        self._dirty.add("decisions")
+        self._dirty_decision_categories.add(category_id)
+        return decision
+
+    def update_decision(self, decision_id: str, **kwargs) -> bool:
+        decision = self._decisions.get(decision_id)
+        if decision is None:
+            return False
+        decision.raw_block = ""
+        _set_fields(decision, kwargs)
+        self._dirty.add("decisions")
+        self._dirty_decision_categories.add(decision.category)
+        return True
+
+    def delete_decision(self, decision_id: str) -> bool:
+        decision = self._decisions.pop(decision_id, None)
+        if decision is None:
+            return False
+        category = self._decision_categories.get(decision.category)
+        if category:
+            category.decisions = [candidate for candidate in category.decisions if candidate.id != decision_id]
+            self._dirty_decision_categories.add(category.id)
+        self._dirty.add("decisions")
         return True
 
     # ── Ideas ───────────────────────────────────────────────────
@@ -496,6 +658,15 @@ class Mod:
             del self._original_files[tree.path]
         self._dirty.add("focus")
         self._dirty_focus_trees.discard(tree_id)
+        return True
+
+    def update_focus_tree(self, tree_id: str, **kwargs) -> bool:
+        tree = self._focus_trees.get(tree_id)
+        if tree is None:
+            return False
+        _set_fields(tree, kwargs)
+        self._dirty.add("focus")
+        self._dirty_focus_trees.add(tree_id)
         return True
 
     # ── Focuses ──────────────────────────────────────────────────
@@ -633,6 +804,30 @@ class Mod:
     def effect_add_timed_idea(idea_id: str, days: int) -> str:
         return f"add_timed_idea = {{ idea = {idea_id} days = {days} }}"
 
+    @staticmethod
+    def effect_create_wargoal(target: str, war_goal_type: str = "annex_everything") -> str:
+        return f"create_wargoal = {{ type = {war_goal_type} target = {target.upper()} }}"
+
+    @staticmethod
+    def effect_declare_war(target: str, war_goal_type: str = "annex_everything") -> str:
+        return f"declare_war_on = {{ type = {war_goal_type} target = {target.upper()} }}"
+
+    @staticmethod
+    def effect_start_civil_war(ideology: str, size: float = 0.5, capital: int | None = None) -> str:
+        parts = [f"ideology = {ideology}", f"size = {size}"]
+        if capital is not None:
+            parts.append(f"capital = {capital}")
+        return f"start_civil_war = {{ {' '.join(parts)} }}"
+
+    def create_wargoal(self, target: str, war_goal_type: str = "annex_everything") -> str:
+        return self.effect_create_wargoal(target, war_goal_type)
+
+    def declare_war(self, target: str, war_goal_type: str = "annex_everything") -> str:
+        return self.effect_declare_war(target, war_goal_type)
+
+    def start_civil_war(self, ideology: str, size: float = 0.5, capital: int | None = None) -> str:
+        return self.effect_start_civil_war(ideology, size, capital)
+
     def create_industrial_branch(
         self,
         tree_id: str,
@@ -744,7 +939,7 @@ class Mod:
     def all_loc(self) -> dict[str, str]:
         return dict(self._loc_entries)
 
-    def get_country_context(self, tag: str) -> dict:
+    def get_country_context(self, tag: str, *, copy_states: bool = False) -> dict:
         tag = tag.upper()
         country = self.get_country(tag)
         context: dict = {
@@ -778,6 +973,11 @@ class Mod:
                     except Exception:
                         continue
                     if state.owner == tag or tag in state.cores:
+                        if copy_states and state.id not in self._states:
+                            try:
+                                state = self.get_state(state.id)
+                            except KeyError:
+                                pass
                         context["states"].append(dataclasses.asdict(state))
 
             for ideas_dir in [base / "common" / "ideas", base / "common" / "national_ideas"]:
@@ -826,12 +1026,17 @@ class Mod:
         context["ideas"] = list({idea["id"]: idea for idea in context["ideas"]}.values())
         return context
 
+    def ensure_country_states_in_mod(self, tag: str) -> list[State]:
+        context = self.get_country_context(tag, copy_states=True)
+        return [self.get_state(state["id"]) for state in context["states"]]
+
     # ── Validation ───────────────────────────────────────────────
 
     def validate(self) -> list[ValidationError]:
         errors: list[ValidationError] = []
 
         known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
+        known_tags.update(self._countries.keys())
         for country in self._countries.values():
             errors.extend(validate_country(country))
         for state in self._states.values():
@@ -911,21 +1116,20 @@ class Mod:
                 if d:
                     diffs.append(d)
 
-        if "states" in self._dirty:
-            for state in self._states.values():
-                current = serialize_state(state)
-                path = state.path or self.mod_root / "history" / "states" / f"{state.id} - {state.name or state.id}.txt"
-                rel = str(path.relative_to(self.mod_root)) if path.is_relative_to(self.mod_root) else str(path)
-                original = self._original_files.get(path, "")
-                d = unified_diff(original, current, rel)
-                if d:
-                    diffs.append(d)
-
         if "events" in self._dirty:
             file_events, file_ns = self._group_events_by_file(dirty_only=True)
             for path, events in file_events.items():
                 rel = str(path.relative_to(self.mod_root)) if path.is_relative_to(self.mod_root) else str(path)
                 current = serialize_events_file(file_ns.get(path), events)
+                original = self._original_files.get(path, "")
+                d = unified_diff(original, current, rel)
+                if d:
+                    diffs.append(d)
+
+        if "decisions" in self._dirty:
+            for path, categories in self._group_decisions_by_file(dirty_only=True).items():
+                rel = str(path.relative_to(self.mod_root)) if path.is_relative_to(self.mod_root) else str(path)
+                current = serialize_decisions_file(categories)
                 original = self._original_files.get(path, "")
                 d = unified_diff(original, current, rel)
                 if d:
@@ -995,6 +1199,11 @@ class Mod:
                 write_events_file(path, file_ns.get(path), events)
                 self._original_files[path] = serialize_events_file(file_ns.get(path), events)
 
+        if "decisions" in self._dirty:
+            for path, categories in self._group_decisions_by_file(dirty_only=True).items():
+                write_decisions_file(path, categories)
+                self._original_files[path] = serialize_decisions_file(categories)
+
         if "ideas" in self._dirty:
             file_ideas = self._group_ideas_by_file(dirty_only=True)
             for path, ideas in file_ideas.items():
@@ -1025,6 +1234,7 @@ class Mod:
         self._dirty_countries.clear()
         self._dirty_states.clear()
         self._dirty_events.clear()
+        self._dirty_decision_categories.clear()
         self._dirty_ideas.clear()
 
     def discard(self) -> None:
@@ -1033,12 +1243,15 @@ class Mod:
         self._state_ids.clear()
         self._events.clear()
         self._event_namespaces.clear()
+        self._decisions.clear()
+        self._decision_categories.clear()
         self._ideas.clear()
         self._focus_trees.clear()
         self._dirty_focus_trees.clear()
         self._dirty_countries.clear()
         self._dirty_states.clear()
         self._dirty_events.clear()
+        self._dirty_decision_categories.clear()
         self._dirty_ideas.clear()
         self._loc_entries.clear()
         self._loc_sources.clear()
@@ -1103,6 +1316,25 @@ class Mod:
                 file_ns[p] = self._event_namespaces.get(eid)
             file_events[p].append(event)
         return file_events, file_ns
+
+    def _group_decisions_by_file(self, dirty_only: bool = False) -> dict[Path, list[DecisionCategory]]:
+        dirty_categories = self._dirty_decision_categories if dirty_only else None
+        file_categories: dict[Path, list[DecisionCategory]] = {}
+        dirty_files: set[Path] = set()
+        if dirty_only:
+            for category_id in dirty_categories:
+                category = self._decision_categories.get(category_id)
+                if category is None:
+                    continue
+                dirty_files.add(category.path or self.mod_root / "common" / "decisions" / "mod_decisions.txt")
+        for category in self._decision_categories.values():
+            p = category.path or self.mod_root / "common" / "decisions" / "mod_decisions.txt"
+            if dirty_only and p not in dirty_files:
+                continue
+            if p not in file_categories:
+                file_categories[p] = []
+            file_categories[p].append(category)
+        return file_categories
 
     def _group_ideas_by_file(self, dirty_only: bool = False) -> dict[Path, list[Idea]]:
         dirty_ids = self._dirty_ideas if dirty_only else None

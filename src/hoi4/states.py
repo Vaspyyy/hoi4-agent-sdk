@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
-from .parser import PdxNode, parse_pdx, serialize_pdx
+from .parser import PdxNode, find_assignment_block, parse_pdx, serialize_pdx
 from .types import State
 
 STATE_ID_RE = re.compile(r"\bid\s*=\s*(\d+)")
@@ -62,10 +62,10 @@ def read_state(state_file: Path) -> State:
             break
     if state_block is None:
         sid_m = STATE_ID_RE.search(txt)
-        return State(id=int(sid_m.group(1)) if sid_m else 0, path=state_file)
+        return State(id=int(sid_m.group(1)) if sid_m else 0, path=state_file, raw_text=txt)
 
     state_id = state_block.get_int("id", 0)
-    state_obj = State(id=state_id, path=state_file)
+    state_obj = State(id=state_id, path=state_file, raw_text=txt)
 
     name_node = state_block.find("name")
     if name_node and name_node.value:
@@ -87,6 +87,22 @@ def read_state(state_file: Path) -> State:
     if bldg_node and bldg_node.value:
         state_obj.buildings_max_level_factor = bldg_node.value
 
+    local_supplies_node = state_block.find("local_supplies")
+    if local_supplies_node and local_supplies_node.value:
+        state_obj.local_supplies = local_supplies_node.value
+
+    resources_block = state_block.get_block("resources")
+    if resources_block:
+        for child in resources_block.children:
+            if child.key and child.value is not None:
+                state_obj.resources[child.key] = _coerce_scalar(child.value)
+
+    state_match = find_assignment_block(txt, "state")
+    state_body = state_match[0] if state_match else ""
+    buildings_match = find_assignment_block(state_body, "buildings")
+    if buildings_match:
+        state_obj.buildings = buildings_match[0].strip()
+
     prov_block = state_block.get_block("provinces")
     if prov_block:
         state_obj.provinces = [
@@ -95,6 +111,10 @@ def read_state(state_file: Path) -> State:
 
     history = state_block.get_block("history")
     if history:
+        history_match = find_assignment_block(state_body, "history")
+        if history_match:
+            state_obj.history = history_match[0].strip()
+
         owner_node = history.find("owner")
         if owner_node and owner_node.value:
             state_obj.owner = owner_node.value
@@ -114,7 +134,120 @@ def read_state(state_file: Path) -> State:
     return state_obj
 
 
+def _coerce_scalar(value: str) -> str | int | float:
+    try:
+        if "." in value:
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+def _find_state_block(root: PdxNode) -> PdxNode | None:
+    for child in root.children:
+        if child.key == "state":
+            return child
+    return None
+
+
+def _set_scalar(block: PdxNode, key: str, value: str) -> None:
+    block.set_value(key, value)
+
+
+def _remove_children(block: PdxNode, key: str) -> None:
+    block.children = [child for child in block.children if child.key != key]
+
+
+def _replace_block(block: PdxNode, key: str, body: str) -> None:
+    parsed = parse_pdx(f"{key} = {{\n{body}\n}}")
+    if not parsed.children:
+        return
+    new_node = parsed.children[0]
+    for i, child in enumerate(block.children):
+        if child.key == key:
+            block.children[i] = new_node
+            return
+    block.children.append(new_node)
+
+
+def _replace_bare_values(block: PdxNode, key: str, values: list[int | str]) -> None:
+    node = PdxNode(key=key)
+    for value in values:
+        node.children.append(PdxNode(key=None, value=str(value)))
+    for i, child in enumerate(block.children):
+        if child.key == key:
+            block.children[i] = node
+            return
+    block.children.append(node)
+
+
+def _replace_resources(block: PdxNode, resources: dict[str, str | int | float]) -> None:
+    if not resources:
+        return
+    node = PdxNode(key="resources")
+    for key, value in resources.items():
+        node.children.append(PdxNode(key=key, value=str(value)))
+    for i, child in enumerate(block.children):
+        if child.key == "resources":
+            block.children[i] = node
+            return
+    block.children.append(node)
+
+
+def _ensure_history(state_block: PdxNode) -> PdxNode:
+    history = state_block.get_block("history")
+    if history is None:
+        history = PdxNode(key="history")
+        state_block.add_child(history)
+    return history
+
+
+def _apply_state_to_root(root: PdxNode, state: State) -> PdxNode:
+    state_block = _find_state_block(root)
+    if state_block is None:
+        state_block = PdxNode(key="state")
+        root.children.append(state_block)
+
+    _set_scalar(state_block, "id", str(state.id))
+    if state.name:
+        _set_scalar(state_block, "name", state.name)
+    _set_scalar(state_block, "manpower", state.manpower or "0")
+    _set_scalar(state_block, "state_category", state.state_category)
+    if state.local_supplies:
+        _set_scalar(state_block, "local_supplies", state.local_supplies)
+    if state.is_demilitarized_zone:
+        _set_scalar(state_block, "is_demilitarized_zone", "yes")
+    else:
+        _remove_children(state_block, "is_demilitarized_zone")
+    if state.buildings_max_level_factor and state.buildings_max_level_factor != "1.0":
+        _set_scalar(state_block, "buildings_max_level_factor", state.buildings_max_level_factor)
+    else:
+        _remove_children(state_block, "buildings_max_level_factor")
+    if state.resources:
+        _replace_resources(state_block, state.resources)
+    if state.buildings:
+        _replace_block(state_block, "buildings", state.buildings)
+    _replace_bare_values(state_block, "provinces", state.provinces)
+
+    if state.history:
+        _replace_block(state_block, "history", state.history)
+    history = _ensure_history(state_block)
+    if state.owner:
+        _set_scalar(history, "owner", state.owner)
+    _remove_children(history, "add_core_of")
+    for core in state.cores:
+        history.add_child(PdxNode(key="add_core_of", value=core))
+    _remove_children(history, "victory_points")
+    if state.victory_points:
+        _replace_bare_values(history, "victory_points", state.victory_points.split())
+    return root
+
+
 def serialize_state(state: State) -> str:
+    if state.raw_text:
+        root = parse_pdx(state.raw_text)
+        return serialize_pdx(_apply_state_to_root(root, state))
+
     root = PdxNode()
     state_block = PdxNode(key="state")
     root.children.append(state_block)
@@ -139,6 +272,12 @@ def serialize_state(state: State) -> str:
         state_block.children.append(PdxNode(
             key="buildings_max_level_factor", value=state.buildings_max_level_factor,
         ))
+    if state.local_supplies:
+        state_block.children.append(PdxNode(key="local_supplies", value=state.local_supplies))
+    if state.resources:
+        _replace_resources(state_block, state.resources)
+    if state.buildings:
+        _replace_block(state_block, "buildings", state.buildings)
 
     prov_block = PdxNode(key="provinces")
     for pid in state.provinces:
@@ -146,10 +285,17 @@ def serialize_state(state: State) -> str:
     state_block.children.append(prov_block)
 
     history = PdxNode(key="history")
+    if state.history:
+        parsed_history = parse_pdx(f"history = {{\n{state.history}\n}}")
+        if parsed_history.children and parsed_history.children[0].is_block():
+            history = parsed_history.children[0]
     if state.owner:
+        history.remove("owner")
         history.children.append(PdxNode(key="owner", value=state.owner))
+    history.remove("add_core_of")
     for core in state.cores:
         history.children.append(PdxNode(key="add_core_of", value=core))
+    history.remove("victory_points")
     if state.victory_points:
         vp_block = PdxNode(key="victory_points")
         for part in state.victory_points.split():
@@ -171,7 +317,9 @@ def write_state(mod_root: Path, state: State) -> Path:
         path = existing or states_dir / f"{state.id} - {state.name or state.id}.txt"
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(serialize_state(state), encoding="utf-8")
+    content = serialize_state(state)
+    path.write_text(content, encoding="utf-8")
+    state.raw_text = content
     return path
 
 

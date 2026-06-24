@@ -14,7 +14,19 @@ Usage:
 from .mod import Mod
 from .config import Config, find_config
 from .parser import PdxNode, parse_pdx, serialize_pdx
-from .types import Country, Event, EventOption, Focus, FocusTree, Idea, Leader, State, ValidationError
+from .types import (
+    Country,
+    Decision,
+    DecisionCategory,
+    Event,
+    EventOption,
+    Focus,
+    FocusTree,
+    Idea,
+    Leader,
+    State,
+    ValidationError,
+)
 
 try:
     from .effects_catalog import EFFECT_CATEGORIES
@@ -28,6 +40,8 @@ __all__ = [
     "Config",
     "find_config",
     "Country",
+    "Decision",
+    "DecisionCategory",
     "Event",
     "EventOption",
     "Focus",

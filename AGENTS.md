@@ -139,16 +139,21 @@ State files live in `history/states/`. When accessing a state not in the mod, `g
 | `list_states() -> list[int]` | Sorted state IDs | All loaded state IDs |
 | `get_state(state_id: int) -> State` | `State` | Cached or reads from mod/vanilla. Raises `KeyError`. |
 | `set_state_owner(state_id: int, tag: str, add_core: bool = True) -> State` | `State` | Change owner, optionally add core |
-| `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field |
+| `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field. List fields such as `cores` and `provinces` append unique values instead of replacing. |
+| `add_state_core(state_id: int, tag: str) -> State` | `State` | Append a core without replacing existing cores |
+| `remove_state_core(state_id: int, tag: str) -> State` | `State` | Remove a core |
 | `batch_set_owner(state_ids: list[int], tag: str, add_core: bool = True) -> list[State]` | `list[State]` | Batch owner change |
 
 ### Example
 
 ```python
 mod.set_state_owner(52, "GER")
+mod.add_state_core(52, "AUT")
 mod.batch_set_owner([1, 2, 3], "SOV", add_core=True)
 mod.set_state_properties(52, manpower="5000000", victory_points="3620 1")
 ```
+
+Loaded state files are patched through their original parsed content. Updating owner, cores, manpower, resources, buildings, or other modeled fields preserves unrelated vanilla data such as buildings, resources, local supplies, history bookmarks, resistance, and compliance blocks.
 
 ## Events
 
@@ -160,7 +165,7 @@ Events are grouped into files by namespace. Each event has a type, trigger, opti
 |--------|---------|-------------|
 | `list_events() -> list[str]` | Sorted event IDs | All loaded events |
 | `get_event(event_id: str) -> Event` | `Event` | Raises `KeyError` with available IDs if not found |
-| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, trigger="", mean_time_to_happen="", options=None) -> Event` | `Event` | Creates event. Default option auto-generated if none provided. |
+| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None) -> Event` | `Event` | Creates event. Default option auto-generated if none provided. |
 | `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field |
 | `delete_event(event_id: str) -> bool` | `bool` | Remove event and its namespace mapping |
 | `set_event_namespace(event_id: str, namespace: str) -> None` | `None` | Set which file this event writes to (`{namespace}_events.txt`) |
@@ -176,6 +181,38 @@ mod.add_event_option("my_mod.1", EventOption(
     effect="add_political_power = 100"
 ))
 mod.set_event_namespace("my_mod.1", "my_mod")
+```
+
+## Decisions
+
+Decisions live in `common/decisions/*.txt` and are grouped by category.
+
+### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `list_decision_categories() -> list[str]` | Sorted category IDs | Loaded decision categories |
+| `list_decisions() -> list[str]` | Sorted decision IDs | Loaded decisions |
+| `get_decision(decision_id: str) -> Decision` | `Decision` | Get a decision |
+| `get_decision_category(category_id: str) -> DecisionCategory` | `DecisionCategory` | Get a category |
+| `create_decision_category(category_id, icon="", allowed="", visible="", path=None) -> DecisionCategory` | `DecisionCategory` | Create or route a category |
+| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None) -> Decision` | `Decision` | Create a decision in a category |
+| `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update a decision |
+| `delete_decision(decision_id: str) -> bool` | `bool` | Remove a decision |
+
+### Example
+
+```python
+mod.create_decision(
+    "lux_industrial_policy",
+    "LUX_subsidize_arbed",
+    cost=25,
+    days_remove=30,
+    available="has_war = no",
+    complete_effect=Mod.effect_add_civilian_factory(8, 1),
+)
+mod.set_loc("LUX_subsidize_arbed", "Subsidize ARBED")
+mod.set_loc("LUX_subsidize_arbed_desc", "Support the domestic steel industry.")
 ```
 
 ### Event Types
@@ -230,6 +267,7 @@ Focus trees are collections of focuses. Each focus has a position (x, y), cost, 
 | `list_focus_trees() -> list[str]` | Sorted tree IDs | All loaded tree IDs |
 | `get_focus_tree(tree_id: str) -> FocusTree` | `FocusTree` | Raises `KeyError` if not found |
 | `create_focus_tree(tree_id: str, country_tag: str) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag |
+| `update_focus_tree(tree_id: str, **kwargs) -> bool` | `bool` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id: str) -> bool` | `bool` | Remove tree |
 | `add_focus(tree_id: str, focus: Focus) -> None` | `None` | Append focus to tree |
 | `remove_focus(tree_id: str, focus_id: str) -> bool` | `bool` | Remove focus by ID |
@@ -421,12 +459,42 @@ Leader(name: str, character_id: str = "",
 ### State
 ```python
 State(id: int, name: str = "", owner: str = "",
-      cores: list[str] = [], manpower: str = "0",
+      cores: list[str] = [],
+      resources: dict[str, str|int|float] = {},
+      buildings: str = "",
+      local_supplies: str = "",
+      manpower: str = "0",
       state_category: str = "large_city",
       victory_points: str = "",
       buildings_max_level_factor: str = "1.0",
       is_demilitarized_zone: bool = False,
-      provinces: list[int] = [], path: Path | None = None)
+      provinces: list[int] = [],
+      history: str = "",
+      path: Path | None = None)
+```
+
+### Decision
+```python
+Decision(id: str, category: str = "",
+         icon: str = "",
+         cost: int | None = None,
+         days_remove: int | None = None,
+         fire_only_once: bool | None = None,
+         available: str = "",
+         visible: str = "",
+         complete_effect: str = "",
+         remove_effect: str = "",
+         ai_will_do: str = "",
+         path: Path | None = None)
+```
+
+### DecisionCategory
+```python
+DecisionCategory(id: str, icon: str = "",
+                 allowed: str = "",
+                 visible: str = "",
+                 decisions: list[Decision] = [],
+                 path: Path | None = None)
 ```
 
 ### Event
@@ -696,7 +764,7 @@ For a quick grounded industrial branch:
 mod.create_industrial_branch("lux_focus", "LUX", anchor_focus_id="LUX_existing_anchor")
 ```
 
-Use `get_country_context("LUX")` before generating content. It returns country basics, owned/core states, matching ideas/advisors/designers, localization, and matching focus trees from the mod and vanilla install without copying vanilla states into the mod.
+Use `get_country_context("LUX")` before generating content. It returns country basics, owned/core states, matching ideas/advisors/designers, localization, and matching focus trees from the mod and vanilla install. By default it is read-only. Use `get_country_context("LUX", copy_states=True)` or `ensure_country_states_in_mod("LUX")` before generating effects that will directly modify vanilla states.
 
 Effect builders:
 
@@ -706,6 +774,9 @@ Mod.effect_add_military_factory(8, 1)
 Mod.effect_add_infrastructure(8, 1)
 Mod.effect_add_industry_bonus("LUX_industry_bonus", uses=1, bonus=0.5)
 Mod.effect_add_timed_idea("LUX_recovery_spirit", days=365)
+Mod.effect_create_wargoal("GER")
+Mod.effect_declare_war("GER")
+Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
 ```
 
 ## Gotchas & Important Notes
@@ -726,13 +797,15 @@ Mod.effect_add_timed_idea("LUX_recovery_spirit", days=365)
 
 8. **Localization key format.** Pass keys without `:0` — the serializer adds it. When reading existing YML files, keys come back with `:0` included. Both forms work for lookups.
 
-9. **`manpower` and `victory_points` are strings.** State fields that could be complex Paradox expressions are stored as raw strings, not parsed.
+9. **State edits preserve unknown vanilla data.** Loaded states retain original raw content. `serialize_state()` patches modeled fields and keeps unrelated blocks like buildings, resources, local supplies, history bookmarks, resistance, and compliance.
 
-10. **Validation is advisory.** `validate()` returns errors but does not prevent `save()`. Check `severity == "error"` for critical issues.
+10. **`manpower`, `victory_points`, `buildings`, and `history` are strings.** State fields that could be complex Paradox expressions are stored as raw strings.
 
-11. **`preview()` only shows dirty sections.** If a module isn't in the dirty set (no mutations made), it won't appear in the diff. After `save()`, `preview()` returns empty.
+11. **Validation is advisory.** `validate()` returns errors but does not prevent `save()`. Check `severity == "error"` for critical issues.
 
-12. **Country localization auto-sync.** `save()` calls `_sync_country_loc()` which auto-generates localization entries for the country name, adjective, and leader. These also appear in the localization diff.
+12. **`preview()` only shows dirty sections.** If a module isn't in the dirty set (no mutations made), it won't appear in the diff. After `save()`, `preview()` returns empty.
+
+13. **Country localization auto-sync.** `save()` calls `_sync_country_loc()` which auto-generates localization entries for the country name, adjective, and leader. These also appear in the localization diff.
 
 ## Low-Level Parser
 

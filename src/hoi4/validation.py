@@ -44,6 +44,36 @@ def validate_country(country: Country) -> list[ValidationError]:
             country_tag=country.tag,
         ))
 
+    if country.leader and country.leader.ideology:
+        ideology_party_map = {
+            "liberalism": "democratic",
+            "conservatism": "democratic",
+            "socialism": "democratic",
+            "marxism": "communism",
+            "leninism": "communism",
+            "stalinism": "communism",
+            "anti_revisionism": "communism",
+            "anarchist_communism": "communism",
+            "nazism": "fascism",
+            "fascism_ideology": "fascism",
+            "falangism": "fascism",
+            "rexism": "fascism",
+            "despotism": "neutrality",
+            "oligarchism": "neutrality",
+            "moderate": "neutrality",
+            "centrism": "neutrality",
+        }
+        expected_party = ideology_party_map.get(country.leader.ideology)
+        if expected_party and country.ruling_party in valid_parties and expected_party != country.ruling_party:
+            errors.append(ValidationError(
+                message=(
+                    f"Country '{country.tag}' ruling party '{country.ruling_party}' does not match "
+                    f"leader ideology '{country.leader.ideology}'"
+                ),
+                severity="warning",
+                country_tag=country.tag,
+            ))
+
     try:
         r, g, b = country.color
         if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255):
