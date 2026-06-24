@@ -6,9 +6,52 @@ from __future__ import annotations
 
 import re
 
+from .effects_catalog import TECHNOLOGY_CATEGORIES
 from .types import Country, Event, FocusTree, Idea, State, ValidationError
 
 TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
+_UNSET = object()
+
+
+def _script_warnings(
+    script: str,
+    *,
+    file_path: str | None = None,
+    focus_id: str | None = None,
+    event_id: str | None = None,
+) -> list[ValidationError]:
+    errors: list[ValidationError] = []
+    if not script:
+        return errors
+
+    for effect_name in ("add_core_of", "remove_core_of"):
+        if re.search(rf"(?m)^\s*{effect_name}\s*=", script):
+            errors.append(ValidationError(
+                message=(
+                    f"'{effect_name}' appears at country scope. Use a state scope such as "
+                    f"'115 = {{ {effect_name} = TAG }}' to avoid changing every owned state."
+                ),
+                severity="warning",
+                file_path=file_path,
+                focus_id=focus_id,
+                event_id=event_id,
+            ))
+
+    if "add_tech_bonus" in script:
+        for category in re.findall(r"\bcategory\s*=\s*([A-Za-z0-9_]+)", script):
+            if category not in TECHNOLOGY_CATEGORIES:
+                examples = "industry, infantry_weapons, artillery, armor, electronics, land_doctrine"
+                errors.append(ValidationError(
+                    message=(
+                        f"Unknown add_tech_bonus category '{category}'. Common valid categories: {examples}."
+                    ),
+                    severity="warning",
+                    file_path=file_path,
+                    focus_id=focus_id,
+                    event_id=event_id,
+                ))
+
+    return errors
 
 
 def validate_country(country: Country) -> list[ValidationError]:
@@ -181,15 +224,15 @@ def validate_focus_tree(
                     file_path=str(tree.path) if tree.path else None,
                 ))
 
+        script = "\n".join([
+            focus.completion_reward,
+            focus.available,
+            focus.bypass,
+            focus.select_effect,
+            focus.complete_tooltip,
+            focus.allow_branch,
+        ])
         if known_state_ids is not None:
-            script = "\n".join([
-                focus.completion_reward,
-                focus.available,
-                focus.bypass,
-                focus.select_effect,
-                focus.complete_tooltip,
-                focus.allow_branch,
-            ])
             for raw_id in re.findall(r"(?m)^\s*(\d+)\s*=\s*\{", script):
                 sid = int(raw_id)
                 if sid not in known_state_ids:
@@ -200,6 +243,12 @@ def validate_focus_tree(
                         state_id=sid,
                         file_path=str(tree.path) if tree.path else None,
                     ))
+
+        errors.extend(_script_warnings(
+            script,
+            file_path=str(tree.path) if tree.path else None,
+            focus_id=focus.id,
+        ))
 
     return errors
 
@@ -242,7 +291,7 @@ def validate_state(
     return errors
 
 
-def validate_event(event: Event) -> list[ValidationError]:
+def validate_event(event: Event, namespace: str | None | object = _UNSET) -> list[ValidationError]:
     errors: list[ValidationError] = []
 
     if not event.id:
@@ -279,6 +328,52 @@ def validate_event(event: Event) -> list[ValidationError]:
             message=f"Event '{event.id}' has invalid type '{event.event_type}'",
             severity="error",
             event_id=event.id,
+        ))
+
+    if namespace is not _UNSET:
+        inferred_namespace = event.id.split(".", 1)[0] if "." in event.id else None
+        if inferred_namespace and not namespace:
+            errors.append(ValidationError(
+                message=f"Event '{event.id}' has no add_namespace = {inferred_namespace}; dotted event IDs need their namespace declared",
+                severity="error",
+                event_id=event.id,
+                file_path=str(event.path) if event.path else None,
+            ))
+        elif inferred_namespace and namespace != inferred_namespace:
+            errors.append(ValidationError(
+                message=f"Event '{event.id}' namespace '{namespace}' does not match ID prefix '{inferred_namespace}'",
+                severity="warning",
+                event_id=event.id,
+                file_path=str(event.path) if event.path else None,
+            ))
+
+    if event.is_triggered_only and event.mean_time_to_happen:
+        errors.append(ValidationError(
+            message=f"Event '{event.id}' is_triggered_only but also has mean_time_to_happen; it will not fire randomly",
+            severity="warning",
+            event_id=event.id,
+            file_path=str(event.path) if event.path else None,
+        ))
+
+    effect_script = "\n".join(
+        [event.trigger, event.immediate, event.mean_time_to_happen]
+        + [opt.trigger + "\n" + opt.effect for opt in event.options]
+    )
+    errors.extend(_script_warnings(
+        effect_script,
+        file_path=str(event.path) if event.path else None,
+        event_id=event.id,
+    ))
+
+    if event.immediate and "declare_war_on" in event.immediate:
+        errors.append(ValidationError(
+            message=(
+                f"Event '{event.id}' declares war in immediate; immediate runs before the option is chosen. "
+                "Put war effects in an option unless that is intentional."
+            ),
+            severity="warning",
+            event_id=event.id,
+            file_path=str(event.path) if event.path else None,
         ))
 
     return errors

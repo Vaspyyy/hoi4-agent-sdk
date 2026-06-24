@@ -23,6 +23,7 @@ from .countries import country_file_paths, read_country, serialize_country_files
 from .decisions import load_decisions_file, serialize_decisions_file, write_decisions_file
 from .diff import unified_diff
 from .events import load_events_file, serialize_events_file, write_events_file
+from .effects_catalog import TECHNOLOGY_CATEGORIES
 from .focus import load_focus_tree, serialize_focus_tree, write_focus_tree
 from .ideas import read_ideas_file, serialize_ideas_file, write_ideas_file
 from .localisation import (
@@ -38,7 +39,7 @@ from .states import (
     serialize_state,
     write_state,
 )
-from .tags import load_all_tags, load_mod_tags
+from .tags import load_all_tags, load_mod_tags, load_vanilla_tags
 from .types import (
     Country,
     Decision,
@@ -53,6 +54,15 @@ from .types import (
     ValidationError,
 )
 from .validation import validate_country, validate_event, validate_focus_tree, validate_idea, validate_state
+
+
+def _infer_event_namespace(event_id: str) -> str | None:
+    if "." not in event_id:
+        return None
+    namespace = event_id.split(".", 1)[0]
+    if namespace.replace("_", "").isalnum() and not namespace[0].isdigit():
+        return namespace
+    return None
 
 
 def _set_fields(obj: object, kwargs: dict) -> None:
@@ -106,6 +116,7 @@ class Mod:
         self._dirty_loc_keys: set[str] = set()
         self._original_files: dict[Path, str] = {}
         self._dirty: set[str] = set()
+        self._vanilla_tags: set[str] = load_vanilla_tags(self.hoi4_install) if self.hoi4_install else set()
 
         self._load()
 
@@ -244,6 +255,19 @@ class Mod:
     def list_countries(self) -> list[str]:
         return sorted(self._countries.keys())
 
+    def is_country_tag_available(self, tag: str) -> bool:
+        tag = tag.upper()
+        return tag not in self._countries and tag not in self._vanilla_tags
+
+    def country_tag_conflicts(self, tag: str) -> list[str]:
+        tag = tag.upper()
+        conflicts: list[str] = []
+        if tag in self._countries:
+            conflicts.append("mod")
+        if tag in self._vanilla_tags:
+            conflicts.append("vanilla")
+        return conflicts
+
     def get_country(self, tag: str) -> Country:
         tag = tag.upper()
         if tag in self._countries:
@@ -267,8 +291,20 @@ class Mod:
         leader_name: str = "Leader",
         leader_ideology: str = "liberalism",
         ideas: list[str] | None = None,
+        overwrite: bool = False,
+        allow_vanilla_override: bool = False,
     ) -> Country:
         tag = tag.upper()
+        if tag in self._countries and not overwrite:
+            raise ValueError(
+                f"Country tag '{tag}' already exists in the mod. "
+                "Use overwrite=True only when intentionally replacing that mod country."
+            )
+        if tag in self._vanilla_tags and not allow_vanilla_override:
+            raise ValueError(
+                f"Country tag '{tag}' is already used by vanilla HOI4. "
+                "Choose an unused tag or pass allow_vanilla_override=True intentionally."
+            )
         leader = Leader(
             name=leader_name,
             character_id=f"{tag}_leader_1",
@@ -436,7 +472,7 @@ class Mod:
             options=options or [EventOption(name=f"{event_id}.a", effect="")],
         )
         self._events[event_id] = event
-        self._event_namespaces[event_id] = None
+        self._event_namespaces[event_id] = _infer_event_namespace(event_id)
         self._dirty.add("events")
         self._dirty_events.add(event_id)
         return event
@@ -797,8 +833,32 @@ class Mod:
         )
 
     @staticmethod
-    def effect_add_industry_bonus(name: str, uses: int = 1, bonus: float = 0.5) -> str:
-        return f"add_tech_bonus = {{ name = {name} bonus = {bonus} uses = {uses} category = industry }}"
+    def effect_add_tech_bonus(
+        name: str,
+        category: str = "industry",
+        uses: int = 1,
+        bonus: float = 0.5,
+    ) -> str:
+        if category not in TECHNOLOGY_CATEGORIES:
+            examples = ", ".join(("industry", "infantry_weapons", "artillery", "armor", "electronics", "land_doctrine"))
+            raise ValueError(f"Unknown technology category '{category}'. Common valid categories: {examples}")
+        return f"add_tech_bonus = {{ name = {name} bonus = {bonus} uses = {uses} category = {category} }}"
+
+    @classmethod
+    def effect_add_industry_bonus(cls, name: str, uses: int = 1, bonus: float = 0.5) -> str:
+        return cls.effect_add_tech_bonus(name, category="industry", uses=uses, bonus=bonus)
+
+    @staticmethod
+    def effect_add_state_core(state_id: int, tag: str) -> str:
+        return f"{state_id} = {{ add_core_of = {tag.upper()} }}"
+
+    @staticmethod
+    def effect_remove_state_core(state_id: int, tag: str) -> str:
+        return f"{state_id} = {{ remove_core_of = {tag.upper()} }}"
+
+    @staticmethod
+    def effect_transfer_state(state_id: int, target: str) -> str:
+        return f"{target.upper()} = {{ transfer_state = {state_id} }}"
 
     @staticmethod
     def effect_add_timed_idea(idea_id: str, days: int) -> str:
@@ -1042,8 +1102,8 @@ class Mod:
         for state in self._states.values():
             errors.extend(validate_state(state, known_tags))
 
-        for event in self._events.values():
-            errors.extend(validate_event(event))
+        for event_id, event in self._events.items():
+            errors.extend(validate_event(event, namespace=self._event_namespaces.get(event_id)))
 
         for idea in self._ideas.values():
             errors.extend(validate_idea(idea))

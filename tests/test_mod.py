@@ -4,6 +4,7 @@ import json
 import pytest
 
 from hoi4 import Mod, Focus, Country, State, Event, EventOption, Idea, Leader
+from hoi4 import TECHNOLOGY_CATEGORIES
 from hoi4.config import Config, find_config
 from hoi4.validation import validate_focus_tree, validate_country, validate_state, validate_event, validate_idea
 from hoi4.types import FocusTree
@@ -566,6 +567,15 @@ class TestAgentFacingApis:
         assert Mod.effect_create_wargoal("fra") == "create_wargoal = { type = annex_everything target = FRA }"
         assert Mod.effect_declare_war("ger") == "declare_war_on = { type = annex_everything target = GER }"
         assert "start_civil_war" in Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
+        assert Mod.effect_add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
+        assert Mod.effect_remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
+
+    def test_tech_bonus_helper_validates_categories(self):
+        assert "infantry_weapons" in TECHNOLOGY_CATEGORIES
+        assert "infantry" not in TECHNOLOGY_CATEGORIES
+        assert "category = infantry_weapons" in Mod.effect_add_tech_bonus("rifle_bonus", category="infantry_weapons")
+        with pytest.raises(ValueError):
+            Mod.effect_add_tech_bonus("bad_bonus", category="infantry")
 
     def test_update_focus_tree(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
@@ -607,6 +617,28 @@ class TestModCountries:
         assert country.tag == "WST"
         assert country.name == "Westralia"
         assert "WST" in mod.list_countries()
+
+    def test_create_country_rejects_existing_mod_tag(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_country("WST", "Westralia")
+        with pytest.raises(ValueError, match="already exists"):
+            mod.create_country("WST", "Other")
+
+    def test_create_country_rejects_vanilla_tag_by_default(self, tmp_path):
+        mod_root = tmp_path / "mod"
+        hoi4_root = tmp_path / "hoi4"
+        (hoi4_root / "common" / "country_tags").mkdir(parents=True)
+        (hoi4_root / "common" / "country_tags" / "00_countries.txt").write_text(
+            'SIC = "countries/Sichuan.txt"\n',
+            encoding="utf-8",
+        )
+        mod = Mod(mod_root, hoi4_install=hoi4_root)
+        assert not mod.is_country_tag_available("SIC")
+        assert mod.country_tag_conflicts("SIC") == ["vanilla"]
+        with pytest.raises(ValueError, match="vanilla HOI4"):
+            mod.create_country("SIC", "Sicily")
+        country = mod.create_country("SIC", "Sicily", allow_vanilla_override=True)
+        assert country.tag == "SIC"
 
     def test_get_country(self, tmp_mod):
         mod = tmp_mod.with_country("WST")
@@ -740,6 +772,15 @@ class TestModEvents:
         assert event.id == "test.1"
         assert "test.1" in mod.list_events()
 
+    def test_create_event_infers_namespace_and_file(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_event("sic.1", title="sic.1.t", description="sic.1.d")
+        mod.save()
+        event_file = tmp_mod.root / "events" / "sic_events.txt"
+        content = event_file.read_text(encoding="utf-8")
+        assert "add_namespace = sic" in content
+        assert "id = sic.1" in content
+
     def test_create_event_with_options(self, tmp_mod):
         mod = tmp_mod.mod
         opts = [EventOption(name="test.1.a", effect="add_pp = 100")]
@@ -755,6 +796,33 @@ class TestModEvents:
         )
         assert event.fire_only_once is True
         assert event.immediate == "add_political_power = 10"
+
+    def test_validate_warns_for_unsafe_core_scope_and_bad_tech_category(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_event(
+            "sic.1",
+            options=[EventOption(name="sic.1.a", effect="add_core_of = SIC")],
+        )
+        tree = mod.create_focus_tree("sic_focus", "SIC")
+        mod.add_focus("sic_focus", Focus(
+            id="SIC_bad_bonus",
+            completion_reward="add_tech_bonus = { name = bad bonus = 1.0 category = infantry }",
+        ))
+        messages = [e.message for e in mod.validate()]
+        assert any("country scope" in message for message in messages)
+        assert any("Unknown add_tech_bonus category 'infantry'" in message for message in messages)
+
+    def test_validate_warns_for_triggered_only_mtth_and_immediate_war(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_event(
+            "war.1",
+            is_triggered_only=True,
+            immediate="declare_war_on = { type = annex_everything target = FRA }",
+            mean_time_to_happen="days = 1",
+        )
+        messages = [e.message for e in mod.validate()]
+        assert any("is_triggered_only but also has mean_time_to_happen" in message for message in messages)
+        assert any("declares war in immediate" in message for message in messages)
 
     def test_update_event(self, tmp_mod):
         mod = tmp_mod.with_events()

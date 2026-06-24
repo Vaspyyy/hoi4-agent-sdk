@@ -330,9 +330,6 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         f" elections_allowed = {elections}\n"
         f"}}\n"
         f"\n"
-        f"set_country_leader = {{\n"
-        f"  character = {leader.character_id}\n"
-        f" }}\n"
         f"{ideas_block}"
     )
 

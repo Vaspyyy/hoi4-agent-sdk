@@ -29,10 +29,11 @@ from .types import (
 )
 
 try:
-    from .effects_catalog import EFFECT_CATEGORIES
+    from .effects_catalog import EFFECT_CATEGORIES, TECHNOLOGY_CATEGORIES
     from .modifiers_catalog import MODIFIER_CATEGORIES
 except ImportError:
     EFFECT_CATEGORIES = []
+    TECHNOLOGY_CATEGORIES = ()
     MODIFIER_CATEGORIES = []
 
 __all__ = [
@@ -54,5 +55,6 @@ __all__ = [
     "parse_pdx",
     "serialize_pdx",
     "EFFECT_CATEGORIES",
+    "TECHNOLOGY_CATEGORIES",
     "MODIFIER_CATEGORIES",
 ]

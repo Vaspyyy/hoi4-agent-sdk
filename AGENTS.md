@@ -14,7 +14,7 @@ Requires Python >=3.11. Zero runtime dependencies.
 ```python
 from hoi4 import Mod, Focus, FocusTree, Country, Leader, State
 from hoi4 import Event, EventOption, Idea, ValidationError
-from hoi4 import EFFECT_CATEGORIES, MODIFIER_CATEGORIES
+from hoi4 import EFFECT_CATEGORIES, MODIFIER_CATEGORIES, TECHNOLOGY_CATEGORIES
 from hoi4 import PdxNode, parse_pdx, serialize_pdx
 from hoi4 import Config, find_config
 ```
@@ -99,8 +99,10 @@ Country data spans 5 files: tag registration, definition (color/culture), histor
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `list_countries() -> list[str]` | Sorted tag list | All loaded country tags |
+| `is_country_tag_available(tag: str) -> bool` | `bool` | False if the tag exists in the mod or vanilla install |
+| `country_tag_conflicts(tag: str) -> list[str]` | `list[str]` | Returns conflict sources: `"mod"`, `"vanilla"` |
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
-| `create_country(tag, name, adjective="", color=(128,128,128), capital=1, ruling_party="democratic", popularities=None, leader_name="Leader", leader_ideology="liberalism", ideas=None) -> Country` | `Country` | Creates country with leader, caches, marks dirty |
+| `create_country(tag, name, adjective="", color=(128,128,128), capital=1, ruling_party="democratic", popularities=None, leader_name="Leader", leader_ideology="liberalism", ideas=None, overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader, caches, marks dirty. Raises `ValueError` for existing mod tags or vanilla tags unless explicitly allowed. |
 | `update_country(tag: str, **kwargs) -> bool` | `bool` | Update any Country/Leader field. Use `leader_name`, `leader_ideology` for leader. |
 | `delete_country(tag: str) -> bool` | `bool` | Remove from cache |
 
@@ -114,6 +116,13 @@ mod.create_country("WST", "Westralia", adjective="Westralian",
                    leader_name="John Curtin", leader_ideology="liberalism")
 
 mod.update_country("WST", capital=999, leader_name="New Leader")
+```
+
+Check tag availability before inventing a new country tag:
+
+```python
+if not mod.is_country_tag_available("SIC"):
+    raise ValueError(f"SIC conflicts with: {mod.country_tag_conflicts('SIC')}")
 ```
 
 ### Country File Layout
@@ -157,7 +166,7 @@ Loaded state files are patched through their original parsed content. Updating o
 
 ## Events
 
-Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen.
+Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`.
 
 ### Methods
 
@@ -165,7 +174,7 @@ Events are grouped into files by namespace. Each event has a type, trigger, opti
 |--------|---------|-------------|
 | `list_events() -> list[str]` | Sorted event IDs | All loaded events |
 | `get_event(event_id: str) -> Event` | `Event` | Raises `KeyError` with available IDs if not found |
-| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None) -> Event` | `Event` | Creates event. Default option auto-generated if none provided. |
+| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None) -> Event` | `Event` | Creates event. Default option auto-generated if none provided. Dotted IDs infer namespace from the ID prefix. |
 | `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field |
 | `delete_event(event_id: str) -> bool` | `bool` | Remove event and its namespace mapping |
 | `set_event_namespace(event_id: str, namespace: str) -> None` | `None` | Set which file this event writes to (`{namespace}_events.txt`) |
@@ -180,6 +189,7 @@ mod.add_event_option("my_mod.1", EventOption(
     name="my_mod.1.a",
     effect="add_political_power = 100"
 ))
+# Optional; already inferred for "my_mod.1".
 mod.set_event_namespace("my_mod.1", "my_mod")
 ```
 
@@ -355,11 +365,11 @@ Default file: `localisation/english/mod_l_english.yml`.
 
 | Entity | Checks |
 |--------|--------|
-| **Country** | Tag format `^[A-Z0-9]{3}$`, has name, popularities sum to 100, valid ruling party, valid RGB color |
+| **Country** | Tag format `^[A-Z0-9]{3}$`, has name, popularities sum to 100, valid ruling party, valid RGB color, leader ideology/ruling party mismatch |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
-| **Event** | Has ID, has title, has description, has options, valid event_type |
+| **Event** | Has ID, has title, has description, has options, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |
-| **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, mutually_exclusive references exist |
+| **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories |
 | **Cross-cut** | Every focus has a localization entry (warning) |
 
 ### ValidationError Fields
@@ -544,14 +554,35 @@ for cat_name, effects in EFFECT_CATEGORIES:
         print(f"{display_name}: {script}")
 ```
 
-**Categories:** Political, Ideology, Economy, Military, Diplomacy, Territory, War Goals, Technology, Custom — 52 total entries.
+**Categories:** Political, Ideology, Economy, Military, Diplomacy, Territory, War Goals, Technology, Custom.
 
 Example entries:
 ```python
 ("Political Power (+100)", "add_political_power = 100")
 ("Civilian Factory (+1)", "add_building_construction = { type = industrial_complex level = 1 instant_build = yes }")
+("Add Core to State", "123 = { add_core_of = TAG }")
 ("Create Faction", 'create_faction = "My Faction"')
 ```
+
+Do not use bare `add_core_of = TAG` or `remove_core_of = TAG` inside country-scope event effects or focus rewards. Scope them to a state:
+
+```python
+Mod.effect_add_state_core(115, "SIC")      # 115 = { add_core_of = SIC }
+Mod.effect_remove_state_core(115, "SIC")   # 115 = { remove_core_of = SIC }
+```
+
+### TECHNOLOGY_CATEGORIES
+
+```python
+from hoi4 import TECHNOLOGY_CATEGORIES
+
+print("infantry_weapons" in TECHNOLOGY_CATEGORIES)  # True
+print("infantry" in TECHNOLOGY_CATEGORIES)          # False; this is not a tech bonus category
+
+Mod.effect_add_tech_bonus("rifle_bonus", category="infantry_weapons", uses=1, bonus=0.5)
+```
+
+Common valid `add_tech_bonus` categories include `industry`, `infantry_weapons`, `artillery`, `armor`, `electronics`, and `land_doctrine`.
 
 ### MODIFIER_CATEGORIES
 
@@ -772,7 +803,10 @@ Effect builders:
 Mod.effect_add_civilian_factory(8, 1)
 Mod.effect_add_military_factory(8, 1)
 Mod.effect_add_infrastructure(8, 1)
+Mod.effect_add_state_core(8, "LUX")
+Mod.effect_remove_state_core(8, "GER")
 Mod.effect_add_industry_bonus("LUX_industry_bonus", uses=1, bonus=0.5)
+Mod.effect_add_tech_bonus("LUX_rifle_bonus", category="infantry_weapons", uses=1, bonus=0.5)
 Mod.effect_add_timed_idea("LUX_recovery_spirit", days=365)
 Mod.effect_create_wargoal("GER")
 Mod.effect_declare_war("GER")
@@ -793,7 +827,7 @@ Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
 
 6. **State vanilla fallback.** `get_state()` copies the vanilla state file into the mod directory if it doesn't exist there. This requires `hoi4_install` to be set.
 
-7. **Event namespaces control file grouping.** Events with the same namespace write to the same file. Set namespace with `set_event_namespace()`. Default is `None` → writes to `mod_events.txt`.
+7. **Event namespaces control file grouping.** Events with the same namespace write to the same file. Dotted event IDs infer their namespace: `sic.1` writes `add_namespace = sic` in `events/sic_events.txt`. Use `set_event_namespace()` only to override.
 
 8. **Localization key format.** Pass keys without `:0` — the serializer adds it. When reading existing YML files, keys come back with `:0` included. Both forms work for lookups.
 
@@ -806,6 +840,14 @@ Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
 12. **`preview()` only shows dirty sections.** If a module isn't in the dirty set (no mutations made), it won't appear in the diff. After `save()`, `preview()` returns empty.
 
 13. **Country localization auto-sync.** `save()` calls `_sync_country_loc()` which auto-generates localization entries for the country name, adjective, and leader. These also appear in the localization diff.
+
+14. **Country leaders use characters, not `set_country_leader`.** Generated country history uses `recruit_character = TAG_leader_1`; the character file supplies `roles = { country_leader }` and the `country_leader = { ... }` block. Do not add `set_country_leader` to history files.
+
+15. **Country tags are guarded.** `create_country()` raises if the tag already exists in the mod or vanilla install. Use `is_country_tag_available()` and pick a free tag. Pass `overwrite=True` or `allow_vanilla_override=True` only for deliberate replacement work.
+
+16. **Core effects must be state-scoped.** In country-scope effects, bare `add_core_of = TAG` or `remove_core_of = TAG` applies across all owned states. Use `Mod.effect_add_state_core(state_id, tag)` or `state_id = { add_core_of = TAG }`.
+
+17. **Random events need namespace and firing rules.** `create_event("sic.1")` now infers `sic`, but validation still catches missing/mismatched namespaces in loaded files. Do not combine `is_triggered_only = yes` with `mean_time_to_happen` if you expect random firing.
 
 ## Low-Level Parser
 

@@ -96,6 +96,18 @@ class TestWriteCountry:
         assert len(history_files) == 1
         assert "capital = 99" in history_files[0].read_text()
 
+    def test_history_uses_recruit_character_not_set_country_leader(self, tmp_path):
+        country = Country(
+            tag="NEW",
+            name="Newland",
+            leader=Leader(name="Boss", character_id="NEW_leader_1"),
+        )
+        write_all_country_files(tmp_path, country)
+        history_file = next((tmp_path / "history" / "countries").glob("NEW*.txt"))
+        content = history_file.read_text()
+        assert "recruit_character = NEW_leader_1" in content
+        assert "set_country_leader" not in content
+
     def test_creates_localisation_file(self, tmp_path):
         country = Country(tag="NEW", name="Newland", adjective="Newlandish")
         write_all_country_files(tmp_path, country)
