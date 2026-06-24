@@ -13,11 +13,21 @@ Requires Python >=3.11. Zero runtime dependencies.
 
 ```python
 from hoi4 import Mod, Focus, FocusTree, Country, Leader, State
-from hoi4 import Event, EventOption, Idea, ValidationError
+from hoi4 import Event, EventOption, Idea, SaveResult, ValidationError
 from hoi4 import EFFECT_CATEGORIES, MODIFIER_CATEGORIES, TECHNOLOGY_CATEGORIES
 from hoi4 import PdxNode, parse_pdx, serialize_pdx
+from hoi4 import effect_block, scope_block, normalize_block_body, validate_script_syntax
 from hoi4 import Config, find_config
 ```
+
+## Agent Quick Gotchas
+
+- `save()` only writes dirty in-memory changes from the same `Mod` instance. Calling `save()` in a fresh second process is a no-op and emits a warning; inspect the returned `SaveResult`.
+- Event block fields (`trigger`, `immediate`, `mean_time_to_happen`, option `trigger`, `ai_chance`) are body strings. Pass `days = 1`, not `{ days = 1 }`; the SDK normalizes one accidental outer brace pair.
+- `create_country(capital=115)` writes only country history. It never transfers state ownership or adds cores. Use `set_state_owner()` / `add_state_core()` explicitly.
+- Raw effect strings are validated only for syntax and common footguns. Prefer helpers such as `effect_block()`, `scope_block()`, `Mod.effect_add_bunker()`, and `Mod.effect_declare_war_from()`.
+- Use `mod.find_state("Sicily")` and `mod.suggest_tag("Sicily")` instead of grepping vanilla files or guessing tags.
+- Use `with mod.transaction(): ... print(mod.preview())` for dry runs that restore in-memory state on exit.
 
 ## Configuration
 
@@ -81,8 +91,9 @@ if errors:
 # Preview changes as unified diff
 print(mod.preview())
 
-# Write to disk
-mod.save()
+# Write to disk and inspect what happened
+result = mod.save()
+print(result.written_files)
 
 # Or throw away changes
 # mod.discard()
@@ -91,9 +102,11 @@ mod.save()
 **Key points:**
 - `Mod()` loads country tags, focus trees, events, ideas, and localization eagerly. States are indexed but loaded lazily on first access via `get_state()`.
 - All `get_*` / `list_*` methods read from the in-memory cache.
-- `save()` writes only dirty sections, updates internal snapshots, and clears the dirty set.
+- `save()` writes only dirty sections, updates internal snapshots, clears the dirty set, and returns `SaveResult`.
+- `save()` on a clean `Mod` emits `RuntimeWarning` and returns `SaveResult(no_changes=True)`.
 - `discard()` clears all caches and reloads from disk.
 - `preview()` returns unified diffs against the last-saved or originally-loaded content.
+- `with mod.transaction():` is a dry-run context: mutate, call `preview()` inside the block, then in-memory state is restored unless `save=True`.
 - `hoi4_install` is optional — needed only for vanilla fallback (states, country definitions).
 - `mod.mod_root` (Path) — the mod directory path.
 - `mod.hoi4_install` (Path | None) — the vanilla HOI4 install path.
@@ -109,6 +122,8 @@ Country data spans 5 files: tag registration, definition (color/culture), histor
 | `list_countries() -> list[str]` | Sorted tag list | All loaded country tags |
 | `is_country_tag_available(tag: str) -> bool` | `bool` | False if the tag exists in the mod or vanilla install |
 | `country_tag_conflicts(tag: str) -> list[str]` | `list[str]` | Returns conflict sources: `"mod"`, `"vanilla"` |
+| `suggest_tag(name: str) -> str` | `str` | Pick an available 3-character tag from a country/place name |
+| `suggest_tags(name: str, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
 | `create_country(tag, name, adjective="", color=(128,128,128), capital=1, ruling_party="democratic", popularities=None, leader_name="Leader", leader_ideology="liberalism", ideas=None, overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader, caches, marks dirty. Raises `ValueError` for existing mod tags or vanilla tags unless explicitly allowed. |
 | `update_country(tag: str, **kwargs) -> bool` | `bool` | Update any Country/Leader field. Use `leader_name`, `leader_ideology` for leader. |
@@ -131,7 +146,10 @@ Check tag availability before inventing a new country tag:
 ```python
 if not mod.is_country_tag_available("SIC"):
     raise ValueError(f"SIC conflicts with: {mod.country_tag_conflicts('SIC')}")
+tag = mod.suggest_tag("Sicily")
 ```
+
+`create_country()` never changes state ownership, cores, controller, or capital state files. The `capital` argument only writes `capital = <state_id>` in `history/countries/{TAG} - {Name}.txt`.
 
 ### Country File Layout
 
@@ -154,6 +172,9 @@ State files live in `history/states/`. When accessing a state not in the mod, `g
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `list_states() -> list[int]` | Sorted state IDs | All loaded state IDs |
+| `state_index(include_vanilla=True) -> list[dict]` | `list[dict]` | Cached state metadata with `id`, `name`, `display_name`, `owner`, `path`, `source` |
+| `get_state_name_map(include_vanilla=True) -> dict[int, str]` | `dict[int,str]` | State ID to display name |
+| `find_state(query: str, include_vanilla=True, limit=10) -> list[dict]` | `list[dict]` | Search by ID, filename name, or state loc key |
 | `get_state(state_id: int) -> State` | `State` | Cached or reads from mod/vanilla. Raises `KeyError`. |
 | `set_state_owner(state_id: int, tag: str, add_core: bool = True) -> State` | `State` | Change owner, optionally add core |
 | `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field. List fields such as `cores` and `provinces` append unique values instead of replacing. |
@@ -168,6 +189,7 @@ mod.set_state_owner(52, "GER")
 mod.add_state_core(52, "AUT")
 mod.batch_set_owner([1, 2, 3], "SOV", add_core=True)
 mod.set_state_properties(52, manpower="5000000", victory_points="3620 1")
+print(mod.find_state("Sicily")[0]["id"])
 ```
 
 Loaded state files are patched through their original parsed content. Updating owner, cores, manpower, resources, buildings, or other modeled fields preserves unrelated vanilla data such as buildings, resources, local supplies, history bookmarks, resistance, and compliance blocks.
@@ -175,6 +197,13 @@ Loaded state files are patched through their original parsed content. Updating o
 ## Events
 
 Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`.
+
+Block fields are body strings. The SDK adds the outer braces:
+
+```python
+mod.create_event("sic.1", mean_time_to_happen="days = 1")      # correct
+mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to days = 1
+```
 
 ### Methods
 
@@ -294,6 +323,7 @@ Focus trees are collections of focuses. Each focus has a position (x, y), cost, 
 | `insert_focus_after(tree_id, anchor_focus_id, focus, add_prerequisite=True, relative_position=True) -> None` | `None` | Insert a focus after an existing focus and optionally wire prerequisite/relative positioning |
 | `insert_branch(tree_id, anchor_focus_id, focuses, chain_prerequisites=True) -> None` | `None` | Insert a vertical branch after an anchor focus |
 | `append_to_focus_reward(tree_id, focus_id, effect) -> bool` | `bool` | Append an effect to an existing focus reward |
+| `set_focuses_mutually_exclusive(tree_id, focus_a_id, focus_b_id) -> bool` | `bool` | Add reciprocal simple mutual exclusion groups |
 | `set_focus_loc(focus_id, name, description, file_path=None) -> None` | `None` | Set both focus name and description localization |
 | `create_industrial_branch(tree_id, tag, anchor_focus_id=None, state_id=None, grounded=True) -> list[Focus]` | `list[Focus]` | Generate a small grounded industrial branch with localization |
 
@@ -317,6 +347,15 @@ Focus(
 ```
 
 Multiple OR prerequisites: `prerequisites=[["GER_a", "GER_b"], ["GER_c"]]` means "(A OR B) AND C".
+
+For two mutually exclusive focuses, use one reciprocal single-focus group on each focus:
+
+```python
+mod.set_focuses_mutually_exclusive("west_focus", "WST_path_a", "WST_path_b")
+# Equivalent raw fields:
+# WST_path_a.mutually_exclusive == [["WST_path_b"]]
+# WST_path_b.mutually_exclusive == [["WST_path_a"]]
+```
 
 ### Example
 
@@ -811,6 +850,8 @@ Effect builders:
 Mod.effect_add_civilian_factory(8, 1)
 Mod.effect_add_military_factory(8, 1)
 Mod.effect_add_infrastructure(8, 1)
+Mod.effect_add_bunker(8, 3)
+Mod.effect_add_state_building(8, "bunker", level=3, province=1234)
 Mod.effect_add_state_core(8, "LUX")
 Mod.effect_remove_state_core(8, "GER")
 Mod.effect_add_industry_bonus("LUX_industry_bonus", uses=1, bonus=0.5)
@@ -818,12 +859,18 @@ Mod.effect_add_tech_bonus("LUX_rifle_bonus", category="infantry_weapons", uses=1
 Mod.effect_add_timed_idea("LUX_recovery_spirit", days=365)
 Mod.effect_create_wargoal("GER")
 Mod.effect_declare_war("GER")
+Mod.effect_declare_war_from("LUX", "GER")
 Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
+Mod.scope_block("LUX", Mod.effect_declare_war("GER"))
+Mod.effect_block("declare_war_on", {"type": "annex_everything", "target": "GER"})
+mod.validate_effect("LUX = { declare_war_on = { target = GER } }")
 ```
 
 ## Gotchas & Important Notes
 
 1. **Batched writes.** Nothing touches disk until `save()`. If the process crashes between mutations, no partial state is written. Call `save()` explicitly.
+
+1a. **Dirty state is process-local.** Mutate and save with the same `Mod` instance. A second Python process loading the mod from disk has no dirty changes to save. `save()` on a clean instance warns and returns `SaveResult(no_changes=True)`.
 
 2. **Eager loading.** `Mod()` reads all data on construction. If the mod directory is large, this takes a moment. Use `discard()` to re-read from disk if external changes occur.
 
@@ -843,7 +890,7 @@ Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
 
 10. **`manpower`, `victory_points`, `buildings`, and `history` are strings.** State fields that could be complex Paradox expressions are stored as raw strings.
 
-11. **Validation is advisory.** `validate()` returns errors but does not prevent `save()`. Check `severity == "error"` for critical issues.
+11. **Validation is advisory.** `validate()` returns errors but does not prevent `save()`. Check `severity == "error"` for critical issues. Raw effect validation catches syntax and common bad patterns, not every HOI4 semantic rule.
 
 12. **`preview()` only shows dirty sections.** If a module isn't in the dirty set (no mutations made), it won't appear in the diff. After `save()`, `preview()` returns empty.
 
@@ -856,6 +903,10 @@ Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
 16. **Core effects must be state-scoped.** In country-scope effects, bare `add_core_of = TAG` or `remove_core_of = TAG` applies across all owned states. Use `Mod.effect_add_state_core(state_id, tag)` or `state_id = { add_core_of = TAG }`.
 
 17. **Random events need namespace and firing rules.** `create_event("sic.1")` now infers `sic`, but validation still catches missing/mismatched namespaces in loaded files. Do not combine `is_triggered_only = yes` with `mean_time_to_happen` if you expect random firing.
+
+18. **Event block-body strings omit outer braces.** Pass `mean_time_to_happen="days = 1"`, not a full `mean_time_to_happen = { ... }` assignment. One accidental outer pair such as `"{ days = 1 }"` is normalized.
+
+19. **Scoped war effects.** `SCL = { declare_war_on = { type = annex_everything target = ITA } }` is the intended way to make SCL declare war from a third-country event option. Prefer `Mod.effect_declare_war_from("SCL", "ITA")`.
 
 ## Low-Level Parser
 

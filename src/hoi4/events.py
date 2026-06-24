@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from .parser import find_assignment_block, iter_assignment_blocks, strip_comments
+from .script import normalize_block_body
 from .types import Event, EventOption
 
 NAMESPACE_RE = re.compile(r"add_namespace\s*=\s*(\S+)")
@@ -162,24 +163,28 @@ def serialize_event(event: Event) -> str:
     if event.fire_only_once is not None:
         parts.append(f"\tfire_only_once = {'yes' if event.fire_only_once else 'no'}")
 
-    if event.trigger:
+    trigger = normalize_block_body(event.trigger)
+    immediate = normalize_block_body(event.immediate)
+    mean_time_to_happen = normalize_block_body(event.mean_time_to_happen)
+
+    if trigger:
         parts.append("")
         parts.append("\ttrigger = {")
-        for line in event.trigger.strip().split("\n"):
+        for line in trigger.split("\n"):
             parts.append(f"\t\t{line.strip()}")
         parts.append("\t}")
 
-    if event.immediate:
+    if immediate:
         parts.append("")
         parts.append("\timmediate = {")
-        for line in event.immediate.strip().split("\n"):
+        for line in immediate.split("\n"):
             parts.append(f"\t\t{line.strip()}")
         parts.append("\t}")
 
-    if event.mean_time_to_happen:
+    if mean_time_to_happen:
         parts.append("")
         parts.append("\tmean_time_to_happen = {")
-        for line in event.mean_time_to_happen.strip().split("\n"):
+        for line in mean_time_to_happen.split("\n"):
             parts.append(f"\t\t{line.strip()}")
         parts.append("\t}")
 
@@ -188,14 +193,16 @@ def serialize_event(event: Event) -> str:
         parts.append("\toption = {")
         if opt.name:
             parts.append(f"\t\tname = {opt.name}")
-        if opt.ai_chance:
+        ai_chance = normalize_block_body(opt.ai_chance)
+        trigger = normalize_block_body(opt.trigger)
+        if ai_chance:
             parts.append("\t\tai_chance = {")
-            for line in opt.ai_chance.strip().split("\n"):
+            for line in ai_chance.split("\n"):
                 parts.append(f"\t\t\t{line.strip()}")
             parts.append("\t\t}")
-        if opt.trigger:
+        if trigger:
             parts.append("\t\ttrigger = {")
-            for line in opt.trigger.strip().split("\n"):
+            for line in trigger.split("\n"):
                 parts.append(f"\t\t\t{line.strip()}")
             parts.append("\t\t}")
         if opt.effect:

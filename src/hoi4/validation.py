@@ -7,6 +7,8 @@ from __future__ import annotations
 import re
 
 from .effects_catalog import TECHNOLOGY_CATEGORIES
+from .parser import iter_assignment_blocks
+from .script import validate_script_syntax
 from .types import Country, Event, FocusTree, Idea, State, ValidationError
 
 TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
@@ -19,10 +21,20 @@ def _script_warnings(
     file_path: str | None = None,
     focus_id: str | None = None,
     event_id: str | None = None,
+    known_tags: set[str] | None = None,
 ) -> list[ValidationError]:
     errors: list[ValidationError] = []
     if not script:
         return errors
+
+    for issue in validate_script_syntax(script):
+        errors.append(ValidationError(
+            message=f"Script syntax issue: {issue}",
+            severity="error",
+            file_path=file_path,
+            focus_id=focus_id,
+            event_id=event_id,
+        ))
 
     for effect_name in ("add_core_of", "remove_core_of"):
         if re.search(rf"(?m)^\s*{effect_name}\s*=", script):
@@ -45,6 +57,36 @@ def _script_warnings(
                     message=(
                         f"Unknown add_tech_bonus category '{category}'. Common valid categories: {examples}."
                     ),
+                    severity="warning",
+                    file_path=file_path,
+                    focus_id=focus_id,
+                    event_id=event_id,
+                ))
+
+    for effect_name in ("declare_war_on", "create_wargoal"):
+        for body, _, _ in iter_assignment_blocks(script, effect_name):
+            if not re.search(r"\btarget\s*=", body):
+                errors.append(ValidationError(
+                    message=f"'{effect_name}' is missing required target = TAG",
+                    severity="error",
+                    file_path=file_path,
+                    focus_id=focus_id,
+                    event_id=event_id,
+                ))
+            if not re.search(r"\btype\s*=", body):
+                errors.append(ValidationError(
+                    message=f"'{effect_name}' is missing required type = <wargoal_type>",
+                    severity="warning",
+                    file_path=file_path,
+                    focus_id=focus_id,
+                    event_id=event_id,
+                ))
+
+    if known_tags is not None:
+        for tag in re.findall(r"(?m)^\s*([A-Z][A-Z0-9]{2})\s*=\s*\{", script):
+            if tag not in known_tags:
+                errors.append(ValidationError(
+                    message=f"Script scopes into unknown country tag '{tag}'",
                     severity="warning",
                     file_path=file_path,
                     focus_id=focus_id,
@@ -139,6 +181,7 @@ def validate_focus_tree(
     tree: FocusTree,
     known_focus_ids: set[str] | None = None,
     known_state_ids: set[int] | None = None,
+    known_tags: set[str] | None = None,
 ) -> list[ValidationError]:
     errors: list[ValidationError] = []
     local_ids = {f.id for f in tree.focuses}
@@ -248,6 +291,7 @@ def validate_focus_tree(
             script,
             file_path=str(tree.path) if tree.path else None,
             focus_id=focus.id,
+            known_tags=known_tags,
         ))
 
     return errors
@@ -291,7 +335,11 @@ def validate_state(
     return errors
 
 
-def validate_event(event: Event, namespace: str | None | object = _UNSET) -> list[ValidationError]:
+def validate_event(
+    event: Event,
+    namespace: str | None | object = _UNSET,
+    known_tags: set[str] | None = None,
+) -> list[ValidationError]:
     errors: list[ValidationError] = []
 
     if not event.id:
@@ -363,6 +411,7 @@ def validate_event(event: Event, namespace: str | None | object = _UNSET) -> lis
         effect_script,
         file_path=str(event.path) if event.path else None,
         event_id=event.id,
+        known_tags=known_tags,
     ))
 
     if event.immediate and "declare_war_on" in event.immediate:

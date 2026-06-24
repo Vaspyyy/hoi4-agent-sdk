@@ -4,7 +4,7 @@ import json
 import pytest
 
 from hoi4 import Mod, Focus, Country, State, Event, EventOption, Idea, Leader
-from hoi4 import TECHNOLOGY_CATEGORIES
+from hoi4 import TECHNOLOGY_CATEGORIES, effect_block, scope_block
 from hoi4.config import Config, find_config
 from hoi4.validation import validate_focus_tree, validate_country, validate_state, validate_event, validate_idea
 from hoi4.types import FocusTree
@@ -126,6 +126,12 @@ class TestModSave:
 
         mod2 = Mod(tmp_mod.root)
         assert mod2.get_loc("SAVED_KEY") == "Saved Value"
+
+    def test_save_no_changes_warns_and_reports_noop(self, tmp_mod):
+        with pytest.warns(RuntimeWarning, match="no dirty changes"):
+            result = tmp_mod.mod.save()
+        assert result.no_changes is True
+        assert result.written_files == []
 
     def test_discard_reverts_changes(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
@@ -501,6 +507,7 @@ class TestPass2Fixes:
     def test_event_round_trip(self, tmp_mod):
         mod = tmp_mod.with_events()
         evt = mod.get_event("mymod.1.1")
+        mod.update_event("mymod.1.1", title=evt.title)
         mod.save()
         mod2 = Mod(tmp_mod.root)
         evt2 = mod2.get_event("mymod.1.1")
@@ -566,9 +573,14 @@ class TestAgentFacingApis:
     def test_war_effect_helpers(self):
         assert Mod.effect_create_wargoal("fra") == "create_wargoal = { type = annex_everything target = FRA }"
         assert Mod.effect_declare_war("ger") == "declare_war_on = { type = annex_everything target = GER }"
+        assert Mod.effect_declare_war_from("scl", "ita") == "SCL = { declare_war_on = { type = annex_everything target = ITA } }"
         assert "start_civil_war" in Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
         assert Mod.effect_add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
         assert Mod.effect_remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
+        assert "type = bunker" in Mod.effect_add_bunker(115, level=3)
+        assert scope_block("SCL", effect_block("declare_war_on", {"type": "annex_everything", "target": "ITA"})) == (
+            "SCL = { declare_war_on = { type = annex_everything target = ITA } }"
+        )
 
     def test_tech_bonus_helper_validates_categories(self):
         assert "infantry_weapons" in TECHNOLOGY_CATEGORIES
@@ -581,6 +593,24 @@ class TestAgentFacingApis:
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         assert mod.update_focus_tree("german_focus", continuous_focus_position="x = 0 y = 1000")
         assert mod.get_focus_tree("german_focus").continuous_focus_position == "x = 0 y = 1000"
+
+    def test_set_focuses_mutually_exclusive_sets_reciprocal_single_groups(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_focus_tree("alt_focus", "ALT")
+        mod.add_focus("alt_focus", Focus(id="ALT_a"))
+        mod.add_focus("alt_focus", Focus(id="ALT_b", x=1))
+        assert mod.set_focuses_mutually_exclusive("alt_focus", "ALT_a", "ALT_b")
+        assert mod.get_focus("alt_focus", "ALT_a").mutually_exclusive == [["ALT_b"]]
+        assert mod.get_focus("alt_focus", "ALT_b").mutually_exclusive == [["ALT_a"]]
+
+    def test_transaction_dry_run_restores_in_memory_state(self, tmp_mod):
+        mod = tmp_mod.mod
+        with mod.transaction():
+            mod.create_focus_tree("dry_focus", "DRY")
+            assert "dry_focus" in mod.list_focus_trees()
+            assert "common/national_focus/DRY_focus.txt" in mod.preview()
+        assert "dry_focus" not in mod.list_focus_trees()
+        assert mod.preview() == ""
 
     def test_get_country_context_can_copy_states(self, tmp_path):
         mod_root = tmp_path / "mod"
@@ -639,6 +669,20 @@ class TestModCountries:
             mod.create_country("SIC", "Sicily")
         country = mod.create_country("SIC", "Sicily", allow_vanilla_override=True)
         assert country.tag == "SIC"
+
+    def test_suggest_tag_avoids_mod_and_vanilla_conflicts(self, tmp_path):
+        mod_root = tmp_path / "mod"
+        hoi4_root = tmp_path / "hoi4"
+        (hoi4_root / "common" / "country_tags").mkdir(parents=True)
+        (hoi4_root / "common" / "country_tags" / "00_countries.txt").write_text(
+            'SIC = "countries/Sichuan.txt"\nSRD = "countries/Sardinia.txt"\n',
+            encoding="utf-8",
+        )
+        mod = Mod(mod_root, hoi4_install=hoi4_root)
+        mod.create_country("SCY", "Taken")
+        suggestion = mod.suggest_tag("Sicily")
+        assert suggestion not in {"SIC", "SCY", "SRD"}
+        assert len(suggestion) == 3
 
     def test_get_country(self, tmp_mod):
         mod = tmp_mod.with_country("WST")
@@ -713,6 +757,22 @@ class TestModStates:
         state = mod.get_state(1)
         assert state.manpower == "9999999"
 
+    def test_find_state_by_vanilla_filename_name(self, tmp_path):
+        mod_root = tmp_path / "mod"
+        hoi4_root = tmp_path / "hoi4"
+        states_dir = hoi4_root / "history" / "states"
+        states_dir.mkdir(parents=True)
+        states_dir.joinpath("115-Sicily.txt").write_text(
+            "state = { id = 115 name = STATE_115 manpower = 1 state_category = town "
+            "provinces = { 1 } history = { owner = ITA add_core_of = ITA } }",
+            encoding="utf-8",
+        )
+        mod = Mod(mod_root, hoi4_install=hoi4_root)
+        matches = mod.find_state("Sicily")
+        assert matches[0]["id"] == 115
+        assert matches[0]["display_name"] == "Sicily"
+        assert matches[0]["source"] == "vanilla"
+
     def test_set_state_properties_appends_cores(self, tmp_mod):
         mod = tmp_mod.with_states()
         original = list(mod.get_state(1).cores)
@@ -781,6 +841,15 @@ class TestModEvents:
         assert "add_namespace = sic" in content
         assert "id = sic.1" in content
 
+    def test_create_event_normalizes_wrapped_mean_time_to_happen(self, tmp_mod):
+        mod = tmp_mod.mod
+        event = mod.create_event("sic.1", mean_time_to_happen="{ days = 1 }")
+        assert event.mean_time_to_happen == "days = 1"
+        mod.save()
+        content = (tmp_mod.root / "events" / "sic_events.txt").read_text(encoding="utf-8")
+        assert "mean_time_to_happen = {\n\t\tdays = 1\n\t}" in content
+        assert "{ days = 1 }" not in content
+
     def test_create_event_with_options(self, tmp_mod):
         mod = tmp_mod.mod
         opts = [EventOption(name="test.1.a", effect="add_pp = 100")]
@@ -823,6 +892,17 @@ class TestModEvents:
         messages = [e.message for e in mod.validate()]
         assert any("is_triggered_only but also has mean_time_to_happen" in message for message in messages)
         assert any("declares war in immediate" in message for message in messages)
+
+    def test_validate_effect_catches_braces_and_declare_war_shape(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_country("SCL", "Sicily")
+        mod.create_country("ITA", "Italy")
+        errors = mod.validate_effect("SCL = { declare_war_on = { target = ITA } }")
+        assert any("missing required type" in error.message for error in errors)
+        assert not any("unknown country tag 'SCL'" in error.message for error in errors)
+        assert mod.validate_effect(Mod.effect_declare_war_from("SCL", "ITA")) == []
+        brace_errors = mod.validate_effect("SCL = { declare_war_on = { target = ITA }")
+        assert any("Script syntax issue" in error.message for error in brace_errors)
 
     def test_update_event(self, tmp_mod):
         mod = tmp_mod.with_events()

@@ -14,8 +14,13 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import dataclasses
+import re
+import warnings
+from contextlib import contextmanager
 from pathlib import Path
+from difflib import SequenceMatcher
 from typing import Optional
 
 from .config import find_config
@@ -39,6 +44,7 @@ from .states import (
     serialize_state,
     write_state,
 )
+from .script import effect_block, normalize_block_body, scope_block
 from .tags import load_all_tags, load_mod_tags, load_vanilla_tags
 from .types import (
     Country,
@@ -50,6 +56,7 @@ from .types import (
     FocusTree,
     Idea,
     Leader,
+    SaveResult,
     State,
     ValidationError,
 )
@@ -83,6 +90,16 @@ def _append_unique(existing: list, values: list) -> list:
         if value not in out:
             out.append(value)
     return out
+
+
+def _normalize_event_option(option: EventOption) -> EventOption:
+    option.trigger = normalize_block_body(option.trigger)
+    option.ai_chance = normalize_block_body(option.ai_chance)
+    return option
+
+
+def _normalize_name_token(name: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", name.upper())
 
 
 class Mod:
@@ -268,6 +285,49 @@ class Mod:
             conflicts.append("vanilla")
         return conflicts
 
+    def suggest_tag(self, name: str) -> str:
+        suggestions = self.suggest_tags(name, count=1)
+        if not suggestions:
+            raise ValueError("No available 3-character country tags remain")
+        return suggestions[0]
+
+    def suggest_tags(self, name: str, count: int = 5) -> list[str]:
+        taken = set(self._countries) | self._vanilla_tags
+        token = _normalize_name_token(name)
+        candidates: list[str] = []
+
+        def add(candidate: str) -> None:
+            candidate = _normalize_name_token(candidate)[:3]
+            if len(candidate) == 3 and candidate not in candidates and candidate not in taken:
+                candidates.append(candidate)
+
+        if len(token) >= 3:
+            add(token[:3])
+            consonants = "".join(ch for ch in token if ch not in "AEIOU")
+            if len(consonants) >= 3:
+                add(consonants[:3])
+            add(token[0] + token[1] + token[-1])
+            add(token[0] + token[-2:])
+            for i in range(1, len(token) - 1):
+                add(token[0] + token[i] + token[-1])
+            for i in range(len(token) - 2):
+                add(token[i:i + 3])
+
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        prefix = token[:1] or "X"
+        for second in alphabet:
+            for third in alphabet:
+                add(prefix + second + third)
+                if len(candidates) >= count:
+                    return candidates[:count]
+        for first in alphabet:
+            for second in alphabet:
+                for third in alphabet:
+                    add(first + second + third)
+                    if len(candidates) >= count:
+                        return candidates[:count]
+        return candidates[:count]
+
     def get_country(self, tag: str) -> Country:
         tag = tag.upper()
         if tag in self._countries:
@@ -378,6 +438,56 @@ class Mod:
         all_ids = set(self._state_ids) | set(self._states.keys())
         return sorted(all_ids)
 
+    def state_index(self, include_vanilla: bool = True) -> list[dict]:
+        entries: list[dict] = []
+        for source, base in [("mod", self.mod_root), ("vanilla", self.hoi4_install)]:
+            if base is None:
+                continue
+            if source == "vanilla" and not include_vanilla:
+                continue
+            states_dir = base / "history" / "states"
+            for entry in build_state_index(states_dir):
+                item = dict(entry)
+                item["source"] = source
+                entries.append(item)
+        by_id: dict[int, dict] = {}
+        for entry in entries:
+            if entry["id"] not in by_id or entry["source"] == "mod":
+                by_id[entry["id"]] = entry
+        return sorted(by_id.values(), key=lambda item: item["id"])
+
+    def get_state_name_map(self, include_vanilla: bool = True) -> dict[int, str]:
+        return {
+            entry["id"]: entry.get("display_name") or entry.get("name") or str(entry["id"])
+            for entry in self.state_index(include_vanilla=include_vanilla)
+        }
+
+    def find_state(self, query: str, include_vanilla: bool = True, limit: int = 10) -> list[dict]:
+        needle = query.strip().lower()
+        if not needle:
+            return []
+        scored: list[tuple[float, dict]] = []
+        for entry in self.state_index(include_vanilla=include_vanilla):
+            haystacks = [
+                str(entry.get("id", "")),
+                str(entry.get("name", "")),
+                str(entry.get("display_name", "")),
+                Path(str(entry.get("path", ""))).stem,
+            ]
+            best = 0.0
+            for haystack in haystacks:
+                text = haystack.lower()
+                if text == needle:
+                    best = max(best, 1.0)
+                elif needle in text:
+                    best = max(best, 0.85)
+                else:
+                    best = max(best, SequenceMatcher(None, needle, text).ratio())
+            if best >= 0.45:
+                scored.append((best, entry))
+        scored.sort(key=lambda item: (-item[0], item[1]["id"]))
+        return [entry for _, entry in scored[:limit]]
+
     def get_state(self, state_id: int) -> State:
         if state_id in self._states:
             return self._states[state_id]
@@ -466,10 +576,10 @@ class Mod:
             picture=picture,
             is_triggered_only=is_triggered_only,
             fire_only_once=fire_only_once,
-            trigger=trigger,
-            immediate=immediate,
-            mean_time_to_happen=mean_time_to_happen,
-            options=options or [EventOption(name=f"{event_id}.a", effect="")],
+            trigger=normalize_block_body(trigger),
+            immediate=normalize_block_body(immediate),
+            mean_time_to_happen=normalize_block_body(mean_time_to_happen),
+            options=[_normalize_event_option(option) for option in (options or [EventOption(name=f"{event_id}.a", effect="")])],
         )
         self._events[event_id] = event
         self._event_namespaces[event_id] = _infer_event_namespace(event_id)
@@ -482,6 +592,11 @@ class Mod:
         if event is None:
             return False
         event.raw_block = ""
+        for key in ("trigger", "immediate", "mean_time_to_happen"):
+            if key in kwargs and isinstance(kwargs[key], str):
+                kwargs[key] = normalize_block_body(kwargs[key])
+        if "options" in kwargs and isinstance(kwargs["options"], list):
+            kwargs["options"] = [_normalize_event_option(option) for option in kwargs["options"]]
         _set_fields(event, kwargs)
         self._dirty.add("events")
         self._dirty_events.add(event_id)
@@ -507,7 +622,7 @@ class Mod:
         if event is None:
             return False
         event.raw_block = ""
-        event.options.append(option)
+        event.options.append(_normalize_event_option(option))
         self._dirty.add("events")
         self._dirty_events.add(event_id)
         return True
@@ -793,6 +908,21 @@ class Mod:
         self._dirty_focus_trees.add(tree_id)
         return True
 
+    def set_focuses_mutually_exclusive(self, tree_id: str, focus_a_id: str, focus_b_id: str) -> bool:
+        focus_a = self.get_focus(tree_id, focus_a_id)
+        focus_b = self.get_focus(tree_id, focus_b_id)
+        if focus_a is None or focus_b is None:
+            return False
+        if [focus_b_id] not in focus_a.mutually_exclusive:
+            focus_a.mutually_exclusive.append([focus_b_id])
+        if [focus_a_id] not in focus_b.mutually_exclusive:
+            focus_b.mutually_exclusive.append([focus_a_id])
+        focus_a.touched = True
+        focus_b.touched = True
+        self._dirty.add("focus")
+        self._dirty_focus_trees.add(tree_id)
+        return True
+
     def set_focus_loc(
         self,
         focus_id: str,
@@ -814,6 +944,36 @@ class Mod:
             "}"
         )
 
+    @staticmethod
+    def effect_block(name: str, fields: dict[str, object] | None = None, **kwargs: object) -> str:
+        return effect_block(name, fields, **kwargs)
+
+    @staticmethod
+    def scope_block(scope: str | int, *effects: str) -> str:
+        return scope_block(scope, *effects)
+
+    @staticmethod
+    def effect_add_state_building(
+        state_id: int,
+        building_type: str,
+        level: int = 1,
+        *,
+        add_slots: int = 0,
+        province: int | None = None,
+    ) -> str:
+        fields: dict[str, object] = {
+            "type": building_type,
+            "level": level,
+            "instant_build": True,
+        }
+        if province is not None:
+            fields["province"] = province
+        effects: list[str] = []
+        if add_slots:
+            effects.append(f"add_extra_state_shared_building_slots = {add_slots}")
+        effects.append(effect_block("add_building_construction", fields))
+        return scope_block(state_id, *effects)
+
     @classmethod
     def effect_add_civilian_factory(cls, state_id: int, level: int = 1) -> str:
         return cls.effect_add_building(state_id, "industrial_complex", level)
@@ -831,6 +991,14 @@ class Mod:
             "} "
             "}"
         )
+
+    @classmethod
+    def effect_add_bunker(cls, state_id: int, level: int = 1, province: int | None = None) -> str:
+        return cls.effect_add_state_building(state_id, "bunker", level, province=province)
+
+    @classmethod
+    def effect_add_coastal_bunker(cls, state_id: int, level: int = 1, province: int | None = None) -> str:
+        return cls.effect_add_state_building(state_id, "coastal_bunker", level, province=province)
 
     @staticmethod
     def effect_add_tech_bonus(
@@ -872,6 +1040,15 @@ class Mod:
     def effect_declare_war(target: str, war_goal_type: str = "annex_everything") -> str:
         return f"declare_war_on = {{ type = {war_goal_type} target = {target.upper()} }}"
 
+    @classmethod
+    def effect_declare_war_from(
+        cls,
+        actor: str,
+        target: str,
+        war_goal_type: str = "annex_everything",
+    ) -> str:
+        return cls.scope_block(actor.upper(), cls.effect_declare_war(target, war_goal_type))
+
     @staticmethod
     def effect_start_civil_war(ideology: str, size: float = 0.5, capital: int | None = None) -> str:
         parts = [f"ideology = {ideology}", f"size = {size}"]
@@ -887,6 +1064,14 @@ class Mod:
 
     def start_civil_war(self, ideology: str, size: float = 0.5, capital: int | None = None) -> str:
         return self.effect_start_civil_war(ideology, size, capital)
+
+    def validate_effect(self, script: str) -> list[ValidationError]:
+        known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
+        known_tags.update(self._countries.keys())
+        probe = Event(id="effect_probe.1", title="Effect Probe", description="Effect Probe", options=[
+            EventOption(name="effect_probe.1.a", effect=script),
+        ])
+        return validate_event(probe, namespace="effect_probe", known_tags=known_tags)
 
     def create_industrial_branch(
         self,
@@ -1103,7 +1288,7 @@ class Mod:
             errors.extend(validate_state(state, known_tags))
 
         for event_id, event in self._events.items():
-            errors.extend(validate_event(event, namespace=self._event_namespaces.get(event_id)))
+            errors.extend(validate_event(event, namespace=self._event_namespaces.get(event_id), known_tags=known_tags))
 
         for idea in self._ideas.values():
             errors.extend(validate_idea(idea))
@@ -1121,6 +1306,7 @@ class Mod:
                 tree,
                 known_focus_ids=all_focus_ids,
                 known_state_ids=known_state_ids if known_state_ids else None,
+                known_tags=known_tags,
             )
             errors.extend(tree_errors)
 
@@ -1233,7 +1419,14 @@ class Mod:
 
         return "\n".join(diffs)
 
-    def save(self) -> None:
+    def save(self) -> SaveResult:
+        if not self._dirty:
+            warnings.warn("save() called with no dirty changes; no files were written", RuntimeWarning, stacklevel=2)
+            return SaveResult(written_files=[], dirty_sections=[], no_changes=True)
+
+        dirty_sections = sorted(self._dirty)
+        written_files: list[Path] = []
+
         if "countries" in self._dirty:
             for tag in self._dirty_countries:
                 country = self._countries.get(tag)
@@ -1243,6 +1436,7 @@ class Mod:
                 self._sync_country_loc(country)
                 for path, content in serialize_country_files(self.mod_root, country).items():
                     self._original_files[path] = content
+                    written_files.append(path)
 
         if "states" in self._dirty:
             for sid in self._dirty_states:
@@ -1252,17 +1446,20 @@ class Mod:
                 path = write_state(self.mod_root, state)
                 state.path = path
                 self._original_files[path] = serialize_state(state)
+                written_files.append(path)
 
         if "events" in self._dirty:
             file_events, file_ns = self._group_events_by_file(dirty_only=True)
             for path, events in file_events.items():
                 write_events_file(path, file_ns.get(path), events)
                 self._original_files[path] = serialize_events_file(file_ns.get(path), events)
+                written_files.append(path)
 
         if "decisions" in self._dirty:
             for path, categories in self._group_decisions_by_file(dirty_only=True).items():
                 write_decisions_file(path, categories)
                 self._original_files[path] = serialize_decisions_file(categories)
+                written_files.append(path)
 
         if "ideas" in self._dirty:
             file_ideas = self._group_ideas_by_file(dirty_only=True)
@@ -1272,6 +1469,7 @@ class Mod:
                     container = "ideas" if path.parent.name == "ideas" else "country_ideas"
                 write_ideas_file(path, ideas, container_name=container)
                 self._original_files[path] = serialize_ideas_file(ideas, container_name=container)
+                written_files.append(path)
 
         if "focus" in self._dirty:
             for tree_id in self._dirty_focus_trees:
@@ -1281,12 +1479,14 @@ class Mod:
                 path = write_focus_tree(tree, self.mod_root)
                 tree.path = path
                 self._original_files[path] = serialize_focus_tree(tree)
+                written_files.append(path)
 
         if "localization" in self._dirty:
             file_entries = self._group_loc_by_file(dirty_only=True)
             for path, entries in file_entries.items():
                 write_localization_file(path, entries)
                 self._original_files[path] = serialize_localization_file(entries)
+                written_files.append(path)
 
         self._dirty.clear()
         self._dirty_loc_keys.clear()
@@ -1296,6 +1496,31 @@ class Mod:
         self._dirty_events.clear()
         self._dirty_decision_categories.clear()
         self._dirty_ideas.clear()
+
+        return SaveResult(
+            written_files=sorted(set(written_files)),
+            dirty_sections=dirty_sections,
+            no_changes=not written_files,
+        )
+
+    @contextmanager
+    def transaction(self, *, save: bool = False):
+        """Temporarily mutate the mod, then save or restore in-memory state.
+
+        Use ``with mod.transaction():`` for dry runs that call ``preview()`` inside
+        the block. On normal exit the transaction is discarded unless
+        ``save=True`` is passed. On exceptions, in-memory state is restored.
+        """
+        snapshot = self._snapshot()
+        try:
+            yield self
+            if save:
+                self.save()
+            else:
+                self._restore(snapshot)
+        except Exception:
+            self._restore(snapshot)
+            raise
 
     def discard(self) -> None:
         self._countries.clear()
@@ -1319,6 +1544,37 @@ class Mod:
         self._original_files.clear()
         self._dirty.clear()
         self._load()
+
+    def _snapshot(self) -> dict[str, object]:
+        keys = [
+            "_focus_trees",
+            "_dirty_focus_trees",
+            "_countries",
+            "_dirty_countries",
+            "_states",
+            "_state_ids",
+            "_dirty_states",
+            "_events",
+            "_event_namespaces",
+            "_dirty_events",
+            "_decisions",
+            "_decision_categories",
+            "_dirty_decision_categories",
+            "_ideas",
+            "_dirty_ideas",
+            "_idea_file_containers",
+            "_cached_idea_file",
+            "_loc_entries",
+            "_loc_sources",
+            "_dirty_loc_keys",
+            "_original_files",
+            "_dirty",
+        ]
+        return {key: copy.deepcopy(getattr(self, key)) for key in keys}
+
+    def _restore(self, snapshot: dict[str, object]) -> None:
+        for key, value in snapshot.items():
+            setattr(self, key, value)
 
     def _sync_country_loc(self, country: Country) -> None:
         name = country.name or country.tag

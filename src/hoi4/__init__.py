@@ -14,6 +14,7 @@ Usage:
 from .mod import Mod
 from .config import Config, find_config
 from .parser import PdxNode, parse_pdx, serialize_pdx
+from .script import effect_block, normalize_block_body, pdx_value, scope_block, validate_script_syntax
 from .types import (
     Country,
     Decision,
@@ -24,6 +25,7 @@ from .types import (
     FocusTree,
     Idea,
     Leader,
+    SaveResult,
     State,
     ValidationError,
 )
@@ -49,11 +51,17 @@ __all__ = [
     "FocusTree",
     "Idea",
     "Leader",
+    "SaveResult",
     "State",
     "ValidationError",
     "PdxNode",
     "parse_pdx",
     "serialize_pdx",
+    "effect_block",
+    "normalize_block_body",
+    "pdx_value",
+    "scope_block",
+    "validate_script_syntax",
     "EFFECT_CATEGORIES",
     "TECHNOLOGY_CATEGORIES",
     "MODIFIER_CATEGORIES",

@@ -16,6 +16,7 @@ from .parser import PdxNode, find_assignment_block, parse_pdx, serialize_pdx
 from .types import State
 
 STATE_ID_RE = re.compile(r"\bid\s*=\s*(\d+)")
+STATE_NAME_RE = re.compile(r"\bname\s*=\s*\"?([^\"\s}]+)\"?")
 OWNER_RE = re.compile(r"\bowner\s*=\s*([A-Z0-9]{3})")
 
 
@@ -364,5 +365,19 @@ def build_state_index(states_dir: Path) -> list[dict]:
             continue
         sid = int(mid.group(1))
         owner_m = OWNER_RE.search(txt)
-        out.append({"id": sid, "owner": owner_m.group(1) if owner_m else None})
+        name_m = STATE_NAME_RE.search(txt)
+        filename_name = _state_name_from_filename(f, sid)
+        out.append({
+            "id": sid,
+            "name": name_m.group(1) if name_m else "",
+            "display_name": filename_name or (name_m.group(1) if name_m else ""),
+            "owner": owner_m.group(1) if owner_m else None,
+            "path": str(f),
+        })
     return out
+
+
+def _state_name_from_filename(path: Path, state_id: int) -> str:
+    stem = path.stem
+    name = re.sub(rf"^\s*{state_id}\s*[-_\s]*", "", stem).strip()
+    return name

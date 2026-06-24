@@ -100,6 +100,17 @@ class ValidationError:
 
 
 @dataclass
+class SaveResult:
+    written_files: list[Path] = field(default_factory=list)
+    dirty_sections: list[str] = field(default_factory=list)
+    no_changes: bool = False
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.written_files)
+
+
+@dataclass
 class EventOption:
     name: str = ""
     trigger: str = ""
