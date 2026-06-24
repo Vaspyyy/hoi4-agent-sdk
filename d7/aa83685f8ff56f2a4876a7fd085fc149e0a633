@@ -1,0 +1,39 @@
+src/hoi4/__init__.py
+  s_318419a5e355fc::t_afd33ce4b57e5c 32,36,58
+AGENTS.md
+  s_318419a5e355fc::t_5d9bf5af0fe1df 557,563,567-585
+  s_318419a5e355fc::t_6dff7931857a94 806-807,809
+  s_318419a5e355fc::t_a1e67d2cda57a6 17,102-103,105,121-127,169,177,192
+  s_318419a5e355fc::t_c01d96b3e66ab7 830,844-850
+  s_318419a5e355fc::t_f23d0cfb5d477f 368,370,372
+tests/test_mod.py
+  s_318419a5e355fc::t_b450a17510dde1 7,570-578,621-642,775-783,800-825
+tests/test_countries.py
+  s_318419a5e355fc::t_a4e47bf6c193d3 99-110
+src/hoi4/validation.py
+  s_318419a5e355fc::t_90afbce22c51ed 13,294,333-348
+  s_318419a5e355fc::t_90f17eb9800c2e 227-234,247-251
+  s_318419a5e355fc::t_d7c4aa4be00874 9,16-54,349-377
+src/hoi4/effects_catalog.py
+  s_318419a5e355fc::t_a2767259fa9cb7 10-119,241-242,282,285-292
+src/hoi4/mod.py
+  s_318419a5e355fc::t_567576162d24d1 26,42,59-67,119,294-295,298-307,475,836-861
+  s_318419a5e355fc::t_0f13c98a9fe7ab 258-270
+  s_318419a5e355fc::t_0f4396a71a8afe 1105-1106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.11",
+  "base_commit_sha": "d7aa83685f8ff56f2a4876a7fd085fc149e0a633",
+  "prompts": {},
+  "sessions": {
+    "s_318419a5e355fc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ef6ef-7409-7ba3-b58e-2aadc0b67d4e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Vaspyyy <lolbautz2@gmail.com>"
+    }
+  }
+}
