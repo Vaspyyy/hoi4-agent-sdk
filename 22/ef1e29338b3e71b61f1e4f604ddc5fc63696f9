@@ -1,0 +1,30 @@
+docs/api.md
+  s_318419a5e355fc::t_2c3ad4ef363d34 1-404
+docs/models.md
+  s_318419a5e355fc::t_2c3ad4ef363d34 1-129
+docs/recipes.md
+  s_318419a5e355fc::t_2c3ad4ef363d34 1-184
+docs/catalogs.md
+  s_318419a5e355fc::t_2c3ad4ef363d34 1-72
+AGENTS.md
+  s_318419a5e355fc::t_bd8ccf7f08c0d6 10,33,71,85,87,102,122,124
+  s_318419a5e355fc::t_2c3ad4ef363d34 1,3,5,7,13,17,22,25-26,29,31,37-38,41,43,46,48,50-51,53-54,56,58-61,63,66-68,74-76,79,81,83,89,91-93,95,97-100,104,106-110,112,114-116,118,120,126,128,130,132-136,138
+docs/internals/parser.md
+  s_318419a5e355fc::t_2c3ad4ef363d34 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.11",
+  "base_commit_sha": "22ef1e29338b3e71b61f1e4f604ddc5fc63696f9",
+  "prompts": {},
+  "sessions": {
+    "s_318419a5e355fc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ef6ef-7409-7ba3-b58e-2aadc0b67d4e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Vaspyyy <lolbautz2@gmail.com>"
+    }
+  }
+}
