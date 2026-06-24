@@ -51,7 +51,8 @@ Country(tag: str, name: str = "", adjective: str = "",
         popularities: dict[str,int] = {},  # Auto-fills if empty
         elections_allowed: bool = True,
         leader: Leader | None = None,
-        ideas: list[str] = [])
+        ideas: list[str] = [],
+        research_slots: int | None = None)
 ```
 
 ### Leader
@@ -117,6 +118,15 @@ Event(id: str, title: str = "", description: str = "",
 ```python
 EventOption(name: str = "", trigger: str = "", effect: str = "",
             ai_chance: str = "")
+```
+
+### OnAction
+```python
+OnAction(id: str,
+         effect: str = "",
+         events: list[str] = [],
+         random_events: list[str] = [],
+         path: Path | None = None)
 ```
 
 ### Idea

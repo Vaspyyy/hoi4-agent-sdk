@@ -133,11 +133,7 @@ def _extract_options(chunk: str) -> list[EventOption]:
                 continue
             lines.append(stripped)
         effect_text = "\n".join(lines).strip()
-        if effect_text.startswith("{"):
-            effect_text = effect_text[1:].strip()
-        if effect_text.endswith("}"):
-            effect_text = effect_text[:-1].strip()
-        opt.effect = effect_text
+        opt.effect = normalize_block_body(effect_text)
 
         options.append(opt)
 

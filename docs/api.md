@@ -47,7 +47,7 @@ Country data spans 5 files: tag registration, definition (color/culture), histor
 | `suggest_tag(name: str) -> str` | `str` | Pick an available 3-character tag from a country/place name |
 | `suggest_tags(name: str, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
-| `create_country(tag, name, adjective="", color=(128,128,128), capital=1, ruling_party="democratic", popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader, caches, marks dirty. If omitted, `leader_ideology` is picked from `ruling_party`. Raises `ValueError` for existing mod tags or vanilla tags unless explicitly allowed. |
+| `create_country(tag, name, adjective="", color=(128,128,128), capital=1, research_slots=None, ruling_party="democratic", popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader, caches, marks dirty. If omitted, `leader_ideology` is picked from `ruling_party`. `research_slots` writes `set_research_slots = N`. Raises `ValueError` for existing mod tags or vanilla tags unless explicitly allowed. |
 | `update_country(tag: str, **kwargs) -> bool` | `bool` | Update any Country/Leader field. Use `leader_name`, `leader_ideology` for leader. |
 | `delete_country(tag: str) -> bool` | `bool` | Remove from cache |
 
@@ -55,7 +55,7 @@ Country data spans 5 files: tag registration, definition (color/culture), histor
 
 ```python
 mod.create_country("WST", "Westralia", adjective="Westralian",
-                   color=(59, 130, 246), capital=345,
+                   color=(59, 130, 246), capital=345, research_slots=3,
                    ruling_party="democratic",
                    popularities={"democratic": 60, "fascism": 20, "communism": 10, "neutrality": 10},
                    leader_name="John Curtin", leader_ideology="liberalism")
@@ -166,6 +166,32 @@ To replace an existing event loaded from disk, be explicit:
 ```python
 mod.create_event("my_mod.1", options=[...], overwrite=True)
 ```
+
+## On Actions
+
+On-actions live in `common/on_actions/*.txt` and are the usual way to register startup hooks or scheduled events.
+
+### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `list_on_actions() -> list[str]` | Sorted action IDs | Loaded on-action IDs |
+| `get_on_action(action_id: str) -> OnAction` | `OnAction` | Raises `KeyError` if not found |
+| `create_on_action(action_id, effect="", events=None, random_events=None, path=None, overwrite=False) -> OnAction` | `OnAction` | Creates an on-action. Raises if it exists unless `overwrite=True`. |
+| `update_on_action(action_id: str, **kwargs) -> bool` | `bool` | Update `effect`, `events`, `random_events`, or `path` |
+| `delete_on_action(action_id: str) -> bool` | `bool` | Remove from cache |
+
+### Example
+
+```python
+mod.create_on_action(
+    "on_startup",
+    effect=Mod.effect_schedule_country_event("sic.1", days=58, target="SCL"),
+)
+```
+
+This writes `common/on_actions/mod_on_actions.txt`.
+
 ## Decisions
 
 Decisions live in `common/decisions/*.txt` and are grouped by category.
@@ -207,9 +233,9 @@ Valid `event_type` values: `"country_event"`, `"state_event"`, `"news_event"`.
 Events without an explicit `path` write to `events/{namespace}_events.txt`. Events with no namespace write to `events/mod_events.txt`.
 ## Ideas
 
-Ideas (national spirits, advisors, etc.) store typed modifier dicts. Idea files are loaded from both `common/national_ideas/` and `common/ideas/`. Both `country_ideas = { }` and `ideas = { }` container formats are supported.
+Ideas (national spirits, advisors, etc.) store typed modifier dicts. Idea files are loaded from both legacy `common/national_ideas/` and current `common/ideas/`. Both `country_ideas = { }` and `ideas = { }` container formats are read.
 
-Without an explicit `path`, new ideas write to `common/national_ideas/mod_ideas.txt`. To write to a country's existing idea file (e.g., `common/ideas/luxembourg.txt`), pass the `path` parameter.
+Without an explicit `path`, new ideas write to `common/ideas/{TAG}_ideas.txt` when the idea ID starts with a 3-letter tag, otherwise `common/ideas/mod_ideas.txt`. New ideas default to `category="country"`, producing current-HOI4 `ideas = { country = { ... } }`. Pass `category="political_advisor"` or similar for advisors/designers.
 
 ### Methods
 
@@ -217,7 +243,7 @@ Without an explicit `path`, new ideas write to `common/national_ideas/mod_ideas.
 |--------|---------|-------------|
 | `list_ideas() -> list[str]` | Sorted idea IDs | All loaded ideas |
 | `get_idea(idea_id: str) -> Idea` | `Idea` | Raises `KeyError` if not found |
-| `create_idea(idea_id, icon="GFX_idea_generic", modifier=None, path=None, overwrite=False) -> Idea` | `Idea` | Creates idea. Raises if it exists unless `overwrite=True`. `modifier` is `dict[str, str|int|float|bool]`. Optional `path` sets target file. |
+| `create_idea(idea_id, icon="GFX_idea_generic", modifier=None, category="country", path=None, overwrite=False) -> Idea` | `Idea` | Creates idea. Raises if it exists unless `overwrite=True`. `modifier` is `dict[str, str|int|float|bool]`. Optional `path` sets target file. |
 | `update_idea(idea_id: str, **kwargs) -> bool` | `bool` | Update fields. `modifier` kwarg **merges** into existing dict. |
 | `delete_idea(idea_id: str) -> bool` | `bool` | Remove from cache |
 
@@ -232,8 +258,9 @@ mod.create_idea("strong_economy", modifier={
 mod.update_idea("strong_economy", modifier={"political_power_gain": 0.25})
 
 # Write to a country-specific ideas file
-mod.create_idea("lux_steel", modifier={"industrial_capacity_factory": 0.05},
-                path="common/ideas/luxembourg.txt")
+mod.create_idea("LUX_steel", category="country",
+                modifier={"industrial_capacity_factory": 0.05},
+                path="common/ideas/LUX_ideas.txt")
 ```
 
 Use `MODIFIER_CATEGORIES` to discover available modifier keys (see Catalogs section).
@@ -360,6 +387,9 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_add_equipment(equipment_type, amount, producer=None, variant_name=None)` | `add_equipment_to_stockpile = { type = ... amount = ... }` |
 | `Mod.effect_set_technology(technology, level=1, popup=None)` | `set_technology = { tech = 1 }` |
 | `Mod.effect_set_technologies({technology: level, ...})` | Multi-entry `set_technology` block |
+| `Mod.effect_schedule_country_event(event_id, days=0, target=None)` | `country_event = { id = sic.1 days = 58 }`, optionally scoped |
+| `Mod.effect_division_template(name, regiments, support="", division_names_group="")` | `division_template = { ... }` |
+| `Mod.effect_create_unit(division, owner=None, start_experience_factor=None)` | `create_unit = { division = "..." }` |
 | `Mod.effect_add_tech_bonus(name, category, uses=1, bonus=0.5)` | Validated `add_tech_bonus` block |
 | `Mod.effect_create_wargoal(target, wargoal_type="annex_everything")` | `create_wargoal = { type = ... target = TAG }` |
 | `Mod.effect_declare_war(target, wargoal_type="annex_everything")` | Current-scope `declare_war_on` block |

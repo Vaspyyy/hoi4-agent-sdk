@@ -128,11 +128,15 @@ with mod.transaction():
 
 13. Use `create_event(..., overwrite=True)` only when replacing an existing event. Use `update_event()` or `update_event_option()` for targeted edits.
 
-14. `create_focus_tree()`, `create_decision_category()`, `create_decision()`, and `create_idea()` also raise on existing IDs unless `overwrite=True`.
+14. Register startup hooks with `create_on_action()`, not manual `common/on_actions` file edits. Use `Mod.effect_schedule_country_event(...)` for delayed event firing.
 
-15. Use `Focus(..., requires="FOCUS_ID")` for a single prerequisite instead of manually writing `prerequisites=[["FOCUS_ID"]]`.
+15. New ideas default to current HOI4 `common/ideas/...` files and `ideas = { country = { ... } }`. Use `create_idea(..., category="political_advisor")` or another explicit category for non-spirit ideas.
 
-16. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
+16. `create_focus_tree()`, `create_decision_category()`, `create_decision()`, and `create_idea()` also raise on existing IDs unless `overwrite=True`.
+
+17. Use `Focus(..., requires="FOCUS_ID")` for a single prerequisite instead of manually writing `prerequisites=[["FOCUS_ID"]]`.
+
+18. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
 
 ## Documentation
 

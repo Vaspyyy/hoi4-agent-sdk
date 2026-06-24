@@ -81,6 +81,7 @@ class Country:
     elections_allowed: bool = True
     leader: Optional[Leader] = None
     ideas: list[str] = field(default_factory=list)
+    research_slots: int | None = None
 
     def __post_init__(self):
         if not self.popularities:
@@ -146,6 +147,16 @@ class Event:
     immediate: str = ""
     mean_time_to_happen: str = ""
     options: list[EventOption] = field(default_factory=list)
+    path: Optional[Path] = None
+    raw_block: str = ""
+
+
+@dataclass
+class OnAction:
+    id: str
+    effect: str = ""
+    events: list[str] = field(default_factory=list)
+    random_events: list[str] = field(default_factory=list)
     path: Optional[Path] = None
     raw_block: str = ""
 

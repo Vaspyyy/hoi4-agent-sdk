@@ -20,6 +20,7 @@ from .types import Country, Leader
 
 COLOR_RE = re.compile(r"\bcolor\s*=\s*\{\s*(\d+)\s+(\d+)\s+(\d+)\s*\}")
 CAPITAL_RE = re.compile(r"\bcapital\s*=\s*(\d+)")
+RESEARCH_SLOTS_RE = re.compile(r"\bset_research_slots\s*=\s*(\d+)")
 POP_RE = re.compile(r"\b(democratic|fascism|communism|neutrality)\s*=\s*(\d+)")
 RULING_PARTY_RE = re.compile(r"\bruling_party\s*=\s*(\w+)")
 IDEOLOGY_RE = re.compile(r"\bideology\s*=\s*(\w+)")
@@ -73,6 +74,10 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
         cap = CAPITAL_RE.search(txt)
         if cap:
             country.capital = int(cap.group(1))
+
+        research_slots = RESEARCH_SLOTS_RE.search(txt)
+        if research_slots:
+            country.research_slots = int(research_slots.group(1))
 
         pops: dict[str, int] = {}
         for m in POP_RE.finditer(txt):
@@ -312,9 +317,11 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
     if country.ideas:
         ideas_lines = "\n".join(f" {idea}" for idea in country.ideas)
         ideas_block = f"\nadd_ideas = {{\n{ideas_lines}\n}}\n"
+    research_slots = f"set_research_slots = {country.research_slots}\n\n" if country.research_slots is not None else ""
     files[hist_path] = (
         f"capital = {country.capital}\n"
         f"\n"
+        f"{research_slots}"
         f"recruit_character = {leader.character_id}\n"
         f"\n"
         f"set_popularities = {{\n"

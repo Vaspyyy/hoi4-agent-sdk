@@ -610,6 +610,14 @@ class TestAgentFacingApis:
         assert Mod.effect_add_war_support(0.1) == "add_war_support = 0.1"
         assert Mod.effect_add_stability(0.05) == "add_stability = 0.05"
         assert Mod.effect_add_manpower(15000) == "add_manpower = 15000"
+        assert Mod.effect_schedule_country_event("sic.1", days=58, target="scl") == (
+            "SCL = { country_event = { id = sic.1 days = 58 } }"
+        )
+        assert 'division_template = { name = "Militia"' in Mod.effect_division_template(
+            "Militia",
+            "infantry = { x = 0 y = 0 }",
+        )
+        assert Mod.effect_create_unit("Militia", owner="scl") == 'create_unit = { division = "Militia" owner = SCL }'
         equipment = Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="ger")
         assert equipment == "add_equipment_to_stockpile = { type = infantry_equipment_0 amount = 1000 producer = GER }"
         variant_equipment = Mod.effect_add_equipment("light_tank_chassis_2", 100, "GER", "Panzer II Ausf. a")
@@ -693,6 +701,15 @@ class TestModCountries:
         assert country.leader.ideology == "marxism"
         assert tmp_mod.mod.validate() == []
         assert "stalinism" in Mod.leader_ideologies_for_party("communism")
+
+    def test_create_country_persists_research_slots(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_country("SCI", "Science Land", research_slots=3)
+        mod.save()
+        history_file = next((tmp_mod.root / "history" / "countries").glob("SCI*.txt"))
+        assert "set_research_slots = 3" in history_file.read_text()
+        mod2 = Mod(tmp_mod.root)
+        assert mod2.get_country("SCI").research_slots == 3
 
     def test_create_country_rejects_existing_mod_tag(self, tmp_mod):
         mod = tmp_mod.mod
@@ -1045,6 +1062,40 @@ class TestModEvents:
         brace_errors = mod.validate_effect("SCL = { declare_war_on = { target = ITA }")
         assert any("Script syntax issue" in error.message for error in brace_errors)
 
+    def test_on_action_creates_startup_hook(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_event("sic.1", title="sic.1.t", options=[EventOption(name="sic.1.a", effect="add_stability = 0.05")])
+        action = mod.create_on_action(
+            "on_startup",
+            effect=Mod.effect_schedule_country_event("sic.1", days=58, target="SCL"),
+        )
+        assert action.id == "on_startup"
+        assert "country_event" in action.effect
+        mod.save()
+
+        on_action_file = tmp_mod.root / "common" / "on_actions" / "mod_on_actions.txt"
+        content = on_action_file.read_text()
+        assert "on_actions = {" in content
+        assert "on_startup = {" in content
+        assert "country_event = { id = sic.1 days = 58 }" in content
+
+        mod2 = Mod(tmp_mod.root)
+        assert "on_startup" in mod2.list_on_actions()
+        assert "country_event" in mod2.get_on_action("on_startup").effect
+
+    def test_delete_on_action_rewrites_source_file(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_on_action("on_startup", effect="add_stability = 0.05")
+        mod.save()
+
+        assert mod.delete_on_action("on_startup") is True
+        mod.save()
+
+        on_action_file = tmp_mod.root / "common" / "on_actions" / "mod_on_actions.txt"
+        content = on_action_file.read_text()
+        assert "on_startup" not in content
+        assert "on_actions = {" in content
+
     def test_update_event(self, tmp_mod):
         mod = tmp_mod.with_events()
         mod.update_event("mymod.1.1", is_triggered_only=False)
@@ -1115,6 +1166,8 @@ class TestModIdeas:
         mod = tmp_mod.mod
         idea = mod.create_idea("TST_spirit", icon="GFX_test", modifier={"army_morale_factor": 0.2})
         assert idea.id == "TST_spirit"
+        assert idea.category == "country"
+        assert idea.path == tmp_mod.root / "common" / "ideas" / "TST_ideas.txt"
         assert "TST_spirit" in mod.list_ideas()
 
     def test_create_idea_requires_explicit_overwrite(self, tmp_mod):
@@ -1165,10 +1218,12 @@ class TestModIdeas:
         target = tmp_mod.root / "common" / "ideas" / "lux_test.txt"
         idea = mod.create_idea("LUX_spirit", modifier={"x": 1}, path=target)
         assert idea.path == target
+        assert idea.category == "country"
         mod.save()
         assert target.exists()
         content = target.read_text()
         assert "ideas = {" in content
+        assert "country = {" in content
         assert "LUX_spirit" in content
 
     def test_loads_ideas_from_common_ideas_dir(self, tmp_mod):
@@ -1199,7 +1254,7 @@ class TestModIdeas:
     def test_create_idea_falls_back_when_no_match(self, tmp_mod):
         tmp_mod.mod.create_country("TST", "Testland")
         idea = tmp_mod.mod.create_idea("generic_spirit", modifier={"x": 1})
-        assert idea.path is None
+        assert idea.path == tmp_mod.root / "common" / "ideas" / "mod_ideas.txt"
 
     def test_set_idea_path_routes(self, tmp_mod):
         target = tmp_mod.root / "common" / "ideas" / "custom.txt"
@@ -1224,6 +1279,18 @@ class TestModIdeas:
         mod2 = Mod(tmp_mod.root)
         idea = mod2.create_idea("LUX_spirit_2", modifier={"x": 2})
         assert idea.path == ideas_dir / "luxembourg.txt"
+
+    def test_create_idea_accepts_direct_category_argument(self, tmp_mod):
+        idea = tmp_mod.mod.create_idea("SCL_advisor", category="political_advisor", modifier={"political_power_gain": 0.1})
+        assert idea.category == "political_advisor"
+
+    def test_validate_warns_for_unresolved_assigned_idea(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_country("SCL", "Sicily", ideas=["SCL_spirit"])
+        errors = mod.validate()
+        assert any(error.code == "unknown_assigned_idea" for error in errors)
+        mod.create_idea("SCL_spirit", modifier={"political_power_gain": 0.1})
+        assert not any(error.code == "unknown_assigned_idea" for error in mod.validate())
 
 
 class TestIdeaValidation:

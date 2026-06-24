@@ -23,6 +23,8 @@ VALIDATION_CODES: dict[str, str] = {
     "missing_wargoal_type": "War goal or war declaration block is missing type = <wargoal_type>.",
     "unknown_country_scope": "Script scopes into a tag not known from vanilla or the mod.",
     "leader_party_mismatch": "Country ruling party group does not match leader sub-ideology.",
+    "unknown_assigned_idea": "Country history assigns an idea ID not loaded by the SDK.",
+    "assigned_idea_not_country_category": "Country history assigns an idea outside ideas = { country = { ... } }.",
 }
 
 VALIDATION_WARNING_CODES: dict[str, str] = {

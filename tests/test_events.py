@@ -123,6 +123,37 @@ class TestSerializeEvent:
         assert "name = test.1.a" in text
         assert "add_stability" in text
 
+    def test_preserves_final_scoped_effect_brace_after_reload(self, tmp_path):
+        path = tmp_path / "events.txt"
+        path.write_text(
+            """
+add_namespace = sic
+
+country_event = {
+    id = sic.1
+    title = sic.1.t
+    desc = sic.1.d
+    option = {
+        name = sic.1.a
+        SCL = {
+            transfer_state = 115
+        }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+        _, events = load_events_file(path)
+        text = serialize_event(Event(
+            id=events[0].id,
+            title=events[0].title,
+            description=events[0].description,
+            options=events[0].options,
+        ))
+        assert "SCL = {" in text
+        assert "transfer_state = 115" in text
+        assert "\n\t\t}" in text
+
 
 class TestSerializeEventsFile:
     def test_includes_namespace(self):

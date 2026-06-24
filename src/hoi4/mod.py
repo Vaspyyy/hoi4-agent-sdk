@@ -36,6 +36,7 @@ from .localisation import (
     serialize_localization_file,
     write_localization_file,
 )
+from .on_actions import load_on_actions_file, serialize_on_actions_file, write_on_actions_file
 from .states import (
     build_state_index,
     ensure_state_in_mod,
@@ -56,6 +57,7 @@ from .types import (
     FocusTree,
     Idea,
     Leader,
+    OnAction,
     SaveResult,
     State,
     ValidationError,
@@ -147,6 +149,9 @@ class Mod:
         self._events: dict[str, Event] = {}
         self._event_namespaces: dict[str, Optional[str]] = {}
         self._dirty_events: set[str] = set()
+        self._on_actions: dict[str, OnAction] = {}
+        self._dirty_on_actions: set[str] = set()
+        self._dirty_on_action_files: set[Path] = set()
         self._decisions: dict[str, Decision] = {}
         self._decision_categories: dict[str, DecisionCategory] = {}
         self._dirty_decision_categories: set[str] = set()
@@ -183,6 +188,7 @@ class Mod:
         self._load_states()
         self._load_focus_trees()
         self._load_events()
+        self._load_on_actions()
         self._load_decisions()
         self._load_ideas()
         self._load_localization()
@@ -238,6 +244,18 @@ class Mod:
                 for event in events:
                     self._events[event.id] = event
                     self._event_namespaces[event.id] = namespace
+                self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+    def _load_on_actions(self) -> None:
+        on_actions_dir = self.mod_root / "common" / "on_actions"
+        if not on_actions_dir.exists():
+            return
+        for f in sorted(on_actions_dir.glob("*.txt")):
+            try:
+                for action in load_on_actions_file(f):
+                    self._on_actions[action.id] = action
                 self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
             except Exception:
                 continue
@@ -376,6 +394,7 @@ class Mod:
         adjective: str = "",
         color: tuple[int, int, int] = (128, 128, 128),
         capital: int = 1,
+        research_slots: int | None = None,
         ruling_party: str = "democratic",
         popularities: dict[str, int] | None = None,
         leader_name: str = "Leader",
@@ -408,6 +427,7 @@ class Mod:
             adjective=adjective or name,
             color=color,
             capital=capital,
+            research_slots=research_slots,
             ruling_party=ruling_party,
             popularities=popularities or None,
             leader=leader,
@@ -690,6 +710,76 @@ class Mod:
         self._dirty_events.add(event_id)
         return True
 
+    # ── On Actions ───────────────────────────────────────────────
+
+    def list_on_actions(self) -> list[str]:
+        return sorted(self._on_actions.keys())
+
+    def get_on_action(self, action_id: str) -> OnAction:
+        if action_id not in self._on_actions:
+            raise KeyError(f"On-action '{action_id}' not found. Available: {self.list_on_actions()}")
+        return self._on_actions[action_id]
+
+    def create_on_action(
+        self,
+        action_id: str,
+        *,
+        effect: str = "",
+        events: list[str] | None = None,
+        random_events: list[str] | None = None,
+        path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> OnAction:
+        existing = self._on_actions.get(action_id)
+        if existing is not None and not overwrite:
+            raise ValueError(
+                f"On-action '{action_id}' already exists. Use overwrite=True to replace it or update_on_action() to patch it."
+            )
+        if existing is not None and existing.path is not None:
+            self._dirty_on_action_files.add(existing.path)
+        target = Path(path) if path is not None else (
+            existing.path if existing is not None and existing.path is not None
+            else self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
+        )
+        action = OnAction(
+            id=action_id,
+            effect=normalize_block_body(effect),
+            events=events or [],
+            random_events=random_events or [],
+            path=target,
+        )
+        self._on_actions[action_id] = action
+        self._dirty.add("on_actions")
+        self._dirty_on_actions.add(action_id)
+        self._dirty_on_action_files.add(target)
+        return action
+
+    def update_on_action(self, action_id: str, **kwargs) -> bool:
+        action = self._on_actions.get(action_id)
+        if action is None:
+            return False
+        old_path = action.path
+        if "effect" in kwargs and isinstance(kwargs["effect"], str):
+            kwargs["effect"] = normalize_block_body(kwargs["effect"])
+        action.raw_block = ""
+        _set_fields(action, kwargs)
+        self._dirty.add("on_actions")
+        self._dirty_on_actions.add(action_id)
+        if old_path is not None:
+            self._dirty_on_action_files.add(old_path)
+        self._dirty_on_action_files.add(action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt")
+        return True
+
+    def delete_on_action(self, action_id: str) -> bool:
+        action = self._on_actions.get(action_id)
+        if action is None:
+            return False
+        del self._on_actions[action_id]
+        self._dirty.add("on_actions")
+        self._dirty_on_actions.discard(action_id)
+        self._dirty_on_action_files.add(action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt")
+        return True
+
     # ── Decisions ────────────────────────────────────────────────
 
     def list_decision_categories(self) -> list[str]:
@@ -821,13 +911,14 @@ class Mod:
         idea_id: str,
         icon: str = "GFX_idea_generic",
         modifier: dict[str, str | int | float | bool] | None = None,
+        category: str = "country",
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> Idea:
         existing = self._ideas.get(idea_id)
         if existing is not None and not overwrite:
             raise ValueError(f"Idea '{idea_id}' already exists. Use overwrite=True to replace it or update_idea() to patch it.")
-        idea = Idea(id=idea_id, icon=icon, modifier=modifier or {})
+        idea = Idea(id=idea_id, icon=icon, modifier=modifier or {}, category=category)
         if path is not None:
             idea.path = Path(path) if not isinstance(path, Path) else path
         elif existing is not None and existing.path is not None:
@@ -836,6 +927,12 @@ class Mod:
             prefix = idea_id.split("_")[0] if "_" in idea_id else idea_id
             if prefix in self._cached_idea_file:
                 idea.path = self._cached_idea_file[prefix]
+            elif len(prefix) == 3 and prefix.isupper():
+                idea.path = self.mod_root / "common" / "ideas" / f"{prefix}_ideas.txt"
+            else:
+                idea.path = self.mod_root / "common" / "ideas" / "mod_ideas.txt"
+        if idea.path is not None and idea.path.parent.name == "ideas":
+            self._idea_file_containers.setdefault(idea.path, "ideas")
         self._ideas[idea_id] = idea
         self._dirty.add("ideas")
         self._dirty_ideas.add(idea_id)
@@ -1198,6 +1295,41 @@ class Mod:
         return f"start_civil_war = {{ {' '.join(parts)} }}"
 
     @staticmethod
+    def effect_schedule_country_event(event_id: str, days: int = 0, target: str | None = None) -> str:
+        fields: dict[str, object] = {"id": event_id}
+        if days:
+            fields["days"] = days
+        effect = effect_block("country_event", fields)
+        return scope_block(target.upper(), effect) if target else effect
+
+    @staticmethod
+    def effect_division_template(
+        name: str,
+        regiments: str,
+        support: str = "",
+        division_names_group: str = "",
+    ) -> str:
+        fields = [f'name = "{name}"', f"regiments = {{ {normalize_block_body(regiments)} }}"]
+        if support:
+            fields.append(f"support = {{ {normalize_block_body(support)} }}")
+        if division_names_group:
+            fields.append(f'division_names_group = "{division_names_group}"')
+        return f"division_template = {{ {' '.join(fields)} }}"
+
+    @staticmethod
+    def effect_create_unit(
+        division: str,
+        owner: str | None = None,
+        start_experience_factor: float | None = None,
+    ) -> str:
+        fields = [f'division = "{division}"']
+        if owner:
+            fields.append(f"owner = {owner.upper()}")
+        if start_experience_factor is not None:
+            fields.append(f"start_experience_factor = {start_experience_factor}")
+        return f"create_unit = {{ {' '.join(fields)} }}"
+
+    @staticmethod
     def default_leader_ideology(ruling_party: str) -> str:
         return LEADER_IDEOLOGIES_BY_PARTY.get(ruling_party, LEADER_IDEOLOGIES_BY_PARTY["democratic"])[0]
 
@@ -1453,8 +1585,38 @@ class Mod:
         for event_id, event in self._events.items():
             errors.extend(validate_event(event, namespace=self._event_namespaces.get(event_id), known_tags=known_tags))
 
+        for action in self._on_actions.values():
+            if action.effect:
+                probe = Event(id=f"on_action.{action.id}", title=action.id, description=action.id, options=[
+                    EventOption(name=f"on_action.{action.id}.a", effect=action.effect),
+                ])
+                errors.extend(validate_event(probe, namespace="on_action", known_tags=known_tags))
+
         for idea in self._ideas.values():
             errors.extend(validate_idea(idea))
+
+        for country in self._countries.values():
+            for idea_id in country.ideas:
+                idea = self._ideas.get(idea_id)
+                if idea is None:
+                    errors.append(ValidationError(
+                        message=f"Country '{country.tag}' assigns unknown idea '{idea_id}'",
+                        severity="warning",
+                        code="unknown_assigned_idea",
+                        country_tag=country.tag,
+                        idea_id=idea_id,
+                    ))
+                elif idea.category != "country":
+                    errors.append(ValidationError(
+                        message=(
+                            f"Country '{country.tag}' assigns idea '{idea_id}', but that idea is in category "
+                            f"'{idea.category or '<none>'}', not 'country'."
+                        ),
+                        severity="warning",
+                        code="assigned_idea_not_country_category",
+                        country_tag=country.tag,
+                        idea_id=idea_id,
+                    ))
 
         all_focus_ids: set[str] = set()
         for tree in self._focus_trees.values():
@@ -1530,6 +1692,15 @@ class Mod:
             for path, events in file_events.items():
                 rel = str(path.relative_to(self.mod_root)) if path.is_relative_to(self.mod_root) else str(path)
                 current = serialize_events_file(file_ns.get(path), events)
+                original = self._original_files.get(path, "")
+                d = unified_diff(original, current, rel)
+                if d:
+                    diffs.append(d)
+
+        if "on_actions" in self._dirty:
+            for path, actions in self._group_on_actions_by_file(dirty_only=True).items():
+                rel = str(path.relative_to(self.mod_root)) if path.is_relative_to(self.mod_root) else str(path)
+                current = serialize_on_actions_file(actions)
                 original = self._original_files.get(path, "")
                 d = unified_diff(original, current, rel)
                 if d:
@@ -1621,6 +1792,12 @@ class Mod:
                 self._original_files[path] = serialize_events_file(file_ns.get(path), events)
                 written_files.append(path)
 
+        if "on_actions" in self._dirty:
+            for path, actions in self._group_on_actions_by_file(dirty_only=True).items():
+                write_on_actions_file(path, actions)
+                self._original_files[path] = serialize_on_actions_file(actions)
+                written_files.append(path)
+
         if "decisions" in self._dirty:
             for path, categories in self._group_decisions_by_file(dirty_only=True).items():
                 write_decisions_file(path, categories)
@@ -1660,6 +1837,8 @@ class Mod:
         self._dirty_countries.clear()
         self._dirty_states.clear()
         self._dirty_events.clear()
+        self._dirty_on_actions.clear()
+        self._dirty_on_action_files.clear()
         self._dirty_decision_categories.clear()
         self._dirty_ideas.clear()
 
@@ -1702,6 +1881,7 @@ class Mod:
         self._state_ids.clear()
         self._events.clear()
         self._event_namespaces.clear()
+        self._on_actions.clear()
         self._decisions.clear()
         self._decision_categories.clear()
         self._ideas.clear()
@@ -1710,6 +1890,8 @@ class Mod:
         self._dirty_countries.clear()
         self._dirty_states.clear()
         self._dirty_events.clear()
+        self._dirty_on_actions.clear()
+        self._dirty_on_action_files.clear()
         self._dirty_decision_categories.clear()
         self._dirty_ideas.clear()
         self._loc_entries.clear()
@@ -1731,6 +1913,9 @@ class Mod:
             "_events",
             "_event_namespaces",
             "_dirty_events",
+            "_on_actions",
+            "_dirty_on_actions",
+            "_dirty_on_action_files",
             "_decisions",
             "_decision_categories",
             "_dirty_decision_categories",
@@ -1807,6 +1992,27 @@ class Mod:
             file_events[p].append(event)
         return file_events, file_ns
 
+    def _group_on_actions_by_file(self, dirty_only: bool = False) -> dict[Path, list[OnAction]]:
+        dirty_ids = self._dirty_on_actions if dirty_only else None
+        file_actions: dict[Path, list[OnAction]] = {}
+        dirty_files: set[Path] = set(self._dirty_on_action_files) if dirty_only else set()
+        if dirty_only:
+            for action_id in dirty_ids:
+                action = self._on_actions.get(action_id)
+                if action is None:
+                    continue
+                dirty_files.add(action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt")
+            for path in dirty_files:
+                file_actions[path] = []
+        for action in self._on_actions.values():
+            p = action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
+            if dirty_only and p not in dirty_files:
+                continue
+            if p not in file_actions:
+                file_actions[p] = []
+            file_actions[p].append(action)
+        return file_actions
+
     def _group_decisions_by_file(self, dirty_only: bool = False) -> dict[Path, list[DecisionCategory]]:
         dirty_categories = self._dirty_decision_categories if dirty_only else None
         file_categories: dict[Path, list[DecisionCategory]] = {}
@@ -1835,9 +2041,9 @@ class Mod:
                 idea = self._ideas.get(iid)
                 if idea is None:
                     continue
-                dirty_files.add(idea.path or self.mod_root / "common" / "national_ideas" / "mod_ideas.txt")
+                dirty_files.add(idea.path or self.mod_root / "common" / "ideas" / "mod_ideas.txt")
         for idea in self._ideas.values():
-            p = idea.path or self.mod_root / "common" / "national_ideas" / "mod_ideas.txt"
+            p = idea.path or self.mod_root / "common" / "ideas" / "mod_ideas.txt"
             if dirty_only and p not in dirty_files:
                 continue
             if p not in file_ideas:
