@@ -140,6 +140,7 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 | `list_events() -> list[str]` | Sorted event IDs | All loaded events |
 | `get_event(event_id: str) -> Event` | `Event` | Raises `KeyError` with available IDs if not found |
 | `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer namespace from the ID prefix. |
+| `ensure_event(event_id: str, **kwargs) -> Event` | `Event` | Idempotent create-or-update wrapper |
 | `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field |
 | `update_event_option(event_id: str, option: int \| str, **kwargs) -> bool` | `bool` | Update one option by zero-based index or option name. Supports `name`, `effect`, `trigger`, and `ai_chance`. |
 | `delete_event(event_id: str) -> bool` | `bool` | Remove event and its namespace mapping |
@@ -178,6 +179,7 @@ On-actions live in `common/on_actions/*.txt` and are the usual way to register s
 | `list_on_actions() -> list[str]` | Sorted action IDs | Loaded on-action IDs |
 | `get_on_action(action_id: str) -> OnAction` | `OnAction` | Raises `KeyError` if not found |
 | `create_on_action(action_id, effect="", events=None, random_events=None, path=None, overwrite=False) -> OnAction` | `OnAction` | Creates an on-action. Raises if it exists unless `overwrite=True`. |
+| `ensure_on_action(action_id, **kwargs) -> OnAction` | `OnAction` | Idempotent create-or-update wrapper |
 | `update_on_action(action_id: str, **kwargs) -> bool` | `bool` | Update `effect`, `events`, `random_events`, or `path` |
 | `delete_on_action(action_id: str) -> bool` | `bool` | Remove from cache |
 
@@ -206,6 +208,9 @@ Decisions live in `common/decisions/*.txt` and are grouped by category.
 | `get_decision_category(category_id: str) -> DecisionCategory` | `DecisionCategory` | Get a category |
 | `create_decision_category(category_id, icon="", allowed="", visible="", path=None, overwrite=False) -> DecisionCategory` | `DecisionCategory` | Create or route a category. Raises if it exists unless `overwrite=True`. |
 | `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. |
+| `ensure_decision_category(category_id, **kwargs) -> DecisionCategory` | `DecisionCategory` | Idempotent create-or-update wrapper |
+| `ensure_decision(category_id, decision_id, **kwargs) -> Decision` | `Decision` | Idempotent create-or-update wrapper |
+| `update_decision_category(category_id: str, **kwargs) -> bool` | `bool` | Update a decision category |
 | `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update a decision |
 | `delete_decision(decision_id: str) -> bool` | `bool` | Remove a decision |
 
@@ -244,6 +249,7 @@ Without an explicit `path`, new ideas write to `common/ideas/{TAG}_ideas.txt` wh
 | `list_ideas() -> list[str]` | Sorted idea IDs | All loaded ideas |
 | `get_idea(idea_id: str) -> Idea` | `Idea` | Raises `KeyError` if not found |
 | `create_idea(idea_id, icon="GFX_idea_generic", modifier=None, category="country", path=None, overwrite=False) -> Idea` | `Idea` | Creates idea. Raises if it exists unless `overwrite=True`. `modifier` is `dict[str, str|int|float|bool]`. Optional `path` sets target file. |
+| `ensure_idea(idea_id, **kwargs) -> Idea` | `Idea` | Idempotent create-or-update wrapper. Existing idea modifiers are merged like `update_idea()`. |
 | `update_idea(idea_id: str, **kwargs) -> bool` | `bool` | Update fields. `modifier` kwarg **merges** into existing dict. |
 | `delete_idea(idea_id: str) -> bool` | `bool` | Remove from cache |
 
@@ -275,12 +281,18 @@ Focus trees are collections of focuses. Each focus has a position (x, y), cost, 
 | `list_focus_trees() -> list[str]` | Sorted tree IDs | All loaded tree IDs |
 | `get_focus_tree(tree_id: str) -> FocusTree` | `FocusTree` | Raises `KeyError` if not found |
 | `create_focus_tree(tree_id: str, country_tag: str, overwrite=False) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
+| `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields |
 | `update_focus_tree(tree_id: str, **kwargs) -> bool` | `bool` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id: str) -> bool` | `bool` | Remove tree |
 | `add_focus(tree_id: str, focus: Focus) -> None` | `None` | Append focus to tree |
+| `upsert_focus(tree_id: str, focus: Focus) -> Focus` | `Focus` | Add a new focus or replace modeled fields on an existing focus |
 | `remove_focus(tree_id: str, focus_id: str) -> bool` | `bool` | Remove focus by ID |
 | `get_focus(tree_id: str, focus_id: str) -> Focus \| None` | `Focus \| None` | Find focus in tree |
 | `update_focus(tree_id: str, focus_id: str, **kwargs) -> bool` | `bool` | Update any Focus field |
+| `focus_tree_bounds(tree_id: str) -> dict[str, int]` | Bounds dict | `min_x`, `max_x`, `min_y`, `max_y`, `width`, `height` |
+| `place_continuous_focus_below_tree(tree_id, padding=400, x=50) -> str` | Position body | Sets `continuous_focus_position` below the lowest focus row |
+| `assert_no_visual_overlap(tree_id, min_continuous_padding=100) -> bool` | `bool` | Raises `ValueError` on duplicate focus positions or too-high continuous focus |
+| `auto_layout_branch(tree_id, focuses, anchor_focus_id=None, x=None, y_start=None, spacing_y=1, chain_prerequisites=True) -> list[Focus]` | `list[Focus]` | Assign positions/prerequisites before inserting a generated branch |
 | `insert_focus_after(tree_id, anchor_focus_id, focus, add_prerequisite=True, relative_position=True) -> None` | `None` | Insert a focus after an existing focus and optionally wire prerequisite/relative positioning |
 | `insert_branch(tree_id, anchor_focus_id, focuses, chain_prerequisites=True) -> None` | `None` | Insert a vertical branch after an anchor focus |
 | `append_to_focus_reward(tree_id, focus_id, effect) -> bool` | `bool` | Append an effect to an existing focus reward |
@@ -380,6 +392,9 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_add_war_support(amount)` | `add_war_support = 0.1` |
 | `Mod.effect_add_stability(amount)` | `add_stability = 0.05` |
 | `Mod.effect_add_manpower(amount)` | `add_manpower = 15000` |
+| `Mod.effect_add_army_experience(amount)` | `add_army_experience = 25` |
+| `Mod.effect_add_navy_experience(amount)` | `add_navy_experience = 25` |
+| `Mod.effect_add_air_experience(amount)` | `add_air_experience = 25` |
 | `Mod.effect_add_civilian_factory(state_id, level=1)` | State-scoped `industrial_complex` construction |
 | `Mod.effect_add_military_factory(state_id, level=1)` | State-scoped `arms_factory` construction |
 | `Mod.effect_add_infrastructure(state_id, level=1)` | State-scoped infrastructure construction |
@@ -390,6 +405,13 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_schedule_country_event(event_id, days=0, target=None)` | `country_event = { id = sic.1 days = 58 }`, optionally scoped |
 | `Mod.effect_division_template(name, regiments, support="", division_names_group="")` | `division_template = { ... }` |
 | `Mod.effect_create_unit(division, owner=None, start_experience_factor=None)` | `create_unit = { division = "..." }` |
+| `Mod.effect_swap_idea(old, new, target=None)` | `swap_ideas = { remove_idea = old add_idea = new }`, optionally scoped |
+| `Mod.effect_upgrade_idea_chain([idea_1, idea_2, ...], target=None)` | Conditional staged-spirit upgrade chain using `swap_ideas` |
+| `Mod.effect_set_politics(ruling_party, elections_allowed=None, elections_frequency=None)` | `set_politics = { ... }` |
+| `Mod.effect_create_faction(name)` | `create_faction = "Name"` |
+| `Mod.effect_add_to_faction(tag)` | `add_to_faction = TAG` |
+| `Mod.effect_white_peace(target="all")` | `white_peace = all` or `white_peace = TAG` |
+| `Mod.effect_set_rule(rule, value=True)` | `set_rule = { rule = yes }` |
 | `Mod.effect_add_tech_bonus(name, category, uses=1, bonus=0.5)` | Validated `add_tech_bonus` block |
 | `Mod.effect_create_wargoal(target, wargoal_type="annex_everything")` | `create_wargoal = { type = ... target = TAG }` |
 | `Mod.effect_declare_war(target, wargoal_type="annex_everything")` | Current-scope `declare_war_on` block |
@@ -405,12 +427,23 @@ reward = "\n".join([
     Mod.effect_add_political_power(100),
     Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="GER"),
     Mod.effect_set_technology("infantry_weapons", 1, popup=False),
+    Mod.effect_swap_idea("old_spirit", "new_spirit", target="SCL"),
 ])
 mod.validate_effect(reward)
 ```
+
+Use layout helpers before saving generated trees:
+
+```python
+branch = mod.auto_layout_branch("west_focus", [Focus(id="WST_a"), Focus(id="WST_b")], anchor_focus_id="WST_independence")
+for focus in branch:
+    mod.upsert_focus("west_focus", focus)
+mod.place_continuous_focus_below_tree("west_focus", padding=400)
+mod.assert_no_visual_overlap("west_focus")
+```
 ## Validation
 
-`mod.validate()` runs all validators and returns `list[ValidationError]`. Does **not** raise — returns empty list if all valid.
+`mod.validate(validate_icons=False)` runs all validators and returns `list[ValidationError]`. Does **not** raise — returns empty list if all valid. Pass `validate_icons=True` to scan interface `.gfx` files and warn about missing focus icons.
 
 ### What Gets Checked
 
@@ -420,8 +453,8 @@ mod.validate_effect(reward)
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
 | **Event** | Has ID, has title, has description, has options, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |
-| **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories |
-| **Cross-cut** | Every focus has a localization entry (warning) |
+| **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, optional focus icon existence |
+| **Cross-cut** | Every focus has a localization entry (warning), effect references to loaded ideas/events/technology/equipment, bad remove-many/add-one idea tooltip patterns, focus/event idea mutation collisions |
 
 ### ValidationError Fields
 
@@ -451,9 +484,16 @@ errors = mod.validate(suppress_warnings=["country_scope_core_effect"])
 errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
 ```
 
-Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, and `script_syntax`.
+Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `bad_idea_tooltip_pattern`, `idea_mutation_collision`, and `script_syntax`.
 
 The `history_set_owner_in_effect` warning catches a common HOI4 boundary mistake: `set_owner` is a state history directive, not a runtime event/focus effect. Use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`.
+
+Use icon suggestion helpers instead of guessing:
+
+```python
+mod.suggest_focus_icon("navy")
+mod.suggest_focus_icons("industry", count=5)
+```
 ## Preview & Diff
 
 `mod.preview()` returns a unified diff string comparing in-memory state against the last-saved or originally-loaded file contents. Returns empty string if nothing is dirty.
@@ -475,6 +515,14 @@ if diff:
 ```
 
 Only dirty sections produce diffs. After `save()`, `preview()` returns empty until further changes.
+
+`mod.preview_summary()` returns a compact semantic summary for agent logs:
+
+```text
+Changed:
+- SCL_focus continuous_focus_position: x = 50 y = 1000 -> x = 50 y = 2600
+- SCL_focus focus SCL_start: position x=1 y=1 -> x=2 y=3
+```
 
 `mod.save()` returns `SaveResult`:
 
@@ -501,10 +549,10 @@ mod_root/
       {TAG}_characters.txt           # Leader/character definitions
     national_focus/
       {TAG}_focus.txt                # Focus trees
-    national_ideas/
-      mod_ideas.txt                  # Ideas (default container)
     ideas/
-      {TAG}.txt                      # Country-specific ideas (alternate container)
+      {TAG}_ideas.txt                # Ideas (default current-HOI4 container)
+    national_ideas/
+      mod_ideas.txt                  # Legacy ideas container, still readable
   history/
     countries/
       "{TAG} - {Name}.txt"           # Country history

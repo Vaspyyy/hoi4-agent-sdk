@@ -25,6 +25,14 @@ VALIDATION_CODES: dict[str, str] = {
     "leader_party_mismatch": "Country ruling party group does not match leader sub-ideology.",
     "unknown_assigned_idea": "Country history assigns an idea ID not loaded by the SDK.",
     "assigned_idea_not_country_category": "Country history assigns an idea outside ideas = { country = { ... } }.",
+    "unknown_idea_reference": "Effect script references an idea ID not loaded from the mod or configured HOI4 install.",
+    "unknown_event_reference": "Effect script references an event ID not loaded from the mod or configured HOI4 install.",
+    "unknown_technology_reference": "Effect script references a technology ID not found in configured data.",
+    "unknown_equipment_reference": "Effect script references an equipment ID not found in configured data.",
+    "unknown_focus_icon": "Focus icon GFX key was not found in interface files.",
+    "bad_idea_tooltip_pattern": "Effect removes several ideas and adds one idea; swap_ideas usually produces cleaner tooltips.",
+    "idea_mutation_collision": "Focuses and delayed/runtime events mutate the same idea IDs.",
+    "visual_overlap": "Focus tree layout contains visual overlap risk.",
 }
 
 VALIDATION_WARNING_CODES: dict[str, str] = {

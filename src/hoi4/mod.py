@@ -45,7 +45,7 @@ from .states import (
     serialize_state,
     write_state,
 )
-from .script import effect_block, normalize_block_body, scope_block
+from .script import effect_block, normalize_block_body, pdx_value, scope_block
 from .tags import load_all_tags, load_mod_tags, load_vanilla_tags
 from .types import (
     Country,
@@ -63,6 +63,33 @@ from .types import (
     ValidationError,
 )
 from .validation import validate_country, validate_event, validate_focus_tree, validate_idea, validate_state
+
+COMMON_FOCUS_ICONS: tuple[str, ...] = (
+    "GFX_goal_generic_army_doctrine",
+    "GFX_goal_generic_construct_civ_factory",
+    "GFX_goal_generic_construct_infrastructure",
+    "GFX_goal_generic_construct_mil_factory",
+    "GFX_goal_generic_consumer_goods",
+    "GFX_goal_generic_dangerous_deal",
+    "GFX_goal_generic_demand_territory",
+    "GFX_goal_generic_forceful_treaty",
+    "GFX_goal_generic_intelligence_exchange",
+    "GFX_goal_generic_major_war",
+    "GFX_goal_generic_navy",
+    "GFX_goal_generic_political_pressure",
+    "GFX_goal_generic_production",
+    "GFX_goal_generic_secret_weapon",
+    "GFX_goal_generic_small_arms",
+    "GFX_goal_generic_territory_or_war",
+)
+
+_IDEA_EFFECT_RE = re.compile(r"\b(?:add_ideas|remove_ideas)\s*=\s*([A-Za-z0-9_.:-]+)")
+_HAS_IDEA_RE = re.compile(r"\bhas_idea\s*=\s*([A-Za-z0-9_.:-]+)")
+_EVENT_REF_RE = re.compile(r"\b(?:country_event|state_event|news_event)\s*=\s*\{[^{}]*\bid\s*=\s*([A-Za-z0-9_.:-]+)")
+_EQUIPMENT_STOCKPILE_RE = re.compile(r"\badd_equipment_to_stockpile\s*=\s*\{([^{}]*)\}")
+_TECH_BLOCK_RE = re.compile(r"\bset_technology\s*=\s*\{([^{}]*)\}")
+_SCRIPT_BLOCK_ID_RE = re.compile(r"(?m)^\s*([A-Za-z0-9_.:-]+)\s*=\s*\{")
+_GFX_NAME_RE = re.compile(r"\bname\s*=\s*\"?([A-Za-z0-9_.:-]+)\"?")
 
 
 def _infer_event_namespace(event_id: str) -> str | None:
@@ -648,6 +675,13 @@ class Mod:
         self._dirty_events.add(event_id)
         return event
 
+    def ensure_event(self, event_id: str, **kwargs) -> Event:
+        """Create an event if missing, otherwise patch the existing event."""
+        if event_id in self._events:
+            self.update_event(event_id, **kwargs)
+            return self._events[event_id]
+        return self.create_event(event_id, **kwargs)
+
     def update_event(self, event_id: str, **kwargs) -> bool:
         event = self._events.get(event_id)
         if event is None:
@@ -754,6 +788,13 @@ class Mod:
         self._dirty_on_action_files.add(target)
         return action
 
+    def ensure_on_action(self, action_id: str, **kwargs) -> OnAction:
+        """Create an on-action if missing, otherwise patch the existing one."""
+        if action_id in self._on_actions:
+            self.update_on_action(action_id, **kwargs)
+            return self._on_actions[action_id]
+        return self.create_on_action(action_id, **kwargs)
+
     def update_on_action(self, action_id: str, **kwargs) -> bool:
         action = self._on_actions.get(action_id)
         if action is None:
@@ -822,6 +863,22 @@ class Mod:
         self._dirty_decision_categories.add(category_id)
         return category
 
+    def ensure_decision_category(self, category_id: str, **kwargs) -> DecisionCategory:
+        if category_id in self._decision_categories:
+            self.update_decision_category(category_id, **kwargs)
+            return self._decision_categories[category_id]
+        return self.create_decision_category(category_id, **kwargs)
+
+    def update_decision_category(self, category_id: str, **kwargs) -> bool:
+        category = self._decision_categories.get(category_id)
+        if category is None:
+            return False
+        category.raw_block = ""
+        _set_fields(category, kwargs)
+        self._dirty.add("decisions")
+        self._dirty_decision_categories.add(category_id)
+        return True
+
     def create_decision(
         self,
         category_id: str,
@@ -874,6 +931,12 @@ class Mod:
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(category_id)
         return decision
+
+    def ensure_decision(self, category_id: str, decision_id: str, **kwargs) -> Decision:
+        if decision_id in self._decisions:
+            self.update_decision(decision_id, **kwargs)
+            return self._decisions[decision_id]
+        return self.create_decision(category_id, decision_id, **kwargs)
 
     def update_decision(self, decision_id: str, **kwargs) -> bool:
         decision = self._decisions.get(decision_id)
@@ -938,6 +1001,13 @@ class Mod:
         self._dirty_ideas.add(idea_id)
         return idea
 
+    def ensure_idea(self, idea_id: str, **kwargs) -> Idea:
+        """Create an idea if missing, otherwise update the existing idea."""
+        if idea_id in self._ideas:
+            self.update_idea(idea_id, **kwargs)
+            return self._ideas[idea_id]
+        return self.create_idea(idea_id, **kwargs)
+
     def update_idea(self, idea_id: str, **kwargs) -> bool:
         idea = self._ideas.get(idea_id)
         if idea is None:
@@ -989,6 +1059,17 @@ class Mod:
         self._original_files.setdefault(path, "")
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
+        return tree
+
+    def ensure_focus_tree(self, tree_id: str, country_tag: str, **kwargs) -> FocusTree:
+        """Create a focus tree if missing, otherwise patch tree-level fields."""
+        if tree_id in self._focus_trees:
+            if kwargs:
+                self.update_focus_tree(tree_id, **kwargs)
+            return self._focus_trees[tree_id]
+        tree = self.create_focus_tree(tree_id, country_tag)
+        if kwargs:
+            self.update_focus_tree(tree_id, **kwargs)
         return tree
 
     def delete_focus_tree(self, tree_id: str) -> bool:
@@ -1045,6 +1126,98 @@ class Mod:
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
         return True
+
+    def upsert_focus(self, tree_id: str, focus: Focus) -> Focus:
+        """Add a focus if missing, otherwise replace its modeled fields."""
+        existing = self.get_focus(tree_id, focus.id)
+        if existing is None:
+            self.add_focus(tree_id, focus)
+            return focus
+        updates = {
+            field.name: copy.deepcopy(getattr(focus, field.name))
+            for field in dataclasses.fields(Focus)
+            if field.name not in {"id", "raw_block", "touched"}
+        }
+        self.update_focus(tree_id, focus.id, **updates)
+        return self.get_focus(tree_id, focus.id) or focus
+
+    def focus_tree_bounds(self, tree_id: str) -> dict[str, int]:
+        tree = self.get_focus_tree(tree_id)
+        if not tree.focuses:
+            return {"min_x": 0, "max_x": 0, "min_y": 0, "max_y": 0, "width": 0, "height": 0}
+        xs = [focus.x for focus in tree.focuses]
+        ys = [focus.y for focus in tree.focuses]
+        return {
+            "min_x": min(xs),
+            "max_x": max(xs),
+            "min_y": min(ys),
+            "max_y": max(ys),
+            "width": max(xs) - min(xs) + 1,
+            "height": max(ys) - min(ys) + 1,
+        }
+
+    def place_continuous_focus_below_tree(self, tree_id: str, padding: int = 400, x: int = 50) -> str:
+        bounds = self.focus_tree_bounds(tree_id)
+        y = (bounds["max_y"] + 1) * 100 + padding
+        position = f"x = {x} y = {y}"
+        self.update_focus_tree(tree_id, continuous_focus_position=position)
+        return position
+
+    def assert_no_visual_overlap(self, tree_id: str, *, min_continuous_padding: int = 100) -> bool:
+        tree = self.get_focus_tree(tree_id)
+        positions: dict[tuple[int, int], str] = {}
+        issues: list[str] = []
+        for focus in tree.focuses:
+            pos = (focus.x, focus.y)
+            if pos in positions:
+                issues.append(f"{focus.id} overlaps {positions[pos]} at x={focus.x}, y={focus.y}")
+            else:
+                positions[pos] = focus.id
+        if tree.continuous_focus_position:
+            match = re.search(r"\by\s*=\s*(-?\d+)", tree.continuous_focus_position)
+            if match:
+                min_y = (self.focus_tree_bounds(tree_id)["max_y"] + 1) * 100 + min_continuous_padding
+                y = int(match.group(1))
+                if y < min_y:
+                    issues.append(f"continuous_focus_position y={y} is above recommended minimum y={min_y}")
+        if issues:
+            raise ValueError("; ".join(issues))
+        return True
+
+    def auto_layout_branch(
+        self,
+        tree_id: str,
+        focuses: list[Focus],
+        *,
+        anchor_focus_id: str | None = None,
+        x: int | None = None,
+        y_start: int | None = None,
+        spacing_y: int = 1,
+        chain_prerequisites: bool = True,
+    ) -> list[Focus]:
+        tree = self.get_focus_tree(tree_id)
+        if not focuses:
+            return []
+        if x is None:
+            if anchor_focus_id:
+                anchor = self.get_focus(tree_id, anchor_focus_id)
+                x = anchor.x if anchor else 0
+            else:
+                x = max((focus.x for focus in tree.focuses), default=0) + 2
+        if y_start is None:
+            if anchor_focus_id:
+                anchor = self.get_focus(tree_id, anchor_focus_id)
+                y_start = (anchor.y + spacing_y) if anchor else max((focus.y for focus in tree.focuses), default=-1) + spacing_y
+            else:
+                y_start = max((focus.y for focus in tree.focuses), default=-1) + spacing_y
+        previous = anchor_focus_id
+        for index, focus in enumerate(focuses):
+            focus.x = x
+            focus.y = y_start + index * spacing_y
+            if chain_prerequisites and previous and not focus.prerequisites:
+                focus.prerequisites = [[previous]]
+            previous = focus.id
+        return focuses
 
     def insert_focus_after(
         self,
@@ -1242,6 +1415,18 @@ class Mod:
         return f"add_manpower = {amount}"
 
     @staticmethod
+    def effect_add_army_experience(amount: int | float) -> str:
+        return f"add_army_experience = {amount}"
+
+    @staticmethod
+    def effect_add_navy_experience(amount: int | float) -> str:
+        return f"add_navy_experience = {amount}"
+
+    @staticmethod
+    def effect_add_air_experience(amount: int | float) -> str:
+        return f"add_air_experience = {amount}"
+
+    @staticmethod
     def effect_add_equipment(
         equipment_type: str,
         amount: int,
@@ -1271,6 +1456,23 @@ class Mod:
         return f"add_timed_idea = {{ idea = {idea_id} days = {days} }}"
 
     @staticmethod
+    def effect_swap_idea(old: str, new: str, target: str | None = None) -> str:
+        effect = f"swap_ideas = {{ remove_idea = {old} add_idea = {new} }}"
+        return scope_block(target.upper(), effect) if target else effect
+
+    @classmethod
+    def effect_upgrade_idea_chain(cls, ideas: list[str], target: str | None = None) -> str:
+        if len(ideas) < 2:
+            raise ValueError("effect_upgrade_idea_chain() requires at least two idea IDs")
+        effects: list[str] = []
+        for old, new in reversed(list(zip(ideas, ideas[1:]))):
+            effects.append(f"if = {{ limit = {{ has_idea = {old} }} {cls.effect_swap_idea(old, new)} }}")
+        missing_checks = " ".join(f"NOT = {{ has_idea = {idea} }}" for idea in ideas)
+        effects.append(f"if = {{ limit = {{ {missing_checks} }} add_ideas = {ideas[0]} }}")
+        body = "\n".join(effects)
+        return scope_block(target.upper(), body) if target else body
+
+    @staticmethod
     def effect_create_wargoal(target: str, war_goal_type: str = "annex_everything") -> str:
         return f"create_wargoal = {{ type = {war_goal_type} target = {target.upper()} }}"
 
@@ -1293,6 +1495,36 @@ class Mod:
         if capital is not None:
             parts.append(f"capital = {capital}")
         return f"start_civil_war = {{ {' '.join(parts)} }}"
+
+    @staticmethod
+    def effect_set_politics(
+        ruling_party: str,
+        *,
+        elections_allowed: bool | None = None,
+        elections_frequency: int | None = None,
+    ) -> str:
+        fields: dict[str, object] = {"ruling_party": ruling_party}
+        if elections_allowed is not None:
+            fields["elections_allowed"] = elections_allowed
+        if elections_frequency is not None:
+            fields["elections_frequency"] = elections_frequency
+        return effect_block("set_politics", fields)
+
+    @staticmethod
+    def effect_create_faction(name: str) -> str:
+        return f"create_faction = {pdx_value(name)}"
+
+    @staticmethod
+    def effect_add_to_faction(target: str) -> str:
+        return f"add_to_faction = {target.upper()}"
+
+    @staticmethod
+    def effect_white_peace(target: str = "all") -> str:
+        return f"white_peace = {target.upper() if re.fullmatch(r'[A-Za-z0-9]{3}', target) else target}"
+
+    @staticmethod
+    def effect_set_rule(rule: str, value: bool | str = True) -> str:
+        return effect_block("set_rule", {rule: value})
 
     @staticmethod
     def effect_schedule_country_event(event_id: str, days: int = 0, target: str | None = None) -> str:
@@ -1567,16 +1799,43 @@ class Mod:
         context = self.get_country_context(tag, copy_states=True)
         return [self.get_state(state["id"]) for state in context["states"]]
 
+    def suggest_focus_icons(self, query: str, count: int = 5) -> list[str]:
+        icons = sorted(self._known_focus_icons())
+        if not icons:
+            icons = sorted(COMMON_FOCUS_ICONS)
+        needle = query.lower().replace(" ", "_")
+
+        def score(icon: str) -> tuple[float, str]:
+            low = icon.lower()
+            substring = 1.0 if needle and needle in low else 0.0
+            ratio = SequenceMatcher(None, needle, low).ratio() if needle else 0.0
+            return (substring + ratio, icon)
+
+        return [icon for _, icon in sorted((score(icon) for icon in icons), reverse=True)[:count]]
+
+    def suggest_focus_icon(self, query: str) -> str:
+        suggestions = self.suggest_focus_icons(query, count=1)
+        if not suggestions:
+            raise ValueError("No focus icons available from mod, vanilla install, or built-in fallback list")
+        return suggestions[0]
+
     # ── Validation ───────────────────────────────────────────────
 
     def validate(
         self,
         suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
+        validate_icons: bool = False,
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
 
         known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
         known_tags.update(self._countries.keys())
+        known_ideas = self._known_idea_ids()
+        known_events = self._known_event_ids()
+        known_technologies = self._known_technology_ids()
+        known_equipment = self._known_equipment_ids()
+        known_focus_icons = self._known_focus_icons() if validate_icons else set()
+
         for country in self._countries.values():
             errors.extend(validate_country(country))
         for state in self._states.values():
@@ -1598,7 +1857,7 @@ class Mod:
         for country in self._countries.values():
             for idea_id in country.ideas:
                 idea = self._ideas.get(idea_id)
-                if idea is None:
+                if idea is None and idea_id not in known_ideas:
                     errors.append(ValidationError(
                         message=f"Country '{country.tag}' assigns unknown idea '{idea_id}'",
                         severity="warning",
@@ -1654,10 +1913,33 @@ class Mod:
                         focus_id=focus.id,
                         file_path=str(tree.path) if tree.path else None,
                     ))
+                if validate_icons and known_focus_icons and focus.icon not in known_focus_icons:
+                    suggestion = self.suggest_focus_icon(focus.icon)
+                    errors.append(ValidationError(
+                        message=f"Focus '{focus.id}' icon '{focus.icon}' was not found. Suggested close match: {suggestion}",
+                        severity="warning",
+                        code="unknown_focus_icon",
+                        focus_id=focus.id,
+                        file_path=str(tree.path) if tree.path else None,
+                    ))
+
+        errors.extend(self._validate_script_references(
+            known_ideas=known_ideas,
+            known_events=known_events,
+            known_technologies=known_technologies,
+            known_equipment=known_equipment,
+        ))
+        errors.extend(self._validate_idea_mutation_collisions())
 
         return _filter_validation_errors(errors, suppress_warnings=suppress_warnings)
 
     # ── Preview & Save ───────────────────────────────────────────
+
+    def preview_summary(self) -> str:
+        lines = self._semantic_preview_lines()
+        if not lines:
+            return "No semantic changes detected"
+        return "Changed:\n" + "\n".join(f"- {line}" for line in lines)
 
     def preview(self) -> str:
         diffs: list[str] = []
@@ -1934,6 +2216,304 @@ class Mod:
     def _restore(self, snapshot: dict[str, object]) -> None:
         for key, value in snapshot.items():
             setattr(self, key, value)
+
+    def _semantic_preview_lines(self) -> list[str]:
+        lines: list[str] = []
+        if "countries" in self._dirty:
+            for tag in sorted(self._dirty_countries):
+                country = self._countries.get(tag)
+                if country:
+                    lines.append(f"country {tag}: create/update {country.name or tag}")
+        if "states" in self._dirty:
+            for sid in sorted(self._dirty_states):
+                state = self._states.get(sid)
+                if state:
+                    lines.append(f"state {sid}: owner={state.owner or '<none>'} cores={','.join(state.cores) or '<none>'}")
+        if "ideas" in self._dirty:
+            for iid in sorted(self._dirty_ideas):
+                idea = self._ideas.get(iid)
+                if idea:
+                    lines.append(f"idea {iid}: category={idea.category or '<none>'} modifiers={','.join(sorted(idea.modifier)) or '<none>'}")
+        if "events" in self._dirty:
+            for eid in sorted(self._dirty_events):
+                event = self._events.get(eid)
+                if event:
+                    lines.append(f"event {eid}: {len(event.options)} option(s)")
+        if "on_actions" in self._dirty:
+            for action_id in sorted(self._dirty_on_actions):
+                if action_id in self._on_actions:
+                    lines.append(f"on_action {action_id}: updated")
+            for path in sorted(self._dirty_on_action_files):
+                lines.append(f"on_action file {self._display_path(path)}: rewritten")
+        if "decisions" in self._dirty:
+            for cid in sorted(self._dirty_decision_categories):
+                category = self._decision_categories.get(cid)
+                if category:
+                    lines.append(f"decision category {cid}: {len(category.decisions)} decision(s)")
+        if "focus" in self._dirty:
+            for tree_id in sorted(self._dirty_focus_trees):
+                tree = self._focus_trees.get(tree_id)
+                if tree is None:
+                    continue
+                old_tree = load_focus_tree(tree.path) if tree.path and tree.path.exists() else None
+                old_focuses = {focus.id: focus for focus in old_tree.focuses} if old_tree else {}
+                new_focuses = {focus.id: focus for focus in tree.focuses}
+                if old_tree and old_tree.continuous_focus_position != tree.continuous_focus_position:
+                    lines.append(
+                        f"{tree_id} continuous_focus_position: "
+                        f"{old_tree.continuous_focus_position or '<none>'} -> {tree.continuous_focus_position or '<none>'}"
+                    )
+                for fid in sorted(new_focuses):
+                    focus = new_focuses[fid]
+                    old = old_focuses.get(fid)
+                    if old is None:
+                        lines.append(f"{tree_id} focus {fid}: added at x={focus.x} y={focus.y}")
+                        continue
+                    changes: list[str] = []
+                    if (old.x, old.y) != (focus.x, focus.y):
+                        changes.append(f"position x={old.x} y={old.y} -> x={focus.x} y={focus.y}")
+                    if old.completion_reward.strip() != focus.completion_reward.strip():
+                        changes.append("completion_reward changed")
+                    if old.icon != focus.icon:
+                        changes.append(f"icon {old.icon} -> {focus.icon}")
+                    if changes:
+                        lines.append(f"{tree_id} focus {fid}: {'; '.join(changes)}")
+                for fid in sorted(set(old_focuses) - set(new_focuses)):
+                    lines.append(f"{tree_id} focus {fid}: removed")
+        if "localization" in self._dirty:
+            lines.append(f"localization: {len(self._dirty_loc_keys)} key(s)")
+        return lines
+
+    def _display_path(self, path: Path) -> str:
+        return str(path.relative_to(self.mod_root)) if path.is_relative_to(self.mod_root) else str(path)
+
+    def _script_entries(self) -> list[tuple[str, str, str | None, str | None]]:
+        entries: list[tuple[str, str, str | None, str | None]] = []
+        for tree in self._focus_trees.values():
+            for focus in tree.focuses:
+                script = "\n".join([
+                    focus.completion_reward,
+                    focus.available,
+                    focus.bypass,
+                    focus.select_effect,
+                    focus.complete_tooltip,
+                    focus.allow_branch,
+                ])
+                entries.append((script, "focus", focus.id, str(tree.path) if tree.path else None))
+        for event in self._events.values():
+            scripts = [event.trigger, event.immediate, event.mean_time_to_happen]
+            scripts.extend(option.trigger + "\n" + option.effect for option in event.options)
+            entries.append(("\n".join(scripts), "event", event.id, str(event.path) if event.path else None))
+        for action in self._on_actions.values():
+            entries.append((action.effect, "on_action", action.id, str(action.path) if action.path else None))
+            if action.events:
+                entries.append(("\n".join(f"country_event = {{ id = {event_id} }}" for event_id in action.events), "on_action", action.id, str(action.path) if action.path else None))
+        for decision in self._decisions.values():
+            entries.append(("\n".join([decision.available, decision.visible, decision.complete_effect, decision.remove_effect]), "decision", decision.id, str(decision.path) if decision.path else None))
+        return entries
+
+    def _validate_script_references(
+        self,
+        *,
+        known_ideas: set[str],
+        known_events: set[str],
+        known_technologies: set[str],
+        known_equipment: set[str],
+    ) -> list[ValidationError]:
+        errors: list[ValidationError] = []
+        for script, kind, obj_id, file_path in self._script_entries():
+            if not script:
+                continue
+            for idea_id in sorted(set(_IDEA_EFFECT_RE.findall(script) + _HAS_IDEA_RE.findall(script))):
+                if idea_id not in known_ideas:
+                    errors.append(self._script_ref_error(
+                        f"{kind} '{obj_id}' references unknown idea '{idea_id}'",
+                        "unknown_idea_reference",
+                        kind,
+                        obj_id,
+                        file_path,
+                        idea_id=idea_id,
+                    ))
+            for event_id in sorted(set(_EVENT_REF_RE.findall(script))):
+                if known_events and event_id not in known_events:
+                    errors.append(self._script_ref_error(
+                        f"{kind} '{obj_id}' references unknown event '{event_id}'",
+                        "unknown_event_reference",
+                        kind,
+                        obj_id,
+                        file_path,
+                        event_id=event_id,
+                    ))
+            if known_technologies:
+                for tech_id in sorted(set(self._technology_refs(script))):
+                    if tech_id not in known_technologies:
+                        errors.append(self._script_ref_error(
+                            f"{kind} '{obj_id}' references unknown technology '{tech_id}'",
+                            "unknown_technology_reference",
+                            kind,
+                            obj_id,
+                            file_path,
+                        ))
+            if known_equipment:
+                for equipment_id in sorted(set(self._equipment_refs(script))):
+                    if equipment_id not in known_equipment:
+                        errors.append(self._script_ref_error(
+                            f"{kind} '{obj_id}' references unknown equipment '{equipment_id}'",
+                            "unknown_equipment_reference",
+                            kind,
+                            obj_id,
+                            file_path,
+                        ))
+            remove_count = len(re.findall(r"\bremove_ideas\s*=", script))
+            add_count = len(re.findall(r"\badd_ideas\s*=", script))
+            if remove_count >= 2 and add_count >= 1 and "swap_ideas" not in script:
+                errors.append(self._script_ref_error(
+                    f"{kind} '{obj_id}' removes {remove_count} ideas and adds {add_count}; consider Mod.effect_swap_idea() or hidden effects for cleaner tooltips",
+                    "bad_idea_tooltip_pattern",
+                    kind,
+                    obj_id,
+                    file_path,
+                ))
+        return errors
+
+    def _validate_idea_mutation_collisions(self) -> list[ValidationError]:
+        focus_mutations: dict[str, set[str]] = {}
+        runtime_mutations: dict[str, set[str]] = {}
+        for script, kind, obj_id, _ in self._script_entries():
+            ideas = set(_IDEA_EFFECT_RE.findall(script))
+            if not ideas:
+                continue
+            target = focus_mutations if kind == "focus" else runtime_mutations
+            target.setdefault(obj_id or "<unknown>", set()).update(ideas)
+        focus_ideas = set().union(*focus_mutations.values()) if focus_mutations else set()
+        runtime_ideas = set().union(*runtime_mutations.values()) if runtime_mutations else set()
+        collisions = sorted(focus_ideas & runtime_ideas)
+        if not collisions:
+            return []
+        return [ValidationError(
+            message=(
+                "Focuses and runtime events/decisions mutate the same idea IDs "
+                f"({', '.join(collisions)}). Check delayed events cannot downgrade a staged spirit."
+            ),
+            severity="warning",
+            code="idea_mutation_collision",
+        )]
+
+    def _script_ref_error(
+        self,
+        message: str,
+        code: str,
+        kind: str,
+        obj_id: str | None,
+        file_path: str | None,
+        *,
+        idea_id: str | None = None,
+        event_id: str | None = None,
+    ) -> ValidationError:
+        return ValidationError(
+            message=message,
+            severity="warning",
+            code=code,
+            file_path=file_path,
+            focus_id=obj_id if kind == "focus" else None,
+            event_id=event_id or (obj_id if kind == "event" else None),
+            idea_id=idea_id,
+        )
+
+    @staticmethod
+    def _technology_refs(script: str) -> list[str]:
+        refs: list[str] = []
+        for body in _TECH_BLOCK_RE.findall(script):
+            refs.extend(
+                key for key in re.findall(r"\b([A-Za-z0-9_.:-]+)\s*=", body)
+                if key != "popup"
+            )
+        return refs
+
+    @staticmethod
+    def _equipment_refs(script: str) -> list[str]:
+        refs: list[str] = []
+        for body in _EQUIPMENT_STOCKPILE_RE.findall(script):
+            refs.extend(re.findall(r"\btype\s*=\s*([A-Za-z0-9_.:-]+)", body))
+        return refs
+
+    def _known_idea_ids(self) -> set[str]:
+        ids = set(self._ideas)
+        for base in self._data_roots():
+            for rel in ("common/ideas", "common/national_ideas"):
+                ideas_dir = base / rel
+                if not ideas_dir.exists():
+                    continue
+                for path in ideas_dir.glob("*.txt"):
+                    try:
+                        ideas, _ = read_ideas_file(path)
+                    except Exception:
+                        continue
+                    ids.update(idea.id for idea in ideas)
+        return ids
+
+    def _known_event_ids(self) -> set[str]:
+        ids = set(self._events)
+        for base in self._data_roots():
+            events_dir = base / "events"
+            if not events_dir.exists():
+                continue
+            for path in events_dir.glob("*.txt"):
+                try:
+                    _, events = load_events_file(path)
+                except Exception:
+                    continue
+                ids.update(event.id for event in events)
+        return ids
+
+    def _known_focus_icons(self) -> set[str]:
+        icons = set(COMMON_FOCUS_ICONS)
+        for base in self._data_roots():
+            interface_dir = base / "interface"
+            if not interface_dir.exists():
+                continue
+            for path in interface_dir.glob("*.gfx"):
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+                icons.update(name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_"))
+        return icons
+
+    def _known_technology_ids(self) -> set[str]:
+        ids: set[str] = set()
+        ignored = {"technologies", "folder", "path", "xor", "research_cost", "start_year", "categories"}
+        for base in self._data_roots():
+            tech_dir = base / "common" / "technologies"
+            if not tech_dir.exists():
+                continue
+            for path in tech_dir.glob("*.txt"):
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+                ids.update(candidate for candidate in _SCRIPT_BLOCK_ID_RE.findall(text) if candidate not in ignored)
+        return ids
+
+    def _known_equipment_ids(self) -> set[str]:
+        ids: set[str] = set()
+        for base in self._data_roots():
+            equipment_dir = base / "common" / "units" / "equipment"
+            if not equipment_dir.exists():
+                continue
+            for path in equipment_dir.glob("*.txt"):
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    continue
+                ids.update(_SCRIPT_BLOCK_ID_RE.findall(text))
+        return ids
+
+    def _data_roots(self) -> list[Path]:
+        roots = [self.mod_root]
+        if self.hoi4_install is not None:
+            roots.append(self.hoi4_install)
+        return roots
 
     def _sync_country_loc(self, country: Country) -> None:
         name = country.name or country.tag

@@ -102,7 +102,7 @@ with mod.transaction():
    Mod.effect_remove_state_core(state_id, tag)
    ```
 
-7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
+7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_swap_idea(...)`, `Mod.effect_upgrade_idea_chain(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_army_experience(...)`, `Mod.effect_add_navy_experience(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_set_politics(...)`, `Mod.effect_create_faction(...)`, `Mod.effect_add_to_faction(...)`, `Mod.effect_white_peace(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
 
 8. Search rather than guess:
 
@@ -120,9 +120,9 @@ with mod.transaction():
 
    This means `(FOCUS_A OR FOCUS_B) AND FOCUS_C`.
 
-10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Known false-positive warnings can be hidden with stable codes from `VALIDATION_WARNING_CODES`, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
+10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Use `validate(validate_icons=True)` before final saves when changing focus icons. Known false-positive warnings can be hidden with stable codes from `VALIDATION_WARNING_CODES`, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
 
-11. Use patch-style focus helpers when editing existing trees: `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
+11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `upsert_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
 
 12. Use `get_country_context(tag)` before generating country-specific content. Pass `copy_states=True` before directly modifying vanilla states.
 
@@ -136,7 +136,11 @@ with mod.transaction():
 
 17. Use `Focus(..., requires="FOCUS_ID")` for a single prerequisite instead of manually writing `prerequisites=[["FOCUS_ID"]]`.
 
-18. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
+18. For generated focus trees, run `auto_layout_branch()`, `place_continuous_focus_below_tree()`, and `assert_no_visual_overlap()` before saving.
+
+19. Use `preview_summary()` alongside `preview()` in long scripts so the agent log contains a compact semantic change list.
+
+20. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
 
 ## Documentation
 

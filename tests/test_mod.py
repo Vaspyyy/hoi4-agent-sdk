@@ -629,6 +629,23 @@ class TestAgentFacingApis:
         assert Mod.effect_set_technologies({"infantry_weapons": 1, "tech_support": 1}) == (
             "set_technology = { infantry_weapons = 1 tech_support = 1 }"
         )
+        assert Mod.effect_add_army_experience(25) == "add_army_experience = 25"
+        assert Mod.effect_add_navy_experience(25) == "add_navy_experience = 25"
+        assert Mod.effect_add_air_experience(25) == "add_air_experience = 25"
+        assert Mod.effect_set_politics("democratic", elections_allowed=True) == (
+            "set_politics = { ruling_party = democratic elections_allowed = yes }"
+        )
+        assert Mod.effect_create_faction("Mediterranean League") == 'create_faction = "Mediterranean League"'
+        assert Mod.effect_add_to_faction("ita") == "add_to_faction = ITA"
+        assert Mod.effect_white_peace("fra") == "white_peace = FRA"
+        assert Mod.effect_set_rule("can_create_factions", True) == "set_rule = { can_create_factions = yes }"
+        assert Mod.effect_swap_idea("old_spirit", "new_spirit", target="ita") == (
+            "ITA = { swap_ideas = { remove_idea = old_spirit add_idea = new_spirit } }"
+        )
+        chain = Mod.effect_upgrade_idea_chain(["spirit_1", "spirit_2", "spirit_3"], target="ita")
+        assert "ITA = {" in chain
+        assert "has_idea = spirit_2" in chain
+        assert "remove_idea = spirit_2 add_idea = spirit_3" in chain
 
     def test_tech_bonus_helper_validates_categories(self):
         assert "infantry_weapons" in TECHNOLOGY_CATEGORIES
@@ -641,6 +658,112 @@ class TestAgentFacingApis:
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         assert mod.update_focus_tree("german_focus", continuous_focus_position="x = 0 y = 1000")
         assert mod.get_focus_tree("german_focus").continuous_focus_position == "x = 0 y = 1000"
+
+    def test_ensure_and_upsert_helpers_are_idempotent(self, tmp_mod):
+        mod = tmp_mod.mod
+        tree = mod.ensure_focus_tree("scl_focus", "SCL")
+        assert tree.id == "scl_focus"
+        assert mod.ensure_focus_tree("scl_focus", "SCL") is tree
+
+        focus = mod.upsert_focus("scl_focus", Focus(id="SCL_start", x=1, y=1, completion_reward="add_stability = 0.05"))
+        assert focus.id == "SCL_start"
+        mod.upsert_focus("scl_focus", Focus(id="SCL_start", x=2, y=3, completion_reward="add_war_support = 0.05"))
+        assert mod.get_focus("scl_focus", "SCL_start").x == 2
+        assert "add_war_support" in mod.get_focus("scl_focus", "SCL_start").completion_reward
+
+        idea = mod.ensure_idea("SCL_spirit", modifier={"political_power_gain": 0.1})
+        assert idea.id == "SCL_spirit"
+        mod.ensure_idea("SCL_spirit", icon="GFX_new", modifier={"stability_factor": 0.05})
+        assert mod.get_idea("SCL_spirit").icon == "GFX_new"
+        assert mod.get_idea("SCL_spirit").modifier["political_power_gain"] == 0.1
+        assert mod.get_idea("SCL_spirit").modifier["stability_factor"] == 0.05
+
+        event = mod.ensure_event("scl.1", options=[EventOption(name="scl.1.a", effect="add_stability = 0.05")])
+        assert event.id == "scl.1"
+        mod.ensure_event("scl.1", immediate="add_political_power = 25")
+        assert mod.get_event("scl.1").immediate == "add_political_power = 25"
+
+    def test_focus_layout_helpers_place_and_guard_continuous_focus(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_focus_tree("scl_focus", "SCL")
+        branch = mod.auto_layout_branch("scl_focus", [
+            Focus(id="SCL_a"),
+            Focus(id="SCL_b"),
+        ], x=4, y_start=2)
+        for focus in branch:
+            mod.add_focus("scl_focus", focus)
+        assert mod.focus_tree_bounds("scl_focus") == {
+            "min_x": 4,
+            "max_x": 4,
+            "min_y": 2,
+            "max_y": 3,
+            "width": 1,
+            "height": 2,
+        }
+        assert branch[1].prerequisites == [["SCL_a"]]
+        position = mod.place_continuous_focus_below_tree("scl_focus", padding=400)
+        assert position == "x = 50 y = 800"
+        assert mod.assert_no_visual_overlap("scl_focus") is True
+        mod.add_focus("scl_focus", Focus(id="SCL_overlap", x=4, y=3))
+        with pytest.raises(ValueError, match="overlaps"):
+            mod.assert_no_visual_overlap("scl_focus")
+
+    def test_validation_catches_icons_refs_and_tooltip_patterns(self, tmp_mod):
+        mod = tmp_mod.mod
+        interface_dir = tmp_mod.root / "interface"
+        interface_dir.mkdir(parents=True, exist_ok=True)
+        interface_dir.joinpath("goals.gfx").write_text(
+            'spriteType = { name = "GFX_goal_generic_navy" texturefile = "gfx/interface/goals/navy.dds" }',
+            encoding="utf-8",
+        )
+        tech_dir = tmp_mod.root / "common" / "technologies"
+        tech_dir.mkdir(parents=True, exist_ok=True)
+        tech_dir.joinpath("industry.txt").write_text("known_tech = { research_cost = 1 }", encoding="utf-8")
+        equip_dir = tmp_mod.root / "common" / "units" / "equipment"
+        equip_dir.mkdir(parents=True, exist_ok=True)
+        equip_dir.joinpath("infantry.txt").write_text("infantry_equipment_0 = { }", encoding="utf-8")
+
+        mod.create_focus_tree("scl_focus", "SCL")
+        mod.create_event("known.1")
+        mod.add_focus("scl_focus", Focus(
+            id="SCL_bad",
+            icon="GFX_missing_icon",
+            completion_reward="\n".join([
+                "remove_ideas = old_1",
+                "remove_ideas = old_2",
+                "add_ideas = missing_spirit",
+                "country_event = { id = missing.1 }",
+                "set_technology = { missing_tech = 1 }",
+                Mod.effect_add_equipment("missing_equipment", 10),
+            ]),
+        ))
+        errors = mod.validate(validate_icons=True)
+        codes = {error.code for error in errors}
+        assert "unknown_focus_icon" in codes
+        assert "unknown_idea_reference" in codes
+        assert "unknown_event_reference" in codes
+        assert "unknown_technology_reference" in codes
+        assert "unknown_equipment_reference" in codes
+        assert "bad_idea_tooltip_pattern" in codes
+        assert mod.suggest_focus_icon("navy") == "GFX_goal_generic_navy"
+
+    def test_validation_warns_on_focus_event_idea_mutation_collision(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_idea("SCL_crisis", modifier={"stability_factor": -0.1})
+        mod.create_focus_tree("scl_focus", "SCL")
+        mod.add_focus("scl_focus", Focus(id="SCL_focus", completion_reward="remove_ideas = SCL_crisis"))
+        mod.create_event("scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_crisis")])
+        errors = mod.validate()
+        assert any(error.code == "idea_mutation_collision" for error in errors)
+
+    def test_preview_summary_reports_semantic_focus_changes(self, tmp_mod):
+        mod = tmp_mod.with_focus_tree("GER_focus.txt")
+        mod.update_focus_tree("german_focus", continuous_focus_position="x = 50 y = 2600")
+        mod.update_focus("german_focus", "GER_rhineland", x=7, y=2)
+        summary = mod.preview_summary()
+        assert "continuous_focus_position" in summary
+        assert "GER_rhineland" in summary
+        assert "position" in summary
 
     def test_set_focuses_mutually_exclusive_sets_reciprocal_single_groups(self, tmp_mod):
         mod = tmp_mod.mod
