@@ -713,7 +713,7 @@ class TestAgentFacingApis:
         interface_dir = tmp_mod.root / "interface"
         interface_dir.mkdir(parents=True, exist_ok=True)
         interface_dir.joinpath("goals.gfx").write_text(
-            'spriteType = { name = "GFX_goal_generic_navy" texturefile = "gfx/interface/goals/navy.dds" }',
+            'spriteType = { name = "GFX_custom_navy_goal" texturefile = "gfx/interface/goals/navy.dds" }',
             encoding="utf-8",
         )
         tech_dir = tmp_mod.root / "common" / "technologies"
@@ -737,15 +737,32 @@ class TestAgentFacingApis:
                 Mod.effect_add_equipment("missing_equipment", 10),
             ]),
         ))
+        mod.add_focus("scl_focus", Focus(id="SCL_bad_fallback_icon", icon="GFX_goal_generic_navy", x=1))
         errors = mod.validate(validate_icons=True)
         codes = {error.code for error in errors}
         assert "unknown_focus_icon" in codes
+        assert any("GFX_goal_generic_navy" in error.message for error in errors)
         assert "unknown_idea_reference" in codes
         assert "unknown_event_reference" in codes
         assert "unknown_technology_reference" in codes
         assert "unknown_equipment_reference" in codes
         assert "bad_idea_tooltip_pattern" in codes
-        assert mod.suggest_focus_icon("navy") == "GFX_goal_generic_navy"
+        assert mod.suggest_focus_icon("navy") == "GFX_custom_navy_goal"
+
+    def test_focus_icon_scan_is_cached_but_discard_refreshes(self, tmp_mod):
+        mod = tmp_mod.mod
+        interface_dir = tmp_mod.root / "interface"
+        interface_dir.mkdir(parents=True, exist_ok=True)
+        icon_file = interface_dir / "goals.gfx"
+        icon_file.write_text('spriteType = { name = "GFX_cached_icon" }', encoding="utf-8")
+
+        assert "GFX_cached_icon" in mod._known_focus_icons()
+        icon_file.write_text('spriteType = { name = "GFX_refreshed_icon" }', encoding="utf-8")
+        assert "GFX_cached_icon" in mod._known_focus_icons()
+        assert "GFX_refreshed_icon" not in mod._known_focus_icons()
+
+        mod.discard()
+        assert "GFX_refreshed_icon" in mod._known_focus_icons()
 
     def test_validation_warns_on_focus_event_idea_mutation_collision(self, tmp_mod):
         mod = tmp_mod.mod

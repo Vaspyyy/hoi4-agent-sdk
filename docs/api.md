@@ -443,7 +443,7 @@ mod.assert_no_visual_overlap("west_focus")
 ```
 ## Validation
 
-`mod.validate(validate_icons=False)` runs all validators and returns `list[ValidationError]`. Does **not** raise — returns empty list if all valid. Pass `validate_icons=True` to scan interface `.gfx` files and warn about missing focus icons.
+`mod.validate(validate_icons=False)` runs all validators and returns `list[ValidationError]`. Does **not** raise — returns empty list if all valid. Pass `validate_icons=True` to scan real interface `.gfx` files and warn about missing focus icons. Icon/reference scans are cached per `Mod` instance; call `discard()` to reload from disk and refresh the cache.
 
 ### What Gets Checked
 
@@ -494,6 +494,8 @@ Use icon suggestion helpers instead of guessing:
 mod.suggest_focus_icon("navy")
 mod.suggest_focus_icons("industry", count=5)
 ```
+
+When real `.gfx` data exists, icon validation uses only scanned icons. The built-in fallback icon list is suggestion-only for projects without a configured HOI4 install or interface files.
 ## Preview & Diff
 
 `mod.preview()` returns a unified diff string comparing in-memory state against the last-saved or originally-loaded file contents. Returns empty string if nothing is dirty.

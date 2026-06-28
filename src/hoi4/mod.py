@@ -65,7 +65,6 @@ from .types import (
 from .validation import validate_country, validate_event, validate_focus_tree, validate_idea, validate_state
 
 COMMON_FOCUS_ICONS: tuple[str, ...] = (
-    "GFX_goal_generic_army_doctrine",
     "GFX_goal_generic_construct_civ_factory",
     "GFX_goal_generic_construct_infrastructure",
     "GFX_goal_generic_construct_mil_factory",
@@ -75,7 +74,6 @@ COMMON_FOCUS_ICONS: tuple[str, ...] = (
     "GFX_goal_generic_forceful_treaty",
     "GFX_goal_generic_intelligence_exchange",
     "GFX_goal_generic_major_war",
-    "GFX_goal_generic_navy",
     "GFX_goal_generic_political_pressure",
     "GFX_goal_generic_production",
     "GFX_goal_generic_secret_weapon",
@@ -192,6 +190,7 @@ class Mod:
         self._original_files: dict[Path, str] = {}
         self._dirty: set[str] = set()
         self._vanilla_tags: set[str] = load_vanilla_tags(self.hoi4_install) if self.hoi4_install else set()
+        self._scan_cache: dict[str, set[str]] = {}
 
         self._load()
 
@@ -2181,6 +2180,7 @@ class Mod:
         self._dirty_loc_keys.clear()
         self._original_files.clear()
         self._dirty.clear()
+        self._scan_cache.clear()
         self._load()
 
     def _snapshot(self) -> dict[str, object]:
@@ -2439,6 +2439,11 @@ class Mod:
 
     def _known_idea_ids(self) -> set[str]:
         ids = set(self._ideas)
+        cached = self._scan_cache.get("ideas")
+        if cached is not None:
+            ids.update(cached)
+            return ids
+        scanned: set[str] = set()
         for base in self._data_roots():
             for rel in ("common/ideas", "common/national_ideas"):
                 ideas_dir = base / rel
@@ -2449,11 +2454,18 @@ class Mod:
                         ideas, _ = read_ideas_file(path)
                     except Exception:
                         continue
-                    ids.update(idea.id for idea in ideas)
+                    scanned.update(idea.id for idea in ideas)
+        self._scan_cache["ideas"] = scanned
+        ids.update(scanned)
         return ids
 
     def _known_event_ids(self) -> set[str]:
         ids = set(self._events)
+        cached = self._scan_cache.get("events")
+        if cached is not None:
+            ids.update(cached)
+            return ids
+        scanned: set[str] = set()
         for base in self._data_roots():
             events_dir = base / "events"
             if not events_dir.exists():
@@ -2463,24 +2475,33 @@ class Mod:
                     _, events = load_events_file(path)
                 except Exception:
                     continue
-                ids.update(event.id for event in events)
+                scanned.update(event.id for event in events)
+        self._scan_cache["events"] = scanned
+        ids.update(scanned)
         return ids
 
     def _known_focus_icons(self) -> set[str]:
-        icons = set(COMMON_FOCUS_ICONS)
+        cached = self._scan_cache.get("focus_icons")
+        if cached is not None:
+            return set(cached)
+        icons: set[str] = set()
         for base in self._data_roots():
             interface_dir = base / "interface"
             if not interface_dir.exists():
                 continue
-            for path in interface_dir.glob("*.gfx"):
+            for path in interface_dir.rglob("*.gfx"):
                 try:
                     text = path.read_text(encoding="utf-8", errors="ignore")
                 except Exception:
                     continue
                 icons.update(name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_"))
+        self._scan_cache["focus_icons"] = icons
         return icons
 
     def _known_technology_ids(self) -> set[str]:
+        cached = self._scan_cache.get("technologies")
+        if cached is not None:
+            return set(cached)
         ids: set[str] = set()
         ignored = {"technologies", "folder", "path", "xor", "research_cost", "start_year", "categories"}
         for base in self._data_roots():
@@ -2493,9 +2514,13 @@ class Mod:
                 except Exception:
                     continue
                 ids.update(candidate for candidate in _SCRIPT_BLOCK_ID_RE.findall(text) if candidate not in ignored)
+        self._scan_cache["technologies"] = ids
         return ids
 
     def _known_equipment_ids(self) -> set[str]:
+        cached = self._scan_cache.get("equipment")
+        if cached is not None:
+            return set(cached)
         ids: set[str] = set()
         for base in self._data_roots():
             equipment_dir = base / "common" / "units" / "equipment"
@@ -2507,6 +2532,7 @@ class Mod:
                 except Exception:
                     continue
                 ids.update(_SCRIPT_BLOCK_ID_RE.findall(text))
+        self._scan_cache["equipment"] = ids
         return ids
 
     def _data_roots(self) -> list[Path]:
