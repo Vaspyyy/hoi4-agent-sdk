@@ -1,0 +1,23 @@
+src/hoi4/mod.py
+  s_318419a5e355fc::t_3932621397f053 193,2183,2442-2446,2457-2459,2464-2468,2478-2480,2484-2487,2492,2498,2502-2504,2517,2521-2523,2535
+tests/test_mod.py
+  s_318419a5e355fc::t_082e18e9b67270 716,740,744,750-765
+docs/api.md
+  s_318419a5e355fc::t_620e9567eab623 446,497-498
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "65286d14bcce88d8c295e634cf5deab277b3e6bb",
+  "prompts": {},
+  "sessions": {
+    "s_318419a5e355fc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ef6ef-7409-7ba3-b58e-2aadc0b67d4e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Vaspyyy <lolbautz2@gmail.com>"
+    }
+  }
+}
