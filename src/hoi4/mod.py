@@ -41,6 +41,7 @@ from .states import (
     build_state_index,
     ensure_state_in_mod,
     find_state_file,
+    patch_state_history_owner_cores,
     read_state,
     serialize_state,
     write_state,
@@ -614,6 +615,28 @@ class Mod:
         state.cores = [core for core in state.cores if core != tag]
         self._dirty.add("states")
         self._dirty_states.add(state_id)
+        return state
+
+    def patch_state_history(
+        self,
+        state_id: int,
+        *,
+        owner: str | None = None,
+        add_cores: list[str] | None = None,
+        remove_cores: list[str] | None = None,
+    ) -> State:
+        """Immediately patch owner/core history lines while preserving unrelated state text."""
+        path = ensure_state_in_mod(self.mod_root, self.hoi4_install, state_id)
+        if path is None:
+            raise KeyError(f"State {state_id} not found in mod or vanilla install")
+        patch_state_history_owner_cores(path, owner=owner, add_cores=add_cores, remove_cores=remove_cores)
+        state = read_state(path)
+        self._states[state_id] = state
+        self._state_ids = sorted(set(self._state_ids) | {state_id})
+        self._original_files[path] = path.read_text(encoding="utf-8", errors="ignore")
+        self._dirty_states.discard(state_id)
+        if not self._dirty_states:
+            self._dirty.discard("states")
         return state
 
     def batch_set_owner(self, state_ids: list[int], tag: str, add_core: bool = True) -> list[State]:
@@ -1517,6 +1540,16 @@ class Mod:
     def effect_add_to_faction(target: str) -> str:
         return f"add_to_faction = {target.upper()}"
 
+    @classmethod
+    def effect_add_target_to_faction(cls, faction_leader: str, target: str) -> str:
+        """Add ``target`` to ``faction_leader``'s faction with explicit scope."""
+        return cls.scope_block(faction_leader.upper(), f"add_to_faction = {target.upper()}")
+
+    @classmethod
+    def effect_join_faction(cls, actor: str, faction_leader: str) -> str:
+        """Make ``actor`` join ``faction_leader``'s faction with explicit direction."""
+        return cls.effect_add_target_to_faction(faction_leader, actor)
+
     @staticmethod
     def effect_white_peace(target: str = "all") -> str:
         return f"white_peace = {target.upper() if re.fullmatch(r'[A-Za-z0-9]{3}', target) else target}"
@@ -1559,6 +1592,56 @@ class Mod:
         if start_experience_factor is not None:
             fields.append(f"start_experience_factor = {start_experience_factor}")
         return f"create_unit = {{ {' '.join(fields)} }}"
+
+    @classmethod
+    def effect_spawn_revolution(
+        cls,
+        tag: str,
+        state_ids: list[int],
+        *,
+        overlord: str | None = None,
+        manpower: int = 0,
+        equipment: dict[str, int] | None = None,
+        technologies: dict[str, int] | None = None,
+        division_template: str = "",
+        units: list[str] | None = None,
+        faction_leader: str | None = None,
+        war_goal_type: str = "annex_everything",
+    ) -> str:
+        tag = tag.upper()
+        if not state_ids:
+            raise ValueError("effect_spawn_revolution() requires at least one state ID")
+        equipment = equipment or {}
+        technologies = technologies or {}
+        units = units or []
+        if not any([manpower, equipment, technologies, division_template, units]):
+            warnings.warn(
+                "effect_spawn_revolution() called without manpower, equipment, technologies, templates, or units; "
+                "the revolt may spawn as an unplayable shell.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        effects: list[str] = []
+        for state_id in state_ids:
+            effects.append(cls.effect_transfer_state_with_core(state_id, tag))
+        scoped: list[str] = []
+        if manpower:
+            scoped.append(cls.effect_add_manpower(manpower))
+        if technologies:
+            scoped.append(cls.effect_set_technologies(technologies))
+        for equipment_type, amount in equipment.items():
+            scoped.append(cls.effect_add_equipment(equipment_type, amount))
+        if division_template:
+            scoped.append(division_template)
+        for unit in units:
+            scoped.append(cls.effect_create_unit(unit))
+        if scoped:
+            effects.append(cls.scope_block(tag, "\n".join(scoped)))
+        if faction_leader:
+            effects.append(cls.effect_join_faction(tag, faction_leader))
+        if overlord:
+            effects.append(cls.effect_declare_war_from(tag, overlord, war_goal_type))
+        return "\n".join(effects)
 
     @staticmethod
     def default_leader_ideology(ruling_party: str) -> str:
@@ -1824,6 +1907,7 @@ class Mod:
         self,
         suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
         validate_icons: bool = False,
+        strict_localization: bool = False,
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
 
@@ -1892,6 +1976,15 @@ class Mod:
                 known_tags=known_tags,
             )
             errors.extend(tree_errors)
+            try:
+                self.assert_no_visual_overlap(tree.id)
+            except ValueError as exc:
+                errors.append(ValidationError(
+                    message=f"Focus tree '{tree.id}' visual overlap risk: {exc}",
+                    severity="warning",
+                    code="visual_overlap",
+                    file_path=str(tree.path) if tree.path else None,
+                ))
 
         for tree in self._focus_trees.values():
             for focus in tree.focuses:
@@ -1900,6 +1993,7 @@ class Mod:
                     errors.append(ValidationError(
                         message=f"No localization found for focus '{focus.id}'",
                         severity="warning",
+                        code="missing_localization",
                         focus_id=focus.id,
                         file_path=str(tree.path) if tree.path else None,
                     ))
@@ -1909,6 +2003,7 @@ class Mod:
                     errors.append(ValidationError(
                         message=f"No description localization found for focus '{focus.id}'",
                         severity="warning",
+                        code="missing_localization",
                         focus_id=focus.id,
                         file_path=str(tree.path) if tree.path else None,
                     ))
@@ -1929,6 +2024,8 @@ class Mod:
             known_equipment=known_equipment,
         ))
         errors.extend(self._validate_idea_mutation_collisions())
+        if strict_localization:
+            errors.extend(self._validate_localization_references())
 
         return _filter_validation_errors(errors, suppress_warnings=suppress_warnings)
 
@@ -2334,6 +2431,17 @@ class Mod:
                         file_path,
                         idea_id=idea_id,
                     ))
+                elif re.search(rf"\badd_ideas\s*=\s*{re.escape(idea_id)}\b", script):
+                    idea = self._ideas.get(idea_id)
+                    if idea is not None and idea.category != "country":
+                        errors.append(self._script_ref_error(
+                            f"{kind} '{obj_id}' adds idea '{idea_id}', but its category is '{idea.category or '<none>'}', not 'country'",
+                            "idea_not_addable",
+                            kind,
+                            obj_id,
+                            file_path,
+                            idea_id=idea_id,
+                        ))
             for event_id in sorted(set(_EVENT_REF_RE.findall(script))):
                 if known_events and event_id not in known_events:
                     errors.append(self._script_ref_error(
@@ -2375,6 +2483,48 @@ class Mod:
                     file_path,
                 ))
         return errors
+
+    def _validate_localization_references(self) -> list[ValidationError]:
+        errors: list[ValidationError] = []
+
+        def add_missing(message: str, *, focus_id: str | None = None, event_id: str | None = None, idea_id: str | None = None, country_tag: str | None = None, file_path: str | None = None) -> None:
+            errors.append(ValidationError(
+                message=message,
+                severity="warning",
+                code="missing_localization",
+                focus_id=focus_id,
+                event_id=event_id,
+                idea_id=idea_id,
+                country_tag=country_tag,
+                file_path=file_path,
+            ))
+
+        for event in self._events.values():
+            if event.title and not self._has_loc(event.title):
+                add_missing(f"Event '{event.id}' title localization '{event.title}' not found", event_id=event.id, file_path=str(event.path) if event.path else None)
+            if event.description and not self._has_loc(event.description):
+                add_missing(f"Event '{event.id}' description localization '{event.description}' not found", event_id=event.id, file_path=str(event.path) if event.path else None)
+            for option in event.options:
+                if option.name and not self._has_loc(option.name):
+                    add_missing(f"Event '{event.id}' option localization '{option.name}' not found", event_id=event.id, file_path=str(event.path) if event.path else None)
+
+        for idea in self._ideas.values():
+            if not self._has_loc(idea.id):
+                add_missing(f"Idea '{idea.id}' localization not found", idea_id=idea.id, file_path=str(idea.path) if idea.path else None)
+
+        for country in self._countries.values():
+            for key in (country.tag, f"{country.tag}_DEF", f"{country.tag}_ADJ"):
+                if not self._has_loc(key):
+                    add_missing(f"Country '{country.tag}' localization '{key}' not found", country_tag=country.tag)
+            if country.leader and country.leader.character_id and not self._has_loc(country.leader.character_id):
+                add_missing(
+                    f"Country '{country.tag}' leader localization '{country.leader.character_id}' not found",
+                    country_tag=country.tag,
+                )
+        return errors
+
+    def _has_loc(self, key: str) -> bool:
+        return key in self._loc_entries or f"{key}:0" in self._loc_entries
 
     def _validate_idea_mutation_collisions(self) -> list[ValidationError]:
         focus_mutations: dict[str, set[str]] = {}

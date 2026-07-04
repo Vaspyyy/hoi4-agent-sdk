@@ -33,6 +33,10 @@ VALIDATION_CODES: dict[str, str] = {
     "bad_idea_tooltip_pattern": "Effect removes several ideas and adds one idea; swap_ideas usually produces cleaner tooltips.",
     "idea_mutation_collision": "Focuses and delayed/runtime events mutate the same idea IDs.",
     "visual_overlap": "Focus tree layout contains visual overlap risk.",
+    "faction_scope_footgun": "Faction effect direction depends on current scope.",
+    "civil_war_scope_footgun": "Civil war effects need careful target/capital scope.",
+    "missing_localization": "Referenced HOI4 object has no localization entry.",
+    "idea_not_addable": "Effect adds an idea that is not in the country idea category.",
 }
 
 VALIDATION_WARNING_CODES: dict[str, str] = {
@@ -95,6 +99,46 @@ def _script_warnings(
             message="'set_owner' is a state history directive, not a runtime effect; use transfer_state in event/focus effects",
             severity="warning",
             code="history_set_owner_in_effect",
+            file_path=file_path,
+            focus_id=focus_id,
+            event_id=event_id,
+        ))
+
+    if re.search(r"\badd_to_faction\s*=", script):
+        iterated_scope = re.search(r"\bevery_(?:other_)?country\s*=\s*\{[^{}]*\badd_to_faction\s*=", script, flags=re.DOTALL)
+        explicit_country_scope = re.search(r"\b[A-Z][A-Z0-9]{2}\s*=\s*\{[^{}]*\badd_to_faction\s*=", script, flags=re.DOTALL)
+        bare_effect = re.search(r"(?m)^\s*add_to_faction\s*=", script) and not explicit_country_scope
+        if iterated_scope:
+            message = (
+                "'add_to_faction' inside every_country/every_other_country is usually wrong because "
+                "the target joins each iterated country's faction. Use an explicit leader scope."
+            )
+        elif bare_effect:
+            message = (
+                "'add_to_faction = TAG' adds TAG to the current scope's faction. "
+                "Use Mod.effect_add_target_to_faction(leader, target) or Mod.effect_join_faction(actor, leader) "
+                "to make direction explicit."
+            )
+        else:
+            message = ""
+        if message:
+            errors.append(ValidationError(
+                message=message,
+                severity="warning",
+                code="faction_scope_footgun",
+                file_path=file_path,
+                focus_id=focus_id,
+                event_id=event_id,
+            ))
+
+    if re.search(r"\bstart_civil_war\s*=", script) and not re.search(r"\bcapital\s*=", script):
+        errors.append(ValidationError(
+            message=(
+                "'start_civil_war' has no capital = state_id. Civil wars without explicit capital/target setup "
+                "often spawn fragile revolts; consider Mod.effect_spawn_revolution(...)."
+            ),
+            severity="warning",
+            code="civil_war_scope_footgun",
             file_path=file_path,
             focus_id=focus_id,
             event_id=event_id,

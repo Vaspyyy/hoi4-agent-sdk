@@ -192,3 +192,41 @@ mod.validate_effect("LUX = { declare_war_on = { target = GER } }")
 ```
 
 `set_state_owner()` modifies state history files before game start. In event, decision, and focus effects, use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`; `set_owner = ...` is not a runtime effect.
+
+### Small Country Focus Tree Template
+
+Small countries usually play better with short setup focuses, visible branch choices, and concrete rewards. Avoid a single long 70-day line.
+
+```python
+tree = mod.ensure_focus_tree("tag_focus", "TAG")
+
+root = Focus(id="TAG_assess_the_state", x=5, y=0, cost=5,
+             icon="GFX_goal_generic_political_pressure",
+             completion_reward=Mod.effect_add_political_power(50))
+industry = Focus(id="TAG_expand_workshops", x=3, y=1, cost=5,
+                 requires="TAG_assess_the_state",
+                 icon="GFX_goal_generic_construct_civ_factory",
+                 completion_reward=Mod.effect_add_civilian_factory(123, 1))
+army = Focus(id="TAG_arm_the_militia", x=7, y=1, cost=5,
+             requires="TAG_assess_the_state",
+             icon="GFX_goal_generic_small_arms",
+             completion_reward="\n".join([
+                 Mod.effect_add_army_experience(15),
+                 Mod.effect_add_equipment("infantry_equipment_0", 500),
+             ]))
+foreign_a = Focus(id="TAG_seek_neighbor_support", x=4, y=2, cost=10,
+                  requires="TAG_expand_workshops",
+                  completion_reward=Mod.effect_add_target_to_faction("ALLY", "TAG"))
+foreign_b = Focus(id="TAG_stay_independent", x=6, y=2, cost=10,
+                  requires="TAG_arm_the_militia",
+                  completion_reward=Mod.effect_add_war_support(0.05))
+
+for focus in [root, industry, army, foreign_a, foreign_b]:
+    mod.upsert_focus("tag_focus", focus)
+
+mod.set_focuses_mutually_exclusive("tag_focus", "TAG_seek_neighbor_support", "TAG_stay_independent")
+mod.place_continuous_focus_below_tree("tag_focus", padding=400)
+mod.assert_no_visual_overlap("tag_focus")
+```
+
+Use varied icons, 35-day setup focuses (`cost=5`), at least one meaningful branch choice, and rewards that change gameplay. Always add localization for every focus.

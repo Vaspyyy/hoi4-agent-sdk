@@ -102,7 +102,7 @@ with mod.transaction():
    Mod.effect_remove_state_core(state_id, tag)
    ```
 
-7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_swap_idea(...)`, `Mod.effect_upgrade_idea_chain(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_army_experience(...)`, `Mod.effect_add_navy_experience(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_set_politics(...)`, `Mod.effect_create_faction(...)`, `Mod.effect_add_to_faction(...)`, `Mod.effect_white_peace(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
+7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_swap_idea(...)`, `Mod.effect_upgrade_idea_chain(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_army_experience(...)`, `Mod.effect_add_navy_experience(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_set_politics(...)`, `Mod.effect_create_faction(...)`, `Mod.effect_add_target_to_faction(...)`, `Mod.effect_join_faction(...)`, `Mod.effect_white_peace(...)`, `Mod.effect_spawn_revolution(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
 
 8. Search rather than guess:
 
@@ -120,7 +120,7 @@ with mod.transaction():
 
    This means `(FOCUS_A OR FOCUS_B) AND FOCUS_C`.
 
-10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Use `validate(validate_icons=True)` before final saves when changing focus icons. Known false-positive warnings can be hidden with stable codes from `VALIDATION_WARNING_CODES`, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
+10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Use `validate(validate_icons=True, strict_localization=True)` before final saves when changing focus icons or localization. Known false-positive warnings can be hidden with stable codes from `VALIDATION_WARNING_CODES`, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
 
 11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `upsert_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
 
@@ -140,7 +140,11 @@ with mod.transaction():
 
 19. Use `preview_summary()` alongside `preview()` in long scripts so the agent log contains a compact semantic change list.
 
-20. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
+20. Use `patch_state_history()` for owner/core-only changes to fragile vanilla states when preserving exact unrelated text matters.
+
+21. Avoid bare `add_to_faction = TAG`. Use `effect_add_target_to_faction(leader, target)` or `effect_join_faction(actor, leader)` so faction direction is explicit.
+
+22. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
 
 ## Documentation
 
@@ -150,6 +154,7 @@ Read only the documentation relevant to the current task:
 - Examples and common workflows: `docs/recipes.md`
 - Dataclass fields: `docs/models.md`
 - Effect, modifier, and technology catalogs: `docs/catalogs.md`
+- Common AI agent mistakes: `docs/agent_traps.md`
 - Low-level parser internals: `docs/internals/parser.md`
 
 Prefer the `Mod` facade. Use the low-level parser only when the public API cannot represent the required modification.

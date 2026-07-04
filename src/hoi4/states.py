@@ -354,6 +354,53 @@ def patch_state_owner(state_text: str, tag: str, add_core: bool = True) -> str:
     return serialize_pdx(root)
 
 
+def patch_state_history_owner_cores(
+    state_file: Path,
+    *,
+    owner: str | None = None,
+    add_cores: list[str] | None = None,
+    remove_cores: list[str] | None = None,
+) -> None:
+    """Patch owner/core lines in-place without reserializing unrelated state data."""
+    text = state_file.read_text(encoding="utf-8", errors="ignore")
+    match = find_assignment_block(text, "history")
+    if match is None:
+        raise ValueError(f"No history block found in {state_file}")
+    body, start, end = match
+    line_start = text.rfind("\n", 0, start) + 1
+    outer_indent = text[line_start:start]
+    inner_indent = outer_indent + "\t"
+
+    removed = {tag.upper() for tag in (remove_cores or [])}
+    existing_cores: list[str] = []
+    preserved: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        core_match = re.match(r"add_core_of\s*=\s*([A-Z0-9]{3})\b", stripped)
+        if core_match:
+            core = core_match.group(1)
+            if core not in removed:
+                existing_cores.append(core)
+            continue
+        if re.match(r"owner\s*=\s*[A-Z0-9]{3}\b", stripped):
+            continue
+        if stripped:
+            preserved.append(line.rstrip())
+
+    for core in add_cores or []:
+        tag = core.upper()
+        if tag not in existing_cores:
+            existing_cores.append(tag)
+
+    replacement_lines: list[str] = []
+    if owner:
+        replacement_lines.append(f"{inner_indent}owner = {owner.upper()}")
+    replacement_lines.extend(f"{inner_indent}add_core_of = {core}" for core in existing_cores)
+    replacement_lines.extend(preserved)
+    new_block = f"history = {{\n" + "\n".join(replacement_lines) + f"\n{outer_indent}}}"
+    state_file.write_text(text[:start] + new_block + text[end:], encoding="utf-8")
+
+
 def build_state_index(states_dir: Path) -> list[dict]:
     out: list[dict] = []
     if not states_dir.is_dir():

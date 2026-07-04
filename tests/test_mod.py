@@ -637,6 +637,8 @@ class TestAgentFacingApis:
         )
         assert Mod.effect_create_faction("Mediterranean League") == 'create_faction = "Mediterranean League"'
         assert Mod.effect_add_to_faction("ita") == "add_to_faction = ITA"
+        assert Mod.effect_add_target_to_faction("aus", "bay") == "AUS = { add_to_faction = BAY }"
+        assert Mod.effect_join_faction("bay", "aus") == "AUS = { add_to_faction = BAY }"
         assert Mod.effect_white_peace("fra") == "white_peace = FRA"
         assert Mod.effect_set_rule("can_create_factions", True) == "set_rule = { can_create_factions = yes }"
         assert Mod.effect_swap_idea("old_spirit", "new_spirit", target="ita") == (
@@ -646,6 +648,25 @@ class TestAgentFacingApis:
         assert "ITA = {" in chain
         assert "has_idea = spirit_2" in chain
         assert "remove_idea = spirit_2 add_idea = spirit_3" in chain
+        revolution = Mod.effect_spawn_revolution(
+            "bay",
+            [52],
+            overlord="aus",
+            manpower=15000,
+            equipment={"infantry_equipment_0": 500},
+            technologies={"infantry_weapons": 1},
+            division_template=Mod.effect_division_template("Militia", "infantry = { x = 0 y = 0 }"),
+            units=["Militia"],
+            faction_leader="ger",
+        )
+        assert "BAY = { transfer_state = 52 }" in revolution
+        assert "52 = { add_core_of = BAY }" in revolution
+        assert "GER = { add_to_faction = BAY }" in revolution
+        assert "BAY = { declare_war_on = { type = annex_everything target = AUS } }" in revolution
+
+    def test_revolution_helper_warns_without_playable_baseline(self):
+        with pytest.warns(RuntimeWarning, match="unplayable shell"):
+            assert "BAY = { transfer_state = 52 }" in Mod.effect_spawn_revolution("bay", [52])
 
     def test_tech_bonus_helper_validates_categories(self):
         assert "infantry_weapons" in TECHNOLOGY_CATEGORIES
@@ -707,6 +728,60 @@ class TestAgentFacingApis:
         mod.add_focus("scl_focus", Focus(id="SCL_overlap", x=4, y=3))
         with pytest.raises(ValueError, match="overlaps"):
             mod.assert_no_visual_overlap("scl_focus")
+        errors = mod.validate()
+        assert any(error.code == "visual_overlap" for error in errors)
+
+    def test_faction_scope_validation_warns_only_for_ambiguous_shapes(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_country("AUS", "Austria")
+        mod.create_country("BAY", "Bavaria")
+        bare_errors = mod.validate_effect("add_to_faction = BAY")
+        assert any(error.code == "faction_scope_footgun" for error in bare_errors)
+        scoped_errors = mod.validate_effect(Mod.effect_add_target_to_faction("AUS", "BAY"))
+        assert not any(error.code == "faction_scope_footgun" for error in scoped_errors)
+        multiline_scoped_errors = mod.validate_effect("AUS = {\n\tadd_to_faction = BAY\n}")
+        assert not any(error.code == "faction_scope_footgun" for error in multiline_scoped_errors)
+
+    def test_strict_localization_and_idea_addability_validation(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_idea("SCL_advisor", category="political_advisor", modifier={"political_power_gain": 0.1})
+        mod.create_event("scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_advisor")])
+        errors = mod.validate(strict_localization=True)
+        codes = {error.code for error in errors}
+        assert "idea_not_addable" in codes
+        assert "missing_localization" in codes
+
+        mod.set_loc("scl.1.t", "Title")
+        mod.set_loc("scl.1.d", "Description")
+        mod.set_loc("scl.1.a", "Option")
+        mod.set_loc("SCL_advisor", "Advisor")
+        errors = mod.validate(strict_localization=True)
+        assert not any("scl.1" in error.message and error.code == "missing_localization" for error in errors)
+
+    def test_patch_state_history_preserves_victory_points_text(self, tmp_mod):
+        state_dir = tmp_mod.root / "history" / "states"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state_file = state_dir / "52 - Test.txt"
+        state_file.write_text(
+            "state = {\n"
+            "\tid = 52\n"
+            "\thistory = {\n"
+            "\t\towner = AUS\n"
+            "\t\tadd_core_of = AUS\n"
+            "\t\tvictory_points = { 123 5 }\n"
+            "\t\tbuildings = { infrastructure = 2 }\n"
+            "\t}\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        state = tmp_mod.mod.patch_state_history(52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"])
+        text = state_file.read_text(encoding="utf-8")
+        assert state.owner == "BAY"
+        assert state.cores == ["BAY"]
+        assert "victory_points = { 123 5 }" in text
+        assert "buildings = { infrastructure = 2 }" in text
+        assert "owner = BAY" in text
+        assert "add_core_of = AUS" not in text
 
     def test_validation_catches_icons_refs_and_tooltip_patterns(self, tmp_mod):
         mod = tmp_mod.mod

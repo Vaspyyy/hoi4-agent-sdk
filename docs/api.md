@@ -109,6 +109,7 @@ State files live in `history/states/`. When accessing a state not in the mod, `g
 | `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field. List fields such as `cores` and `provinces` append unique values instead of replacing. |
 | `add_state_core(state_id: int, tag: str) -> State` | `State` | Append a core without replacing existing cores |
 | `remove_state_core(state_id: int, tag: str) -> State` | `State` | Remove a core |
+| `patch_state_history(state_id, owner=None, add_cores=None, remove_cores=None) -> State` | `State` | Immediate text-preserving owner/core patch for fragile vanilla states |
 | `batch_set_owner(state_ids: list[int], tag: str, add_core: bool = True) -> list[State]` | `list[State]` | Batch owner change |
 
 ### Example
@@ -118,10 +119,13 @@ mod.set_state_owner(52, "GER")
 mod.add_state_core(52, "AUT")
 mod.batch_set_owner([1, 2, 3], "SOV", add_core=True)
 mod.set_state_properties(52, manpower="5000000", victory_points="3620 1")
+mod.patch_state_history(52, owner="GER", add_cores=["GER"], remove_cores=["FRA"])
 print(mod.find_state("Sicily")[0]["id"])
 ```
 
 Loaded state files are patched through their original parsed content. Updating owner, cores, manpower, resources, buildings, or other modeled fields preserves unrelated vanilla data such as buildings, resources, local supplies, history bookmarks, resistance, and compliance blocks.
+
+Use `patch_state_history()` when owner/core changes must avoid reserializing unrelated state content such as complex vanilla `victory_points` formatting. It writes the state file immediately and refreshes the SDK cache for that state.
 ## Events
 
 Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`.
@@ -409,9 +413,12 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_upgrade_idea_chain([idea_1, idea_2, ...], target=None)` | Conditional staged-spirit upgrade chain using `swap_ideas` |
 | `Mod.effect_set_politics(ruling_party, elections_allowed=None, elections_frequency=None)` | `set_politics = { ... }` |
 | `Mod.effect_create_faction(name)` | `create_faction = "Name"` |
-| `Mod.effect_add_to_faction(tag)` | `add_to_faction = TAG` |
+| `Mod.effect_add_to_faction(tag)` | Bare current-scope `add_to_faction = TAG`; prefer explicit helpers below |
+| `Mod.effect_add_target_to_faction(faction_leader, target)` | `LEADER = { add_to_faction = TARGET }` |
+| `Mod.effect_join_faction(actor, faction_leader)` | Same output, named from the joining country's perspective |
 | `Mod.effect_white_peace(target="all")` | `white_peace = all` or `white_peace = TAG` |
 | `Mod.effect_set_rule(rule, value=True)` | `set_rule = { rule = yes }` |
+| `Mod.effect_spawn_revolution(tag, state_ids, ...)` | Transfer/core states and optionally add manpower, tech, stockpile, units, faction, and war |
 | `Mod.effect_add_tech_bonus(name, category, uses=1, bonus=0.5)` | Validated `add_tech_bonus` block |
 | `Mod.effect_create_wargoal(target, wargoal_type="annex_everything")` | `create_wargoal = { type = ... target = TAG }` |
 | `Mod.effect_declare_war(target, wargoal_type="annex_everything")` | Current-scope `declare_war_on` block |
@@ -428,6 +435,7 @@ reward = "\n".join([
     Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="GER"),
     Mod.effect_set_technology("infantry_weapons", 1, popup=False),
     Mod.effect_swap_idea("old_spirit", "new_spirit", target="SCL"),
+    Mod.effect_add_target_to_faction("AUS", "BAY"),
 ])
 mod.validate_effect(reward)
 ```
@@ -443,7 +451,7 @@ mod.assert_no_visual_overlap("west_focus")
 ```
 ## Validation
 
-`mod.validate(validate_icons=False)` runs all validators and returns `list[ValidationError]`. Does **not** raise — returns empty list if all valid. Pass `validate_icons=True` to scan real interface `.gfx` files and warn about missing focus icons. Icon/reference scans are cached per `Mod` instance; call `discard()` to reload from disk and refresh the cache.
+`mod.validate(validate_icons=False, strict_localization=False)` runs all validators and returns `list[ValidationError]`. Does **not** raise — returns empty list if all valid. Pass `validate_icons=True` to scan real interface `.gfx` files and warn about missing focus icons. Pass `strict_localization=True` for a final audit of event, idea, country, and leader localization. Icon/reference scans are cached per `Mod` instance; call `discard()` to reload from disk and refresh the cache.
 
 ### What Gets Checked
 
@@ -453,8 +461,8 @@ mod.assert_no_visual_overlap("west_focus")
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
 | **Event** | Has ID, has title, has description, has options, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |
-| **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, optional focus icon existence |
-| **Cross-cut** | Every focus has a localization entry (warning), effect references to loaded ideas/events/technology/equipment, bad remove-many/add-one idea tooltip patterns, focus/event idea mutation collisions |
+| **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, continuous focus overlap risk, optional focus icon existence |
+| **Cross-cut** | Every focus has a localization entry (warning), optional strict localization for events/ideas/countries/leaders, effect references to loaded ideas/events/technology/equipment, bad remove-many/add-one idea tooltip patterns, focus/event idea mutation collisions, faction-scope footguns |
 
 ### ValidationError Fields
 
@@ -484,7 +492,7 @@ errors = mod.validate(suppress_warnings=["country_scope_core_effect"])
 errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
 ```
 
-Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `bad_idea_tooltip_pattern`, `idea_mutation_collision`, and `script_syntax`.
+Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `faction_scope_footgun`, `civil_war_scope_footgun`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `bad_idea_tooltip_pattern`, `idea_mutation_collision`, `idea_not_addable`, `missing_localization`, `visual_overlap`, and `script_syntax`.
 
 The `history_set_owner_in_effect` warning catches a common HOI4 boundary mistake: `set_owner` is a state history directive, not a runtime event/focus effect. Use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`.
 
