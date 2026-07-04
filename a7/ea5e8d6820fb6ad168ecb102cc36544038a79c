@@ -1,0 +1,44 @@
+docs/recipes.md
+  s_318419a5e355fc::t_9182a6551602e5 195-232
+tests/test_mod.py
+  s_318419a5e355fc::t_16c1ced86b9ff5 640-641,651-669,731-741,744-784
+  s_318419a5e355fc::t_632e027fac176c 742-743
+docs/agent_traps.md
+  s_318419a5e355fc::t_34779892a5635f 1-136
+src/hoi4/mod.py
+  s_318419a5e355fc::t_ddafec4b3d9430 1543-1552
+  s_318419a5e355fc::t_8503708857ab42 1596-1645
+  s_318419a5e355fc::t_7389764567ba26 44,620-639
+  s_318419a5e355fc::t_51fb327e5c4211 2434-2444,2487-2527
+  s_318419a5e355fc::t_71a8f024f8ba4a 1910,1979-1987,1996,2006,2027-2028
+  s_318419a5e355fc::t_7970b0e2fe3ac1 640-641
+  s_318419a5e355fc::t_b06f9d995beed9 2528
+src/hoi4/states.py
+  s_318419a5e355fc::t_03b61d7d971579 357-403
+src/hoi4/validation.py
+  s_318419a5e355fc::t_905c9d5d7d69e0 36-39,107,112-115,117-121,133-141
+  s_318419a5e355fc::t_985184cfb4f47b 108,111,116,122-132
+  s_318419a5e355fc::t_9a37299c484b99 109-110
+  s_318419a5e355fc::t_df2ac2e9bf624d 142-144
+  s_318419a5e355fc::t_635406f50e4ab7 145-146
+AGENTS.md
+  s_318419a5e355fc::t_7dd9218e952f9d 105,123,143-147,157
+docs/api.md
+  s_318419a5e355fc::t_02cfa1f06de27e 112,122,127-128,416-418,421,438,454,464-465,495
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a7ea5e8d6820fb6ad168ecb102cc36544038a79c",
+  "prompts": {},
+  "sessions": {
+    "s_318419a5e355fc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ef6ef-7409-7ba3-b58e-2aadc0b67d4e",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Vaspyyy <lolbautz2@gmail.com>"
+    }
+  }
+}
