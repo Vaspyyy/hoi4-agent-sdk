@@ -24,12 +24,22 @@ def pdx_value(value: object) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
     if isinstance(value, str):
+        if "\n" in value or "\r" in value or "\x00" in value:
+            raise ValueError("Paradox scalar values cannot contain newlines or NUL characters")
         if value in {"yes", "no"}:
             return value
         if _needs_quotes(value):
             return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
         return value
     return str(value)
+
+
+def pdx_string(value: object) -> str:
+    """Serialize a value as an always-quoted Paradox string."""
+    text = str(value)
+    if "\n" in text or "\r" in text or "\x00" in text:
+        raise ValueError("Paradox single-line strings cannot contain newlines or NUL characters")
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def effect_block(name: str, fields: Mapping[str, object] | None = None, **kwargs: object) -> str:
@@ -68,14 +78,18 @@ def validate_script_syntax(script: str) -> list[str]:
                 i += 1
             continue
         if ch == '"':
+            quote_line = line
+            quote_col = col
             i += 1
             col += 1
+            closed = False
             while i < len(script):
                 if script[i] == "\\":
                     i += 2
                     col += 2
                     continue
                 if script[i] == '"':
+                    closed = True
                     break
                 if script[i] == "\n":
                     line += 1
@@ -83,6 +97,9 @@ def validate_script_syntax(script: str) -> list[str]:
                 else:
                     col += 1
                 i += 1
+            if not closed:
+                issues.append(f"Unclosed quote from line {quote_line}, column {quote_col}")
+                break
         elif ch == "{":
             stack.append((line, col))
         elif ch == "}":

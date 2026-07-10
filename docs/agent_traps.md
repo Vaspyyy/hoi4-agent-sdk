@@ -42,10 +42,11 @@ Good pre-game history edit:
 mod.set_state_owner(52, "BAY")
 ```
 
-For fragile vanilla state files where only owner/cores should change, use the immediate text-preserving patcher:
+For fragile vanilla state files where only owner/cores should change, queue the text-preserving patcher and save with the same `Mod` instance:
 
 ```python
 mod.patch_state_history(52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"])
+mod.save(require_changes=True)
 ```
 
 ## Idea Replacement Tooltips
@@ -108,6 +109,80 @@ Mod.effect_spawn_revolution(
 ```
 
 The helper warns if called without any playable baseline.
+
+## Civil-War Focus Tree Assignment
+
+Focus tree selectors such as `original_tag = AUS` are not enough for many dynamic civil-war countries. Load the rebel tree at runtime.
+
+Bad:
+
+```python
+Mod.effect_start_civil_war("communism", size=0.4, capital=4)
+```
+
+Good:
+
+```python
+Mod.effect_spawn_civil_war_with_focus_tree(
+    "communism",
+    "FB_AUS_focus",
+    size=0.4,
+    capital=4,
+    rebel_tag="D01",
+)
+```
+
+Validation warning: `civil_war_focus_tree_missing` when `start_civil_war` is not paired with `load_focus_tree`. Unknown tree IDs warn as `unknown_focus_tree_reference`.
+
+## Existing or Puppet Revolt Tags
+
+Do not assume a tag is unreleased. Vanilla paths may release a tag as a puppet or transfer some of its states before your content runs.
+
+Good:
+
+```python
+Mod.effect_convert_existing_or_spawn_revolt(
+    "SLV",
+    [102, 103],
+    overlord="YUG",
+    manpower=5000,
+    equipment={"infantry_equipment_0": 300},
+)
+```
+
+For non-war conversions:
+
+```python
+Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
+```
+
+Validation warning: `revolt_state_already_owned` when a transfer effect gives a state to the country that already owns it in loaded history.
+
+## Resistance Is Not Generic Unrest
+
+Occupation resistance is not a universal revolt meter. If a state is a core of its current owner, `add_resistance` usually does not model nationalist unrest the way an event chain expects.
+
+Bad:
+
+```text
+102 = { add_resistance = 20 }
+```
+
+Better: use country/state flags, variables, decisions, and events to represent unrest, then fire a revolt event when thresholds are met.
+
+Validation warning: `resistance_on_core_state` for state-scoped `add_resistance` on owner-core states.
+
+## Lore Events Need Gameplay Options
+
+Flavor popups are fine, but triggered event options with no effects often feel broken in agent-generated content.
+
+Good:
+
+```python
+EventOption(name="slv.1.a", effect="set_country_flag = SLV_cells_organized")
+```
+
+Validation warning: `event_option_no_effect`.
 
 ## Focus Layout
 

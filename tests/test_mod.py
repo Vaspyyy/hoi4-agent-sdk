@@ -3,10 +3,26 @@ import json
 
 import pytest
 
-from hoi4 import Mod, Focus, Country, State, Event, EventOption, Idea, Leader, VALIDATION_WARNING_CODES
+from hoi4 import (
+    Mod,
+    Focus,
+    Country,
+    State,
+    Event,
+    EventOption,
+    Idea,
+    Leader,
+    VALIDATION_WARNING_CODES,
+)
 from hoi4 import TECHNOLOGY_CATEGORIES, effect_block, scope_block
 from hoi4.config import Config, find_config
-from hoi4.validation import validate_focus_tree, validate_country, validate_state, validate_event, validate_idea
+from hoi4.validation import (
+    validate_focus_tree,
+    validate_country,
+    validate_state,
+    validate_event,
+    validate_idea,
+)
 from hoi4.types import FocusTree
 
 
@@ -71,7 +87,7 @@ class TestModFocusTrees:
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         style_dst = tmp_mod.root / "common" / "national_focus" / "00_titlebar_styles.txt"
         style_dst.write_text(
-            'style = {\n\tname = default_style\n\tdefault = yes\n}\n',
+            "style = {\n\tname = default_style\n\tdefault = yes\n}\n",
             encoding="utf-8",
         )
         mod.discard()
@@ -82,7 +98,7 @@ class TestModFocusTrees:
     def test_non_focus_file_not_corrupted_on_save(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         style_dst = tmp_mod.root / "common" / "national_focus" / "00_titlebar_styles.txt"
-        original = 'style = {\n\tname = default_style\n\tdefault = yes\n}\n'
+        original = "style = {\n\tname = default_style\n\tdefault = yes\n}\n"
         style_dst.write_text(original, encoding="utf-8")
         mod.discard()
 
@@ -278,16 +294,19 @@ class TestPreview:
 class TestCatalogs:
     def test_effect_categories_importable(self):
         from hoi4 import EFFECT_CATEGORIES
+
         assert isinstance(EFFECT_CATEGORIES, list)
         assert len(EFFECT_CATEGORIES) > 0
 
     def test_modifier_categories_importable(self):
         from hoi4 import MODIFIER_CATEGORIES
+
         assert isinstance(MODIFIER_CATEGORIES, list)
         assert len(MODIFIER_CATEGORIES) > 0
 
     def test_effect_categories_have_name_and_effects(self):
         from hoi4 import EFFECT_CATEGORIES
+
         for cat_name, effects in EFFECT_CATEGORIES:
             assert isinstance(cat_name, str)
             for effect_name, effect_desc in effects:
@@ -295,6 +314,7 @@ class TestCatalogs:
 
     def test_modifier_categories_have_name_and_modifiers(self):
         from hoi4 import MODIFIER_CATEGORIES
+
         for cat_name, modifiers in MODIFIER_CATEGORIES:
             assert isinstance(cat_name, str)
             for entry in modifiers:
@@ -304,10 +324,14 @@ class TestCatalogs:
 class TestConfig:
     def test_find_config_in_cwd(self, tmp_path):
         cfg_path = tmp_path / ".hoi4.json"
-        cfg_path.write_text(json.dumps({
-            "mod_path": "/tmp/my_mod",
-            "hoi4_install": "/opt/hoi4",
-        }))
+        cfg_path.write_text(
+            json.dumps(
+                {
+                    "mod_path": "/tmp/my_mod",
+                    "hoi4_install": "/opt/hoi4",
+                }
+            )
+        )
         cfg = find_config(tmp_path)
         assert cfg is not None
         assert cfg.mod_path == Path("/tmp/my_mod")
@@ -376,6 +400,7 @@ class TestPass1Fixes:
         mod.save()
 
         import time
+
         time.sleep(0.05)
         assert focus_file.stat().st_mtime == original_mtime
 
@@ -469,12 +494,14 @@ class TestPass2Fixes:
 
     def test_loc_key_with_colon_no_double_zero(self):
         from hoi4.localisation import serialize_localization_file
+
         result = serialize_localization_file({"KEY:0": "value"})
         assert "KEY:0:0" not in result
         assert "KEY:0" in result
 
     def test_loc_key_without_colon_gets_zero(self):
         from hoi4.localisation import serialize_localization_file
+
         result = serialize_localization_file({"KEY": "value"})
         assert "KEY:0" in result
 
@@ -590,10 +617,35 @@ class TestAgentFacingApis:
         assert "add_tech_bonus" in focuses[-1].completion_reward
 
     def test_war_effect_helpers(self):
-        assert Mod.effect_create_wargoal("fra") == "create_wargoal = { type = annex_everything target = FRA }"
-        assert Mod.effect_declare_war("ger") == "declare_war_on = { type = annex_everything target = GER }"
-        assert Mod.effect_declare_war_from("scl", "ita") == "SCL = { declare_war_on = { type = annex_everything target = ITA } }"
+        assert (
+            Mod.effect_create_wargoal("fra")
+            == "create_wargoal = { type = annex_everything target = FRA }"
+        )
+        assert (
+            Mod.effect_declare_war("ger")
+            == "declare_war_on = { type = annex_everything target = GER }"
+        )
+        assert (
+            Mod.effect_declare_war_from("scl", "ita")
+            == "SCL = { declare_war_on = { type = annex_everything target = ITA } }"
+        )
         assert "start_civil_war" in Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
+        assert Mod.effect_load_focus_tree("FB_AUS_focus") == (
+            "load_focus_tree = { tree = FB_AUS_focus keep_completed = no }\n"
+            "mark_focus_tree_layout_dirty = yes"
+        )
+        civil_war_tree = Mod.effect_spawn_civil_war_with_focus_tree(
+            "communism",
+            "FB_AUS_focus",
+            size=0.4,
+            capital=4,
+            rebel_tag="d01",
+        )
+        assert "start_civil_war = { ideology = communism size = 0.4 capital = 4 }" in civil_war_tree
+        assert (
+            "D01 = { load_focus_tree = { tree = FB_AUS_focus keep_completed = no }"
+            in civil_war_tree
+        )
         assert Mod.effect_add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
         assert Mod.effect_remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
         assert Mod.effect_transfer_state(115, "scl") == "SCL = { transfer_state = 115 }"
@@ -601,9 +653,9 @@ class TestAgentFacingApis:
             "SCL = { transfer_state = 115 }\n115 = { add_core_of = SCL }"
         )
         assert "type = bunker" in Mod.effect_add_bunker(115, level=3)
-        assert scope_block("SCL", effect_block("declare_war_on", {"type": "annex_everything", "target": "ITA"})) == (
-            "SCL = { declare_war_on = { type = annex_everything target = ITA } }"
-        )
+        assert scope_block(
+            "SCL", effect_block("declare_war_on", {"type": "annex_everything", "target": "ITA"})
+        ) == ("SCL = { declare_war_on = { type = annex_everything target = ITA } }")
 
     def test_equipment_and_technology_effect_helpers(self):
         assert Mod.effect_add_political_power(100) == "add_political_power = 100"
@@ -617,12 +669,23 @@ class TestAgentFacingApis:
             "Militia",
             "infantry = { x = 0 y = 0 }",
         )
-        assert Mod.effect_create_unit("Militia", owner="scl") == 'create_unit = { division = "Militia" owner = SCL }'
+        assert (
+            Mod.effect_create_unit("Militia", owner="scl")
+            == 'create_unit = { division = "Militia" owner = SCL }'
+        )
         equipment = Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="ger")
-        assert equipment == "add_equipment_to_stockpile = { type = infantry_equipment_0 amount = 1000 producer = GER }"
-        variant_equipment = Mod.effect_add_equipment("light_tank_chassis_2", 100, "GER", "Panzer II Ausf. a")
+        assert (
+            equipment
+            == "add_equipment_to_stockpile = { type = infantry_equipment_0 amount = 1000 producer = GER }"
+        )
+        variant_equipment = Mod.effect_add_equipment(
+            "light_tank_chassis_2", 100, "GER", "Panzer II Ausf. a"
+        )
         assert 'variant_name = "Panzer II Ausf. a"' in variant_equipment
-        assert Mod.effect_set_technology("infantry_weapons", 1) == "set_technology = { infantry_weapons = 1 }"
+        assert (
+            Mod.effect_set_technology("infantry_weapons", 1)
+            == "set_technology = { infantry_weapons = 1 }"
+        )
         assert Mod.effect_set_technology("infantry_weapons", 1, popup=False) == (
             "set_technology = { infantry_weapons = 1 popup = no }"
         )
@@ -635,12 +698,27 @@ class TestAgentFacingApis:
         assert Mod.effect_set_politics("democratic", elections_allowed=True) == (
             "set_politics = { ruling_party = democratic elections_allowed = yes }"
         )
-        assert Mod.effect_create_faction("Mediterranean League") == 'create_faction = "Mediterranean League"'
+        assert (
+            Mod.effect_create_faction("Mediterranean League")
+            == 'create_faction = "Mediterranean League"'
+        )
         assert Mod.effect_add_to_faction("ita") == "add_to_faction = ITA"
         assert Mod.effect_add_target_to_faction("aus", "bay") == "AUS = { add_to_faction = BAY }"
         assert Mod.effect_join_faction("bay", "aus") == "AUS = { add_to_faction = BAY }"
+        assert Mod.effect_release("slv") == "release = SLV"
+        assert Mod.effect_release_puppet("slv") == "release_puppet = SLV"
+        assert Mod.effect_end_puppet("slv", "yug") == "YUG = { end_puppet = SLV }"
+        assert Mod.effect_set_autonomy("slv", "autonomy_free", freedom_level=1.0) == (
+            "set_autonomy = { target = SLV autonomy_state = autonomy_free freedom_level = 1.0 }"
+        )
+        assert Mod.effect_convert_puppet_to_ally("slv", "yug", faction_leader="aus") == (
+            "YUG = { end_puppet = SLV }\nAUS = { add_to_faction = SLV }"
+        )
         assert Mod.effect_white_peace("fra") == "white_peace = FRA"
-        assert Mod.effect_set_rule("can_create_factions", True) == "set_rule = { can_create_factions = yes }"
+        assert (
+            Mod.effect_set_rule("can_create_factions", True)
+            == "set_rule = { can_create_factions = yes }"
+        )
         assert Mod.effect_swap_idea("old_spirit", "new_spirit", target="ita") == (
             "ITA = { swap_ideas = { remove_idea = old_spirit add_idea = new_spirit } }"
         )
@@ -663,15 +741,68 @@ class TestAgentFacingApis:
         assert "52 = { add_core_of = BAY }" in revolution
         assert "GER = { add_to_faction = BAY }" in revolution
         assert "BAY = { declare_war_on = { type = annex_everything target = AUS } }" in revolution
+        revolt = Mod.effect_convert_existing_or_spawn_revolt(
+            "slv",
+            [102],
+            overlord="yug",
+            manpower=5000,
+            equipment={"infantry_equipment_0": 100},
+        )
+        assert "if = { limit = { SLV = { exists = yes } }" in revolt
+        assert "limit = { exists = SLV }" not in revolt
+        assert "YUG = { end_puppet = SLV }" in revolt
+        assert "SLV = { transfer_state = 102 }" in revolt
+        assert "else = {" in revolt
 
     def test_revolution_helper_warns_without_playable_baseline(self):
         with pytest.warns(RuntimeWarning, match="unplayable shell"):
             assert "BAY = { transfer_state = 52 }" in Mod.effect_spawn_revolution("bay", [52])
 
+    def test_decision_chain_and_recovery_helpers(self, tmp_mod):
+        mod = tmp_mod.mod
+        decisions = mod.create_decision_chain(
+            "SLO_revolt_decisions",
+            [
+                {
+                    "id": "SLO_organize_cells",
+                    "complete_effect": "add_political_power = 25",
+                    "event": "slo.1",
+                    "loc_name": "Organize Cells",
+                    "loc_desc": "Prepare the network.",
+                },
+                {
+                    "id": "SLO_launch_revolt",
+                    "complete_effect": Mod.effect_convert_existing_or_spawn_revolt(
+                        "slv", [102], overlord="yug", manpower=1
+                    ),
+                },
+            ],
+            final_event="slo.99",
+        )
+        assert len(decisions) == 2
+        assert "set_country_flag = SLO_organize_cells_done" in decisions[0].complete_effect
+        assert "country_event = { id = slo.1 }" in decisions[0].complete_effect
+        assert "has_country_flag = SLO_organize_cells_done" in decisions[1].available
+        assert "country_event = { id = slo.99 }" in decisions[1].complete_effect
+        assert mod.get_loc("SLO_organize_cells") == "Organize Cells"
+
+        repair = mod.create_recovery_decision(
+            "SLO_revolt_decisions",
+            "SLO_repair_live_save",
+            effect=Mod.effect_load_focus_tree("SLO_focus"),
+            hidden=True,
+            loc_name="Repair Slovenia Revolt",
+        )
+        assert repair.visible == "always = no"
+        assert "load_focus_tree" in repair.complete_effect
+        assert mod.get_loc("SLO_repair_live_save") == "Repair Slovenia Revolt"
+
     def test_tech_bonus_helper_validates_categories(self):
         assert "infantry_weapons" in TECHNOLOGY_CATEGORIES
         assert "infantry" not in TECHNOLOGY_CATEGORIES
-        assert "category = infantry_weapons" in Mod.effect_add_tech_bonus("rifle_bonus", category="infantry_weapons")
+        assert "category = infantry_weapons" in Mod.effect_add_tech_bonus(
+            "rifle_bonus", category="infantry_weapons"
+        )
         with pytest.raises(ValueError):
             Mod.effect_add_tech_bonus("bad_bonus", category="infantry")
 
@@ -686,9 +817,13 @@ class TestAgentFacingApis:
         assert tree.id == "scl_focus"
         assert mod.ensure_focus_tree("scl_focus", "SCL") is tree
 
-        focus = mod.upsert_focus("scl_focus", Focus(id="SCL_start", x=1, y=1, completion_reward="add_stability = 0.05"))
+        focus = mod.upsert_focus(
+            "scl_focus", Focus(id="SCL_start", x=1, y=1, completion_reward="add_stability = 0.05")
+        )
         assert focus.id == "SCL_start"
-        mod.upsert_focus("scl_focus", Focus(id="SCL_start", x=2, y=3, completion_reward="add_war_support = 0.05"))
+        mod.upsert_focus(
+            "scl_focus", Focus(id="SCL_start", x=2, y=3, completion_reward="add_war_support = 0.05")
+        )
         assert mod.get_focus("scl_focus", "SCL_start").x == 2
         assert "add_war_support" in mod.get_focus("scl_focus", "SCL_start").completion_reward
 
@@ -699,7 +834,9 @@ class TestAgentFacingApis:
         assert mod.get_idea("SCL_spirit").modifier["political_power_gain"] == 0.1
         assert mod.get_idea("SCL_spirit").modifier["stability_factor"] == 0.05
 
-        event = mod.ensure_event("scl.1", options=[EventOption(name="scl.1.a", effect="add_stability = 0.05")])
+        event = mod.ensure_event(
+            "scl.1", options=[EventOption(name="scl.1.a", effect="add_stability = 0.05")]
+        )
         assert event.id == "scl.1"
         mod.ensure_event("scl.1", immediate="add_political_power = 25")
         assert mod.get_event("scl.1").immediate == "add_political_power = 25"
@@ -707,10 +844,15 @@ class TestAgentFacingApis:
     def test_focus_layout_helpers_place_and_guard_continuous_focus(self, tmp_mod):
         mod = tmp_mod.mod
         mod.create_focus_tree("scl_focus", "SCL")
-        branch = mod.auto_layout_branch("scl_focus", [
-            Focus(id="SCL_a"),
-            Focus(id="SCL_b"),
-        ], x=4, y_start=2)
+        branch = mod.auto_layout_branch(
+            "scl_focus",
+            [
+                Focus(id="SCL_a"),
+                Focus(id="SCL_b"),
+            ],
+            x=4,
+            y_start=2,
+        )
         for focus in branch:
             mod.add_focus("scl_focus", focus)
         assert mod.focus_tree_bounds("scl_focus") == {
@@ -744,8 +886,12 @@ class TestAgentFacingApis:
 
     def test_strict_localization_and_idea_addability_validation(self, tmp_mod):
         mod = tmp_mod.mod
-        mod.create_idea("SCL_advisor", category="political_advisor", modifier={"political_power_gain": 0.1})
-        mod.create_event("scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_advisor")])
+        mod.create_idea(
+            "SCL_advisor", category="political_advisor", modifier={"political_power_gain": 0.1}
+        )
+        mod.create_event(
+            "scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_advisor")]
+        )
         errors = mod.validate(strict_localization=True)
         codes = {error.code for error in errors}
         assert "idea_not_addable" in codes
@@ -756,7 +902,49 @@ class TestAgentFacingApis:
         mod.set_loc("scl.1.a", "Option")
         mod.set_loc("SCL_advisor", "Advisor")
         errors = mod.validate(strict_localization=True)
-        assert not any("scl.1" in error.message and error.code == "missing_localization" for error in errors)
+        assert not any(
+            "scl.1" in error.message and error.code == "missing_localization" for error in errors
+        )
+
+    def test_revolt_and_resistance_semantic_validation(self, tmp_mod):
+        state_dir = tmp_mod.root / "history" / "states"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state_dir.joinpath("102-Slovenia.txt").write_text(
+            "state = { id = 102 name = STATE_102 manpower = 1 state_category = town "
+            "provinces = { 1 } history = { owner = YUG add_core_of = YUG } }",
+            encoding="utf-8",
+        )
+        mod = Mod(tmp_mod.root)
+        mod.create_country("YUG", "Yugoslavia")
+        mod.create_focus_tree("FB_AUS_focus", "AUS")
+
+        missing_tree_errors = mod.validate_effect(
+            Mod.effect_start_civil_war("communism", capital=102)
+        )
+        assert any(error.code == "civil_war_focus_tree_missing" for error in missing_tree_errors)
+
+        load_errors = mod.validate_effect(Mod.effect_load_focus_tree("MISSING_focus"))
+        assert any(error.code == "unknown_focus_tree_reference" for error in load_errors)
+        known_load_errors = mod.validate_effect(Mod.effect_load_focus_tree("FB_AUS_focus"))
+        assert not any(error.code == "unknown_focus_tree_reference" for error in known_load_errors)
+        civil_war_with_tree_errors = mod.validate_effect(
+            Mod.effect_spawn_civil_war_with_focus_tree(
+                "communism", "FB_AUS_focus", capital=102, rebel_tag="D01"
+            )
+        )
+        assert not any(
+            error.code in {"civil_war_focus_tree_missing", "unknown_country_scope"}
+            for error in civil_war_with_tree_errors
+        )
+
+        resistance_errors = mod.validate_effect("102 = { add_resistance = 20 }")
+        assert any(error.code == "resistance_on_core_state" for error in resistance_errors)
+        no_op_transfer_errors = mod.validate_effect("YUG = { transfer_state = 102 }")
+        assert any(error.code == "revolt_state_already_owned" for error in no_op_transfer_errors)
+
+        mod.create_event("slo.1", options=[EventOption(name="slo.1.a")])
+        errors = mod.validate()
+        assert any(error.code == "event_option_no_effect" for error in errors)
 
     def test_patch_state_history_preserves_victory_points_text(self, tmp_mod):
         state_dir = tmp_mod.root / "history" / "states"
@@ -774,7 +962,11 @@ class TestAgentFacingApis:
             "}\n",
             encoding="utf-8",
         )
-        state = tmp_mod.mod.patch_state_history(52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"])
+        state = tmp_mod.mod.patch_state_history(
+            52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"]
+        )
+        assert "owner = BAY" in tmp_mod.mod.preview()
+        tmp_mod.mod.save(require_changes=True)
         text = state_file.read_text(encoding="utf-8")
         assert state.owner == "BAY"
         assert state.cores == ["BAY"]
@@ -793,26 +985,37 @@ class TestAgentFacingApis:
         )
         tech_dir = tmp_mod.root / "common" / "technologies"
         tech_dir.mkdir(parents=True, exist_ok=True)
-        tech_dir.joinpath("industry.txt").write_text("known_tech = { research_cost = 1 }", encoding="utf-8")
+        tech_dir.joinpath("industry.txt").write_text(
+            "known_tech = { research_cost = 1 }", encoding="utf-8"
+        )
         equip_dir = tmp_mod.root / "common" / "units" / "equipment"
         equip_dir.mkdir(parents=True, exist_ok=True)
-        equip_dir.joinpath("infantry.txt").write_text("infantry_equipment_0 = { }", encoding="utf-8")
+        equip_dir.joinpath("infantry.txt").write_text(
+            "infantry_equipment_0 = { }", encoding="utf-8"
+        )
 
         mod.create_focus_tree("scl_focus", "SCL")
         mod.create_event("known.1")
-        mod.add_focus("scl_focus", Focus(
-            id="SCL_bad",
-            icon="GFX_missing_icon",
-            completion_reward="\n".join([
-                "remove_ideas = old_1",
-                "remove_ideas = old_2",
-                "add_ideas = missing_spirit",
-                "country_event = { id = missing.1 }",
-                "set_technology = { missing_tech = 1 }",
-                Mod.effect_add_equipment("missing_equipment", 10),
-            ]),
-        ))
-        mod.add_focus("scl_focus", Focus(id="SCL_bad_fallback_icon", icon="GFX_goal_generic_navy", x=1))
+        mod.add_focus(
+            "scl_focus",
+            Focus(
+                id="SCL_bad",
+                icon="GFX_missing_icon",
+                completion_reward="\n".join(
+                    [
+                        "remove_ideas = old_1",
+                        "remove_ideas = old_2",
+                        "add_ideas = missing_spirit",
+                        "country_event = { id = missing.1 }",
+                        "set_technology = { missing_tech = 1 }",
+                        Mod.effect_add_equipment("missing_equipment", 10),
+                    ]
+                ),
+            ),
+        )
+        mod.add_focus(
+            "scl_focus", Focus(id="SCL_bad_fallback_icon", icon="GFX_goal_generic_navy", x=1)
+        )
         errors = mod.validate(validate_icons=True)
         codes = {error.code for error in errors}
         assert "unknown_focus_icon" in codes
@@ -843,19 +1046,41 @@ class TestAgentFacingApis:
         mod = tmp_mod.mod
         mod.create_idea("SCL_crisis", modifier={"stability_factor": -0.1})
         mod.create_focus_tree("scl_focus", "SCL")
-        mod.add_focus("scl_focus", Focus(id="SCL_focus", completion_reward="remove_ideas = SCL_crisis"))
-        mod.create_event("scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_crisis")])
+        mod.add_focus(
+            "scl_focus", Focus(id="SCL_focus", completion_reward="remove_ideas = SCL_crisis")
+        )
+        mod.create_event(
+            "scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_crisis")]
+        )
         errors = mod.validate()
         assert any(error.code == "idea_mutation_collision" for error in errors)
 
     def test_preview_summary_reports_semantic_focus_changes(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         mod.update_focus_tree("german_focus", continuous_focus_position="x = 50 y = 2600")
-        mod.update_focus("german_focus", "GER_rhineland", x=7, y=2)
+        mod.update_focus(
+            "german_focus",
+            "GER_rhineland",
+            x=7,
+            y=2,
+            completion_reward="\n".join(
+                [
+                    Mod.effect_load_focus_tree("FB_AUS_focus"),
+                    Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS"),
+                    Mod.effect_transfer_state_with_core(102, "SLV"),
+                    Mod.effect_declare_war_from("SLV", "YUG"),
+                ]
+            ),
+        )
         summary = mod.preview_summary()
         assert "continuous_focus_position" in summary
         assert "GER_rhineland" in summary
         assert "position" in summary
+        assert "load focus tree FB_AUS_focus" in summary
+        assert "end puppet SLV under YUG" in summary
+        assert "transfer state 102 to SLV" in summary
+        assert "SLV joins AUS faction" in summary
+        assert "SLV declares war on YUG" in summary
 
     def test_set_focuses_mutually_exclusive_sets_reciprocal_single_groups(self, tmp_mod):
         mod = tmp_mod.mod
@@ -881,7 +1106,9 @@ class TestAgentFacingApis:
         mod_root.mkdir()
         country_tags = mod_root / "common" / "country_tags"
         country_tags.mkdir(parents=True)
-        country_tags.joinpath("tags.txt").write_text('TST = "countries/TST.txt"\n', encoding="utf-8")
+        country_tags.joinpath("tags.txt").write_text(
+            'TST = "countries/TST.txt"\n', encoding="utf-8"
+        )
         countries = mod_root / "common" / "countries"
         countries.mkdir(parents=True)
         countries.joinpath("TST.txt").write_text("color = { 1 2 3 }\n", encoding="utf-8")
@@ -906,7 +1133,9 @@ class TestAgentFacingApis:
 class TestModCountries:
     def test_create_country(self, tmp_mod):
         mod = tmp_mod.mod
-        country = mod.create_country("WST", "Westralia", adjective="Westralian", color=(59, 130, 246))
+        country = mod.create_country(
+            "WST", "Westralia", adjective="Westralian", color=(59, 130, 246)
+        )
         assert country.tag == "WST"
         assert country.name == "Westralia"
         assert "WST" in mod.list_countries()
@@ -957,7 +1186,9 @@ class TestModCountries:
             encoding="utf-8",
         )
         (hoi4_root / "common" / "countries").mkdir(parents=True)
-        (hoi4_root / "common" / "countries" / "SAR.txt").write_text("color = { 1 2 3 }\n", encoding="utf-8")
+        (hoi4_root / "common" / "countries" / "SAR.txt").write_text(
+            "color = { 1 2 3 }\n", encoding="utf-8"
+        )
         (hoi4_root / "localisation" / "english").mkdir(parents=True)
         (hoi4_root / "localisation" / "english" / "countries_l_english.yml").write_text(
             'l_english:\n SAR:0 "Sarawak"\n',
@@ -1214,11 +1445,14 @@ class TestModEvents:
             "sic.1",
             options=[EventOption(name="sic.1.a", effect="add_core_of = SIC")],
         )
-        tree = mod.create_focus_tree("sic_focus", "SIC")
-        mod.add_focus("sic_focus", Focus(
-            id="SIC_bad_bonus",
-            completion_reward="add_tech_bonus = { name = bad bonus = 1.0 category = infantry }",
-        ))
+        mod.create_focus_tree("sic_focus", "SIC")
+        mod.add_focus(
+            "sic_focus",
+            Focus(
+                id="SIC_bad_bonus",
+                completion_reward="add_tech_bonus = { name = bad bonus = 1.0 category = infantry }",
+            ),
+        )
         messages = [e.message for e in mod.validate()]
         assert any("country scope" in message for message in messages)
         assert any("Unknown add_tech_bonus category 'infantry'" in message for message in messages)
@@ -1250,7 +1484,8 @@ class TestModEvents:
         tmp_mod.mod.create_country("SCL", "Sicily")
         errors = tmp_mod.mod.validate_effect("SCL = { add_core_of = 115 }")
         assert any(
-            error.code == "country_scope_core_effect" and "115 = { add_core_of = SCL }" in error.message
+            error.code == "country_scope_core_effect"
+            and "115 = { add_core_of = SCL }" in error.message
             for error in errors
         )
 
@@ -1263,7 +1498,9 @@ class TestModEvents:
             mean_time_to_happen="days = 1",
         )
         messages = [e.message for e in mod.validate()]
-        assert any("is_triggered_only but also has mean_time_to_happen" in message for message in messages)
+        assert any(
+            "is_triggered_only but also has mean_time_to_happen" in message for message in messages
+        )
         assert any("declares war in immediate" in message for message in messages)
 
     def test_validate_effect_catches_braces_and_declare_war_shape(self, tmp_mod):
@@ -1279,7 +1516,11 @@ class TestModEvents:
 
     def test_on_action_creates_startup_hook(self, tmp_mod):
         mod = tmp_mod.mod
-        mod.create_event("sic.1", title="sic.1.t", options=[EventOption(name="sic.1.a", effect="add_stability = 0.05")])
+        mod.create_event(
+            "sic.1",
+            title="sic.1.t",
+            options=[EventOption(name="sic.1.a", effect="add_stability = 0.05")],
+        )
         action = mod.create_on_action(
             "on_startup",
             effect=Mod.effect_schedule_country_event("sic.1", days=58, target="SCL"),
@@ -1328,7 +1569,9 @@ class TestModEvents:
         )
 
         assert mod.update_event_option("sic.1", 0, effect=Mod.effect_transfer_state(115, "SCL"))
-        assert mod.update_event_option("sic.1", "sic.1.b", trigger="{ has_war = no }", effect="add_stability = 0.05")
+        assert mod.update_event_option(
+            "sic.1", "sic.1.b", trigger="{ has_war = no }", effect="add_stability = 0.05"
+        )
         assert mod.update_event_option("sic.1", "missing", effect="noop = yes") is False
         event = mod.get_event("sic.1")
         assert event.options[0].effect == "SCL = { transfer_state = 115 }"
@@ -1342,7 +1585,9 @@ class TestModEvents:
 
     def test_add_event_option(self, tmp_mod):
         mod = tmp_mod.with_events()
-        mod.add_event_option("mymod.1.2", EventOption(name="mymod.1.2.b", effect="add_war_support = 0.1"))
+        mod.add_event_option(
+            "mymod.1.2", EventOption(name="mymod.1.2.b", effect="add_war_support = 0.1")
+        )
         event = mod.get_event("mymod.1.2")
         assert len(event.options) == 2
 
@@ -1496,7 +1741,9 @@ class TestModIdeas:
         assert idea.path == ideas_dir / "luxembourg.txt"
 
     def test_create_idea_accepts_direct_category_argument(self, tmp_mod):
-        idea = tmp_mod.mod.create_idea("SCL_advisor", category="political_advisor", modifier={"political_power_gain": 0.1})
+        idea = tmp_mod.mod.create_idea(
+            "SCL_advisor", category="political_advisor", modifier={"political_power_gain": 0.1}
+        )
         assert idea.category == "political_advisor"
 
     def test_validate_warns_for_unresolved_assigned_idea(self, tmp_mod):
@@ -1527,8 +1774,12 @@ class TestIdeaValidation:
 
 class TestEventValidation:
     def test_valid_event(self):
-        event = Event(id="t.1", title="T", description="D",
-                      options=[EventOption(name="t.1.a")])
+        event = Event(
+            id="t.1",
+            title="T",
+            description="D",
+            options=[EventOption(name="t.1.a", effect="add_political_power = 1")],
+        )
         errors = validate_event(event)
         assert len(errors) == 0
 
@@ -1548,8 +1799,7 @@ class TestEventValidation:
         assert any("no options" in e.message for e in errors)
 
     def test_invalid_type(self):
-        event = Event(id="t.1", event_type="bad_type",
-                      options=[EventOption(name="a")])
+        event = Event(id="t.1", event_type="bad_type", options=[EventOption(name="a")])
         errors = validate_event(event)
         assert any("invalid type" in e.message for e in errors)
 
@@ -1603,8 +1853,12 @@ class TestCountryValidation:
         assert any("ruling party" in e.message for e in errors)
 
     def test_leader_party_mismatch_warns(self):
-        country = Country(tag="TST", name="T", ruling_party="democratic",
-                          leader=Leader(name="Boss", ideology="nazism"))
+        country = Country(
+            tag="TST",
+            name="T",
+            ruling_party="democratic",
+            leader=Leader(name="Boss", ideology="nazism"),
+        )
         errors = validate_country(country)
         assert any("does not match" in e.message for e in errors)
 

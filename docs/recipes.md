@@ -186,6 +186,14 @@ Mod.effect_create_wargoal("GER")
 Mod.effect_declare_war("GER")
 Mod.effect_declare_war_from("LUX", "GER")
 Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
+Mod.effect_load_focus_tree("TAG_focus")
+Mod.effect_spawn_civil_war_with_focus_tree("communism", "TAG_rebel_focus", capital=8, rebel_tag="D01")
+Mod.effect_release("SLV")
+Mod.effect_release_puppet("SLV")
+Mod.effect_end_puppet("SLV", "YUG")
+Mod.effect_set_autonomy("SLV", "autonomy_free")
+Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
+Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)
 Mod.scope_block("LUX", Mod.effect_declare_war("GER"))
 Mod.effect_block("declare_war_on", {"type": "annex_everything", "target": "GER"})
 mod.validate_effect("LUX = { declare_war_on = { target = GER } }")
@@ -230,3 +238,56 @@ mod.assert_no_visual_overlap("tag_focus")
 ```
 
 Use varied icons, 35-day setup focuses (`cost=5`), at least one meaningful branch choice, and rewards that change gameplay. Always add localization for every focus.
+
+### Civil-War Rebels With Custom Focus Trees
+
+Dynamic civil-war countries often do not match normal focus tree selectors. Pair the civil war effect with a runtime tree load:
+
+```python
+reward = Mod.effect_spawn_civil_war_with_focus_tree(
+    "communism",
+    "FB_AUS_focus",
+    size=0.4,
+    capital=4,
+    rebel_tag="D01",
+)
+mod.append_to_focus_reward("AUS_focus", "AUS_arm_the_cells", reward)
+```
+
+If a revolt tag may already exist, use the existing-or-spawn helper instead of assuming the tag is unreleased:
+
+```python
+effect = Mod.effect_convert_existing_or_spawn_revolt(
+    "SLV",
+    [102, 103],
+    overlord="YUG",
+    manpower=5000,
+    equipment={"infantry_equipment_0": 300},
+)
+mod.create_event("slv.10", is_triggered_only=True,
+                 options=[EventOption(name="slv.10.a", effect=effect)])
+```
+
+### Decision Chains and Save Recovery
+
+Use `create_decision_chain()` for staged revolt/campaign decisions instead of hand-writing flags:
+
+```python
+mod.create_decision_chain("slv_revolt", [
+    {"id": "SLV_organize_cells", "complete_effect": "add_political_power = 25", "event": "slv.1"},
+    {"id": "SLV_launch_revolt",
+     "complete_effect": Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
+], final_event="slv.99")
+```
+
+For live-save migrations, create a visible repair decision or a hidden one triggered by a scripted effect:
+
+```python
+mod.create_recovery_decision(
+    "slv_revolt",
+    "SLV_repair_focus_tree",
+    effect=Mod.effect_load_focus_tree("SLV_focus"),
+    hidden=True,
+    loc_name="Repair Slovenia Revolt",
+)
+```

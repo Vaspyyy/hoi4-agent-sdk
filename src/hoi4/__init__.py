@@ -13,8 +13,15 @@ Usage:
 
 from .mod import Mod
 from .config import Config, find_config
-from .parser import PdxNode, parse_pdx, serialize_pdx
-from .script import effect_block, normalize_block_body, pdx_value, scope_block, validate_script_syntax
+from .parser import ParseError, PdxNode, parse_pdx, serialize_pdx
+from .script import (
+    effect_block,
+    normalize_block_body,
+    pdx_string,
+    pdx_value,
+    scope_block,
+    validate_script_syntax,
+)
 from .validation import VALIDATION_CODES, VALIDATION_WARNING_CODES
 from .types import (
     Country,
@@ -26,6 +33,7 @@ from .types import (
     FocusTree,
     Idea,
     Leader,
+    LoadDiagnostic,
     OnAction,
     SaveResult,
     State,
@@ -53,16 +61,19 @@ __all__ = [
     "FocusTree",
     "Idea",
     "Leader",
+    "LoadDiagnostic",
     "OnAction",
     "SaveResult",
     "State",
     "ValidationError",
     "PdxNode",
+    "ParseError",
     "parse_pdx",
     "serialize_pdx",
     "effect_block",
     "normalize_block_body",
     "pdx_value",
+    "pdx_string",
     "scope_block",
     "validate_script_syntax",
     "VALIDATION_CODES",

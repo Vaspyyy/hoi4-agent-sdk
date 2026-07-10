@@ -65,8 +65,14 @@ class TestSerializeState:
         assert restored.owner == original.owner
 
     def test_serialize_new_state(self):
-        state = State(id=99, name="STATE_99", owner="TST", cores=["TST"],
-                      manpower="500000", provinces=[9001, 9002])
+        state = State(
+            id=99,
+            name="STATE_99",
+            owner="TST",
+            cores=["TST"],
+            manpower="500000",
+            provinces=[9001, 9002],
+        )
         text = serialize_state(state)
         assert "id = 99" in text
         assert "owner = TST" in text
@@ -104,8 +110,9 @@ class TestPatchStateOwner:
 
 class TestWriteState:
     def test_writes_file(self, tmp_path):
-        state = State(id=50, name="STATE_50", owner="GER", cores=["GER"],
-                      manpower="1000", provinces=[500])
+        state = State(
+            id=50, name="STATE_50", owner="GER", cores=["GER"], manpower="1000", provinces=[500]
+        )
         path = write_state(tmp_path, state)
         assert path.exists()
         loaded = read_state(path)
@@ -115,6 +122,7 @@ class TestWriteState:
 
 def read_state_from_string(text: str) -> State:
     import tempfile
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(text)
         f.flush()

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from hoi4 import Mod
@@ -37,10 +35,12 @@ test_category = {
     assert "add_political_power" in decision.complete_effect
 
 
-def test_serialize_decision_file():
-    mod = Mod("/tmp/nonexistent_decision_test_mod")
+def test_serialize_decision_file(tmp_path):
+    mod = Mod(tmp_path)
     category = mod.create_decision_category("test_category", icon="generic_decision")
-    mod.create_decision("test_category", "test_decision", cost=10, complete_effect="add_stability = 0.05")
+    mod.create_decision(
+        "test_category", "test_decision", cost=10, complete_effect="add_stability = 0.05"
+    )
     text = serialize_decisions_file([category])
     assert "test_category = {" in text
     assert "test_decision = {" in text

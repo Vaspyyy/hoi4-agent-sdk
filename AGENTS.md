@@ -102,7 +102,7 @@ with mod.transaction():
    Mod.effect_remove_state_core(state_id, tag)
    ```
 
-7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_swap_idea(...)`, `Mod.effect_upgrade_idea_chain(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_army_experience(...)`, `Mod.effect_add_navy_experience(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_set_politics(...)`, `Mod.effect_create_faction(...)`, `Mod.effect_add_target_to_faction(...)`, `Mod.effect_join_faction(...)`, `Mod.effect_white_peace(...)`, `Mod.effect_spawn_revolution(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
+7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_swap_idea(...)`, `Mod.effect_upgrade_idea_chain(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_army_experience(...)`, `Mod.effect_add_navy_experience(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_set_politics(...)`, `Mod.effect_create_faction(...)`, `Mod.effect_add_target_to_faction(...)`, `Mod.effect_join_faction(...)`, `Mod.effect_white_peace(...)`, `Mod.effect_spawn_revolution(...)`, `Mod.effect_convert_existing_or_spawn_revolt(...)`, `Mod.effect_load_focus_tree(...)`, `Mod.effect_spawn_civil_war_with_focus_tree(...)`, `Mod.effect_release(...)`, `Mod.effect_release_puppet(...)`, `Mod.effect_end_puppet(...)`, `Mod.effect_set_autonomy(...)`, `Mod.effect_convert_puppet_to_ally(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
 
 8. Search rather than guess:
 
@@ -145,6 +145,14 @@ with mod.transaction():
 21. Avoid bare `add_to_faction = TAG`. Use `effect_add_target_to_faction(leader, target)` or `effect_join_faction(actor, leader)` so faction direction is explicit.
 
 22. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
+
+23. For civil-war countries that need custom focus trees, use `Mod.effect_spawn_civil_war_with_focus_tree(...)` or immediately pair `start_civil_war` with `Mod.effect_load_focus_tree(...)`. Do not rely only on focus tree selectors for dynamic rebel tags.
+
+24. For revolt chains where the tag might already exist or be a puppet, use `Mod.effect_convert_existing_or_spawn_revolt(...)` or explicit puppet helpers. Do not assume the target tag is unreleased.
+
+25. Do not use `add_resistance` as generic unrest on states that are cores of their current owner. Use flags, variables, decisions, and events for unrest/revolt progression.
+
+26. Triggered lore events should have at least one gameplay effect in each option, even if it is only a flag. Use `create_decision_chain()` for staged flag/event/cleanup decision chains and `create_recovery_decision()` for live-save repair hooks.
 
 ## Documentation
 

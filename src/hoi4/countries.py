@@ -15,7 +15,15 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .tags import resolve_country_filename
+from .tags import (
+    add_country_tag,
+    remove_country_tag as _remove_country_tag,
+    resolve_country_filename,
+)
+from .patching import replace_assignment, set_block, set_scalar, top_level_assignments
+from .paths import require_country_tag, safe_file_stem
+from .parser import find_assignment_block
+from .script import pdx_string
 from .types import Country, Leader
 
 COLOR_RE = re.compile(r"\bcolor\s*=\s*\{\s*(\d+)\s+(\d+)\s+(\d+)\s*\}")
@@ -31,10 +39,11 @@ def read_country(
     tag: str,
     hoi4_install: Optional[Path] = None,
     _loc_cache: Optional[dict[str, dict[str, str]]] = None,
+    _tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
 ) -> Country:
     country = Country(tag=tag)
 
-    _read_definition(country, mod_root, hoi4_install)
+    _read_definition(country, mod_root, hoi4_install, _tag_mappings)
     _read_history(country, mod_root, hoi4_install)
     _read_character(country, mod_root, hoi4_install)
 
@@ -46,13 +55,20 @@ def read_country(
     return country
 
 
-def _read_definition(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+def _read_definition(
+    country: Country,
+    mod_root: Path,
+    hoi4_install: Optional[Path],
+    tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
-        p = resolve_country_filename(base, country.tag)
+        p = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
         if p and p.exists():
             txt = p.read_text(encoding="utf-8", errors="ignore")
+            country.definition_path = p.resolve()
+            country.raw_definition = txt
             m = COLOR_RE.search(txt)
             if m:
                 country.color = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
@@ -70,6 +86,8 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
         if not f:
             continue
         txt = f.read_text(encoding="utf-8", errors="ignore")
+        country.history_path = f.resolve()
+        country.raw_history = txt
 
         cap = CAPITAL_RE.search(txt)
         if cap:
@@ -146,7 +164,7 @@ def _build_loc_cache(mod_root: Path) -> dict[str, dict[str, str]]:
             s = line.strip()
             if not s or s.startswith("#") or s.startswith("l_"):
                 continue
-            m = re.match(r'^\s*([A-Z0-9]{3}[A-Z0-9_]*):', s)
+            m = re.match(r"^\s*([A-Z0-9]{3}[A-Z0-9_]*):", s)
             if m:
                 tag_key = m.group(1)
                 tag = tag_key[:3] if len(tag_key) >= 3 and tag_key[:3].isupper() else None
@@ -179,6 +197,8 @@ def _read_character(country: Country, mod_root: Path, hoi4_install: Optional[Pat
         if not p.exists():
             continue
         txt = p.read_text(encoding="utf-8", errors="ignore")
+        country.character_path = p.resolve()
+        country.raw_character = txt
 
         ideology_m = IDEOLOGY_RE.search(txt)
         name_m = re.search(r'name\s*=\s*"([^"]*)"', txt)
@@ -216,20 +236,16 @@ def _extract_leader_name(txt: str) -> Optional[str]:
     return None
 
 
-def write_country_tag(mod_root: Path, tag: str) -> None:
-    p = mod_root / "common" / "country_tags" / "00_generated_tags.txt"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    line = f'{tag} = "countries/{tag}.txt"\n'
-    if p.exists():
-        content = p.read_text(encoding="utf-8", errors="ignore")
-        if re.search(rf"^{re.escape(tag)}\s*=", content, re.MULTILINE):
-            return
-    with p.open("a", encoding="utf-8") as fh:
-        fh.write(line)
+def write_country_tag(mod_root: Path, tag: str) -> Path:
+    return add_country_tag(mod_root, tag)
+
+
+def remove_country_tag(mod_root: Path, tag: str) -> Path | None:
+    return _remove_country_tag(mod_root, tag)
 
 
 def write_country_definition(mod_root: Path, country: Country) -> None:
-    p = mod_root / f"common/countries/{country.tag}.txt"
+    p = country.definition_path or mod_root / f"common/countries/{country.tag}.txt"
     p.parent.mkdir(parents=True, exist_ok=True)
     content = serialize_country_files(mod_root, country)[p]
     p.write_text(content, encoding="utf-8")
@@ -237,8 +253,12 @@ def write_country_definition(mod_root: Path, country: Country) -> None:
 
 def write_country_history(mod_root: Path, country: Country) -> None:
     tag = country.tag
-    safe_name = re.sub(r'[\\/:*?"<>|]', "_", country.name or tag)
-    p = mod_root / f"history/countries/{tag} - {safe_name}.txt"
+    safe_name = safe_file_stem(country.name or tag, fallback=tag)
+    p = (
+        mod_root / f"history/countries/{tag} - {safe_name}.txt"
+        if "name" in country.touched_fields or country.history_path is None
+        else country.history_path
+    )
     p.parent.mkdir(parents=True, exist_ok=True)
 
     for old in p.parent.glob(f"{tag} - *.txt"):
@@ -256,9 +276,9 @@ def write_country_localisation(mod_root: Path, country: Country) -> None:
     name = country.name or country.tag
     adj = country.adjective or name
     for suffix in ["", "_neutrality", "_democratic", "_fascism", "_communism"]:
-        lines.append(f' {country.tag}{suffix}:0 "{name}"')
-        lines.append(f' {country.tag}{suffix}_DEF:0 "{name}"')
-    lines.append(f' {country.tag}_ADJ:0 "{adj}"')
+        lines.append(f" {country.tag}{suffix}:0 {pdx_string(name)}")
+        lines.append(f" {country.tag}{suffix}_DEF:0 {pdx_string(name)}")
+    lines.append(f" {country.tag}_ADJ:0 {pdx_string(adj)}")
     lines.append("")
     loc.write_text("\n".join(lines), encoding="utf-8-sig")
 
@@ -268,48 +288,77 @@ def write_character_file(mod_root: Path, country: Country) -> None:
         return
     serialized = serialize_country_files(mod_root, country)
     tag = country.tag
-    p = mod_root / f"common/characters/{tag}_characters.txt"
+    p = country.character_path or mod_root / f"common/characters/{tag}_characters.txt"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(serialized[p], encoding="utf-8")
 
 
-def write_all_country_files(mod_root: Path, country: Country) -> None:
-    write_country_tag(mod_root, country.tag)
+def write_all_country_files(mod_root: Path, country: Country) -> list[Path]:
+    written = [write_country_tag(mod_root, country.tag)]
     write_country_definition(mod_root, country)
+    written.append(country.definition_path or mod_root / f"common/countries/{country.tag}.txt")
     write_country_history(mod_root, country)
-    write_country_localisation(mod_root, country)
+    safe_name = safe_file_stem(country.name or country.tag, fallback=country.tag)
+    written.append(
+        mod_root / f"history/countries/{country.tag} - {safe_name}.txt"
+        if "name" in country.touched_fields or country.history_path is None
+        else country.history_path
+    )
     write_character_file(mod_root, country)
+    if country.leader:
+        written.append(
+            country.character_path or mod_root / f"common/characters/{country.tag}_characters.txt"
+        )
+    write_country_localisation(mod_root, country)
+    written.append(mod_root / "localisation" / "english" / f"{country.tag}_country_l_english.yml")
+    return written
 
 
 def country_file_paths(mod_root: Path, country: Country) -> list[Path]:
     tag = country.tag
-    safe_name = re.sub(r'[\\/:*?"<>|]', "_", country.name or tag)
+    safe_name = safe_file_stem(country.name or tag, fallback=tag)
     paths = [
-        mod_root / f"common/countries/{tag}.txt",
-        mod_root / f"history/countries/{tag} - {safe_name}.txt",
+        country.definition_path or mod_root / f"common/countries/{tag}.txt",
+        country.history_path or mod_root / f"history/countries/{tag} - {safe_name}.txt",
     ]
     if country.leader:
-        paths.append(mod_root / f"common/characters/{tag}_characters.txt")
+        paths.append(country.character_path or mod_root / f"common/characters/{tag}_characters.txt")
     return paths
 
 
 def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]:
-    tag = country.tag
+    tag = require_country_tag(country.tag)
     files: dict[Path, str] = {}
 
-    def_path = mod_root / f"common/countries/{tag}.txt"
+    def_path = country.definition_path or mod_root / f"common/countries/{tag}.txt"
     try:
         r, g, b = country.color
     except (TypeError, ValueError):
         r, g, b = 128, 128, 128
-    files[def_path] = (
-        f"graphical_culture = {country.graphical_culture}\n"
-        f"graphical_culture_2d = {country.graphical_culture_2d}\n"
-        f"color = {{ {r} {g} {b} }}\n"
-    )
+    definition = country.raw_definition
+    if not definition:
+        definition = (
+            f"graphical_culture = {country.graphical_culture}\n"
+            f"graphical_culture_2d = {country.graphical_culture_2d}\n"
+            f"color = {{ {r} {g} {b} }}\n"
+        )
+    else:
+        if "*" in country.touched_fields or "graphical_culture" in country.touched_fields:
+            definition = set_scalar(definition, "graphical_culture", country.graphical_culture)
+        if "*" in country.touched_fields or "graphical_culture_2d" in country.touched_fields:
+            definition = set_scalar(
+                definition, "graphical_culture_2d", country.graphical_culture_2d
+            )
+        if "*" in country.touched_fields or "color" in country.touched_fields:
+            definition = set_block(definition, "color", f"{r} {g} {b}")
+    files[def_path] = definition
 
-    safe_name = re.sub(r'[\\/:*?"<>|]', "_", country.name or tag)
-    hist_path = mod_root / f"history/countries/{tag} - {safe_name}.txt"
+    safe_name = safe_file_stem(country.name or tag, fallback=tag)
+    hist_path = (
+        mod_root / f"history/countries/{tag} - {safe_name}.txt"
+        if "name" in country.touched_fields or country.history_path is None
+        else country.history_path
+    )
     leader = country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1")
     elections = "yes" if country.elections_allowed else "no"
     pops = country.popularities
@@ -317,8 +366,12 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
     if country.ideas:
         ideas_lines = "\n".join(f" {idea}" for idea in country.ideas)
         ideas_block = f"\nadd_ideas = {{\n{ideas_lines}\n}}\n"
-    research_slots = f"set_research_slots = {country.research_slots}\n\n" if country.research_slots is not None else ""
-    files[hist_path] = (
+    research_slots = (
+        f"set_research_slots = {country.research_slots}\n\n"
+        if country.research_slots is not None
+        else ""
+    )
+    generated_history = (
         f"capital = {country.capital}\n"
         f"\n"
         f"{research_slots}"
@@ -339,14 +392,47 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         f"\n"
         f"{ideas_block}"
     )
+    history = country.raw_history
+    if not history:
+        history = generated_history
+    else:
+        touched = country.touched_fields
+        if "*" in touched or "capital" in touched:
+            history = set_scalar(history, "capital", str(country.capital))
+        if "*" in touched or "research_slots" in touched:
+            history = set_scalar(
+                history,
+                "set_research_slots",
+                None if country.research_slots is None else str(country.research_slots),
+            )
+        if "*" in touched or "popularities" in touched:
+            popularity_body = "\n".join(
+                f"{key} = {pops.get(key, 0)}"
+                for key in ("democratic", "fascism", "communism", "neutrality")
+            )
+            history = set_block(history, "set_popularities", popularity_body)
+        if "*" in touched or {"ruling_party", "elections_allowed"} & touched:
+            politics_body = "\n".join(
+                [
+                    f"ruling_party = {country.ruling_party}",
+                    'last_election = "1936.1.1"',
+                    f"elections_allowed = {elections}",
+                ]
+            )
+            history = set_block(history, "set_politics", politics_body)
+        if "*" in touched or "ideas" in touched:
+            history = set_block(
+                history, "add_ideas", "\n".join(country.ideas) if country.ideas else None
+            )
+    files[hist_path] = history
 
     if country.leader:
-        char_path = mod_root / f"common/characters/{tag}_characters.txt"
+        char_path = country.character_path or mod_root / f"common/characters/{tag}_characters.txt"
         ld = country.leader
-        files[char_path] = (
+        generated_character = (
             f"characters = {{\n"
             f" {ld.character_id} = {{\n"
-            f'  name = "{ld.name}"\n'
+            f"  name = {pdx_string(ld.name)}\n"
             f"\n"
             f"  roles = {{ country_leader }}\n"
             f"\n"
@@ -365,5 +451,67 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
             f" }}\n"
             f"}}\n"
         )
+        # Existing character files may define advisors/generals alongside the leader.
+        # Preserve them byte-for-byte unless a leader field was explicitly changed.
+        character = country.raw_character
+        if character and any(
+            field.startswith("leader_") or field == "*" for field in country.touched_fields
+        ):
+            character = _patch_character(character, ld)
+        files[char_path] = character or generated_character
 
     return files
+
+
+def _patch_character(text: str, leader: Leader) -> str:
+    root = find_assignment_block(text, "characters")
+    if root is None:
+        return text
+    body = root[0]
+    leader_span = next(
+        (
+            span
+            for span in top_level_assignments(body)
+            if span.key == leader.character_id
+            and span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+        ),
+        None,
+    )
+    if leader_span is None or leader_span.body_start is None or leader_span.body_end is None:
+        return text
+    leader_body = body[leader_span.body_start : leader_span.body_end]
+    leader_body = set_scalar(leader_body, "name", pdx_string(leader.name))
+    role = next(
+        (
+            span
+            for span in top_level_assignments(leader_body)
+            if span.key == "country_leader"
+            and span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+        ),
+        None,
+    )
+    if role is not None and role.body_start is not None and role.body_end is not None:
+        role_body = leader_body[role.body_start : role.body_end]
+        role_body = set_scalar(role_body, "ideology", leader.ideology)
+        leader_body = replace_assignment(
+            leader_body,
+            role,
+            "country_leader = {\n"
+            + "\n".join("\t" + line for line in role_body.strip().splitlines())
+            + "\n}",
+        )
+    body = replace_assignment(
+        body,
+        leader_span,
+        f"{leader.character_id} = {{\n"
+        + "\n".join("\t" + line for line in leader_body.strip().splitlines())
+        + "\n}",
+    )
+    replacement = (
+        "characters = {\n" + "\n".join("\t" + line for line in body.strip().splitlines()) + "\n}"
+    )
+    return text[: root[1]] + replacement + text[root[2] :]

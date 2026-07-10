@@ -10,7 +10,17 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .parser import find_assignment_block, iter_assignment_blocks, strip_comments
+from .parser import find_assignment_block, strip_comments
+from .patching import (
+    AssignmentSpan,
+    append_assignment,
+    assignment_spans,
+    replace_assignment,
+    set_block,
+    set_scalar,
+    top_level_assignments,
+)
+from .paths import require_country_tag, resolve_mod_output_path
 from .types import Focus, FocusTree
 
 FOCUS_ID_RE = re.compile(r"\bid\s*=\s*([A-Za-z0-9_\-]+)")
@@ -25,33 +35,52 @@ RELATIVE_POSITION_RE = re.compile(r"\brelative_position_id\s*=\s*([A-Za-z0-9_\-]
 WAR_TARGET_RE = re.compile(r"\bwill_lead_to_war_with\s*=\s*([A-Z0-9]{3})")
 
 
-def load_focus_tree(path: Path) -> Optional[FocusTree]:
-    txt = path.read_text(encoding="utf-8", errors="ignore")
-
-    tree_match = find_assignment_block(txt, "focus_tree")
-    if tree_match:
-        return _parse_wrapped_tree(txt, path)
-
-    if not iter_assignment_blocks(txt, "focus"):
-        return None
-
-    return _parse_bare_focuses(txt, path)
+def load_focus_tree(path: Path, text: str | None = None) -> Optional[FocusTree]:
+    trees = load_focus_trees(path, text=text)
+    return trees[0] if trees else None
 
 
-def _parse_wrapped_tree(txt: str, path: Path) -> FocusTree:
-    match = find_assignment_block(txt, "focus_tree")
-    if match is None:
-        return FocusTree(id=path.stem, path=path)
-    tree_block = match[0]
+def load_focus_trees(path: Path, text: str | None = None) -> list[FocusTree]:
+    txt = text if text is not None else path.read_text(encoding="utf-8", errors="ignore")
+    wrapped = [
+        txt[span.body_start : span.body_end]
+        for span in top_level_assignments(txt)
+        if span.key == "focus_tree"
+        and span.is_block
+        and span.body_start is not None
+        and span.body_end is not None
+    ]
+    if wrapped:
+        return [_parse_wrapped_tree(body, path) for body in wrapped]
+    focuses = _extract_focuses(txt)
+    return [_parse_bare_focuses(txt, path)] if focuses else []
 
+
+def _parse_wrapped_tree(tree_block: str, path: Path) -> FocusTree:
     clean_tree_block = strip_comments(tree_block)
     tree_id_m = TREE_ID_RE.search(clean_tree_block)
     tree_id = tree_id_m.group(1) if tree_id_m else path.stem
-    tag_m = TAG_RE.search(clean_tree_block)
+    tag_m = None
+    for span in top_level_assignments(tree_block):
+        if (
+            span.key == "country"
+            and span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+        ):
+            selector = strip_comments(tree_block[span.body_start : span.body_end])
+            tag_m = re.search(r"\b(?:original_tag|tag)\s*=\s*([A-Z0-9]{3})", selector)
+            break
     country_tag = tag_m.group(1) if tag_m else ""
 
     focuses = _extract_focuses(tree_block)
-    tree = FocusTree(id=tree_id, country_tag=country_tag, focuses=focuses, path=path)
+    tree = FocusTree(
+        id=tree_id,
+        country_tag=country_tag,
+        focuses=focuses,
+        path=path.resolve(),
+        raw_block=tree_block.strip(),
+    )
     default = _extract_bool(tree_block, "default")
     if default is not None:
         tree.default = default
@@ -67,7 +96,15 @@ def _parse_bare_focuses(txt: str, path: Path) -> FocusTree:
 
 def _extract_focuses(text: str) -> list[Focus]:
     focuses: list[Focus] = []
-    for chunk, _, _ in iter_assignment_blocks(text, "focus"):
+    for span in top_level_assignments(text):
+        if (
+            span.key != "focus"
+            or not span.is_block
+            or span.body_start is None
+            or span.body_end is None
+        ):
+            continue
+        chunk = text[span.body_start : span.body_end]
         focus = _parse_focus_block(chunk)
         if focus:
             focuses.append(focus)
@@ -88,15 +125,24 @@ def _parse_focus_block(chunk: str) -> Focus | None:
     rel_m = RELATIVE_POSITION_RE.search(clean_chunk)
     war_m = WAR_TARGET_RE.search(clean_chunk)
 
-    prereqs = _extract_ref_groups(chunk, "prerequisite")
-    mutex = _extract_ref_groups(chunk, "mutually_exclusive")
-    completion_reward = _extract_block_content(chunk, "completion_reward")
-    available = _extract_block_content(chunk, "available")
-    bypass = _extract_block_content(chunk, "bypass")
-    select_effect = _extract_block_content(chunk, "select_effect")
-    complete_tooltip = _extract_block_content(chunk, "complete_tooltip")
-    allow_branch = _extract_block_content(chunk, "allow_branch")
-    ai_will_do = _extract_block_content(chunk, "ai_will_do")
+    spans = top_level_assignments(chunk)
+    block_values: dict[str, list[str]] = {}
+    scalar_values: dict[str, list[str]] = {}
+    for span in spans:
+        if span.is_block and span.body_start is not None and span.body_end is not None:
+            block_values.setdefault(span.key, []).append(
+                chunk[span.body_start : span.body_end].strip()
+            )
+        else:
+            scalar_values.setdefault(span.key, []).append(
+                chunk[span.value_start : span.value_end].strip().strip('"')
+            )
+
+    def block(name: str) -> str:
+        return block_values.get(name, [""])[0]
+
+    prereqs = _ref_groups(block_values.get("prerequisite", []))
+    mutex = _ref_groups(block_values.get("mutually_exclusive", []))
 
     return Focus(
         id=fid,
@@ -107,29 +153,35 @@ def _parse_focus_block(chunk: str) -> Focus | None:
         prerequisites=prereqs,
         mutually_exclusive=mutex,
         relative_position_id=rel_m.group(1) if rel_m else "",
-        search_filters=_extract_bare_block_values(chunk, "search_filters"),
-        completion_reward=completion_reward,
-        available=available,
-        bypass=bypass,
-        select_effect=select_effect,
-        complete_tooltip=complete_tooltip,
-        allow_branch=allow_branch,
-        ai_will_do=ai_will_do,
-        cancel_if_invalid=_extract_bool(chunk, "cancel_if_invalid"),
-        continue_if_invalid=_extract_bool(chunk, "continue_if_invalid"),
-        available_if_capitulated=_extract_bool(chunk, "available_if_capitulated"),
+        search_filters=strip_comments(block("search_filters")).split(),
+        completion_reward=block("completion_reward"),
+        available=block("available"),
+        bypass=block("bypass"),
+        select_effect=block("select_effect"),
+        complete_tooltip=block("complete_tooltip"),
+        allow_branch=block("allow_branch"),
+        ai_will_do=block("ai_will_do"),
+        cancel_if_invalid=_bool_value(scalar_values.get("cancel_if_invalid", [])),
+        continue_if_invalid=_bool_value(scalar_values.get("continue_if_invalid", [])),
+        available_if_capitulated=_bool_value(scalar_values.get("available_if_capitulated", [])),
         will_lead_to_war_with=war_m.group(1) if war_m else "",
         raw_block=chunk.strip(),
     )
 
 
-def _extract_ref_groups(chunk: str, block_name: str) -> list[list[str]]:
+def _ref_groups(blocks: list[str]) -> list[list[str]]:
     groups: list[list[str]] = []
-    for block_text, _, _ in iter_assignment_blocks(chunk, block_name):
+    for block_text in blocks:
         refs = [rm.group(1) for rm in FOCUS_REF_RE.finditer(strip_comments(block_text))]
         if refs:
             groups.append(refs)
     return groups
+
+
+def _bool_value(values: list[str]) -> bool | None:
+    if not values or values[0] not in {"yes", "no"}:
+        return None
+    return values[0] == "yes"
 
 
 def _extract_block_content(chunk: str, block_name: str) -> str:
@@ -160,6 +212,43 @@ def _extract_bare_block_values(chunk: str, block_name: str) -> list[str]:
 
 
 def serialize_focus_tree(tree: FocusTree) -> str:
+    if tree.raw_block:
+        body = tree.raw_block
+        if tree.touched:
+            body = set_scalar(body, "id", tree.id)
+            body = set_scalar(
+                body, "default", None if tree.default is None else ("yes" if tree.default else "no")
+            )
+            body = set_block(
+                body, "continuous_focus_position", tree.continuous_focus_position or None
+            )
+            for span in reversed(assignment_spans(body, "shared_focus")):
+                body = replace_assignment(body, span, None)
+            for shared in tree.shared_focuses:
+                body = append_assignment(body, f"shared_focus = {shared}")
+        current = {focus.id: focus for focus in tree.focuses}
+        focus_spans: list[tuple[str, AssignmentSpan]] = []
+        for span in top_level_assignments(body):
+            if (
+                span.key != "focus"
+                or not span.is_block
+                or span.body_start is None
+                or span.body_end is None
+            ):
+                continue
+            focus_body = body[span.body_start : span.body_end]
+            match = FOCUS_ID_RE.search(strip_comments(focus_body))
+            if match:
+                focus_spans.append((match.group(1), span))
+        for focus_id, span in sorted(focus_spans, key=lambda item: item[1].start, reverse=True):
+            focus = current.pop(focus_id, None)
+            replacement = (
+                None if focus is None else "\n".join(_serialize_focus(focus, indent=0)).strip()
+            )
+            body = replace_assignment(body, span, replacement)
+        for focus in current.values():
+            body = append_assignment(body, "\n".join(_serialize_focus(focus, indent=0)).strip())
+        return "focus_tree = {\n" + _indent(body, 1) + "\n}\n"
     parts: list[str] = []
     if tree.country_tag:
         parts.append("focus_tree = {")
@@ -200,17 +289,58 @@ def serialize_focus_tree(tree: FocusTree) -> str:
     return "\n".join(parts)
 
 
-def _serialize_focus(focus: Focus) -> list[str]:
+def _serialize_focus(focus: Focus, indent: int = 1) -> list[str]:
+    prefix = "\t" * indent
     if focus.raw_block and not focus.touched:
-        lines = ["\tfocus = {"]
+        lines = [f"{prefix}focus = {{"]
         for line in focus.raw_block.strip().split("\n"):
-            lines.append(f"\t\t{line.rstrip()}")
-        lines.append("\t}")
+            lines.append(f"{prefix}\t{line.rstrip()}")
+        lines.append(f"{prefix}}}")
         lines.append("")
         return lines
 
-    lines = ["\tfocus = {"]
-    lines.append(f"\t\tid = {focus.id}")
+    if focus.raw_block:
+        body = focus.raw_block
+        body = set_scalar(body, "id", focus.id)
+        body = set_scalar(body, "icon", focus.icon)
+        body = set_scalar(body, "x", str(focus.x))
+        body = set_scalar(body, "y", str(focus.y))
+        body = set_scalar(body, "cost", str(focus.cost))
+        body = set_scalar(body, "relative_position_id", focus.relative_position_id or None)
+        for key, flag_value in [
+            ("cancel_if_invalid", focus.cancel_if_invalid),
+            ("continue_if_invalid", focus.continue_if_invalid),
+            ("available_if_capitulated", focus.available_if_capitulated),
+        ]:
+            body = set_scalar(
+                body, key, None if flag_value is None else ("yes" if flag_value else "no")
+            )
+        body = set_scalar(body, "will_lead_to_war_with", focus.will_lead_to_war_with or None)
+        for key, block_value in [
+            ("search_filters", " ".join(focus.search_filters)),
+            ("available", focus.available),
+            ("bypass", focus.bypass),
+            ("select_effect", focus.select_effect),
+            ("completion_reward", focus.completion_reward),
+            ("complete_tooltip", focus.complete_tooltip),
+            ("allow_branch", focus.allow_branch),
+            ("ai_will_do", focus.ai_will_do),
+        ]:
+            body = set_block(body, key, block_value or None)
+        for key, groups in [
+            ("prerequisite", focus.prerequisites),
+            ("mutually_exclusive", focus.mutually_exclusive),
+        ]:
+            for span in reversed(assignment_spans(body, key)):
+                body = replace_assignment(body, span, None)
+            for group in groups:
+                body = append_assignment(
+                    body, f"{key} = {{ " + " ".join(f"focus = {ref}" for ref in group) + " }"
+                )
+        return [f"{prefix}focus = {{", _indent(body, indent + 1), f"{prefix}}}", ""]
+
+    lines = [f"{prefix}focus = {{"]
+    lines.append(f"{prefix}\tid = {focus.id}")
     lines.append(f"\t\ticon = {focus.icon}")
     lines.append(f"\t\tx = {focus.x}")
     lines.append(f"\t\ty = {focus.y}")
@@ -286,7 +416,7 @@ def _serialize_focus(focus: Focus) -> list[str]:
             lines.append(f"\t\t\t{line.strip()}")
         lines.append("\t\t}")
 
-    lines.append("\t}")
+    lines.append(f"{prefix}}}")
     lines.append("")
     return lines
 
@@ -294,8 +424,45 @@ def _serialize_focus(focus: Focus) -> list[str]:
 def write_focus_tree(tree: FocusTree, mod_root: Path) -> Path:
     tag = tree.country_tag or tree.id.replace("_focus", "").upper()
     filename = f"{tag}_focus.txt"
-    out_path = tree.path or mod_root / "common" / "national_focus" / filename
+    if tree.path is None:
+        tag = require_country_tag(tag)
+    out_path = resolve_mod_output_path(
+        mod_root, tree.path or Path("common") / "national_focus" / filename
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     content = serialize_focus_tree(tree)
     out_path.write_text(content, encoding="utf-8")
     return out_path
+
+
+def serialize_focus_file(trees: list[FocusTree], original: str = "") -> str:
+    if not original:
+        return "\n".join(serialize_focus_tree(tree).rstrip() for tree in trees) + "\n"
+    current = {tree.id: tree for tree in trees}
+    text = original
+    spans: list[tuple[str, AssignmentSpan]] = []
+    for span in top_level_assignments(text):
+        if (
+            span.key != "focus_tree"
+            or not span.is_block
+            or span.body_start is None
+            or span.body_end is None
+        ):
+            continue
+        body = text[span.body_start : span.body_end]
+        match = TREE_ID_RE.search(strip_comments(body))
+        if match:
+            spans.append((match.group(1), span))
+    for tree_id, span in sorted(spans, key=lambda item: item[1].start, reverse=True):
+        tree = current.pop(tree_id, None)
+        text = replace_assignment(
+            text, span, None if tree is None else serialize_focus_tree(tree).strip()
+        )
+    for tree in current.values():
+        text = append_assignment(text, serialize_focus_tree(tree).strip())
+    return text
+
+
+def _indent(text: str, count: int) -> str:
+    prefix = "\t" * count
+    return "\n".join(prefix + line.rstrip() for line in text.strip().splitlines())

@@ -33,6 +33,8 @@ If no config file exists, use `Mod()` directly with explicit paths:
 mod = Mod("/path/to/my_mod", hoi4_install="/path/to/hoi4")
 ```
 
+Loader failures are available through `mod.load_diagnostics`. Pass `strict_loading=True` to `Mod(...)` when malformed discovered files should abort construction instead of being skipped with a diagnostic.
+
 ## Countries
 
 Country data spans 5 files: tag registration, definition (color/culture), history (capital/politics/leader), characters, and localization.
@@ -109,7 +111,7 @@ State files live in `history/states/`. When accessing a state not in the mod, `g
 | `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field. List fields such as `cores` and `provinces` append unique values instead of replacing. |
 | `add_state_core(state_id: int, tag: str) -> State` | `State` | Append a core without replacing existing cores |
 | `remove_state_core(state_id: int, tag: str) -> State` | `State` | Remove a core |
-| `patch_state_history(state_id, owner=None, add_cores=None, remove_cores=None) -> State` | `State` | Immediate text-preserving owner/core patch for fragile vanilla states |
+| `patch_state_history(state_id, owner=None, add_cores=None, remove_cores=None) -> State` | `State` | Queue a text-preserving owner/core patch for the next `save()` |
 | `batch_set_owner(state_ids: list[int], tag: str, add_core: bool = True) -> list[State]` | `list[State]` | Batch owner change |
 
 ### Example
@@ -125,7 +127,7 @@ print(mod.find_state("Sicily")[0]["id"])
 
 Loaded state files are patched through their original parsed content. Updating owner, cores, manpower, resources, buildings, or other modeled fields preserves unrelated vanilla data such as buildings, resources, local supplies, history bookmarks, resistance, and compliance blocks.
 
-Use `patch_state_history()` when owner/core changes must avoid reserializing unrelated state content such as complex vanilla `victory_points` formatting. It writes the state file immediately and refreshes the SDK cache for that state.
+Use `patch_state_history()` when owner/core changes must avoid reserializing unrelated state content such as complex vanilla `victory_points` formatting. The change remains in memory for `preview()` and is written transactionally by `save()`.
 ## Events
 
 Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`.
@@ -214,6 +216,8 @@ Decisions live in `common/decisions/*.txt` and are grouped by category.
 | `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. |
 | `ensure_decision_category(category_id, **kwargs) -> DecisionCategory` | `DecisionCategory` | Idempotent create-or-update wrapper |
 | `ensure_decision(category_id, decision_id, **kwargs) -> Decision` | `Decision` | Idempotent create-or-update wrapper |
+| `create_decision_chain(category_id, steps, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Decisions | Build staged decisions with generated completion flags, event calls, localization, and final event |
+| `create_recovery_decision(category_id, decision_id, effect, hidden=False, ...) -> Decision` | `Decision` | Create a visible or hidden repair/migration decision for already-started saves |
 | `update_decision_category(category_id: str, **kwargs) -> bool` | `bool` | Update a decision category |
 | `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update a decision |
 | `delete_decision(decision_id: str) -> bool` | `bool` | Remove a decision |
@@ -231,6 +235,16 @@ mod.create_decision(
 )
 mod.set_loc("LUX_subsidize_arbed", "Subsidize ARBED")
 mod.set_loc("LUX_subsidize_arbed_desc", "Support the domestic steel industry.")
+```
+
+Staged chain example:
+
+```python
+mod.create_decision_chain("slv_revolt", [
+    {"id": "SLV_organize_cells", "complete_effect": "add_political_power = 25", "event": "slv.1"},
+    {"id": "SLV_launch_revolt",
+     "complete_effect": Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
+], final_event="slv.99")
 ```
 
 ### Event Types
@@ -370,7 +384,7 @@ Localization uses HOI4 YML format (`l_english:` header, ` KEY:0 "value"` entries
 - Event titles: `"EVENT_ID.t"`
 - Country names: `"TAG"`, `"TAG_DEF"`, `"TAG_ADJ"`, `"TAG_fascism"`, etc.
 - Leader names: `"CHARACTER_ID"`
-- When reading existing YML files, keys come back **with** `:0` included (e.g., `"GER_anschluss:0"`) — both forms work for `get_loc()`/`set_loc()`
+- When reading existing YML files, numeric suffixes such as `:0` are normalized away. Both `"GER_anschluss"` and `"GER_anschluss:0"` work for `get_loc()`/`set_loc()`.
 
 ### Example
 
@@ -420,9 +434,17 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_set_rule(rule, value=True)` | `set_rule = { rule = yes }` |
 | `Mod.effect_spawn_revolution(tag, state_ids, ...)` | Transfer/core states and optionally add manpower, tech, stockpile, units, faction, and war |
 | `Mod.effect_add_tech_bonus(name, category, uses=1, bonus=0.5)` | Validated `add_tech_bonus` block |
-| `Mod.effect_create_wargoal(target, wargoal_type="annex_everything")` | `create_wargoal = { type = ... target = TAG }` |
-| `Mod.effect_declare_war(target, wargoal_type="annex_everything")` | Current-scope `declare_war_on` block |
-| `Mod.effect_declare_war_from(attacker, target, wargoal_type="annex_everything")` | Attacker-scoped war declaration |
+| `Mod.effect_create_wargoal(target, war_goal_type="annex_everything")` | `create_wargoal = { type = ... target = TAG }` |
+| `Mod.effect_declare_war(target, war_goal_type="annex_everything")` | Current-scope `declare_war_on` block |
+| `Mod.effect_declare_war_from(attacker, target, war_goal_type="annex_everything")` | Attacker-scoped war declaration |
+| `Mod.effect_load_focus_tree(tree_id, keep_completed=False, copy_completed_from=None, mark_layout_dirty=True)` | Runtime `load_focus_tree` plus optional `mark_focus_tree_layout_dirty = yes` |
+| `Mod.effect_spawn_civil_war_with_focus_tree(ideology, tree_id, size=0.5, capital=None, rebel_tag=None, ...)` | `start_civil_war` plus immediate focus tree assignment for the rebel tag |
+| `Mod.effect_release(tag)` | `release = TAG` |
+| `Mod.effect_release_puppet(tag)` | `release_puppet = TAG` |
+| `Mod.effect_end_puppet(puppet, overlord=None)` | `end_puppet = PUP` or `OVER = { end_puppet = PUP }` |
+| `Mod.effect_set_autonomy(target, autonomy_state, freedom_level=None)` | `set_autonomy = { target = TAG autonomy_state = ... }` |
+| `Mod.effect_convert_puppet_to_ally(puppet, overlord, faction_leader=None)` | End puppet relationship and optionally join a faction |
+| `Mod.effect_convert_existing_or_spawn_revolt(tag, state_ids, ...)` | Handles `TAG = { exists = yes }` edge cases before falling back to revolt spawning |
 | `Mod.scope_block(scope, *effects)` | Generic scoped effect block |
 | `Mod.effect_block(name, fields)` | Generic `effect = { key = value }` block |
 
@@ -436,6 +458,7 @@ reward = "\n".join([
     Mod.effect_set_technology("infantry_weapons", 1, popup=False),
     Mod.effect_swap_idea("old_spirit", "new_spirit", target="SCL"),
     Mod.effect_add_target_to_faction("AUS", "BAY"),
+    Mod.effect_load_focus_tree("FB_AUS_focus"),
 ])
 mod.validate_effect(reward)
 ```
@@ -459,10 +482,10 @@ mod.assert_no_visual_overlap("west_focus")
 |--------|--------|
 | **Country** | Tag format `^[A-Z0-9]{3}$`, has name, popularities sum to 100, valid ruling party, valid RGB color, leader ideology/ruling party mismatch |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
-| **Event** | Has ID, has title, has description, has options, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
+| **Event** | Has ID, has title, has description, has options, option gameplay effects, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |
 | **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, continuous focus overlap risk, optional focus icon existence |
-| **Cross-cut** | Every focus has a localization entry (warning), optional strict localization for events/ideas/countries/leaders, effect references to loaded ideas/events/technology/equipment, bad remove-many/add-one idea tooltip patterns, focus/event idea mutation collisions, faction-scope footguns |
+| **Cross-cut** | Every focus has a localization entry (warning), optional strict localization for events/ideas/countries/leaders, effect references to loaded ideas/events/technology/equipment/focus trees, bad remove-many/add-one idea tooltip patterns, focus/event idea mutation collisions, faction-scope footguns, civil-war-without-runtime-tree warnings, resistance-on-owner-core warnings, no-op revolt state transfer warnings |
 
 ### ValidationError Fields
 
@@ -492,7 +515,7 @@ errors = mod.validate(suppress_warnings=["country_scope_core_effect"])
 errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
 ```
 
-Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `faction_scope_footgun`, `civil_war_scope_footgun`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `bad_idea_tooltip_pattern`, `idea_mutation_collision`, `idea_not_addable`, `missing_localization`, `visual_overlap`, and `script_syntax`.
+Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `faction_scope_footgun`, `civil_war_scope_footgun`, `civil_war_focus_tree_missing`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_focus_tree_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `bad_idea_tooltip_pattern`, `idea_mutation_collision`, `idea_not_addable`, `resistance_on_core_state`, `revolt_state_already_owned`, `event_option_no_effect`, `missing_localization`, `visual_overlap`, and `script_syntax`.
 
 The `history_set_owner_in_effect` warning catches a common HOI4 boundary mistake: `set_owner` is a state history directive, not a runtime event/focus effect. Use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`.
 
@@ -532,6 +555,9 @@ Only dirty sections produce diffs. After `save()`, `preview()` returns empty unt
 Changed:
 - SCL_focus continuous_focus_position: x = 50 y = 1000 -> x = 50 y = 2600
 - SCL_focus focus SCL_start: position x=1 y=1 -> x=2 y=3
+- SCL_focus focus SCL_revolt: load focus tree FB_AUS_focus
+- SCL_focus focus SCL_revolt: transfer state 115 to SCL
+- SCL_focus focus SCL_revolt: SCL declares war on ITA
 ```
 
 `mod.save()` returns `SaveResult`:

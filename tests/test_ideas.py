@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from hoi4.ideas import detect_ideas_container, read_ideas_file, serialize_idea, serialize_ideas_file, write_ideas_file
+from hoi4.ideas import (
+    detect_ideas_container,
+    read_ideas_file,
+    serialize_idea,
+    serialize_ideas_file,
+    write_ideas_file,
+)
 from hoi4.types import Idea
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -85,7 +91,9 @@ class TestSerializeIdea:
         assert "GFX_test" in text
 
     def test_serializes_modifier_types(self):
-        idea = Idea(id="t", modifier={"float_val": 0.1, "int_val": 5, "bool_val": True, "str_val": "hello"})
+        idea = Idea(
+            id="t", modifier={"float_val": 0.1, "int_val": 5, "bool_val": True, "str_val": "hello"}
+        )
         text = serialize_idea(idea)
         assert "float_val = 0.1" in text
         assert "int_val = 5" in text

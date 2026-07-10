@@ -11,10 +11,17 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .parser import extract_braced_block, find_assignment_block, iter_assignment_blocks, strip_comments
+from .parser import extract_braced_block, find_assignment_block, strip_comments
+from .patching import (
+    append_assignment,
+    replace_assignment,
+    set_block,
+    set_scalar,
+    top_level_assignments,
+)
+from .script import pdx_string, pdx_value
 from .types import Idea
 
-IDEA_BLOCK_RE = re.compile(r"\b([a-zA-Z0-9_]+)\s*=\s*\{")
 KV_RE = re.compile(r"^\s*([a-zA-Z0-9_]+)\s*=\s*([^\n\r]+)", re.MULTILINE)
 PICTURE_RE = re.compile(r"\bpicture\s*=\s*([^\n\r]+)")
 ICON_RE = re.compile(r"\bicon\s*=\s*([^\n\r]+)")
@@ -31,75 +38,44 @@ def _extract_block(text: str, keyword: str) -> str:
 
 
 def detect_ideas_container(text: str) -> str:
-    for name in VALID_CONTAINERS:
-        if re.search(rf"\b{re.escape(name)}\s*=\s*\{{", text):
-            return name
+    matches = [
+        (match[1], name)
+        for name in VALID_CONTAINERS
+        if (match := find_assignment_block(text, name)) is not None
+    ]
+    if matches:
+        return min(matches)[1]
     return "country_ideas"
 
 
 def _find_toplevel_blocks(text: str) -> list[tuple[str, str]]:
-    blocks: list[tuple[str, str]] = []
-    pos = 0
-    while pos < len(text):
-        m = IDEA_BLOCK_RE.search(text[pos:])
-        if not m:
-            break
-        block_id = m.group(1)
-        block_start = pos + m.end()
-        try:
-            block_content, block_end = extract_braced_block(text, block_start)
-            blocks.append((block_id, block_content))
-            pos = block_end
-        except ValueError:
-            pos = block_start
-    return blocks
+    return [
+        (span.key, text[span.body_start : span.body_end])
+        for span in top_level_assignments(text)
+        if span.is_block and span.body_start is not None and span.body_end is not None
+    ]
 
 
 def _has_direct_property(text: str, keys: set[str]) -> bool:
-    clean = strip_comments(text)
-    depth = 0
-    token = []
-    i = 0
-    while i < len(clean):
-        c = clean[i]
-        if c == '"':
-            i += 1
-            while i < len(clean) and clean[i] != '"':
-                if clean[i] == "\\":
-                    i += 1
-                i += 1
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-        elif depth == 0 and (c.isalnum() or c == "_"):
-            start = i
-            while i < len(clean) and (clean[i].isalnum() or clean[i] == "_"):
-                i += 1
-            key = clean[start:i]
-            j = i
-            while j < len(clean) and clean[j].isspace():
-                j += 1
-            if key in keys and j < len(clean) and clean[j] == "=":
-                return True
-            continue
-        i += 1
-    return False
+    return any(span.key in keys for span in top_level_assignments(text))
 
 
 def _is_idea_body(text: str) -> bool:
-    return _has_direct_property(text, {
-        "icon",
-        "picture",
-        "modifier",
-        "research_bonus",
-        "traits",
-        "allowed",
-        "allowed_civil_war",
-        "ai_will_do",
-        "cost",
-        "visible",
-    })
+    return _has_direct_property(
+        text,
+        {
+            "icon",
+            "picture",
+            "modifier",
+            "research_bonus",
+            "traits",
+            "allowed",
+            "allowed_civil_war",
+            "ai_will_do",
+            "cost",
+            "visible",
+        },
+    )
 
 
 def _parse_kv(text: str) -> dict[str, Any]:
@@ -161,6 +137,7 @@ def read_ideas_file(path: Path) -> tuple[list[Idea], str]:
         for idea_id, idea_body in _find_toplevel_blocks(block_body):
             idea = _parse_idea_body(idea_id, idea_body)
             idea.category = block_id
+            idea.category_raw_block = block_body.strip()
             idea.path = path
             ideas.append(idea)
     return ideas, container_name
@@ -168,6 +145,32 @@ def read_ideas_file(path: Path) -> tuple[list[Idea], str]:
 
 def serialize_idea(idea: Idea, indent: int = 1) -> str:
     tab = "\t" * indent
+    if idea.raw_block:
+        body = idea.raw_block
+        if idea.touched:
+            body = set_scalar(body, "icon", idea.icon or None)
+            body = set_scalar(body, "picture", None)
+            body = set_block(body, "allowed", idea.allowed or None)
+            body = set_block(
+                body,
+                "modifier",
+                "\n".join(
+                    f"{key} = {pdx_string(value) if isinstance(value, str) else pdx_value(value)}"
+                    for key, value in idea.modifier.items()
+                )
+                or None,
+            )
+            body = set_block(
+                body,
+                "research_bonus",
+                "\n".join(
+                    f"{key} = {pdx_value(value)}" for key, value in idea.research_bonus.items()
+                )
+                or None,
+            )
+            body = set_block(body, "traits", " ".join(idea.traits) or None)
+            body = set_block(body, "ai_will_do", idea.ai_will_do or None)
+        return f"{tab}{idea.id} = {{\n{_indent(body, indent + 1)}\n{tab}}}"
     lines = [f"{tab}{idea.id} = {{"]
     lines.append(f"{tab}\ticon = {idea.icon}")
     if idea.allowed:
@@ -185,7 +188,7 @@ def serialize_idea(idea: Idea, indent: int = 1) -> str:
             elif isinstance(value, int):
                 lines.append(f"{tab}\t\t{key} = {value}")
             else:
-                lines.append(f'{tab}\t\t{key} = "{value}"')
+                lines.append(f"{tab}\t\t{key} = {pdx_string(value)}")
         lines.append(f"{tab}\t}}")
     if idea.research_bonus:
         lines.append(f"{tab}\tresearch_bonus = {{")
@@ -203,26 +206,108 @@ def serialize_idea(idea: Idea, indent: int = 1) -> str:
     return "\n".join(lines)
 
 
-def serialize_ideas_file(ideas: list[Idea], container_name: str = "country_ideas") -> str:
-    parts = [f"{container_name} = {{"]
-    emitted_categories: set[str] = set()
+def serialize_ideas_file(
+    ideas: list[Idea],
+    container_name: str = "country_ideas",
+    original: str = "",
+) -> str:
+    uncategorized: list[Idea] = []
+    categories: dict[str, list[Idea]] = {}
     for idea in ideas:
         if not idea.category:
-            parts.append(serialize_idea(idea))
-            parts.append("")
+            uncategorized.append(idea)
             continue
-        if idea.category in emitted_categories:
-            continue
-        emitted_categories.add(idea.category)
-        parts.append(f"\t{idea.category} = {{")
-        for nested in [candidate for candidate in ideas if candidate.category == idea.category]:
-            parts.append(serialize_idea(nested, indent=2))
-            parts.append("")
-        parts.append("\t}")
+        categories.setdefault(idea.category, []).append(idea)
+    if original:
+        match = find_assignment_block(original, container_name)
+        if match is not None:
+            body = match[0]
+            direct = {idea.id: idea for idea in uncategorized}
+            remaining_categories = dict(categories)
+            spans = top_level_assignments(body)
+            for span in sorted(spans, key=lambda item: item.start, reverse=True):
+                if not span.is_block or span.body_start is None or span.body_end is None:
+                    continue
+                span_body = body[span.body_start : span.body_end]
+                replacement: str | None
+                if _is_idea_body(span_body):
+                    matched_idea = direct.pop(span.key) if span.key in direct else None
+                    replacement = (
+                        None
+                        if matched_idea is None
+                        else serialize_idea(matched_idea, indent=0).strip()
+                    )
+                else:
+                    category_ideas = remaining_categories.pop(span.key, None)
+                    if category_ideas is None:
+                        nested = [
+                            nested_span
+                            for nested_span in top_level_assignments(span_body)
+                            if nested_span.is_block
+                            and nested_span.body_start is not None
+                            and nested_span.body_end is not None
+                        ]
+                        if nested and all(
+                            _is_idea_body(span_body[nested_span.body_start : nested_span.body_end])
+                            for nested_span in nested
+                        ):
+                            body = replace_assignment(body, span, None)
+                        continue
+                    replacement = _serialize_category(span.key, category_ideas, indent=0)
+                body = replace_assignment(body, span, replacement)
+            for idea in direct.values():
+                body = append_assignment(body, serialize_idea(idea, indent=0).strip())
+            for category, category_ideas in remaining_categories.items():
+                body = append_assignment(
+                    body, _serialize_category(category, category_ideas, indent=0)
+                )
+            replacement = f"{container_name} = {{\n{_indent(body, 1)}\n}}"
+            return original[: match[1]] + replacement + original[match[2] :]
+
+    parts = [f"{container_name} = {{"]
+    for idea in uncategorized:
+        parts.append(serialize_idea(idea))
+        parts.append("")
+    for category, category_ideas in categories.items():
+        parts.append(_serialize_category(category, category_ideas, indent=1))
         parts.append("")
     parts.append("}")
     parts.append("")
     return "\n".join(parts)
+
+
+def _serialize_category(category: str, ideas: list[Idea], indent: int) -> str:
+    prefix = "\t" * indent
+    raw = next((idea.category_raw_block for idea in ideas if idea.category_raw_block), "")
+    if raw:
+        current = {idea.id: idea for idea in ideas}
+        spans = {
+            span.key: span
+            for span in top_level_assignments(raw)
+            if span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+            and _is_idea_body(raw[span.body_start : span.body_end])
+        }
+        for idea_id, span in sorted(spans.items(), key=lambda item: item[1].start, reverse=True):
+            idea = current.pop(idea_id, None)
+            raw = replace_assignment(
+                raw, span, None if idea is None else serialize_idea(idea, indent=0).strip()
+            )
+        for idea in current.values():
+            raw = append_assignment(raw, serialize_idea(idea, indent=0).strip())
+        return f"{prefix}{category} = {{\n{_indent(raw, indent + 1)}\n{prefix}}}"
+    lines = [f"{prefix}{category} = {{"]
+    for idea in ideas:
+        lines.append(serialize_idea(idea, indent=indent + 1))
+        lines.append("")
+    lines.append(f"{prefix}}}")
+    return "\n".join(lines)
+
+
+def _indent(text: str, count: int) -> str:
+    prefix = "\t" * count
+    return "\n".join(prefix + line.rstrip() for line in text.strip().splitlines())
 
 
 def write_ideas_file(path: Path, ideas: list[Idea], container_name: str = "country_ideas") -> Path:

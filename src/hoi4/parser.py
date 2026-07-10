@@ -13,6 +13,10 @@ from enum import Enum, auto
 from typing import Optional
 
 
+class ParseError(ValueError):
+    """Raised when Paradox script cannot be parsed without losing structure."""
+
+
 class TokenType(Enum):
     STRING = auto()
     NUMBER = auto()
@@ -90,23 +94,36 @@ def tokenize(text: str) -> list[Token]:
             continue
 
         if c == '"':
+            start_line = line
             start_col = col
             i += 1
             col += 1
-            start = i
-            while i < len(text) and text[i] != '"':
+            value: list[str] = []
+            while i < len(text):
+                if text[i] == '"':
+                    break
                 if text[i] == "\\" and i + 1 < len(text):
-                    i += 1
-                    col += 1
+                    nxt = text[i + 1]
+                    if nxt in {'"', "\\"}:
+                        value.append(nxt)
+                    else:
+                        value.extend(("\\", nxt))
+                    i += 2
+                    col += 2
+                    continue
                 if text[i] == "\n":
                     line += 1
                     col = 0
+                value.append(text[i])
                 i += 1
                 col += 1
-            tokens.append(Token(TokenType.STRING, text[start:i], line, start_col))
-            if i < len(text):
-                i += 1
-                col += 1
+            if i >= len(text):
+                raise ParseError(
+                    f"Unterminated quoted string at line {start_line}, column {start_col}"
+                )
+            tokens.append(Token(TokenType.STRING, "".join(value), start_line, start_col))
+            i += 1
+            col += 1
             continue
 
         start = i
@@ -132,9 +149,11 @@ class PdxNode:
     children: list["PdxNode"] = field(default_factory=list)
     operator: str = "="
     is_comment: bool = False
+    block: bool = False
+    quoted: bool = False
 
     def is_block(self) -> bool:
-        return len(self.children) > 0
+        return self.block or bool(self.children) or (self.key is not None and self.value is None)
 
     def is_assignment(self) -> bool:
         return self.value is not None and not self.is_block()
@@ -218,6 +237,9 @@ class PdxParser:
             stmt = self._parse_statement()
             if stmt:
                 stmts.append(stmt)
+        if end_token != TokenType.EOF and self.current().type == TokenType.EOF:
+            current = self.current()
+            raise ParseError(f"Unclosed block before line {current.line}, column {current.col}")
         return stmts
 
     def _parse_statement(self) -> Optional[PdxNode]:
@@ -228,7 +250,7 @@ class PdxParser:
             return PdxNode(value=tok.value, is_comment=True)
 
         if tok.type == TokenType.RBRACE:
-            return None
+            raise ParseError(f"Unexpected closing brace at line {tok.line}, column {tok.col}")
 
         if tok.type in (TokenType.IDENT, TokenType.STRING, TokenType.NUMBER):
             value = self.advance().value
@@ -237,14 +259,14 @@ class PdxParser:
                 node = self._parse_rhs(value)
                 node.operator = op
                 return node
-            return PdxNode(key=None, value=value)
+            return PdxNode(key=None, value=value, quoted=tok.type == TokenType.STRING)
 
         if tok.type == TokenType.LBRACE:
             self.advance()
             children = self._parse_statements(TokenType.RBRACE)
             if self.current().type == TokenType.RBRACE:
                 self.advance()
-            node = PdxNode()
+            node = PdxNode(block=True)
             node.children = children
             return node
 
@@ -260,13 +282,13 @@ class PdxParser:
             children = self._parse_statements(TokenType.RBRACE)
             if self.current().type == TokenType.RBRACE:
                 self.advance()
-            node = PdxNode(key=key)
+            node = PdxNode(key=key, block=True)
             node.children = children
             return node
         if tok.type in (TokenType.IDENT, TokenType.STRING, TokenType.NUMBER):
             val = self.advance().value
-            return PdxNode(key=key, value=val)
-        return PdxNode(key=key, value="")
+            return PdxNode(key=key, value=val, quoted=tok.type == TokenType.STRING)
+        raise ParseError(f"Expected a value for {key!r} at line {tok.line}, column {tok.col}")
 
 
 def parse_pdx(text: str) -> PdxNode:
@@ -388,7 +410,7 @@ def serialize_pdx(node: PdxNode, indent: int = 0) -> str:
     elif node.value is not None:
         if node.key is not None:
             v = node.value
-            if " " in v or '"' in v:
+            if node.quoted or any(ch.isspace() for ch in v) or any(ch in v for ch in '{}#"'):
                 v = '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
             parts.append(f"{tab}{node.key} {node.operator} {v}\n")
         else:

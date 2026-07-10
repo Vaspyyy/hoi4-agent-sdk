@@ -144,12 +144,14 @@ country_event = {
             encoding="utf-8",
         )
         _, events = load_events_file(path)
-        text = serialize_event(Event(
-            id=events[0].id,
-            title=events[0].title,
-            description=events[0].description,
-            options=events[0].options,
-        ))
+        text = serialize_event(
+            Event(
+                id=events[0].id,
+                title=events[0].title,
+                description=events[0].description,
+                options=events[0].options,
+            )
+        )
         assert "SCL = {" in text
         assert "transfer_state = 115" in text
         assert "\n\t\t}" in text
@@ -175,7 +177,9 @@ class TestWriteEventsFile:
     def test_writes_and_reads_back(self, tmp_path):
         events = [
             Event(
-                id="t.1", title="t.1.t", description="t.1.d",
+                id="t.1",
+                title="t.1.t",
+                description="t.1.d",
                 event_type="country_event",
                 options=[EventOption(name="t.1.a", effect="add_pp = 50")],
             ),

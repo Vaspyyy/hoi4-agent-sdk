@@ -8,11 +8,13 @@ an owner, cores, manpower, victory points, and province assignments.
 from __future__ import annotations
 
 import re
+import textwrap
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from .parser import PdxNode, find_assignment_block, parse_pdx, serialize_pdx
+from .patching import append_assignment, replace_assignment, set_scalar, top_level_assignments
 from .types import State
 
 STATE_ID_RE = re.compile(r"\bid\s*=\s*(\d+)")
@@ -32,7 +34,9 @@ def find_state_file(states_dir: Path, state_id: int) -> Optional[Path]:
     return None
 
 
-def ensure_state_in_mod(mod_root: Path, hoi4_install: Optional[Path], state_id: int) -> Optional[Path]:
+def ensure_state_in_mod(
+    mod_root: Path, hoi4_install: Optional[Path], state_id: int
+) -> Optional[Path]:
     mod_states = mod_root / "history" / "states"
     mod_states.mkdir(parents=True, exist_ok=True)
 
@@ -52,8 +56,8 @@ def ensure_state_in_mod(mod_root: Path, hoi4_install: Optional[Path], state_id: 
     return dst
 
 
-def read_state(state_file: Path) -> State:
-    txt = state_file.read_text(encoding="utf-8", errors="ignore")
+def read_state(state_file: Path, text: str | None = None) -> State:
+    txt = text if text is not None else state_file.read_text(encoding="utf-8", errors="ignore")
     root = parse_pdx(txt)
 
     state_block = None
@@ -171,7 +175,7 @@ def _replace_block(block: PdxNode, key: str, body: str) -> None:
     block.children.append(new_node)
 
 
-def _replace_bare_values(block: PdxNode, key: str, values: list[int | str]) -> None:
+def _replace_bare_values(block: PdxNode, key: str, values: Sequence[int | str]) -> None:
     node = PdxNode(key=key)
     for value in values:
         node.children.append(PdxNode(key=None, value=str(value)))
@@ -258,21 +262,30 @@ def serialize_state(state: State) -> str:
     if state.name:
         state_block.children.append(PdxNode(key="name", value=state.name))
 
-    state_block.children.append(PdxNode(
-        key="manpower", value=state.manpower or "0",
-    ))
+    state_block.children.append(
+        PdxNode(
+            key="manpower",
+            value=state.manpower or "0",
+        )
+    )
 
-    state_block.children.append(PdxNode(
-        key="state_category", value=state.state_category,
-    ))
+    state_block.children.append(
+        PdxNode(
+            key="state_category",
+            value=state.state_category,
+        )
+    )
 
     if state.is_demilitarized_zone:
         state_block.children.append(PdxNode(key="is_demilitarized_zone", value="yes"))
 
     if state.buildings_max_level_factor and state.buildings_max_level_factor != "1.0":
-        state_block.children.append(PdxNode(
-            key="buildings_max_level_factor", value=state.buildings_max_level_factor,
-        ))
+        state_block.children.append(
+            PdxNode(
+                key="buildings_max_level_factor",
+                value=state.buildings_max_level_factor,
+            )
+        )
     if state.local_supplies:
         state_block.children.append(PdxNode(key="local_supplies", value=state.local_supplies))
     if state.resources:
@@ -363,42 +376,57 @@ def patch_state_history_owner_cores(
 ) -> None:
     """Patch owner/core lines in-place without reserializing unrelated state data."""
     text = state_file.read_text(encoding="utf-8", errors="ignore")
+    patched = patch_state_history_owner_cores_text(
+        text,
+        owner=owner,
+        add_cores=add_cores,
+        remove_cores=remove_cores,
+    )
+    state_file.write_text(patched, encoding="utf-8")
+
+
+def patch_state_history_owner_cores_text(
+    text: str,
+    *,
+    owner: str | None = None,
+    add_cores: list[str] | None = None,
+    remove_cores: list[str] | None = None,
+) -> str:
+    """Patch only top-level owner/core assignments in the state's history block."""
     match = find_assignment_block(text, "history")
     if match is None:
-        raise ValueError(f"No history block found in {state_file}")
+        raise ValueError("No history block found in state text")
     body, start, end = match
-    line_start = text.rfind("\n", 0, start) + 1
-    outer_indent = text[line_start:start]
-    inner_indent = outer_indent + "\t"
-
+    assignments = top_level_assignments(body)
+    body_indent = ""
+    if assignments:
+        first = assignments[0]
+        first_line_start = body.rfind("\n", 0, first.start) + 1
+        body_indent = body[first_line_start : first.start]
     removed = {tag.upper() for tag in (remove_cores or [])}
     existing_cores: list[str] = []
-    preserved: list[str] = []
-    for line in body.splitlines():
-        stripped = line.strip()
-        core_match = re.match(r"add_core_of\s*=\s*([A-Z0-9]{3})\b", stripped)
-        if core_match:
-            core = core_match.group(1)
-            if core not in removed:
+    for span in top_level_assignments(body):
+        if span.key == "add_core_of" and not span.is_block:
+            core = body[span.value_start : span.value_end].strip().upper()
+            if core not in removed and core not in existing_cores:
                 existing_cores.append(core)
-            continue
-        if re.match(r"owner\s*=\s*[A-Z0-9]{3}\b", stripped):
-            continue
-        if stripped:
-            preserved.append(line.rstrip())
-
     for core in add_cores or []:
         tag = core.upper()
         if tag not in existing_cores:
             existing_cores.append(tag)
-
-    replacement_lines: list[str] = []
-    if owner:
-        replacement_lines.append(f"{inner_indent}owner = {owner.upper()}")
-    replacement_lines.extend(f"{inner_indent}add_core_of = {core}" for core in existing_cores)
-    replacement_lines.extend(preserved)
-    new_block = f"history = {{\n" + "\n".join(replacement_lines) + f"\n{outer_indent}}}"
-    state_file.write_text(text[:start] + new_block + text[end:], encoding="utf-8")
+    patched_body = set_scalar(body, "owner", owner.upper() if owner else None)
+    for span in reversed(
+        [span for span in top_level_assignments(patched_body) if span.key == "add_core_of"]
+    ):
+        patched_body = replace_assignment(patched_body, span, None)
+    for core in existing_cores:
+        patched_body = append_assignment(patched_body, f"{body_indent}add_core_of = {core}")
+    line_start = text.rfind("\n", 0, start) + 1
+    outer_indent = text[line_start:start]
+    normalized_body = textwrap.dedent(patched_body).strip()
+    inner = "\n".join(outer_indent + "\t" + line.rstrip() for line in normalized_body.splitlines())
+    new_block = f"history = {{\n{inner}\n{outer_indent}}}"
+    return text[:start] + new_block + text[end:]
 
 
 def build_state_index(states_dir: Path) -> list[dict]:
@@ -414,13 +442,15 @@ def build_state_index(states_dir: Path) -> list[dict]:
         owner_m = OWNER_RE.search(txt)
         name_m = STATE_NAME_RE.search(txt)
         filename_name = _state_name_from_filename(f, sid)
-        out.append({
-            "id": sid,
-            "name": name_m.group(1) if name_m else "",
-            "display_name": filename_name or (name_m.group(1) if name_m else ""),
-            "owner": owner_m.group(1) if owner_m else None,
-            "path": str(f),
-        })
+        out.append(
+            {
+                "id": sid,
+                "name": name_m.group(1) if name_m else "",
+                "display_name": filename_name or (name_m.group(1) if name_m else ""),
+                "owner": owner_m.group(1) if owner_m else None,
+                "path": str(f),
+            }
+        )
     return out
 
 

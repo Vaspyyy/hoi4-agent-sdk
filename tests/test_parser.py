@@ -3,7 +3,7 @@ from hoi4.parser import parse_pdx, serialize_pdx, tokenize
 
 class TestTokenizer:
     def test_simple_assignment(self):
-        tokens = tokenize('key = value')
+        tokens = tokenize("key = value")
         assert len(tokens) == 4
         assert tokens[0].value == "key"
         assert tokens[1].value == "="

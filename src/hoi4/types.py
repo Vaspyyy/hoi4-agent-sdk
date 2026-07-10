@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 
-def _ensure_nested(value) -> list[list[str]]:
+def _ensure_nested(value: str | list[str] | list[list[str]] | None) -> list[list[str]]:
     if not value:
         return []
     if isinstance(value, str):
         return [[value]]
     if isinstance(value[0], str):
-        return [value]
-    return value
+        return [list(cast(list[str], value))]
+    return [list(group) for group in cast(list[list[str]], value)]
 
 
 @dataclass
@@ -57,6 +57,8 @@ class FocusTree:
     default: Optional[bool] = None
     continuous_focus_position: str = ""
     shared_focuses: list[str] = field(default_factory=list)
+    raw_block: str = ""
+    touched: bool = False
 
 
 @dataclass
@@ -82,6 +84,13 @@ class Country:
     leader: Optional[Leader] = None
     ideas: list[str] = field(default_factory=list)
     research_slots: int | None = None
+    raw_definition: str = ""
+    raw_history: str = ""
+    raw_character: str = ""
+    definition_path: Optional[Path] = None
+    history_path: Optional[Path] = None
+    character_path: Optional[Path] = None
+    touched_fields: set[str] = field(default_factory=set)
 
     def __post_init__(self):
         if not self.popularities:
@@ -125,6 +134,16 @@ class SaveResult:
         return f"Saved {len(self.written_files)} file(s)"
 
 
+@dataclass(frozen=True)
+class LoadDiagnostic:
+    """A mod file that could not be loaded without hiding the failure."""
+
+    section: str
+    path: Path
+    error_type: str
+    message: str
+
+
 @dataclass
 class EventOption:
     name: str = ""
@@ -132,6 +151,7 @@ class EventOption:
     effect: str = ""
     ai_chance: str = ""
     raw_block: str = ""
+    touched: bool = False
 
 
 @dataclass
@@ -149,6 +169,7 @@ class Event:
     options: list[EventOption] = field(default_factory=list)
     path: Optional[Path] = None
     raw_block: str = ""
+    touched: bool = False
 
 
 @dataclass
@@ -159,6 +180,7 @@ class OnAction:
     random_events: list[str] = field(default_factory=list)
     path: Optional[Path] = None
     raw_block: str = ""
+    touched: bool = False
 
 
 @dataclass
@@ -179,6 +201,7 @@ class State:
     history: str = ""
     path: Optional[Path] = None
     raw_text: str = ""
+    source_path: Optional[Path] = None
 
 
 @dataclass
@@ -196,6 +219,7 @@ class Decision:
     ai_will_do: str = ""
     path: Optional[Path] = None
     raw_block: str = ""
+    touched: bool = False
 
 
 @dataclass
@@ -207,6 +231,7 @@ class DecisionCategory:
     decisions: list[Decision] = field(default_factory=list)
     path: Optional[Path] = None
     raw_block: str = ""
+    touched: bool = False
 
 
 @dataclass
@@ -221,3 +246,5 @@ class Idea:
     traits: list[str] = field(default_factory=list)
     ai_will_do: str = ""
     raw_block: str = ""
+    category_raw_block: str = ""
+    touched: bool = False

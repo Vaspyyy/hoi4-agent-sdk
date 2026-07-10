@@ -12,6 +12,13 @@ import re
 from pathlib import Path
 
 from .parser import find_assignment_block, iter_assignment_blocks, strip_comments
+from .patching import (
+    append_assignment,
+    replace_assignment,
+    set_block,
+    set_scalar,
+    top_level_assignments,
+)
 from .types import Decision, DecisionCategory
 
 
@@ -90,15 +97,11 @@ def _looks_like_category(body: str) -> bool:
 def load_decisions_file(path: Path) -> list[DecisionCategory]:
     txt = path.read_text(encoding="utf-8", errors="ignore")
     categories: list[DecisionCategory] = []
-
-    for m in re.finditer(r"(?m)^\s*([A-Za-z0-9_]+)\s*=\s*\{", txt):
-        if _brace_depth_at(txt, m.start(1)) != 0:
+    for span in top_level_assignments(txt):
+        if not span.is_block or span.body_start is None or span.body_end is None:
             continue
-        category_id = m.group(1)
-        match = find_assignment_block(txt, category_id, m.start(1))
-        if match is None or match[1] != m.start(1):
-            continue
-        category_body = match[0]
+        category_id = span.key
+        category_body = txt[span.body_start : span.body_end]
         category = DecisionCategory(
             id=category_id,
             icon=_extract_scalar(category_body, "icon"),
@@ -107,39 +110,26 @@ def load_decisions_file(path: Path) -> list[DecisionCategory]:
             path=path,
             raw_block=category_body.strip(),
         )
-        for decision_body, _, _ in _iter_top_level_decision_blocks(category_body):
-            decision_id = _decision_id_from_body(category_body, decision_body)
+        for decision_id, decision_body in _iter_top_level_decision_blocks(category_body):
             decision = _parse_decision(decision_id, category_id, decision_body, path)
             category.decisions.append(decision)
         categories.append(category)
     return categories
 
 
-def _iter_top_level_decision_blocks(category_body: str) -> list[tuple[str, int, int]]:
-    blocks: list[tuple[str, int, int]] = []
-    for m in re.finditer(r"(?m)^\s*([A-Za-z0-9_]+)\s*=\s*\{", category_body):
-        if _brace_depth_at(category_body, m.start(1)) != 0:
+def _iter_top_level_decision_blocks(category_body: str) -> list[tuple[str, str]]:
+    blocks: list[tuple[str, str]] = []
+    for span in top_level_assignments(category_body):
+        if not span.is_block or span.body_start is None or span.body_end is None:
             continue
-        key = m.group(1)
+        key = span.key
         if key in {"allowed", "visible", "picture", "icon"}:
             continue
-        match = find_assignment_block(category_body, key, m.start(1))
-        if match is None or match[1] != m.start(1):
+        body = category_body[span.body_start : span.body_end]
+        if not _looks_like_category(body):
             continue
-        if not _looks_like_category(match[0]):
-            continue
-        blocks.append(match)
+        blocks.append((key, body))
     return blocks
-
-
-def _decision_id_from_body(category_body: str, decision_body: str) -> str:
-    for m in re.finditer(r"(?m)^\s*([A-Za-z0-9_]+)\s*=\s*\{", category_body):
-        if _brace_depth_at(category_body, m.start(1)) != 0:
-            continue
-        match = find_assignment_block(category_body, m.group(1), m.start(1))
-        if match and match[0] == decision_body:
-            return m.group(1)
-    return ""
 
 
 def _parse_decision(decision_id: str, category_id: str, body: str, path: Path) -> Decision:
@@ -161,6 +151,27 @@ def _parse_decision(decision_id: str, category_id: str, body: str, path: Path) -
 
 
 def serialize_decision(decision: Decision) -> str:
+    if decision.raw_block:
+        body = decision.raw_block
+        if decision.touched:
+            body = set_scalar(body, "icon", decision.icon or None)
+            body = set_scalar(body, "cost", None if decision.cost is None else str(decision.cost))
+            body = set_scalar(
+                body,
+                "days_remove",
+                None if decision.days_remove is None else str(decision.days_remove),
+            )
+            body = set_scalar(
+                body,
+                "fire_only_once",
+                None
+                if decision.fire_only_once is None
+                else ("yes" if decision.fire_only_once else "no"),
+            )
+            for key in ["visible", "available", "complete_effect", "remove_effect", "ai_will_do"]:
+                value = getattr(decision, key)
+                body = set_block(body, key, value or None)
+        return f"\t{decision.id} = {{\n{_indent(body, 2)}\n\t}}"
     lines = [f"\t{decision.id} = {{"]
     if decision.icon:
         lines.append(f"\t\ticon = {decision.icon}")
@@ -181,24 +192,74 @@ def serialize_decision(decision: Decision) -> str:
     return "\n".join(lines)
 
 
-def serialize_decisions_file(categories: list[DecisionCategory]) -> str:
+def serialize_decisions_file(categories: list[DecisionCategory], original: str = "") -> str:
+    if original:
+        text = original
+        current = {category.id: category for category in categories}
+        for span in sorted(top_level_assignments(text), key=lambda item: item.start, reverse=True):
+            if not span.is_block:
+                continue
+            category = current.pop(span.key, None)
+            if category is None and span.key not in {candidate.id for candidate in categories}:
+                # Treat blocks that parse as categories as deleted; leave unrelated blocks.
+                if (
+                    span.body_start is None
+                    or span.body_end is None
+                    or not _iter_top_level_decision_blocks(text[span.body_start : span.body_end])
+                ):
+                    continue
+            text = replace_assignment(
+                text, span, None if category is None else _serialize_category(category)
+            )
+        for category in current.values():
+            text = append_assignment(text, _serialize_category(category))
+        return text
     parts: list[str] = []
     for category in categories:
-        parts.append(f"{category.id} = {{")
-        if category.icon:
-            parts.append(f"\ticon = {category.icon}")
-        for key in ["allowed", "visible"]:
-            body = getattr(category, key)
-            if body:
-                parts.append(f"\t{key} = {{")
-                for line in body.strip().split("\n"):
-                    parts.append(f"\t\t{line.strip()}")
-                parts.append("\t}")
-        for decision in category.decisions:
-            parts.append(serialize_decision(decision))
-            parts.append("")
-        parts.append("}")
+        parts.append(_serialize_category(category))
         parts.append("")
+    return "\n".join(parts)
+
+
+def _serialize_category(category: DecisionCategory) -> str:
+    if category.raw_block:
+        body = category.raw_block
+        if category.touched:
+            body = set_scalar(body, "icon", category.icon or None)
+            body = set_block(body, "allowed", category.allowed or None)
+            body = set_block(body, "visible", category.visible or None)
+        current = {decision.id: decision for decision in category.decisions}
+        decision_spans = {
+            span.key: span
+            for span in top_level_assignments(body)
+            if span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+            and _looks_like_category(body[span.body_start : span.body_end])
+        }
+        for decision_id, span in sorted(
+            decision_spans.items(), key=lambda item: item[1].start, reverse=True
+        ):
+            decision = current.pop(decision_id, None)
+            body = replace_assignment(
+                body, span, None if decision is None else serialize_decision(decision).strip()
+            )
+        for decision in current.values():
+            body = append_assignment(body, serialize_decision(decision).strip())
+        return f"{category.id} = {{\n{_indent(body, 1)}\n}}"
+    parts = [f"{category.id} = {{"]
+    if category.icon:
+        parts.append(f"\ticon = {category.icon}")
+    for key in ["allowed", "visible"]:
+        body = getattr(category, key)
+        if body:
+            parts.append(f"\t{key} = {{")
+            parts.extend(f"\t\t{line.strip()}" for line in body.strip().splitlines())
+            parts.append("\t}")
+    for decision in category.decisions:
+        parts.append(serialize_decision(decision))
+        parts.append("")
+    parts.append("}")
     return "\n".join(parts)
 
 
@@ -206,3 +267,8 @@ def write_decisions_file(path: Path, categories: list[DecisionCategory]) -> Path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(serialize_decisions_file(categories), encoding="utf-8")
     return path
+
+
+def _indent(text: str, count: int) -> str:
+    prefix = "\t" * count
+    return "\n".join(prefix + line.rstrip() for line in text.strip().splitlines())

@@ -59,7 +59,9 @@ class TestWriteCountry:
             capital=42,
             ruling_party="fascism",
             popularities={"democratic": 10, "fascism": 70, "communism": 10, "neutrality": 10},
-            leader=Leader(name="Test Leader", character_id="TST_leader_1", ideology="fascism_ideology"),
+            leader=Leader(
+                name="Test Leader", character_id="TST_leader_1", ideology="fascism_ideology"
+            ),
             ideas=["test_idea"],
         )
 
@@ -119,7 +121,8 @@ class TestWriteCountry:
 
     def test_creates_character_file(self, tmp_path):
         country = Country(
-            tag="NEW", name="Newland",
+            tag="NEW",
+            name="Newland",
             leader=Leader(name="Boss", character_id="NEW_leader_1"),
         )
         write_all_country_files(tmp_path, country)

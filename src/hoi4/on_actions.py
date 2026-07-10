@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .parser import find_assignment_block
+from .patching import append_assignment, replace_assignment, set_block, top_level_assignments
 from .script import normalize_block_body
 from .types import OnAction
 
@@ -35,7 +36,12 @@ def load_on_actions_file(path: Path) -> list[OnAction]:
 
 def serialize_on_action(action: OnAction) -> str:
     if action.raw_block:
-        return f"\t{action.id} = {{\n{_indent(action.raw_block, 2)}\n\t}}"
+        body = action.raw_block
+        if action.touched:
+            body = set_block(body, "events", "\n".join(action.events) or None)
+            body = set_block(body, "random_events", "\n".join(action.random_events) or None)
+            body = set_block(body, "effect", action.effect or None)
+        return f"\t{action.id} = {{\n{_indent(body, 2)}\n\t}}"
     parts = [f"\t{action.id} = {{"]
     if action.events:
         parts.append("\t\tevents = {")
@@ -58,7 +64,25 @@ def serialize_on_action(action: OnAction) -> str:
     return "\n".join(parts)
 
 
-def serialize_on_actions_file(actions: list[OnAction]) -> str:
+def serialize_on_actions_file(actions: list[OnAction], original: str = "") -> str:
+    if original:
+        root = find_assignment_block(original, "on_actions")
+        if root is not None:
+            body = root[0]
+            current = {action.id: action for action in actions}
+            for span in sorted(
+                top_level_assignments(body), key=lambda item: item.start, reverse=True
+            ):
+                if not span.is_block:
+                    continue
+                action = current.pop(span.key, None)
+                replacement = None if action is None else serialize_on_action(action).strip()
+                body = replace_assignment(body, span, replacement)
+            for action in current.values():
+                body = append_assignment(body, serialize_on_action(action).strip())
+            replacement = f"on_actions = {{\n{_indent(body, 1)}\n}}"
+            start, end = root[1], root[2]
+            return original[:start] + replacement + original[end:]
     parts = ["on_actions = {"]
     for action in actions:
         parts.append(serialize_on_action(action))
@@ -87,52 +111,11 @@ def _extract_list(text: str, key: str) -> list[str]:
 
 
 def _top_level_blocks(text: str) -> list[tuple[str, str]]:
-    blocks: list[tuple[str, str]] = []
-    depth = 0
-    in_quote = False
-    i = 0
-    while i < len(text):
-        ch = text[i]
-        if ch == "\\" and in_quote:
-            i += 2
-            continue
-        if ch == '"':
-            in_quote = not in_quote
-            i += 1
-            continue
-        if ch == "#" and not in_quote:
-            while i < len(text) and text[i] != "\n":
-                i += 1
-            continue
-        if ch == "{" and not in_quote:
-            depth += 1
-            i += 1
-            continue
-        if ch == "}" and not in_quote:
-            depth -= 1
-            i += 1
-            continue
-        if depth == 0 and (ch.isalpha() or ch == "_"):
-            start = i
-            while i < len(text) and (text[i].isalnum() or text[i] == "_"):
-                i += 1
-            key = text[start:i]
-            j = i
-            while j < len(text) and text[j].isspace():
-                j += 1
-            if j < len(text) and text[j] == "=":
-                j += 1
-                while j < len(text) and text[j].isspace():
-                    j += 1
-                if j < len(text) and text[j] == "{":
-                    match = find_assignment_block(text, key, start)
-                    if match and match[1] == start:
-                        blocks.append((key, match[0]))
-                        i = match[2]
-                        continue
-            continue
-        i += 1
-    return blocks
+    return [
+        (span.key, text[span.body_start : span.body_end])
+        for span in top_level_assignments(text)
+        if span.is_block and span.body_start is not None and span.body_end is not None
+    ]
 
 
 def _indent(text: str, count: int) -> str:
