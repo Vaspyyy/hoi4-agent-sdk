@@ -11,9 +11,42 @@ Usage:
     mod.save()
 """
 
-from .mod import Mod
+from importlib.metadata import PackageNotFoundError, version
+
+from .assets import (
+    BookmarkPictureAsset,
+    DDSExportUnsupportedError,
+    FlagAssetSet,
+    ImageBackendUnavailableError,
+    UnsupportedImageFormatError,
+    export_flag_from_mod,
+    export_portrait_from_mod,
+    find_flag_path,
+    find_portrait_path,
+    import_bookmark_picture_to_mod,
+    import_flag_to_mod,
+    import_portrait_to_mod,
+    write_portrait_gfx,
+)
+from .bookmarks import Bookmark, BookmarkCountry
+from .mod import ExternalModificationError, Mod
 from .config import Config, find_config
+from .dynamic_ideas import DynamicIdea, DynamicIdeaGroup
+from .ideologies import Ideology, SubIdeology
+from .map_render import MapRenderCancelled, PoliticalMapResult, render_political_map
 from .parser import ParseError, PdxNode, parse_pdx, serialize_pdx
+from .progress import OperationCancelled, ProgressEvent
+from .project import (
+    DiscoveredMod,
+    ModDiscoveryIssue,
+    ModDiscoveryResult,
+    ModDescriptorFiles,
+    create_mod_structure,
+    detect_launcher_mod_directory,
+    discover_mods,
+    scan_mod_descriptors,
+    write_mod_descriptors,
+)
 from .script import (
     effect_block,
     normalize_block_body,
@@ -48,8 +81,15 @@ except ImportError:
     TECHNOLOGY_CATEGORIES = ()
     MODIFIER_CATEGORIES = []
 
+try:
+    __version__ = version("hoi4-agent-sdk")
+except PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
+    __version__ = "0.2.0"
+
 __all__ = [
     "Mod",
+    "ExternalModificationError",
+    "__version__",
     "Config",
     "find_config",
     "Country",
@@ -66,6 +106,39 @@ __all__ = [
     "SaveResult",
     "State",
     "ValidationError",
+    "Bookmark",
+    "BookmarkCountry",
+    "DynamicIdea",
+    "DynamicIdeaGroup",
+    "Ideology",
+    "SubIdeology",
+    "ProgressEvent",
+    "OperationCancelled",
+    "BookmarkPictureAsset",
+    "DDSExportUnsupportedError",
+    "FlagAssetSet",
+    "ImageBackendUnavailableError",
+    "UnsupportedImageFormatError",
+    "export_flag_from_mod",
+    "export_portrait_from_mod",
+    "find_flag_path",
+    "find_portrait_path",
+    "import_bookmark_picture_to_mod",
+    "import_flag_to_mod",
+    "import_portrait_to_mod",
+    "write_portrait_gfx",
+    "MapRenderCancelled",
+    "PoliticalMapResult",
+    "render_political_map",
+    "ModDescriptorFiles",
+    "DiscoveredMod",
+    "ModDiscoveryIssue",
+    "ModDiscoveryResult",
+    "create_mod_structure",
+    "detect_launcher_mod_directory",
+    "discover_mods",
+    "scan_mod_descriptors",
+    "write_mod_descriptors",
     "PdxNode",
     "ParseError",
     "parse_pdx",

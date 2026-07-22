@@ -1,0 +1,9 @@
+# Representative ideology source with unknown future content.
+ideologies = {
+	stability_ideology = {
+		color = { 120 80 60 } # keep color note
+		types = { stability_main = { } }
+		rules = { can_send_volunteers = yes }
+		future_ideology_setting = { enabled = yes }
+	}
+}

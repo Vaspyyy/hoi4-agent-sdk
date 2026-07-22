@@ -20,18 +20,27 @@ from .tags import (
     remove_country_tag as _remove_country_tag,
     resolve_country_filename,
 )
-from .patching import replace_assignment, set_block, set_scalar, top_level_assignments
+from .patching import (
+    replace_assignment,
+    replace_assignment_body,
+    set_block,
+    set_scalar,
+    top_level_assignments,
+)
 from .paths import require_country_tag, safe_file_stem
 from .parser import find_assignment_block
 from .script import pdx_string
 from .types import Country, Leader
 
-COLOR_RE = re.compile(r"\bcolor\s*=\s*\{\s*(\d+)\s+(\d+)\s+(\d+)\s*\}")
+COLOR_RE = re.compile(
+    r"\bcolor\s*=\s*(?:rgb\s*)?\{\s*(\d+)\s+(\d+)\s+(\d+)\s*\}"
+)
+COLOR_FIELD_RE = re.compile(
+    r"(\bcolor(?:_ui)?\s*=\s*(?:rgb\s*)?\{\s*)\d+\s+\d+\s+\d+(\s*\})"
+)
 CAPITAL_RE = re.compile(r"\bcapital\s*=\s*(\d+)")
 RESEARCH_SLOTS_RE = re.compile(r"\bset_research_slots\s*=\s*(\d+)")
-POP_RE = re.compile(r"\b(democratic|fascism|communism|neutrality)\s*=\s*(\d+)")
-RULING_PARTY_RE = re.compile(r"\bruling_party\s*=\s*(\w+)")
-IDEOLOGY_RE = re.compile(r"\bideology\s*=\s*(\w+)")
+STANDARD_IDEOLOGY_GROUPS = ("democratic", "fascism", "communism", "neutrality")
 
 
 def read_country(
@@ -44,6 +53,7 @@ def read_country(
     country = Country(tag=tag)
 
     _read_definition(country, mod_root, hoi4_install, _tag_mappings)
+    _read_color(country, mod_root, hoi4_install, _tag_mappings)
     _read_history(country, mod_root, hoi4_install)
     _read_character(country, mod_root, hoi4_install)
 
@@ -75,6 +85,37 @@ def _read_definition(
             return
 
 
+def _read_color(
+    country: Country,
+    mod_root: Path,
+    hoi4_install: Optional[Path],
+    tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+) -> None:
+    """Resolve country colour using the same vanilla-then-mod precedence as HOI4."""
+
+    resolved: tuple[int, int, int] | None = None
+    for base in (hoi4_install, mod_root):
+        if base is None:
+            continue
+        definition = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
+        if definition is not None and definition.is_file():
+            match = COLOR_RE.search(definition.read_text(encoding="utf-8", errors="ignore"))
+            if match:
+                resolved = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
+        colors_path = base / "common" / "countries" / "colors.txt"
+        if not colors_path.is_file():
+            continue
+        text = colors_path.read_text(encoding="utf-8", errors="ignore")
+        span = next((item for item in top_level_assignments(text) if item.key == country.tag), None)
+        if span is None or not span.is_block or span.body_start is None or span.body_end is None:
+            continue
+        match = COLOR_RE.search(text[span.body_start : span.body_end])
+        if match:
+            resolved = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
+    if resolved is not None:
+        country.color = resolved
+
+
 def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
@@ -97,22 +138,34 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
         if research_slots:
             country.research_slots = int(research_slots.group(1))
 
-        pops: dict[str, int] = {}
-        for m in POP_RE.finditer(txt):
-            pops[m.group(1)] = int(m.group(2))
+        pops = _read_popularities(txt)
         if pops:
             country.popularities = pops
 
-        rp = RULING_PARTY_RE.search(txt)
-        if rp:
-            country.ruling_party = rp.group(1)
-            country.elections_allowed = rp.group(1) == "democratic"
+        ruling_party, elections_allowed = _read_politics(txt)
+        if ruling_party:
+            country.ruling_party = ruling_party
+            country.elections_allowed = (
+                ruling_party == "democratic"
+                if elections_allowed is None
+                else elections_allowed
+            )
+
+        country.ideas = _read_assigned_ideas(txt)
 
         leader_name = _extract_leader_name(txt)
-        if leader_name:
+        recruited_ids = _read_recruited_character_ids(txt)
+        if recruited_ids:
+            country.leader = Leader(
+                name=leader_name or "",
+                character_id=recruited_ids[0],
+                portrait_slug=recruited_ids[0].removeprefix(f"{country.tag}_"),
+            )
+        elif leader_name:
             country.leader = Leader(
                 name=leader_name,
                 character_id=f"{country.tag}_leader_1",
+                portrait_slug="leader_1",
             )
 
         return
@@ -200,21 +253,228 @@ def _read_character(country: Country, mod_root: Path, hoi4_install: Optional[Pat
         country.character_path = p.resolve()
         country.raw_character = txt
 
-        ideology_m = IDEOLOGY_RE.search(txt)
-        name_m = re.search(r'name\s*=\s*"([^"]*)"', txt)
+        definitions = _character_definitions(txt)
+        recruited = _read_recruited_character_ids(country.raw_history)
+        by_id = {character_id: body for character_id, body in definitions}
+        leader_ids = [
+            character_id
+            for character_id, body in definitions
+            if find_assignment_block(body, "country_leader") is not None
+        ]
+        selected_id = next((item for item in recruited if item in leader_ids), "")
+        if not selected_id and country.leader and country.leader.character_id in by_id:
+            selected_id = country.leader.character_id
+        if not selected_id and leader_ids:
+            selected_id = leader_ids[0]
+        if not selected_id:
+            selected_id = next((item for item in recruited if item in by_id), "")
+        if not selected_id:
+            return
 
-        if country.leader is None:
-            country.leader = Leader(
-                name=name_m.group(1) if name_m else "",
-                character_id=f"{country.tag}_leader_1",
-                ideology=ideology_m.group(1) if ideology_m else "liberalism",
-            )
-        else:
-            if ideology_m:
-                country.leader.ideology = ideology_m.group(1)
-            if name_m:
-                country.leader.name = name_m.group(1)
+        character_body = by_id[selected_id]
+        role = find_assignment_block(character_body, "country_leader")
+        role_body = role[0] if role is not None else ""
+        name = _direct_scalar(character_body, "name")
+        ideology = _direct_scalar(role_body, "ideology") or "liberalism"
+        portrait_match = re.search(
+            rf"\blarge\s*=\s*GFX_portrait_{re.escape(country.tag)}_([A-Za-z0-9_.:-]+)",
+            character_body,
+        )
+        portrait_slug = (
+            portrait_match.group(1)
+            if portrait_match
+            else selected_id.removeprefix(f"{country.tag}_")
+        )
+        country.leader = Leader(
+            name=name or (country.leader.name if country.leader else "") or selected_id,
+            character_id=selected_id,
+            ideology=ideology,
+            portrait_slug=portrait_slug,
+        )
         return
+
+
+def _read_assigned_ideas(history: str) -> list[str]:
+    assigned: list[str] = []
+    removed: set[str] = set()
+    identifier = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]*")
+    for span in top_level_assignments(history):
+        if span.key not in {"add_ideas", "remove_ideas"}:
+            continue
+        if span.is_block and span.body_start is not None and span.body_end is not None:
+            value = history[span.body_start : span.body_end]
+        else:
+            value = history[span.value_start : span.value_end]
+        values = identifier.findall(re.sub(r"#.*", "", value))
+        if span.key == "add_ideas":
+            assigned.extend(values)
+        else:
+            removed.update(values)
+    return [idea for idea in dict.fromkeys(assigned) if idea not in removed]
+
+
+def _direct_scalar(text: str, key: str) -> str:
+    for span in top_level_assignments(text):
+        if span.key == key and not span.is_block:
+            return text[span.value_start : span.value_end].strip().strip('"')
+    return ""
+
+
+def _read_recruited_character_ids(history: str) -> list[str]:
+    character_ids: list[str] = []
+    for span in top_level_assignments(history):
+        if span.key == "recruit_character" and not span.is_block:
+            value = history[span.value_start : span.value_end].strip().strip('"')
+            if value and value not in character_ids:
+                character_ids.append(value)
+        elif (
+            span.key == "set_country_leader"
+            and span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+        ):
+            value = _direct_scalar(history[span.body_start : span.body_end], "character")
+            if value and value not in character_ids:
+                character_ids.append(value)
+    return character_ids
+
+
+def _character_definitions(text: str) -> list[tuple[str, str]]:
+    wrapper = find_assignment_block(text, "characters")
+    body = wrapper[0] if wrapper is not None else text
+    return [
+        (span.key, body[span.body_start : span.body_end])
+        for span in top_level_assignments(body)
+        if span.is_block and span.body_start is not None and span.body_end is not None
+    ]
+
+
+def _read_popularities(history: str) -> dict[str, int]:
+    """Read every direct ideology group in ``set_popularities``.
+
+    Party groups are data-driven in HOI4. Restricting this block to the four
+    vanilla identifiers would silently discard custom ideologies when a
+    country is edited and saved.
+    """
+
+    popularity = next(
+        (
+            span
+            for span in top_level_assignments(history)
+            if span.key == "set_popularities"
+            and span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+        ),
+        None,
+    )
+    if popularity is None or popularity.body_start is None or popularity.body_end is None:
+        return {}
+    body = history[popularity.body_start : popularity.body_end]
+    values: dict[str, int] = {}
+    for assignment in top_level_assignments(body):
+        if assignment.is_block:
+            continue
+        raw_value = body[assignment.value_start : assignment.value_end].strip().strip('"')
+        try:
+            values[assignment.key] = int(raw_value)
+        except ValueError:
+            continue
+    return values
+
+
+def _read_politics(history: str) -> tuple[str, bool | None]:
+    politics = next(
+        (
+            span
+            for span in top_level_assignments(history)
+            if span.key == "set_politics"
+            and span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+        ),
+        None,
+    )
+    if politics is None or politics.body_start is None or politics.body_end is None:
+        return "", None
+    body = history[politics.body_start : politics.body_end]
+    assignments = {
+        assignment.key: body[assignment.value_start : assignment.value_end]
+        for assignment in top_level_assignments(body)
+        if not assignment.is_block
+    }
+    ruling_party = assignments.get("ruling_party", "").strip().strip('"')
+    election_value = assignments.get("elections_allowed")
+    if election_value is None:
+        return ruling_party, None
+    return ruling_party, election_value.strip().strip('"').lower() in {"yes", "true", "1"}
+
+
+def _popularity_body(popularities: dict[str, int]) -> str:
+    ordered = [key for key in STANDARD_IDEOLOGY_GROUPS if key in popularities]
+    ordered.extend(sorted(set(popularities) - set(ordered)))
+    return "\n".join(f"{key} = {popularities[key]}" for key in ordered)
+
+
+def _country_localisation_suffixes(country: Country) -> list[str]:
+    groups = list(STANDARD_IDEOLOGY_GROUPS)
+    for group in (*country.popularities, country.ruling_party):
+        if group and group not in groups:
+            groups.append(group)
+    return [""] + [f"_{group}" for group in groups]
+
+
+def serialize_country_colors_file(
+    original: str,
+    colors: dict[str, tuple[int, int, int]],
+    *,
+    deleted_tags: set[str] | None = None,
+) -> str:
+    """Patch country map/UI colours while retaining unrelated source text."""
+
+    text = original
+    for tag in sorted(deleted_tags or set()):
+        span = next((item for item in top_level_assignments(text) if item.key == tag), None)
+        if span is not None:
+            text = replace_assignment(text, span, None)
+    for tag, color in sorted(colors.items()):
+        r, g, b = color
+        if any(channel < 0 or channel > 255 for channel in color):
+            raise ValueError(f"Country color for {tag} must use channels from 0 to 255")
+        span = next((item for item in top_level_assignments(text) if item.key == tag), None)
+        if span is None:
+            text = text.rstrip() + ("\n" if text.strip() else "")
+            text += (
+                f"{tag} = {{\n"
+                f"    color = rgb {{ {r} {g} {b} }}\n"
+                f"    color_ui = rgb {{ {r} {g} {b} }}\n"
+                "}\n"
+            )
+            continue
+        if not span.is_block or span.body_start is None or span.body_end is None:
+            replacement = (
+                f"{tag} = {{\n"
+                f"    color = rgb {{ {r} {g} {b} }}\n"
+                f"    color_ui = rgb {{ {r} {g} {b} }}\n"
+                "}"
+            )
+            text = replace_assignment(text, span, replacement)
+            continue
+        body = text[span.body_start : span.body_end]
+        seen: set[str] = set()
+
+        def replace_color(match: re.Match[str]) -> str:
+            key_match = re.search(r"color(?:_ui)?", match.group(1))
+            if key_match is not None:
+                seen.add(key_match.group(0))
+            return f"{match.group(1)}{r} {g} {b}{match.group(2)}"
+
+        body = COLOR_FIELD_RE.sub(replace_color, body)
+        for key in ("color", "color_ui"):
+            if key not in seen:
+                body = body.rstrip() + f"\n    {key} = rgb {{ {r} {g} {b} }}\n"
+        text = text[: span.body_start] + body + text[span.body_end :]
+    return text
 
 
 def _find_history_file(history_dir: Path, tag: str) -> Optional[Path]:
@@ -256,7 +516,7 @@ def write_country_history(mod_root: Path, country: Country) -> None:
     safe_name = safe_file_stem(country.name or tag, fallback=tag)
     p = (
         mod_root / f"history/countries/{tag} - {safe_name}.txt"
-        if "name" in country.touched_fields or country.history_path is None
+        if {"*", "name"} & country.touched_fields or country.history_path is None
         else country.history_path
     )
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -275,7 +535,7 @@ def write_country_localisation(mod_root: Path, country: Country) -> None:
     lines = ["l_english:"]
     name = country.name or country.tag
     adj = country.adjective or name
-    for suffix in ["", "_neutrality", "_democratic", "_fascism", "_communism"]:
+    for suffix in _country_localisation_suffixes(country):
         lines.append(f" {country.tag}{suffix}:0 {pdx_string(name)}")
         lines.append(f" {country.tag}{suffix}_DEF:0 {pdx_string(name)}")
     lines.append(f" {country.tag}_ADJ:0 {pdx_string(adj)}")
@@ -301,7 +561,7 @@ def write_all_country_files(mod_root: Path, country: Country) -> list[Path]:
     safe_name = safe_file_stem(country.name or country.tag, fallback=country.tag)
     written.append(
         mod_root / f"history/countries/{country.tag} - {safe_name}.txt"
-        if "name" in country.touched_fields or country.history_path is None
+        if {"*", "name"} & country.touched_fields or country.history_path is None
         else country.history_path
     )
     write_character_file(mod_root, country)
@@ -356,7 +616,7 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
     safe_name = safe_file_stem(country.name or tag, fallback=tag)
     hist_path = (
         mod_root / f"history/countries/{tag} - {safe_name}.txt"
-        if "name" in country.touched_fields or country.history_path is None
+        if {"*", "name"} & country.touched_fields or country.history_path is None
         else country.history_path
     )
     leader = country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1")
@@ -371,6 +631,9 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         if country.research_slots is not None
         else ""
     )
+    popularity_lines = "\n".join(
+        f" {line}" for line in _popularity_body(pops).splitlines()
+    )
     generated_history = (
         f"capital = {country.capital}\n"
         f"\n"
@@ -378,10 +641,7 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         f"recruit_character = {leader.character_id}\n"
         f"\n"
         f"set_popularities = {{\n"
-        f" democratic = {pops.get('democratic', 0)}\n"
-        f" fascism = {pops.get('fascism', 0)}\n"
-        f" communism = {pops.get('communism', 0)}\n"
-        f" neutrality = {pops.get('neutrality', 0)}\n"
+        f"{popularity_lines}\n"
         f"}}\n"
         f"\n"
         f"set_politics = {{\n"
@@ -406,11 +666,7 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
                 None if country.research_slots is None else str(country.research_slots),
             )
         if "*" in touched or "popularities" in touched:
-            popularity_body = "\n".join(
-                f"{key} = {pops.get(key, 0)}"
-                for key in ("democratic", "fascism", "communism", "neutrality")
-            )
-            history = set_block(history, "set_popularities", popularity_body)
+            history = set_block(history, "set_popularities", _popularity_body(pops))
         if "*" in touched or {"ruling_party", "elections_allowed"} & touched:
             politics_body = "\n".join(
                 [
@@ -424,11 +680,13 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
             history = set_block(
                 history, "add_ideas", "\n".join(country.ideas) if country.ideas else None
             )
+            history = set_block(history, "remove_ideas", None)
     files[hist_path] = history
 
     if country.leader:
         char_path = country.character_path or mod_root / f"common/characters/{tag}_characters.txt"
         ld = country.leader
+        portrait_key = ld.portrait_slug or ld.character_id.removeprefix(f"{tag}_")
         generated_character = (
             f"characters = {{\n"
             f" {ld.character_id} = {{\n"
@@ -438,7 +696,7 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
             f"\n"
             f"  portraits = {{\n"
             f"   civilian = {{\n"
-            f"    large = GFX_portrait_{tag}_{ld.portrait_slug or ld.character_id}\n"
+            f"    large = GFX_portrait_{tag}_{portrait_key}\n"
             f"   }}\n"
             f"  }}\n"
             f"\n"
@@ -457,17 +715,20 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         if character and any(
             field.startswith("leader_") or field == "*" for field in country.touched_fields
         ):
-            character = _patch_character(character, ld)
+            character = _patch_character(character, ld, country.touched_fields, tag)
         files[char_path] = character or generated_character
 
     return files
 
 
-def _patch_character(text: str, leader: Leader) -> str:
+def _patch_character(
+    text: str,
+    leader: Leader,
+    touched_fields: set[str],
+    tag: str,
+) -> str:
     root = find_assignment_block(text, "characters")
-    if root is None:
-        return text
-    body = root[0]
+    body = root[0] if root is not None else text
     leader_span = next(
         (
             span
@@ -480,9 +741,12 @@ def _patch_character(text: str, leader: Leader) -> str:
         None,
     )
     if leader_span is None or leader_span.body_start is None or leader_span.body_end is None:
-        return text
+        raise ValueError(
+            f"Cannot update leader '{leader.character_id}': matching character block not found"
+        )
     leader_body = body[leader_span.body_start : leader_span.body_end]
-    leader_body = set_scalar(leader_body, "name", pdx_string(leader.name))
+    if "*" in touched_fields or "leader_name" in touched_fields:
+        leader_body = set_scalar(leader_body, "name", pdx_string(leader.name))
     role = next(
         (
             span
@@ -494,24 +758,61 @@ def _patch_character(text: str, leader: Leader) -> str:
         ),
         None,
     )
-    if role is not None and role.body_start is not None and role.body_end is not None:
+    if "*" in touched_fields or "leader_ideology" in touched_fields:
+        if role is None or role.body_start is None or role.body_end is None:
+            raise ValueError(
+                f"Cannot update leader '{leader.character_id}' ideology: "
+                "country_leader block not found"
+            )
         role_body = leader_body[role.body_start : role.body_end]
         role_body = set_scalar(role_body, "ideology", leader.ideology)
-        leader_body = replace_assignment(
-            leader_body,
-            role,
-            "country_leader = {\n"
-            + "\n".join("\t" + line for line in role_body.strip().splitlines())
-            + "\n}",
+        leader_body = replace_assignment_body(leader_body, role, role_body)
+    if "*" in touched_fields or "leader_portrait_slug" in touched_fields:
+        leader_body = _patch_character_portrait(leader_body, tag, leader.portrait_slug)
+    body = replace_assignment_body(body, leader_span, leader_body)
+    if root is None:
+        return body
+    open_brace = text.find("{", root[1], root[2])
+    if open_brace < 0:
+        raise ValueError("Malformed characters block")
+    return text[: open_brace + 1] + body + text[root[2] - 1 :]
+
+
+def _patch_character_portrait(body: str, tag: str, portrait_slug: str) -> str:
+    portrait_key = f"GFX_portrait_{tag}_{portrait_slug}"
+    portraits = next(
+        (span for span in top_level_assignments(body) if span.key == "portraits"),
+        None,
+    )
+    if (
+        portraits is None
+        or not portraits.is_block
+        or portraits.body_start is None
+        or portraits.body_end is None
+    ):
+        return set_block(body, "portraits", f"civilian = {{ large = {portrait_key} }}")
+    portraits_body = body[portraits.body_start : portraits.body_end]
+    civilian = next(
+        (span for span in top_level_assignments(portraits_body) if span.key == "civilian"),
+        None,
+    )
+    if (
+        civilian is None
+        or not civilian.is_block
+        or civilian.body_start is None
+        or civilian.body_end is None
+    ):
+        portraits_body = set_block(
+            portraits_body,
+            "civilian",
+            f"large = {portrait_key}",
         )
-    body = replace_assignment(
-        body,
-        leader_span,
-        f"{leader.character_id} = {{\n"
-        + "\n".join("\t" + line for line in leader_body.strip().splitlines())
-        + "\n}",
-    )
-    replacement = (
-        "characters = {\n" + "\n".join("\t" + line for line in body.strip().splitlines()) + "\n}"
-    )
-    return text[: root[1]] + replacement + text[root[2] :]
+    else:
+        civilian_body = portraits_body[civilian.body_start : civilian.body_end]
+        civilian_body = set_scalar(civilian_body, "large", portrait_key)
+        portraits_body = replace_assignment_body(
+            portraits_body,
+            civilian,
+            civilian_body,
+        )
+    return replace_assignment_body(body, portraits, portraits_body)

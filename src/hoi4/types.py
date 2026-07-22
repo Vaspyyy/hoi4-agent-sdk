@@ -113,6 +113,14 @@ class ValidationError:
     state_id: Optional[int] = None
     event_id: Optional[str] = None
     idea_id: Optional[str] = None
+    decision_id: Optional[str] = None
+    focus_tree_id: Optional[str] = None
+    ideology_id: Optional[str] = None
+    dynamic_idea_id: Optional[str] = None
+    bookmark_name: Optional[str] = None
+    related_file_path: Optional[str] = None
+    line: Optional[int] = None
+    column: Optional[int] = None
 
 
 @dataclass
@@ -142,6 +150,8 @@ class LoadDiagnostic:
     path: Path
     error_type: str
     message: str
+    related_path: Optional[Path] = None
+    identifier: Optional[str] = None
 
 
 @dataclass
@@ -181,6 +191,12 @@ class OnAction:
     path: Optional[Path] = None
     raw_block: str = ""
     touched: bool = False
+    # On-action hooks are compositional in HOI4: the same hook may occur more
+    # than once, including multiple times in one file.  These internal source
+    # coordinates let the serializer patch or remove the exact occurrence
+    # without collapsing its siblings.
+    source_path: Optional[Path] = None
+    source_occurrence: int = -1
 
 
 @dataclass
@@ -245,6 +261,10 @@ class Idea:
     research_bonus: dict[str, str | int | float | bool] = field(default_factory=dict)
     traits: list[str] = field(default_factory=list)
     ai_will_do: str = ""
+    desc: str = ""
+    removal_cost: str | int | float | None = None
     raw_block: str = ""
     category_raw_block: str = ""
     touched: bool = False
+    touched_fields: set[str] = field(default_factory=set)
+    modifier_merge: bool = field(default=False, repr=False, compare=False)

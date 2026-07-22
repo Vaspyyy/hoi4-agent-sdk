@@ -139,15 +139,15 @@ state = {
     resources = {
         steel = 8
     }
-    buildings = {
-        infrastructure = 3
-        industrial_complex = 1
-    }
     provinces = { 6583 13375 }
     history = {
         owner = LUX
         add_core_of = LUX
         victory_points = { 6583 5 }
+        buildings = {
+            infrastructure = 3
+            industrial_complex = 1
+        }
         resistance = 10
         compliance = 20
         1939.1.1 = {

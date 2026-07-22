@@ -1,0 +1,17 @@
+﻿l_english:
+ # Translator note and deliberately unusual spacing/version token.
+ STB:0 "Source Stability Land"
+ STB_DEF:0 "Source Stability Land"
+ STB_ADJ:0 "Source-Stable"
+ STB_opening : 2 "Preserve the Source" # translator note
+ STB_opening_desc:0 "Change one field, not one file."
+ STB_followup:0 "Verify the Result"
+ STB_followup_desc:0 "Measure the resulting source diff."
+ stb.1.t:0 "The Gate Runs"
+ stb.1.d:0 "A dry-run transaction tests the serializer."
+ stb.1.a:0 "Keep every unrelated byte."
+ STB_source_stability:0 "Source Stability"
+ STB_source_stability_desc:0 "Unrelated source remains untouched."
+ stb_fixture_category:0 "Release Checks"
+ STB_fixture_decision:0 "Run the Fixture"
+ STB_fixture_decision_desc:0 "Exercise a minimally invasive edit."

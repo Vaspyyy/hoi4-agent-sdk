@@ -14,7 +14,9 @@ from pathlib import Path
 from .parser import find_assignment_block, iter_assignment_blocks, strip_comments
 from .patching import (
     append_assignment,
+    dedent_block_body,
     replace_assignment,
+    replace_assignment_body,
     set_block,
     set_scalar,
     top_level_assignments,
@@ -27,7 +29,7 @@ SCALAR_RE = re.compile(r"\b([A-Za-z0-9_]+)\s*=\s*([^\s{}#]+)")
 
 def _extract_block(text: str, key: str) -> str:
     match = find_assignment_block(text, key)
-    return match[0].strip() if match else ""
+    return dedent_block_body(match[0]) if match else ""
 
 
 def _extract_scalar(text: str, key: str) -> str:
@@ -152,25 +154,7 @@ def _parse_decision(decision_id: str, category_id: str, body: str, path: Path) -
 
 def serialize_decision(decision: Decision) -> str:
     if decision.raw_block:
-        body = decision.raw_block
-        if decision.touched:
-            body = set_scalar(body, "icon", decision.icon or None)
-            body = set_scalar(body, "cost", None if decision.cost is None else str(decision.cost))
-            body = set_scalar(
-                body,
-                "days_remove",
-                None if decision.days_remove is None else str(decision.days_remove),
-            )
-            body = set_scalar(
-                body,
-                "fire_only_once",
-                None
-                if decision.fire_only_once is None
-                else ("yes" if decision.fire_only_once else "no"),
-            )
-            for key in ["visible", "available", "complete_effect", "remove_effect", "ai_will_do"]:
-                value = getattr(decision, key)
-                body = set_block(body, key, value or None)
+        body = _patch_decision_body(decision, decision.raw_block)
         return f"\t{decision.id} = {{\n{_indent(body, 2)}\n\t}}"
     lines = [f"\t{decision.id} = {{"]
     if decision.icon:
@@ -208,9 +192,15 @@ def serialize_decisions_file(categories: list[DecisionCategory], original: str =
                     or not _iter_top_level_decision_blocks(text[span.body_start : span.body_end])
                 ):
                     continue
-            text = replace_assignment(
-                text, span, None if category is None else _serialize_category(category)
-            )
+            if category is None:
+                text = replace_assignment(text, span, None)
+            elif category.raw_block and span.body_start is not None and span.body_end is not None:
+                category_body = text[span.body_start : span.body_end]
+                text = replace_assignment_body(
+                    text, span, _patch_category_body(category, category_body)
+                )
+            else:
+                text = replace_assignment(text, span, _serialize_category(category))
         for category in current.values():
             text = append_assignment(text, _serialize_category(category))
         return text
@@ -223,29 +213,7 @@ def serialize_decisions_file(categories: list[DecisionCategory], original: str =
 
 def _serialize_category(category: DecisionCategory) -> str:
     if category.raw_block:
-        body = category.raw_block
-        if category.touched:
-            body = set_scalar(body, "icon", category.icon or None)
-            body = set_block(body, "allowed", category.allowed or None)
-            body = set_block(body, "visible", category.visible or None)
-        current = {decision.id: decision for decision in category.decisions}
-        decision_spans = {
-            span.key: span
-            for span in top_level_assignments(body)
-            if span.is_block
-            and span.body_start is not None
-            and span.body_end is not None
-            and _looks_like_category(body[span.body_start : span.body_end])
-        }
-        for decision_id, span in sorted(
-            decision_spans.items(), key=lambda item: item[1].start, reverse=True
-        ):
-            decision = current.pop(decision_id, None)
-            body = replace_assignment(
-                body, span, None if decision is None else serialize_decision(decision).strip()
-            )
-        for decision in current.values():
-            body = append_assignment(body, serialize_decision(decision).strip())
+        body = _patch_category_body(category, category.raw_block)
         return f"{category.id} = {{\n{_indent(body, 1)}\n}}"
     parts = [f"{category.id} = {{"]
     if category.icon:
@@ -261,6 +229,59 @@ def _serialize_category(category: DecisionCategory) -> str:
         parts.append("")
     parts.append("}")
     return "\n".join(parts)
+
+
+def _patch_decision_body(decision: Decision, body: str) -> str:
+    if not decision.touched:
+        return body
+    body = set_scalar(body, "icon", decision.icon or None)
+    body = set_scalar(body, "cost", None if decision.cost is None else str(decision.cost))
+    body = set_scalar(
+        body, "days_remove", None if decision.days_remove is None else str(decision.days_remove)
+    )
+    body = set_scalar(
+        body,
+        "fire_only_once",
+        None
+        if decision.fire_only_once is None
+        else ("yes" if decision.fire_only_once else "no"),
+    )
+    for key in ["visible", "available", "complete_effect", "remove_effect", "ai_will_do"]:
+        value = getattr(decision, key)
+        body = set_block(body, key, value or None)
+    return body
+
+
+def _patch_category_body(category: DecisionCategory, body: str) -> str:
+    if category.touched:
+        body = set_scalar(body, "icon", category.icon or None)
+        body = set_block(body, "allowed", category.allowed or None)
+        body = set_block(body, "visible", category.visible or None)
+    current = {decision.id: decision for decision in category.decisions}
+    decision_spans = {
+        span.key: span
+        for span in top_level_assignments(body)
+        if span.is_block
+        and span.body_start is not None
+        and span.body_end is not None
+        and _looks_like_category(body[span.body_start : span.body_end])
+    }
+    for decision_id, span in sorted(
+        decision_spans.items(), key=lambda item: item[1].start, reverse=True
+    ):
+        decision = current.pop(decision_id, None)
+        if decision is None:
+            body = replace_assignment(body, span, None)
+        elif span.body_start is not None and span.body_end is not None and decision.raw_block:
+            decision_body = body[span.body_start : span.body_end]
+            body = replace_assignment_body(
+                body, span, _patch_decision_body(decision, decision_body)
+            )
+        else:
+            body = replace_assignment(body, span, serialize_decision(decision).strip())
+    for decision in current.values():
+        body = append_assignment(body, serialize_decision(decision).strip())
+    return body
 
 
 def write_decisions_file(path: Path, categories: list[DecisionCategory]) -> Path:

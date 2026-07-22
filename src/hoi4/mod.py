@@ -26,18 +26,44 @@ from pathlib import Path
 from difflib import SequenceMatcher
 from typing import Any, Optional, Sequence, TypedDict, cast
 
+from .bookmarks import (
+    DEFAULT_BOOKMARK_EFFECT,
+    Bookmark,
+    BookmarkCountry,
+    load_bookmarks_file,
+    normalize_required_dlc,
+    patch_bookmark_dates_defines,
+    require_bookmark_date,
+    require_bookmark_country_key,
+    serialize_bookmarks_file,
+)
 from .config import find_config
+from .content_validation import (
+    validate_bookmark,
+    validate_dynamic_idea_group,
+    validate_ideology,
+)
 from .countries import (
+    _country_localisation_suffixes,
     country_file_paths,
     read_country,
+    serialize_country_colors_file,
     serialize_country_files,
 )
 from .decisions import load_decisions_file, serialize_decisions_file
 from .diff import unified_diff
-from .events import load_events_file, serialize_events_file
+from .dynamic_ideas import (
+    DynamicIdea,
+    DynamicIdeaGroup,
+    load_dynamic_ideas_file,
+    remove_dynamic_ideas_container,
+    serialize_dynamic_ideas_file,
+)
+from .events import load_events_file, scan_event_ids_file, serialize_events_file
 from .effects_catalog import TECHNOLOGY_CATEGORIES
 from .focus import load_focus_tree, load_focus_trees, serialize_focus_file
-from .ideas import read_ideas_file, serialize_ideas_file
+from .ideas import read_ideas_file, scan_idea_ids_file, serialize_ideas_file
+from .ideologies import Ideology, SubIdeology, load_ideologies_file, serialize_ideologies_file
 from .localisation import (
     normalize_localization_key,
     parse_localization_dir,
@@ -52,16 +78,22 @@ from .paths import (
     safe_file_stem,
 )
 from .politics import LEADER_IDEOLOGIES_BY_PARTY, RULING_PARTIES
+from .progress import CancelCallback, ProgressCallback, check_cancelled, report_progress
 from .states import (
     build_state_index,
-    ensure_state_in_mod,
     find_state_file,
     patch_state_history_owner_cores_text,
     read_state,
     serialize_state,
 )
-from .script import effect_block, normalize_block_body, pdx_string, scope_block
-from .tags import _parse_tag_file_mapping, load_all_tags, load_mod_tags, load_vanilla_tags
+from .script import (
+    effect_block,
+    normalize_block_body,
+    pdx_string,
+    scope_block,
+    validate_script_syntax,
+)
+from .tags import _parse_tag_file_mapping, load_all_tags, load_vanilla_tags
 from .types import (
     Country,
     Decision,
@@ -79,11 +111,14 @@ from .types import (
     ValidationError,
 )
 from .validation import (
+    collect_character_ids,
     validate_country,
+    validate_country_history_references,
     validate_event,
     validate_focus_tree,
     validate_idea,
     validate_state,
+    validate_tag_definition_targets,
 )
 
 COMMON_FOCUS_ICONS: tuple[str, ...] = (
@@ -103,16 +138,25 @@ COMMON_FOCUS_ICONS: tuple[str, ...] = (
     "GFX_goal_generic_territory_or_war",
 )
 
+
+class ExternalModificationError(RuntimeError):
+    """A source file changed on disk after this ``Mod`` instance loaded it."""
+
+
 _IDEA_EFFECT_RE = re.compile(r"\b(?:add_ideas|remove_ideas)\s*=\s*([A-Za-z0-9_.:-]+)")
 _HAS_IDEA_RE = re.compile(r"\bhas_idea\s*=\s*([A-Za-z0-9_.:-]+)")
 _EVENT_REF_RE = re.compile(
-    r"\b(?:country_event|state_event|news_event)\s*=\s*\{[^{}]*\bid\s*=\s*([A-Za-z0-9_.:-]+)"
+    r"\b(?:country_event|state_event|news_event|unit_leader_event|operative_leader_event)"
+    r"\s*=\s*\{[^{}]*\bid\s*=\s*([A-Za-z0-9_.:-]+)"
 )
 _EQUIPMENT_STOCKPILE_RE = re.compile(r"\badd_equipment_to_stockpile\s*=\s*\{([^{}]*)\}")
 _TECH_BLOCK_RE = re.compile(r"\bset_technology\s*=\s*\{([^{}]*)\}")
 _LOAD_FOCUS_TREE_RE = re.compile(r"\bload_focus_tree\s*=\s*\{[^{}]*\btree\s*=\s*([A-Za-z0-9_.:-]+)")
 _SCRIPT_BLOCK_ID_RE = re.compile(r"(?m)^\s*([A-Za-z0-9_.:-]+)\s*=\s*\{")
 _GFX_NAME_RE = re.compile(r"\bname\s*=\s*\"?([A-Za-z0-9_.:-]+)\"?")
+_COUNTRY_TAG_LINE_RE = re.compile(
+    r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"(?:\s*#.*)?\s*$'
+)
 
 
 def _infer_event_namespace(event_id: str) -> str | None:
@@ -130,6 +174,10 @@ class StateHistoryPatch(TypedDict):
     remove_cores: list[str]
 
 
+class _DuplicateIdentifierError(RuntimeError):
+    pass
+
+
 def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False) -> None:
     from .types import _ensure_nested
 
@@ -141,11 +189,13 @@ def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False
         "raw_history",
         "raw_character",
         "source_path",
+        "source_occurrence",
         "definition_path",
         "history_path",
         "character_path",
         "touched",
         "touched_fields",
+        "modifier_merge",
         "category_raw_block",
     }
     if not allow_path:
@@ -201,6 +251,88 @@ def _filter_validation_errors(
     ]
 
 
+_ISSUE_LOCATION_RE = re.compile(r"line (\d+), column (\d+)")
+_LOCALIZATION_HEADER_RE = re.compile(r"^l_[A-Za-z_]+\s*:")
+
+
+def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
+    """Validate script and localization files even when no model loader owns them."""
+
+    errors: list[ValidationError] = []
+    script_paths: set[Path] = set()
+    for directory_name in ("common", "events", "history", "interface"):
+        directory = mod_root / directory_name
+        if not directory.is_dir():
+            continue
+        for suffix in ("*.txt", "*.gfx"):
+            script_paths.update(path for path in directory.rglob(suffix) if path.is_file())
+    descriptor = mod_root / "descriptor.mod"
+    if descriptor.is_file():
+        script_paths.add(descriptor)
+
+    for path in sorted(script_paths):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for issue in validate_script_syntax(text):
+            location = _ISSUE_LOCATION_RE.search(issue)
+            errors.append(
+                ValidationError(
+                    message=f"{path}: {issue}",
+                    severity="error",
+                    code="script_syntax",
+                    file_path=str(path),
+                    line=int(location.group(1)) if location else None,
+                    column=int(location.group(2)) if location else None,
+                )
+            )
+
+    localization = mod_root / "localisation"
+    if localization.is_dir():
+        for path in sorted(localization.rglob("*.yml")):
+            raw = path.read_bytes()
+            if not raw.startswith(b"\xef\xbb\xbf"):
+                errors.append(
+                    ValidationError(
+                        message=f"Localization file is missing a UTF-8 BOM: {path}",
+                        severity="error",
+                        code="localization_bom",
+                        file_path=str(path),
+                        line=1,
+                    )
+                )
+            try:
+                text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError as error:
+                errors.append(
+                    ValidationError(
+                        message=f"Localization file is not valid UTF-8: {path}: {error}",
+                        severity="error",
+                        code="localization_encoding",
+                        file_path=str(path),
+                        line=1,
+                    )
+                )
+                continue
+            first_content = next(
+                (
+                    line.strip()
+                    for line in text.splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")
+                ),
+                "",
+            )
+            if not _LOCALIZATION_HEADER_RE.match(first_content):
+                errors.append(
+                    ValidationError(
+                        message=f"Localization file has no l_<language>: header: {path}",
+                        severity="error",
+                        code="localization_header",
+                        file_path=str(path),
+                        line=1,
+                    )
+                )
+    return errors
+
+
 class Mod:
     def __init__(
         self,
@@ -222,6 +354,7 @@ class Mod:
         self._deleted_countries: dict[str, Country] = {}
         self._states: dict[int, State] = {}
         self._state_ids: list[int] = []
+        self._state_source_paths: dict[int, Path] = {}
         self._dirty_states: set[int] = set()
         self._state_history_patches: dict[int, StateHistoryPatch] = {}
         self._events: dict[str, Event] = {}
@@ -230,6 +363,7 @@ class Mod:
         self._dirty_event_files: set[Path] = set()
         self._event_file_namespaces: dict[Path, Optional[str]] = {}
         self._on_actions: dict[str, OnAction] = {}
+        self._on_action_occurrences: dict[str, list[OnAction]] = {}
         self._dirty_on_actions: set[str] = set()
         self._dirty_on_action_files: set[Path] = set()
         self._decisions: dict[str, Decision] = {}
@@ -241,11 +375,26 @@ class Mod:
         self._dirty_idea_files: set[Path] = set()
         self._idea_file_containers: dict[Path, str] = {}
         self._cached_idea_file: dict[str, Path] = {}
+        self._ideologies: dict[str, Ideology] = {}
+        self._vanilla_ideologies: dict[str, Ideology] = {}
+        self._dirty_ideologies: set[str] = set()
+        self._dirty_ideology_files: set[Path] = set()
+        self._dynamic_idea_groups: dict[str, DynamicIdeaGroup] = {}
+        self._dynamic_idea_ids: dict[str, str] = {}
+        self._dynamic_idea_sources: dict[str, Path] = {}
+        self._dirty_dynamic_idea_groups: set[str] = set()
+        self._dirty_dynamic_idea_files: set[Path] = set()
+        self._deleted_dynamic_idea_files: set[Path] = set()
+        self._bookmarks: list[Bookmark] = []
+        self._dirty_bookmarks: set[tuple[Path, int | None]] = set()
+        self._dirty_bookmark_files: set[Path] = set()
+        self._bookmark_date_defines: tuple[Path, str, str] | None = None
         self._loc_entries: dict[str, str] = {}
         self._loc_sources: dict[str, Path] = {}
         self._dirty_loc_keys: set[str] = set()
         self._dirty_loc_files: set[Path] = set()
         self._original_files: dict[Path, str] = {}
+        self._source_baseline: dict[Path, bytes] = {}
         self._dirty: set[str] = set()
         self._vanilla_tags: set[str] = (
             load_vanilla_tags(self.hoi4_install) if self.hoi4_install else set()
@@ -260,6 +409,7 @@ class Mod:
         }
 
         self._load()
+        self._capture_source_baseline()
 
     @classmethod
     def from_config(cls, start: str | Path | None = None) -> Mod:
@@ -284,6 +434,9 @@ class Mod:
         self._load_on_actions()
         self._load_decisions()
         self._load_ideas()
+        self._load_ideologies()
+        self._load_dynamic_ideas()
+        self._load_bookmarks()
         self._load_localization()
 
     @property
@@ -304,11 +457,88 @@ class Mod:
                 f"Failed to load {section} file {path}: {type(error).__name__}: {error}"
             ) from error
 
+    def _record_duplicate_identifier(
+        self,
+        section: str,
+        identifier: str,
+        first_path: Path,
+        duplicate_path: Path,
+    ) -> None:
+        label = section.replace("_", " ")
+        message = (
+            f"Duplicate {label} ID '{identifier}': first defined in {first_path}; "
+            f"also defined in {duplicate_path}"
+        )
+        diagnostic = LoadDiagnostic(
+            section=section,
+            path=duplicate_path,
+            related_path=first_path,
+            identifier=identifier,
+            error_type="DuplicateIdentifierError",
+            message=message,
+        )
+        self._load_diagnostics.append(diagnostic)
+        if self.strict_loading:
+            raise _DuplicateIdentifierError(message)
+
+    def _assert_no_unmodeled_duplicates_in_file(
+        self,
+        path: Path,
+        *,
+        sections: frozenset[str],
+    ) -> None:
+        """Refuse a rewrite that would discard definitions skipped during loading."""
+
+        target = path.resolve(strict=False)
+        conflicts = [
+            diagnostic
+            for diagnostic in self._load_diagnostics
+            if diagnostic.error_type == "DuplicateIdentifierError"
+            and diagnostic.section in sections
+            and diagnostic.path.resolve(strict=False) == target
+        ]
+        if not conflicts:
+            return
+        definitions = ", ".join(
+            f"{diagnostic.section.replace('_', ' ')} "
+            f"'{diagnostic.identifier or '<unknown>'}'"
+            for diagnostic in conflicts
+        )
+        raise RuntimeError(
+            f"Refusing to rewrite {path}: duplicate definitions skipped during loading "
+            f"would be lost ({definitions}). Resolve the duplicate diagnostics first or "
+            "reopen the mod with strict_loading=True to fail during loading."
+        )
+
+    def _load_mod_country_tag_mapping(self) -> dict[str, str]:
+        tags_dir = self.mod_root / "common" / "country_tags"
+        mapping: dict[str, str] = {}
+        sources: dict[str, Path] = {}
+        if not tags_dir.is_dir():
+            return mapping
+        for path in sorted(tags_dir.glob("*.txt")):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for line in text.splitlines():
+                match = _COUNTRY_TAG_LINE_RE.match(line)
+                if match is None:
+                    continue
+                tag, target = match.groups()
+                if tag in sources:
+                    self._record_duplicate_identifier(
+                        "country_tag", tag, sources[tag], path
+                    )
+                    continue
+                sources[tag] = path
+                mapping[tag] = target
+        return mapping
+
     def _load_countries(self) -> None:
         from .countries import _build_loc_cache
 
         loc_cache = _build_loc_cache(self.mod_root)
-        for tag in load_mod_tags(self.mod_root):
+        mod_mapping = self._load_mod_country_tag_mapping()
+        self._country_tag_mappings[self.mod_root] = mod_mapping
+        for tag in sorted(mod_mapping):
             try:
                 self._countries[tag] = read_country(
                     self.mod_root,
@@ -329,7 +559,17 @@ class Mod:
         states_dir = self.mod_root / "history" / "states"
         if not states_dir.exists():
             return
-        self._state_ids = [entry["id"] for entry in build_state_index(states_dir)]
+        for entry in build_state_index(states_dir):
+            state_id = entry["id"]
+            path = Path(entry["path"])
+            first_path = self._state_source_paths.get(state_id)
+            if first_path is not None:
+                self._record_duplicate_identifier(
+                    "state", str(state_id), first_path, path
+                )
+                continue
+            self._state_source_paths[state_id] = path
+            self._state_ids.append(state_id)
 
     def _load_focus_trees(self) -> None:
         focus_dir = self.mod_root / "common" / "national_focus"
@@ -338,11 +578,34 @@ class Mod:
         for f in sorted(focus_dir.glob("*.txt")):
             try:
                 trees = load_focus_trees(f)
+                # Preserve non-focus companion files too. A subsequently
+                # created tree may legitimately target the same file and must
+                # append to, not replace, its unmodeled declarations.
+                self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
                 if not trees:
                     continue
                 for tree in trees:
+                    focus_sources: dict[str, Path] = {}
+                    for focus in tree.focuses:
+                        first_path = focus_sources.get(focus.id)
+                        if first_path is not None:
+                            self._record_duplicate_identifier(
+                                "focus", focus.id, first_path, tree.path or f
+                            )
+                            continue
+                        focus_sources[focus.id] = tree.path or f
+                    existing = self._focus_trees.get(tree.id)
+                    if existing is not None:
+                        self._record_duplicate_identifier(
+                            "focus_tree",
+                            tree.id,
+                            existing.path or f,
+                            tree.path or f,
+                        )
+                        continue
                     self._focus_trees[tree.id] = tree
-                self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+            except _DuplicateIdentifierError:
+                raise
             except Exception as error:
                 self._record_load_error("focus", f, error)
                 continue
@@ -352,9 +615,14 @@ class Mod:
         if not loc_dir.exists():
             return
         self._loc_entries, self._loc_sources = parse_localization_dir(loc_dir)
-        for path in set(self._loc_sources.values()):
-            if path.exists():
-                self._original_files[path] = path.read_text(encoding="utf-8-sig", errors="ignore")
+        # Keep every localization source, including header/comment-only files.
+        # Otherwise adding the first modeled key to such a file would serialize
+        # from an empty baseline and silently discard its existing content.
+        for path in loc_dir.rglob("*.yml"):
+            if path.is_file():
+                self._original_files[path] = path.read_text(
+                    encoding="utf-8-sig", errors="ignore"
+                )
 
     def _load_events(self) -> None:
         events_dir = self.mod_root / "events"
@@ -365,9 +633,20 @@ class Mod:
                 namespace, events = load_events_file(f)
                 self._event_file_namespaces[f] = namespace
                 for event in events:
+                    existing = self._events.get(event.id)
+                    if existing is not None:
+                        self._record_duplicate_identifier(
+                            "event",
+                            event.id,
+                            existing.path or f,
+                            event.path or f,
+                        )
+                        continue
                     self._events[event.id] = event
                     self._event_namespaces[event.id] = namespace
                 self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+            except _DuplicateIdentifierError:
+                raise
             except Exception as error:
                 self._record_load_error("event", f, error)
                 continue
@@ -379,7 +658,12 @@ class Mod:
         for f in sorted(on_actions_dir.glob("*.txt")):
             try:
                 for action in load_on_actions_file(f):
-                    self._on_actions[action.id] = action
+                    # Unlike most Paradox objects, on-actions are hooks.  The
+                    # game composes repeated definitions across files (and
+                    # even repeated definitions in one file), so retain every
+                    # occurrence instead of diagnosing or dropping duplicates.
+                    self._on_action_occurrences.setdefault(action.id, []).append(action)
+                    self._on_actions.setdefault(action.id, action)
                 self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
             except Exception as error:
                 self._record_load_error("on_action", f, error)
@@ -392,11 +676,45 @@ class Mod:
         for f in sorted(decisions_dir.glob("*.txt")):
             try:
                 categories = load_decisions_file(f)
+                file_category_sources: dict[str, Path] = {}
                 for category in categories:
-                    self._decision_categories[category.id] = category
+                    first_category_path = file_category_sources.get(category.id)
+                    if first_category_path is not None:
+                        self._record_duplicate_identifier(
+                            "decision_category",
+                            category.id,
+                            first_category_path,
+                            category.path or f,
+                        )
+                        continue
+                    file_category_sources[category.id] = category.path or f
+                    unique_decisions: list[Decision] = []
+                    pending_sources: dict[str, Path] = {}
                     for decision in category.decisions:
+                        existing = self._decisions.get(decision.id)
+                        pending_source = pending_sources.get(decision.id)
+                        if existing is not None or pending_source is not None:
+                            first_path = (
+                                existing.path or f
+                                if existing is not None
+                                else cast(Path, pending_source)
+                            )
+                            self._record_duplicate_identifier(
+                                "decision",
+                                decision.id,
+                                first_path,
+                                decision.path or f,
+                            )
+                            continue
+                        unique_decisions.append(decision)
+                        pending_sources[decision.id] = decision.path or f
+                    for decision in unique_decisions:
                         self._decisions[decision.id] = decision
+                    category.decisions = unique_decisions
+                    self._decision_categories[category.id] = category
                 self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+            except _DuplicateIdentifierError:
+                raise
             except Exception as error:
                 self._record_load_error("decision", f, error)
                 continue
@@ -413,14 +731,126 @@ class Mod:
                 try:
                     ideas, container = read_ideas_file(f)
                     for idea in ideas:
+                        existing = self._ideas.get(idea.id)
+                        if existing is not None:
+                            self._record_duplicate_identifier(
+                                "idea",
+                                idea.id,
+                                existing.path or f,
+                                idea.path or f,
+                            )
+                            continue
                         self._ideas[idea.id] = idea
                     self._idea_file_containers[f] = container
                     self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+                except _DuplicateIdentifierError:
+                    raise
                 except Exception as error:
                     self._record_load_error("idea", f, error)
                     continue
 
         self._match_idea_files_to_countries()
+
+    def _load_ideologies(self) -> None:
+        if self.hoi4_install is not None:
+            directory = self.hoi4_install / "common" / "ideologies"
+            if directory.is_dir():
+                for path in sorted(directory.glob("*.txt")):
+                    try:
+                        for ideology in load_ideologies_file(path, is_vanilla=True):
+                            self._vanilla_ideologies[ideology.id] = ideology
+                    except Exception:
+                        # Vanilla is reference data; malformed or version-specific files
+                        # must not make an otherwise valid mod impossible to open.
+                        continue
+
+        directory = self.mod_root / "common" / "ideologies"
+        if not directory.is_dir():
+            return
+        for path in sorted(directory.glob("*.txt")):
+            try:
+                for ideology in load_ideologies_file(path):
+                    existing = self._ideologies.get(ideology.id)
+                    if existing is not None:
+                        self._record_duplicate_identifier(
+                            "ideology",
+                            ideology.id,
+                            existing.path or path,
+                            ideology.path or path,
+                        )
+                        continue
+                    self._ideologies[ideology.id] = ideology
+                self._original_files[path] = path.read_text(encoding="utf-8", errors="ignore")
+            except _DuplicateIdentifierError:
+                raise
+            except Exception as error:
+                self._record_load_error("ideology", path, error)
+
+    def _load_dynamic_ideas(self) -> None:
+        directory = self.mod_root / "common" / "national_ideas"
+        if not directory.is_dir():
+            return
+        for path in sorted(directory.glob("*.txt")):
+            try:
+                group = load_dynamic_ideas_file(path)
+                # Mixed national-idea files without a dynamic container are
+                # still possible targets for a new group.
+                self._original_files[path] = path.read_text(
+                    encoding="utf-8", errors="ignore"
+                )
+                if group is None:
+                    continue
+                existing_group = self._dynamic_idea_groups.get(group.name)
+                if existing_group is not None:
+                    self._record_duplicate_identifier(
+                        "dynamic_idea_group",
+                        group.name,
+                        existing_group.path or path,
+                        group.path or path,
+                    )
+                    continue
+                unique_ideas: list[DynamicIdea] = []
+                for idea in group.ideas:
+                    first_group_name = self._dynamic_idea_ids.get(idea.id)
+                    if first_group_name is not None:
+                        self._record_duplicate_identifier(
+                            "dynamic_idea",
+                            idea.id,
+                            self._dynamic_idea_sources[idea.id],
+                            idea.path or path,
+                        )
+                        continue
+                    self._dynamic_idea_ids[idea.id] = group.name
+                    self._dynamic_idea_sources[idea.id] = idea.path or path
+                    unique_ideas.append(idea)
+                group.ideas = unique_ideas
+                self._dynamic_idea_groups[group.name] = group
+            except _DuplicateIdentifierError:
+                raise
+            except Exception as error:
+                self._record_load_error("dynamic_idea", path, error)
+
+    def _load_bookmarks(self) -> None:
+        directory = self.mod_root / "common" / "bookmarks"
+        if not directory.is_dir():
+            return
+        sources: dict[str, Path] = {}
+        for path in sorted(directory.glob("*.txt")):
+            try:
+                for bookmark in load_bookmarks_file(path):
+                    first_path = sources.get(bookmark.name)
+                    if first_path is not None:
+                        self._record_duplicate_identifier(
+                            "bookmark", bookmark.name, first_path, bookmark.path or path
+                        )
+                        continue
+                    sources[bookmark.name] = bookmark.path or path
+                    self._bookmarks.append(bookmark)
+                self._original_files[path] = path.read_text(encoding="utf-8", errors="ignore")
+            except _DuplicateIdentifierError:
+                raise
+            except Exception as error:
+                self._record_load_error("bookmark", path, error)
 
     def _match_idea_files_to_countries(self) -> None:
         ideas_dir = self.mod_root / "common" / "ideas"
@@ -519,6 +949,10 @@ class Mod:
                 self._original_files.setdefault(
                     path, path.read_text(encoding="utf-8", errors="ignore")
                 )
+                if path.resolve(strict=False).is_relative_to(self.mod_root):
+                    self._source_baseline.setdefault(
+                        path.resolve(strict=False), path.read_bytes()
+                    )
         return country
 
     def create_country(
@@ -538,22 +972,55 @@ class Mod:
         allow_vanilla_override: bool = False,
     ) -> Country:
         tag = require_country_tag(tag)
-        if tag in self._countries and not overwrite:
+        existing = self._countries.get(tag)
+        if existing is not None and not overwrite:
             raise ValueError(
                 f"Country tag '{tag}' already exists in the mod. "
                 "Use overwrite=True only when intentionally replacing that mod country."
             )
+        if existing is None and not overwrite:
+            orphan_candidates = [
+                self.mod_root / "common" / "countries" / f"{tag}.txt",
+                self.mod_root / "common" / "characters" / f"{tag}_characters.txt",
+                self.mod_root / "common" / "characters" / f"{tag}.txt",
+            ]
+            history_dir = self.mod_root / "history" / "countries"
+            if history_dir.is_dir():
+                orphan_candidates.extend(sorted(history_dir.glob(f"{tag}*.txt")))
+            conflicts = [path for path in orphan_candidates if path.exists()]
+            if conflicts:
+                displayed = ", ".join(self._display_path(path) for path in conflicts)
+                raise FileExistsError(
+                    f"Country tag '{tag}' is not registered, but country files already "
+                    f"exist and would be overwritten: {displayed}. Pass overwrite=True "
+                    "only if replacing those orphaned files is intentional."
+                )
         if tag in self._vanilla_tags and not allow_vanilla_override:
             raise ValueError(
                 f"Country tag '{tag}' is already used by vanilla HOI4. "
                 "Choose an unused tag or pass allow_vanilla_override=True intentionally."
             )
         if leader_ideology is None:
-            leader_ideology = self.default_leader_ideology(ruling_party)
+            leader_ideology = self._default_leader_ideology_for_party(ruling_party)
+
+        def preserved_mod_path(path: Path | None) -> Path | None:
+            if path is None:
+                return None
+            resolved = path.resolve(strict=False)
+            if resolved.is_relative_to(self.mod_root):
+                return resolved
+            if self.hoi4_install is not None and resolved.is_relative_to(self.hoi4_install):
+                return resolve_mod_output_path(
+                    self.mod_root,
+                    resolved.relative_to(self.hoi4_install),
+                )
+            return None
+
         leader = Leader(
             name=leader_name,
             character_id=f"{tag}_leader_1",
             ideology=leader_ideology,
+            portrait_slug="leader_1",
         )
         country = Country(
             tag=tag,
@@ -566,6 +1033,15 @@ class Mod:
             popularities=popularities or {},
             leader=leader,
             ideas=ideas or [],
+            definition_path=(
+                preserved_mod_path(existing.definition_path) if existing is not None else None
+            ),
+            history_path=(
+                preserved_mod_path(existing.history_path) if existing is not None else None
+            ),
+            character_path=(
+                preserved_mod_path(existing.character_path) if existing is not None else None
+            ),
             touched_fields={"*"},
         )
         self._countries[tag] = country
@@ -589,10 +1065,16 @@ class Mod:
         return country
 
     def update_country(self, tag: str, **kwargs) -> bool:
-        tag = tag.upper()
+        try:
+            tag = require_country_tag(tag)
+        except ValueError:
+            return False
         country = self._countries.get(tag)
+        if country is None and tag in self._vanilla_tags:
+            country = self.get_country(tag)
         if country is None:
             return False
+        self._materialize_country_override(country)
         leader_kwargs = {}
         other_kwargs = {}
         for key, value in kwargs.items():
@@ -610,7 +1092,9 @@ class Mod:
             _set_fields(country.leader, leader_kwargs)
         country.touched_fields.update(other_kwargs)
         country.touched_fields.update(f"leader_{key}" for key in leader_kwargs)
-        if {"name", "adjective"} & set(other_kwargs) or leader_kwargs:
+        if {"name", "adjective", "popularities", "ruling_party"} & set(
+            other_kwargs
+        ) or leader_kwargs:
             self._sync_country_loc(country)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
@@ -624,9 +1108,18 @@ class Mod:
         if tag not in self._countries:
             return False
         country = self._countries.pop(tag)
+        if any(
+            path is not None and not path.resolve(strict=False).is_relative_to(self.mod_root)
+            for path in (country.definition_path, country.history_path, country.character_path)
+        ):
+            self._countries[tag] = country
+            raise ValueError(
+                f"Cannot delete vanilla country '{tag}' without an explicit total-conversion "
+                "tag replacement strategy"
+            )
         self._deleted_countries[tag] = country
         loc_keys: list[str] = []
-        for suffix in ("", "_neutrality", "_democratic", "_fascism", "_communism"):
+        for suffix in _country_localisation_suffixes(country):
             key = f"{tag}{suffix}"
             loc_keys.extend((key, f"{key}_DEF"))
         loc_keys.append(f"{tag}_ADJ")
@@ -637,6 +1130,32 @@ class Mod:
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
         return True
+
+    def _materialize_country_override(self, country: Country) -> None:
+        """Retarget vanilla-backed country files into equivalent mod paths."""
+
+        path_fields = (
+            ("definition_path", Path("common/countries") / f"{country.tag}.txt"),
+            (
+                "history_path",
+                Path("history/countries")
+                / f"{country.tag} - {country.name or country.tag}.txt",
+            ),
+            ("character_path", Path("common/characters") / f"{country.tag}_characters.txt"),
+        )
+        for field_name, fallback in path_fields:
+            source = getattr(country, field_name)
+            if source is None or source.resolve(strict=False).is_relative_to(self.mod_root):
+                continue
+            relative = fallback
+            if self.hoi4_install is not None:
+                try:
+                    relative = source.resolve(strict=False).relative_to(self.hoi4_install)
+                except ValueError:
+                    pass
+            target = resolve_mod_output_path(self.mod_root, relative)
+            setattr(country, field_name, target)
+            self._original_files.setdefault(target, self._read_current_text(target))
 
     # ── States ──────────────────────────────────────────────────
 
@@ -661,7 +1180,10 @@ class Mod:
                 entries.append(item)
         by_id: dict[int, dict] = {}
         for entry in entries:
-            if entry["id"] not in by_id or entry["source"] == "mod":
+            existing = by_id.get(entry["id"])
+            if existing is None or (
+                existing["source"] == "vanilla" and entry["source"] == "mod"
+            ):
                 by_id[entry["id"]] = entry
         result = sorted(by_id.values(), key=lambda item: item["id"])
         self._state_index_cache[include_vanilla] = [dict(entry) for entry in result]
@@ -700,22 +1222,60 @@ class Mod:
         return [entry for _, entry in scored[:limit]]
 
     def get_state(self, state_id: int) -> State:
+        """Load a state without changing the mod directory.
+
+        Vanilla fallback states remain backed by their vanilla source until a
+        mutating state API explicitly materializes an override under the mod.
+        """
         if state_id in self._states:
             return self._states[state_id]
         states_dir = self.mod_root / "history" / "states"
-        f = find_state_file(states_dir, state_id)
+        f = self._state_source_paths.get(state_id)
+        if f is not None and not f.exists():
+            f = None
+        if f is None:
+            f = find_state_file(states_dir, state_id)
         if not f and self.hoi4_install:
-            f = ensure_state_in_mod(self.mod_root, self.hoi4_install, state_id)
+            f = find_state_file(self.hoi4_install / "history" / "states", state_id)
         if f:
             state = read_state(f)
             self._states[state_id] = state
+            self._state_source_paths.setdefault(state_id, f)
             self._original_files.setdefault(f, f.read_text(encoding="utf-8", errors="ignore"))
+            self._source_baseline.setdefault(f.resolve(strict=False), f.read_bytes())
             return state
         raise KeyError(f"State {state_id} not found")
+
+    def _materialize_state_override(self, state: State) -> bool:
+        """Retarget a vanilla-backed state to its equivalent in-mod path.
+
+        This only changes queued in-memory state. The source file is copied by
+        the normal preview/save rendering path, so reads and validation never
+        create files as a side effect.
+        """
+
+        source = state.path or state.source_path or self._state_source_paths.get(state.id)
+        if source is None:
+            relative = Path("history") / "states" / f"{state.id} - {state.name or state.id}.txt"
+        elif source.resolve(strict=False).is_relative_to(self.mod_root):
+            return False
+        else:
+            relative = Path("history") / "states" / source.name
+            if self.hoi4_install is not None:
+                try:
+                    relative = source.resolve(strict=False).relative_to(self.hoi4_install)
+                except ValueError:
+                    pass
+        target = resolve_mod_output_path(self.mod_root, relative)
+        state.path = target
+        self._state_source_paths[state.id] = target
+        self._original_files.setdefault(target, self._read_current_text(target))
+        return True
 
     def set_state_owner(self, state_id: int, tag: str, add_core: bool = True) -> State:
         tag = require_country_tag(tag)
         state = self.get_state(state_id)
+        self._materialize_state_override(state)
         state.owner = tag
         if add_core and tag not in state.cores:
             state.cores.append(tag)
@@ -725,6 +1285,7 @@ class Mod:
 
     def set_state_properties(self, state_id: int, **kwargs) -> bool:
         state = self.get_state(state_id)
+        self._materialize_state_override(state)
         for list_key in ("cores", "provinces"):
             if list_key in kwargs and isinstance(kwargs[list_key], list):
                 kwargs[list_key] = _append_unique(getattr(state, list_key), kwargs[list_key])
@@ -735,6 +1296,7 @@ class Mod:
 
     def add_state_core(self, state_id: int, tag: str) -> State:
         state = self.get_state(state_id)
+        self._materialize_state_override(state)
         tag = require_country_tag(tag)
         if tag not in state.cores:
             state.cores.append(tag)
@@ -744,6 +1306,7 @@ class Mod:
 
     def remove_state_core(self, state_id: int, tag: str) -> State:
         state = self.get_state(state_id)
+        self._materialize_state_override(state)
         tag = require_country_tag(tag)
         state.cores = [core for core in state.cores if core != tag]
         self._dirty.add("states")
@@ -760,6 +1323,7 @@ class Mod:
     ) -> State:
         """Queue a minimal owner/core history patch for the next ``save()``."""
         state = self.get_state(state_id)
+        self._materialize_state_override(state)
         removed = {tag.upper() for tag in (remove_cores or [])}
         state.cores = [core for core in state.cores if core not in removed]
         for core in add_cores or []:
@@ -961,12 +1525,78 @@ class Mod:
     def list_on_actions(self) -> list[str]:
         return sorted(self._on_actions.keys())
 
-    def get_on_action(self, action_id: str) -> OnAction:
-        if action_id not in self._on_actions:
+    def get_on_action_occurrences(self, action_id: str) -> tuple[OnAction, ...]:
+        """Return every compositional occurrence of an on-action hook."""
+
+        occurrences = self._on_action_occurrences.get(action_id)
+        if not occurrences:
             raise KeyError(
                 f"On-action '{action_id}' not found. Available: {self.list_on_actions()}"
             )
-        return self._on_actions[action_id]
+        return tuple(occurrences)
+
+    def _select_on_action_occurrence(
+        self,
+        action_id: str,
+        *,
+        occurrence: int | None,
+        source_path: str | Path | None,
+        require_unique: bool,
+    ) -> tuple[int, OnAction]:
+        actions = self._on_action_occurrences.get(action_id)
+        if not actions:
+            raise KeyError(
+                f"On-action '{action_id}' not found. Available: {self.list_on_actions()}"
+            )
+        candidates = list(enumerate(actions))
+        if source_path is not None:
+            target = resolve_mod_output_path(self.mod_root, source_path)
+            candidates = [
+                (index, action)
+                for index, action in candidates
+                if (action.path or self.mod_root / "common/on_actions/mod_on_actions.txt")
+                .resolve(strict=False)
+                == target
+            ]
+            if not candidates:
+                raise KeyError(
+                    f"On-action '{action_id}' has no occurrence in {target}"
+                )
+        if occurrence is None:
+            if require_unique and len(candidates) != 1:
+                locations = ", ".join(
+                    f"{index}: {action.path or '<generated>'}"
+                    for index, action in candidates
+                )
+                raise ValueError(
+                    f"On-action '{action_id}' has {len(candidates)} compositional "
+                    f"occurrences ({locations}). Specify occurrence= or source_path= "
+                    "to choose one safely."
+                )
+            occurrence = 0
+        if occurrence < 0 or occurrence >= len(candidates):
+            raise IndexError(
+                f"On-action '{action_id}' occurrence {occurrence} is out of range "
+                f"for {len(candidates)} matching occurrence(s)"
+            )
+        return candidates[occurrence]
+
+    def get_on_action(
+        self,
+        action_id: str,
+        *,
+        occurrence: int = 0,
+        source_path: str | Path | None = None,
+    ) -> OnAction:
+        """Return one hook occurrence, defaulting to the first in load order."""
+
+        _, action = self._select_on_action_occurrence(
+            action_id,
+            occurrence=occurrence,
+            source_path=source_path,
+            require_unique=False,
+        )
+        return action
 
     def create_on_action(
         self,
@@ -979,47 +1609,117 @@ class Mod:
         overwrite: bool = False,
     ) -> OnAction:
         action_id = require_script_id(action_id, label="on-action ID")
-        existing = self._on_actions.get(action_id)
-        if existing is not None and not overwrite:
+        existing = self._on_action_occurrences.get(action_id, [])
+        default_path = self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
+        if path is None and overwrite and len(existing) > 1:
             raise ValueError(
-                f"On-action '{action_id}' already exists. Use overwrite=True to replace it or update_on_action() to patch it."
+                f"On-action '{action_id}' has multiple compositional occurrences; "
+                "specify path= to choose which file to overwrite"
             )
-        if existing is not None and existing.path is not None:
-            self._dirty_on_action_files.add(existing.path)
         target = (
             resolve_mod_output_path(self.mod_root, path)
             if path is not None
             else (
-                existing.path
-                if existing is not None and existing.path is not None
-                else self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
+                existing[0].path
+                if overwrite and len(existing) == 1 and existing[0].path is not None
+                else default_path
             )
         )
+        target_existing = [
+            action
+            for action in existing
+            if (action.path or default_path).resolve(strict=False) == target
+        ]
+        if target_existing and not overwrite:
+            raise ValueError(
+                f"On-action '{action_id}' already has an occurrence in {target}. "
+                "Use overwrite=True to replace that occurrence, update_on_action() "
+                "to patch it, or choose another path for an additive extension."
+            )
+        if len(target_existing) > 1:
+            raise ValueError(
+                f"On-action '{action_id}' occurs multiple times in {target}; "
+                "create_on_action(overwrite=True) cannot choose one safely. Use "
+                "update_on_action(..., source_path=..., occurrence=...)."
+            )
+        replaced = target_existing[0] if target_existing else None
+        if replaced is not None and replaced.path is not None:
+            self._dirty_on_action_files.add(replaced.path)
         action = OnAction(
             id=action_id,
             effect=normalize_block_body(effect),
-            events=events or [],
-            random_events=random_events or [],
+            events=list(events or ()),
+            random_events=list(random_events or ()),
             path=target,
             touched=True,
+            source_path=replaced.source_path if replaced is not None else None,
+            source_occurrence=(
+                replaced.source_occurrence if replaced is not None else -1
+            ),
         )
-        self._on_actions[action_id] = action
+        if replaced is None:
+            existing.append(action)
+            self._on_action_occurrences[action_id] = existing
+            self._on_actions.setdefault(action_id, action)
+        else:
+            index = existing.index(replaced)
+            existing[index] = action
+            if self._on_actions.get(action_id) is replaced:
+                self._on_actions[action_id] = action
         self._dirty.add("on_actions")
         self._dirty_on_actions.add(action_id)
         self._dirty_on_action_files.add(target)
         return action
 
     def ensure_on_action(self, action_id: str, **kwargs) -> OnAction:
-        """Create an on-action if missing, otherwise patch the existing one."""
-        if action_id in self._on_actions:
-            self.update_on_action(action_id, **kwargs)
-            return self._on_actions[action_id]
+        """Ensure one occurrence, using the requested/default file as its identity."""
+
+        occurrences = self._on_action_occurrences.get(action_id, [])
+        if len(occurrences) == 1:
+            self.update_on_action(action_id, occurrence=0, **kwargs)
+            return occurrences[0]
+        if occurrences:
+            path_arg = kwargs.get("path")
+            target = (
+                resolve_mod_output_path(self.mod_root, path_arg)
+                if path_arg is not None
+                else self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
+            )
+            matching = [
+                index
+                for index, action in enumerate(occurrences)
+                if (
+                    action.path
+                    or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
+                ).resolve(strict=False)
+                == target
+            ]
+            if len(matching) == 1:
+                self.update_on_action(action_id, occurrence=matching[0], **kwargs)
+                return occurrences[matching[0]]
+            if len(matching) > 1:
+                raise ValueError(
+                    f"On-action '{action_id}' occurs multiple times in {target}; "
+                    "ensure_on_action() cannot choose one safely"
+                )
         return self.create_on_action(action_id, **kwargs)
 
-    def update_on_action(self, action_id: str, **kwargs) -> bool:
-        action = self._on_actions.get(action_id)
-        if action is None:
+    def update_on_action(
+        self,
+        action_id: str,
+        *,
+        occurrence: int | None = None,
+        source_path: str | Path | None = None,
+        **kwargs,
+    ) -> bool:
+        if action_id not in self._on_action_occurrences:
             return False
+        _, action = self._select_on_action_occurrence(
+            action_id,
+            occurrence=occurrence,
+            source_path=source_path,
+            require_unique=True,
+        )
         old_path = action.path
         if "effect" in kwargs and isinstance(kwargs["effect"], str):
             kwargs["effect"] = normalize_block_body(kwargs["effect"])
@@ -1038,11 +1738,28 @@ class Mod:
         )
         return True
 
-    def delete_on_action(self, action_id: str) -> bool:
-        action = self._on_actions.get(action_id)
-        if action is None:
+    def delete_on_action(
+        self,
+        action_id: str,
+        *,
+        occurrence: int | None = None,
+        source_path: str | Path | None = None,
+    ) -> bool:
+        actions = self._on_action_occurrences.get(action_id)
+        if not actions:
             return False
-        del self._on_actions[action_id]
+        index, action = self._select_on_action_occurrence(
+            action_id,
+            occurrence=occurrence,
+            source_path=source_path,
+            require_unique=True,
+        )
+        del actions[index]
+        if actions:
+            self._on_actions[action_id] = actions[0]
+        else:
+            del self._on_action_occurrences[action_id]
+            del self._on_actions[action_id]
         self._dirty.add("on_actions")
         self._dirty_on_actions.discard(action_id)
         self._dirty_on_action_files.add(
@@ -1083,16 +1800,48 @@ class Mod:
         overwrite: bool = False,
     ) -> DecisionCategory:
         category_id = require_script_id(category_id, label="decision category ID")
-        if category_id in self._decision_categories and not overwrite:
+        existing = self._decision_categories.get(category_id)
+        if existing is not None and not overwrite:
             raise ValueError(
                 f"Decision category '{category_id}' already exists. "
                 "Use overwrite=True to replace it or update existing decisions."
             )
+        existing_decisions = [
+            decision
+            for decision in self._decisions.values()
+            if decision.category == category_id
+        ]
+        if existing is not None:
+            canonical_path = existing.path
+            extended_paths = {
+                decision.path.resolve(strict=False)
+                for decision in existing_decisions
+                if decision.path is not None
+                and (
+                    canonical_path is None
+                    or decision.path.resolve(strict=False)
+                    != canonical_path.resolve(strict=False)
+                )
+            }
+            if extended_paths:
+                raise RuntimeError(
+                    f"Decision category '{category_id}' is extended across multiple files; "
+                    "cannot safely overwrite the whole category. Consolidate it first."
+                )
         target = (
             resolve_mod_output_path(self.mod_root, path)
             if path is not None
-            else self.mod_root / "common" / "decisions" / "mod_decisions.txt"
+            else (
+                existing.path
+                if existing is not None and existing.path is not None
+                else self.mod_root / "common" / "decisions" / "mod_decisions.txt"
+            )
         )
+        if existing is not None:
+            if existing.path is not None:
+                self._dirty_decision_files.add(existing.path)
+            for decision in existing_decisions:
+                self._decisions.pop(decision.id, None)
         category = DecisionCategory(
             id=category_id, icon=icon, allowed=allowed, visible=visible, path=target
         )
@@ -1100,6 +1849,7 @@ class Mod:
         self._decision_categories[category_id] = category
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(category_id)
+        self._dirty_decision_files.add(target)
         return category
 
     def ensure_decision_category(self, category_id: str, **kwargs) -> DecisionCategory:
@@ -1152,6 +1902,8 @@ class Mod:
                 f"Decision '{decision_id}' already exists. "
                 "Use overwrite=True to replace it or update_decision() to patch it."
             )
+        if existing is not None:
+            self._assert_decision_occurrence_is_editable(existing)
         category = self._decision_categories.get(category_id)
         if category is None:
             category = self.create_decision_category(category_id, path=path)
@@ -1200,6 +1952,7 @@ class Mod:
         decision = self._decisions.get(decision_id)
         if decision is None:
             return False
+        self._assert_decision_occurrence_is_editable(decision)
         if "id" in kwargs or "category" in kwargs:
             raise ValueError(
                 "Decision identity/category are immutable; recreate the decision to move it"
@@ -1212,9 +1965,11 @@ class Mod:
         return True
 
     def delete_decision(self, decision_id: str) -> bool:
-        decision = self._decisions.pop(decision_id, None)
+        decision = self._decisions.get(decision_id)
         if decision is None:
             return False
+        self._assert_decision_occurrence_is_editable(decision)
+        del self._decisions[decision_id]
         category = self._decision_categories.get(decision.category)
         if category:
             category.decisions = [
@@ -1225,6 +1980,21 @@ class Mod:
                 self._dirty_decision_files.add(category.path)
         self._dirty.add("decisions")
         return True
+
+    def _assert_decision_occurrence_is_editable(self, decision: Decision) -> None:
+        category = self._decision_categories.get(decision.category)
+        if (
+            category is None
+            or decision.path is None
+            or category.path is None
+            or decision.path.resolve(strict=False) == category.path.resolve(strict=False)
+        ):
+            return
+        raise RuntimeError(
+            f"Decision category '{decision.category}' is extended across multiple files; "
+            f"cannot safely mutate '{decision.id}' in {decision.path}. Consolidate the "
+            "category or edit that source file directly."
+        )
 
     def create_decision_chain(
         self,
@@ -1376,6 +2146,9 @@ class Mod:
         category: str = "country",
         path: str | Path | None = None,
         overwrite: bool = False,
+        *,
+        desc: str = "",
+        removal_cost: str | int | float | None = None,
     ) -> Idea:
         idea_id = require_script_id(idea_id, label="idea ID")
         existing = self._ideas.get(idea_id)
@@ -1383,7 +2156,15 @@ class Mod:
             raise ValueError(
                 f"Idea '{idea_id}' already exists. Use overwrite=True to replace it or update_idea() to patch it."
             )
-        idea = Idea(id=idea_id, icon=icon, modifier=modifier or {}, category=category, touched=True)
+        idea = Idea(
+            id=idea_id,
+            icon=icon,
+            desc=desc,
+            removal_cost=removal_cost,
+            modifier=dict(modifier or {}),
+            category=category,
+            touched=True,
+        )
         if existing is not None and existing.path is not None:
             self._dirty_idea_files.add(existing.path)
         if path is not None:
@@ -1405,30 +2186,47 @@ class Mod:
         self._dirty_ideas.add(idea_id)
         return idea
 
-    def ensure_idea(self, idea_id: str, **kwargs) -> Idea:
-        """Create an idea if missing, otherwise update the existing idea."""
+    def ensure_idea(self, idea_id: str, *, merge_modifier: bool = False, **kwargs) -> Idea:
+        """Create an idea if missing, otherwise update the existing idea.
+
+        Existing modifiers are replaced by default. Pass
+        ``merge_modifier=True`` to merge supplied keys instead.
+        """
         if idea_id in self._ideas:
-            self.update_idea(idea_id, **kwargs)
+            self.update_idea(idea_id, merge_modifier=merge_modifier, **kwargs)
             return self._ideas[idea_id]
         return self.create_idea(idea_id, **kwargs)
 
-    def update_idea(self, idea_id: str, **kwargs) -> bool:
+    def update_idea(self, idea_id: str, *, merge_modifier: bool = False, **kwargs) -> bool:
+        """Update an idea, replacing its modifier mapping by default.
+
+        ``modifier={}`` therefore clears the block. Pass
+        ``merge_modifier=True`` for the legacy key-by-key merge behavior.
+        """
         idea = self._ideas.get(idea_id)
         if idea is None:
             return False
         if "id" in kwargs:
             raise ValueError("Idea IDs are immutable; create a new idea instead")
+        touched_fields = set(kwargs) - {"path"}
         old_path = idea.path
         if "path" in kwargs:
             kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+        modifier_supplied = "modifier" in kwargs
         modifier_val = kwargs.pop("modifier", None)
-        if modifier_val is not None:
+        if modifier_supplied and modifier_val is not None:
             if not isinstance(modifier_val, dict):
                 raise TypeError(f"modifier must be a dict, got {type(modifier_val).__name__}")
-            idea.modifier.update(modifier_val)
+            if merge_modifier:
+                idea.modifier.update(modifier_val)
+            else:
+                idea.modifier = dict(modifier_val)
+            idea.modifier_merge = merge_modifier
+            touched_fields.add("modifier")
         if kwargs:
             _set_fields(idea, kwargs, allow_path=True)
         idea.touched = True
+        idea.touched_fields.update(touched_fields)
         if old_path is not None:
             self._dirty_idea_files.add(old_path)
         if idea.path is not None:
@@ -1451,6 +2249,435 @@ class Mod:
     def set_idea_path(self, tag: str, path: str | Path) -> None:
         tag = require_country_tag(tag)
         self._cached_idea_file[tag] = resolve_mod_output_path(self.mod_root, path)
+
+    # ── Ideologies ───────────────────────────────────────────────
+
+    def list_ideologies(self, *, include_vanilla: bool = True) -> list[str]:
+        ids = set(self._ideologies)
+        if include_vanilla:
+            ids.update(self._vanilla_ideologies)
+        return sorted(ids)
+
+    def get_ideology(self, ideology_id: str, *, include_vanilla: bool = True) -> Ideology:
+        ideology = self._ideologies.get(ideology_id)
+        if ideology is None and include_vanilla:
+            ideology = self._vanilla_ideologies.get(ideology_id)
+        if ideology is None:
+            raise KeyError(
+                f"Ideology '{ideology_id}' not found. Available: {self.list_ideologies(include_vanilla=include_vanilla)}"
+            )
+        return ideology
+
+    def create_ideology(
+        self,
+        ideology_id: str,
+        *,
+        color: tuple[int, int, int] = (128, 128, 128),
+        types: list[SubIdeology] | None = None,
+        rules: dict[str, str] | None = None,
+        modifiers: dict[str, str] | None = None,
+        hidden_modifiers: dict[str, str] | None = None,
+        faction_modifiers: dict[str, str] | None = None,
+        dynamic_faction_names: list[str] | None = None,
+        ai_behavior: str = "",
+        can_host_government_in_exile: bool = False,
+        can_collaborate: bool = False,
+        effects: list[str] | None = None,
+        path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Ideology:
+        ideology_id = require_script_id(ideology_id, label="ideology ID")
+        existing = self._ideologies.get(ideology_id)
+        if existing is not None and not overwrite:
+            raise ValueError(
+                f"Ideology '{ideology_id}' already exists. Use overwrite=True or update_ideology()."
+            )
+        target = (
+            resolve_mod_output_path(self.mod_root, path)
+            if path is not None
+            else self.mod_root / "common" / "ideologies" / "00_mod_ideologies.txt"
+        )
+        ideology = Ideology(
+            id=ideology_id,
+            color=color,
+            types=list(types or []),
+            rules=dict(rules or {}),
+            modifiers=dict(modifiers or {}),
+            hidden_modifiers=dict(hidden_modifiers or {}),
+            faction_modifiers=dict(faction_modifiers or {}),
+            dynamic_faction_names=list(dynamic_faction_names or []),
+            ai_behavior=ai_behavior,
+            can_host_government_in_exile=can_host_government_in_exile,
+            can_collaborate=can_collaborate,
+            effects=list(effects or []),
+            path=target,
+        )
+        if existing is not None and existing.path is not None:
+            self._dirty_ideology_files.add(existing.path)
+        self._ideologies[ideology_id] = ideology
+        self._dirty_ideologies.add(ideology_id)
+        self._dirty_ideology_files.add(target)
+        self._dirty.add("ideologies")
+        return ideology
+
+    def update_ideology(self, ideology_id: str, **kwargs) -> bool:
+        ideology = self._ideologies.get(ideology_id)
+        if ideology is None:
+            vanilla = self._vanilla_ideologies.get(ideology_id)
+            if vanilla is None:
+                return False
+            ideology = copy.deepcopy(vanilla)
+            ideology.is_vanilla = False
+            ideology.path = (
+                self.mod_root / "common" / "ideologies" / "00_mod_ideologies.txt"
+            )
+            self._ideologies[ideology_id] = ideology
+        forbidden = {"id", "raw_block", "touched_fields", "is_vanilla"} & set(kwargs)
+        if forbidden:
+            raise ValueError(f"Immutable/internal ideology fields: {sorted(forbidden)}")
+        old_path = ideology.path
+        if "path" in kwargs:
+            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+        _set_fields(ideology, kwargs, allow_path=True)
+        ideology.touched_fields.update(key for key in kwargs if key != "path")
+        if old_path is not None:
+            self._dirty_ideology_files.add(old_path)
+        if ideology.path is not None:
+            self._dirty_ideology_files.add(ideology.path)
+        self._dirty_ideologies.add(ideology_id)
+        self._dirty.add("ideologies")
+        return True
+
+    def delete_ideology(self, ideology_id: str) -> bool:
+        ideology = self._ideologies.pop(ideology_id, None)
+        if ideology is None:
+            return False
+        if ideology.path is not None:
+            self._dirty_ideology_files.add(ideology.path)
+        self._dirty_ideologies.discard(ideology_id)
+        self._dirty.add("ideologies")
+        return True
+
+    # ── Dynamic Ideas ────────────────────────────────────────────
+
+    def list_dynamic_idea_groups(self) -> list[str]:
+        return sorted(self._dynamic_idea_groups)
+
+    def list_dynamic_ideas(self) -> list[str]:
+        return sorted(self._dynamic_idea_ids)
+
+    def get_dynamic_idea_group(self, group_name: str) -> DynamicIdeaGroup:
+        try:
+            return self._dynamic_idea_groups[group_name]
+        except KeyError as error:
+            raise KeyError(
+                f"Dynamic idea group '{group_name}' not found. Available: {self.list_dynamic_idea_groups()}"
+            ) from error
+
+    def get_dynamic_idea(self, idea_id: str) -> DynamicIdea:
+        group_name = self._dynamic_idea_ids.get(idea_id)
+        if group_name is None:
+            raise KeyError(
+                f"Dynamic idea '{idea_id}' not found. Available: {self.list_dynamic_ideas()}"
+            )
+        return next(
+            idea for idea in self._dynamic_idea_groups[group_name].ideas if idea.id == idea_id
+        )
+
+    def create_dynamic_idea_group(
+        self,
+        group_name: str,
+        *,
+        path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> DynamicIdeaGroup:
+        group_name = require_script_id(group_name, label="dynamic idea group")
+        existing = self._dynamic_idea_groups.get(group_name)
+        if existing is not None and not overwrite:
+            raise ValueError(f"Dynamic idea group '{group_name}' already exists")
+        target = (
+            resolve_mod_output_path(self.mod_root, path)
+            if path is not None
+            else self.mod_root
+            / "common"
+            / "national_ideas"
+            / f"{safe_file_stem(group_name)}.txt"
+        )
+        conflicting_group = next(
+            (
+                group.name
+                for group in self._dynamic_idea_groups.values()
+                if group.name != group_name and group.path == target
+            ),
+            None,
+        )
+        if conflicting_group is not None:
+            raise ValueError(
+                f"Dynamic idea group '{conflicting_group}' already uses target file {target}"
+            )
+        if existing is not None:
+            for idea in existing.ideas:
+                self._dynamic_idea_ids.pop(idea.id, None)
+                self._dynamic_idea_sources.pop(idea.id, None)
+            if existing.path is not None:
+                self._dirty_dynamic_idea_files.add(existing.path)
+        group = DynamicIdeaGroup(name=group_name, path=target)
+        self._dynamic_idea_groups[group_name] = group
+        self._dirty_dynamic_idea_groups.add(group_name)
+        self._dirty_dynamic_idea_files.add(target)
+        self._deleted_dynamic_idea_files.discard(target)
+        self._dirty.add("dynamic_ideas")
+        return group
+
+    def create_dynamic_idea(
+        self,
+        group_name: str,
+        idea_id: str,
+        *,
+        potential: str = "",
+        available: str = "",
+        modifier: dict[str, str | int | float | bool] | None = None,
+        overwrite: bool = False,
+    ) -> DynamicIdea:
+        idea_id = require_script_id(idea_id, label="dynamic idea ID")
+        if idea_id in self._dynamic_idea_ids:
+            if not overwrite:
+                raise ValueError(f"Dynamic idea '{idea_id}' already exists")
+            self.delete_dynamic_idea(idea_id)
+        group = self.get_dynamic_idea_group(group_name)
+        idea = DynamicIdea(
+            id=idea_id,
+            potential=normalize_block_body(potential),
+            available=normalize_block_body(available),
+            modifier=dict(modifier or {}),
+            path=group.path,
+        )
+        group.ideas.append(idea)
+        self._dynamic_idea_ids[idea_id] = group_name
+        if group.path is not None:
+            self._dynamic_idea_sources[idea_id] = group.path
+            self._dirty_dynamic_idea_files.add(group.path)
+        self._dirty_dynamic_idea_groups.add(group_name)
+        self._dirty.add("dynamic_ideas")
+        return idea
+
+    def update_dynamic_idea(self, idea_id: str, **kwargs) -> bool:
+        group_name = self._dynamic_idea_ids.get(idea_id)
+        if group_name is None:
+            return False
+        idea = self.get_dynamic_idea(idea_id)
+        forbidden = {"id", "path", "raw_block", "touched_fields"} & set(kwargs)
+        if forbidden:
+            raise ValueError(f"Immutable/internal dynamic idea fields: {sorted(forbidden)}")
+        for key in ("potential", "available"):
+            if key in kwargs:
+                kwargs[key] = normalize_block_body(kwargs[key])
+        _set_fields(idea, kwargs)
+        idea.touched_fields.update(kwargs)
+        group = self._dynamic_idea_groups[group_name]
+        if group.path is not None:
+            self._dirty_dynamic_idea_files.add(group.path)
+        self._dirty_dynamic_idea_groups.add(group_name)
+        self._dirty.add("dynamic_ideas")
+        return True
+
+    def delete_dynamic_idea(self, idea_id: str) -> bool:
+        group_name = self._dynamic_idea_ids.pop(idea_id, None)
+        if group_name is None:
+            return False
+        group = self._dynamic_idea_groups[group_name]
+        group.ideas = [idea for idea in group.ideas if idea.id != idea_id]
+        self._dynamic_idea_sources.pop(idea_id, None)
+        if group.path is not None:
+            self._dirty_dynamic_idea_files.add(group.path)
+        self._dirty_dynamic_idea_groups.add(group_name)
+        self._dirty.add("dynamic_ideas")
+        return True
+
+    def delete_dynamic_idea_group(self, group_name: str) -> bool:
+        group = self._dynamic_idea_groups.pop(group_name, None)
+        if group is None:
+            return False
+        for idea in group.ideas:
+            self._dynamic_idea_ids.pop(idea.id, None)
+            self._dynamic_idea_sources.pop(idea.id, None)
+        if group.path is not None:
+            self._dirty_dynamic_idea_files.add(group.path)
+            self._deleted_dynamic_idea_files.add(group.path)
+        self._dirty_dynamic_idea_groups.discard(group_name)
+        self._dirty.add("dynamic_ideas")
+        return True
+
+    # ── Bookmarks ────────────────────────────────────────────────
+
+    def list_bookmarks(self) -> list[str]:
+        return [bookmark.name for bookmark in self._bookmarks]
+
+    def get_bookmark(self, name: str) -> Bookmark:
+        bookmark = next((item for item in self._bookmarks if item.name == name), None)
+        if bookmark is None:
+            raise KeyError(f"Bookmark '{name}' not found. Available: {self.list_bookmarks()}")
+        return bookmark
+
+    def create_bookmark(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        date: str = "1936.1.1.12",
+        picture: str = "GFX_select_date_1936",
+        default_country: str = "",
+        default: bool | None = None,
+        filters: str = "",
+        effect: str = DEFAULT_BOOKMARK_EFFECT,
+        countries: list[BookmarkCountry] | None = None,
+        path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Bookmark:
+        existing = next((item for item in self._bookmarks if item.name == name), None)
+        if existing is not None and not overwrite:
+            raise ValueError(f"Bookmark '{name}' already exists")
+        if existing is not None:
+            self.delete_bookmark(name)
+        target = (
+            resolve_mod_output_path(self.mod_root, path)
+            if path is not None
+            else self.mod_root
+            / "common"
+            / "bookmarks"
+            / f"{safe_file_stem(name, fallback='bookmark')}.txt"
+        )
+        selected_countries = list(countries or [])
+        for country in selected_countries:
+            country.tag = require_bookmark_country_key(country.tag)
+            country.required_dlc = normalize_required_dlc(country.required_dlc)
+        bookmark = Bookmark(
+            name=name,
+            description=description,
+            date=date,
+            picture=picture,
+            default_country=default_country,
+            default=default,
+            filters=normalize_block_body(filters),
+            effect=normalize_block_body(effect),
+            countries=selected_countries,
+            path=target,
+        )
+        self._bookmarks.append(bookmark)
+        self._dirty_bookmarks.add((target, None))
+        self._dirty_bookmark_files.add(target)
+        self._dirty.add("bookmarks")
+        return bookmark
+
+    def update_bookmark(self, name: str, **kwargs) -> bool:
+        try:
+            bookmark = self.get_bookmark(name)
+        except KeyError:
+            return False
+        forbidden = {"raw_block", "source_index", "touched_fields"} & set(kwargs)
+        if forbidden:
+            raise ValueError(f"Internal bookmark fields: {sorted(forbidden)}")
+        old_path = bookmark.path
+        if "path" in kwargs:
+            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+        if "filters" in kwargs:
+            kwargs["filters"] = normalize_block_body(kwargs["filters"])
+        if "effect" in kwargs:
+            kwargs["effect"] = normalize_block_body(kwargs["effect"])
+        _set_fields(bookmark, kwargs, allow_path=True)
+        bookmark.touched_fields.update(key for key in kwargs if key != "path")
+        if old_path is not None:
+            self._dirty_bookmark_files.add(old_path)
+        if bookmark.path is not None:
+            self._dirty_bookmark_files.add(bookmark.path)
+            self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
+        self._dirty.add("bookmarks")
+        return True
+
+    def add_bookmark_country(self, bookmark_name: str, country: BookmarkCountry) -> None:
+        bookmark = self.get_bookmark(bookmark_name)
+        country.tag = require_bookmark_country_key(country.tag)
+        country.required_dlc = normalize_required_dlc(country.required_dlc)
+        bookmark.countries.append(country)
+        if bookmark.path is not None:
+            self._dirty_bookmark_files.add(bookmark.path)
+            self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
+        self._dirty.add("bookmarks")
+
+    def update_bookmark_country(
+        self,
+        bookmark_name: str,
+        tag: str,
+        *,
+        occurrence: int = 0,
+        **kwargs,
+    ) -> bool:
+        bookmark = self.get_bookmark(bookmark_name)
+        tag = require_bookmark_country_key(tag)
+        matches = [country for country in bookmark.countries if country.tag == tag]
+        if occurrence < 0 or occurrence >= len(matches):
+            return False
+        country = matches[occurrence]
+        forbidden = {"tag", "raw_block", "source_index", "touched_fields"} & set(kwargs)
+        if forbidden:
+            raise ValueError(f"Immutable/internal bookmark country fields: {sorted(forbidden)}")
+        if "available" in kwargs:
+            kwargs["available"] = normalize_block_body(kwargs["available"])
+        if "required_dlc" in kwargs:
+            kwargs["required_dlc"] = normalize_required_dlc(kwargs["required_dlc"])
+        _set_fields(country, kwargs)
+        country.touched_fields.update(kwargs)
+        if bookmark.path is not None:
+            self._dirty_bookmark_files.add(bookmark.path)
+            self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
+        self._dirty.add("bookmarks")
+        return True
+
+    def delete_bookmark_country(
+        self,
+        bookmark_name: str,
+        tag: str,
+        *,
+        occurrence: int = 0,
+    ) -> bool:
+        bookmark = self.get_bookmark(bookmark_name)
+        tag = require_bookmark_country_key(tag)
+        indices = [index for index, country in enumerate(bookmark.countries) if country.tag == tag]
+        if occurrence < 0 or occurrence >= len(indices):
+            return False
+        del bookmark.countries[indices[occurrence]]
+        if bookmark.path is not None:
+            self._dirty_bookmark_files.add(bookmark.path)
+            self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
+        self._dirty.add("bookmarks")
+        return True
+
+    def delete_bookmark(self, name: str) -> bool:
+        bookmark = next((item for item in self._bookmarks if item.name == name), None)
+        if bookmark is None:
+            return False
+        self._bookmarks.remove(bookmark)
+        if bookmark.path is not None:
+            self._dirty_bookmark_files.add(bookmark.path)
+        self._dirty.add("bookmarks")
+        return True
+
+    def set_bookmark_date_range(
+        self,
+        start_date: str,
+        end_date: str,
+        *,
+        path: str | Path = "common/defines/zz_bookmark_dates.lua",
+    ) -> Path:
+        """Stage START_DATE/END_DATE defines in the normal preview/save transaction."""
+
+        start = require_bookmark_date(start_date, label="bookmark start date")
+        end = require_bookmark_date(end_date, label="bookmark end date")
+        target = resolve_mod_output_path(self.mod_root, path)
+        self._original_files.setdefault(target, self._read_current_text(target))
+        self._bookmark_date_defines = (target, start, end)
+        self._dirty.add("bookmark_dates")
+        return target
 
     # ── Focus Trees ──────────────────────────────────────────────
 
@@ -2292,6 +3519,32 @@ class Mod:
     def ruling_parties() -> tuple[str, ...]:
         return RULING_PARTIES
 
+    def available_ruling_parties(self, *, include_vanilla: bool = True) -> tuple[str, ...]:
+        """Return ideology groups available to this mod, including custom groups."""
+
+        parties = set(RULING_PARTIES) | set(self._ideologies)
+        if include_vanilla:
+            parties.update(self._vanilla_ideologies)
+        return tuple(sorted(parties))
+
+    def available_leader_ideologies(
+        self, ruling_party: str, *, include_vanilla: bool = True
+    ) -> tuple[str, ...]:
+        """Return subtype IDs for a vanilla or custom ideology group."""
+
+        ideology = self._ideologies.get(ruling_party)
+        if ideology is None and include_vanilla:
+            ideology = self._vanilla_ideologies.get(ruling_party)
+        if ideology is not None:
+            return tuple(subtype.name for subtype in ideology.types)
+        return self.leader_ideologies_for_party(ruling_party)
+
+    def _default_leader_ideology_for_party(self, ruling_party: str) -> str:
+        available = self.available_leader_ideologies(ruling_party)
+        if available:
+            return available[0]
+        return self.default_leader_ideology(ruling_party)
+
     def create_wargoal(self, target: str, war_goal_type: str = "annex_everything") -> str:
         warnings.warn(
             "create_wargoal() only builds script; use effect_create_wargoal()",
@@ -2554,9 +3807,12 @@ class Mod:
                     except Exception:
                         continue
                     if state.owner == tag or tag in state.cores:
-                        if copy_states and state.id not in self._states:
+                        if copy_states:
                             try:
                                 state = self.get_state(state.id)
+                                if self._materialize_state_override(state):
+                                    self._dirty.add("states")
+                                    self._dirty_states.add(state.id)
                             except KeyError:
                                 pass
                         context["states"].append(dataclasses.asdict(state))
@@ -2653,9 +3909,122 @@ class Mod:
         suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
         validate_icons: bool = False,
         strict_localization: bool = False,
+        progress: ProgressCallback | None = None,
+        cancelled: CancelCallback | None = None,
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
+        phase_total = 10
+        phase_current = 0
 
+        def begin_phase(phase: str, message: str) -> None:
+            nonlocal phase_current
+            check_cancelled(cancelled, operation="validation")
+            report_progress(
+                progress,
+                operation="validation",
+                phase=phase,
+                current=phase_current,
+                total=phase_total,
+                message=message,
+            )
+            phase_current += 1
+
+        begin_phase("load_diagnostics", "Checking load and duplicate diagnostics")
+
+        duplicate_codes = {
+            "country_tag": "duplicate_country_tag",
+            "state": "duplicate_state_id",
+            "focus_tree": "duplicate_focus_tree_id",
+            "focus": "duplicate_focus_id",
+            "event": "duplicate_event_id",
+            "decision_category": "duplicate_decision_category_id",
+            "decision": "duplicate_decision_id",
+            "idea": "duplicate_idea_id",
+            "ideology": "duplicate_ideology_id",
+            "dynamic_idea_group": "duplicate_dynamic_idea_group",
+            "dynamic_idea": "duplicate_dynamic_idea_id",
+            "bookmark": "duplicate_bookmark_name",
+        }
+        for diagnostic in self._load_diagnostics:
+            if diagnostic.error_type != "DuplicateIdentifierError":
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"Failed to load {diagnostic.section} file "
+                            f"{diagnostic.path}: {diagnostic.error_type}: "
+                            f"{diagnostic.message}"
+                        ),
+                        severity="error",
+                        code="load_failure",
+                        file_path=str(diagnostic.path),
+                    )
+                )
+                continue
+            errors.append(
+                ValidationError(
+                    message=diagnostic.message,
+                    severity="error",
+                    code=duplicate_codes.get(
+                        diagnostic.section, "duplicate_identifier"
+                    ),
+                    file_path=str(diagnostic.path),
+                    related_file_path=(
+                        str(diagnostic.related_path)
+                        if diagnostic.related_path is not None
+                        else None
+                    ),
+                    country_tag=(
+                        diagnostic.identifier
+                        if diagnostic.section == "country_tag"
+                        else None
+                    ),
+                    state_id=(
+                        int(diagnostic.identifier)
+                        if diagnostic.section == "state" and diagnostic.identifier
+                        else None
+                    ),
+                    event_id=(
+                        diagnostic.identifier
+                        if diagnostic.section == "event"
+                        else None
+                    ),
+                    idea_id=(
+                        diagnostic.identifier
+                        if diagnostic.section == "idea"
+                        else None
+                    ),
+                    decision_id=(
+                        diagnostic.identifier
+                        if diagnostic.section == "decision"
+                        else None
+                    ),
+                    focus_tree_id=(
+                        diagnostic.identifier
+                        if diagnostic.section == "focus_tree"
+                        else None
+                    ),
+                    ideology_id=(
+                        diagnostic.identifier
+                        if diagnostic.section == "ideology"
+                        else None
+                    ),
+                    dynamic_idea_id=(
+                        diagnostic.identifier
+                        if diagnostic.section == "dynamic_idea"
+                        else None
+                    ),
+                    bookmark_name=(
+                        diagnostic.identifier
+                        if diagnostic.section == "bookmark"
+                        else None
+                    ),
+                )
+            )
+
+        begin_phase("source_files", "Checking all script and localization source files")
+        errors.extend(_validate_source_tree(self.mod_root))
+
+        begin_phase("catalogs", "Resolving referenced game and mod catalogs")
         known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
         known_tags.update(self._countries.keys())
         script_entries = self._script_entries()
@@ -2677,12 +4046,44 @@ class Mod:
         known_focus_icons = (
             self._known_focus_icons() if validate_icons and self._focus_trees else set()
         )
+        known_state_ids = {entry["id"] for entry in self.state_index()}
+        known_character_ids = self._known_character_ids()
+        errors.extend(validate_tag_definition_targets(self.mod_root))
+        errors.extend(
+            validate_country_history_references(
+                self.mod_root,
+                known_state_ids=known_state_ids,
+                known_character_ids=known_character_ids,
+            )
+        )
 
+        begin_phase("countries", "Validating countries")
+        known_parties = set(self._vanilla_ideologies) | set(self._ideologies)
         for country in self._countries.values():
-            errors.extend(validate_country(country))
-        for state in self._states.values():
+            errors.extend(validate_country(country, known_parties=known_parties))
+        begin_phase("states", "Validating states")
+        for state_id in sorted(set(self._state_ids) | set(self._states)):
+            check_cancelled(cancelled, operation="validation")
+            try:
+                state = self.get_state(state_id)
+            except (KeyError, OSError, ValueError) as error:
+                errors.append(
+                    ValidationError(
+                        message=f"Could not validate state {state_id}: {error}",
+                        severity="error",
+                        code="state_load_error",
+                        state_id=state_id,
+                        file_path=(
+                            str(self._state_source_paths[state_id])
+                            if state_id in self._state_source_paths
+                            else None
+                        ),
+                    )
+                )
+                continue
             errors.extend(validate_state(state, known_tags))
 
+        begin_phase("events", "Validating events and on-actions")
         for event_id, event in self._events.items():
             errors.extend(
                 validate_event(
@@ -2690,20 +4091,31 @@ class Mod:
                 )
             )
 
-        for action in self._on_actions.values():
-            if action.effect:
-                probe = Event(
-                    id=f"on_action.{action.id}",
-                    title=action.id,
-                    description=action.id,
-                    options=[
-                        EventOption(name=f"on_action.{action.id}.a", effect=action.effect),
-                    ],
-                )
-                errors.extend(validate_event(probe, namespace="on_action", known_tags=known_tags))
+        for occurrences in self._on_action_occurrences.values():
+            for action in occurrences:
+                if action.effect:
+                    probe = Event(
+                        id=f"on_action.{action.id}",
+                        title=action.id,
+                        description=action.id,
+                        options=[
+                            EventOption(name=f"on_action.{action.id}.a", effect=action.effect),
+                        ],
+                    )
+                    errors.extend(
+                        validate_event(probe, namespace="on_action", known_tags=known_tags)
+                    )
 
+        begin_phase("ideas", "Validating ideas and assignments")
         for idea in self._ideas.values():
             errors.extend(validate_idea(idea))
+
+        for ideology in self._ideologies.values():
+            errors.extend(validate_ideology(ideology))
+        for group in self._dynamic_idea_groups.values():
+            errors.extend(validate_dynamic_idea_group(group))
+        for bookmark in self._bookmarks:
+            errors.extend(validate_bookmark(bookmark))
 
         for country in self._countries.values():
             for idea_id in country.ideas:
@@ -2732,13 +4144,12 @@ class Mod:
                         )
                     )
 
+        begin_phase("focus_catalog", "Preparing focus validation context")
         all_focus_ids: set[str] = set()
+        begin_phase("focus_trees", "Validating focus trees")
         for tree in self._focus_trees.values():
+            check_cancelled(cancelled, operation="validation")
             all_focus_ids.update(f.id for f in tree.focuses)
-
-        known_state_ids = set(self.list_states())
-        if self.hoi4_install and self._focus_trees:
-            known_state_ids.update(entry["id"] for entry in self.state_index())
 
         icon_suggestions: dict[str, str] = {}
         if validate_icons and known_focus_icons:
@@ -2807,6 +4218,7 @@ class Mod:
                         )
                     )
 
+        begin_phase("references", "Validating cross-content references")
         errors.extend(
             self._validate_script_references(
                 known_ideas=known_ideas,
@@ -2821,6 +4233,15 @@ class Mod:
         if strict_localization:
             errors.extend(self._validate_localization_references())
 
+        check_cancelled(cancelled, operation="validation")
+        report_progress(
+            progress,
+            operation="validation",
+            phase="done",
+            current=phase_total,
+            total=phase_total,
+            message=f"Validation complete with {len(errors)} issue(s)",
+        )
         return _filter_validation_errors(errors, suppress_warnings=suppress_warnings)
 
     # ── Preview & Save ───────────────────────────────────────────
@@ -2833,7 +4254,9 @@ class Mod:
 
     def preview(self) -> str:
         diffs: list[str] = []
-        for path, current in self._render_dirty_files().items():
+        rendered = self._render_dirty_files()
+        self._assert_no_external_modifications(rendered)
+        for path, current in rendered.items():
             original = self._read_current_text(path)
             rel = str(path.relative_to(self.mod_root))
             if current is None:
@@ -2853,6 +4276,7 @@ class Mod:
 
         dirty_sections = sorted(self._dirty)
         rendered = self._render_dirty_files()
+        self._assert_no_external_modifications(rendered)
         changed = {
             path: content
             for path, content in rendered.items()
@@ -2886,9 +4310,28 @@ class Mod:
                 if tag not in self._countries:
                     continue
                 line = f'{tag} = "countries/{tag}.txt"'
-                if not re.search(rf"(?m)^\s*{re.escape(tag)}\s*=", tag_text):
+                declared_in_mod = tag in self._country_tag_mappings.get(self.mod_root, {})
+                declared_by_vanilla = tag in self._vanilla_tags
+                if not declared_in_mod and not declared_by_vanilla and not re.search(
+                    rf"(?m)^\s*{re.escape(tag)}\s*=", tag_text
+                ):
                     tag_text = tag_text.rstrip() + ("\n" if tag_text.strip() else "") + line + "\n"
             rendered[tag_path] = tag_text or None
+            tags_dir = self.mod_root / "common" / "country_tags"
+            if self._deleted_countries and tags_dir.is_dir():
+                for source_path in sorted(tags_dir.glob("*.txt")):
+                    if source_path == tag_path:
+                        continue
+                    source_text = self._read_current_text(source_path)
+                    updated_text = source_text
+                    for tag in self._deleted_countries:
+                        updated_text = re.sub(
+                            rf"(?m)^\s*{re.escape(tag)}\s*=.*(?:\n|$)",
+                            "",
+                            updated_text,
+                        )
+                    if updated_text != source_text:
+                        rendered[source_path] = updated_text or None
             for deleted_country in self._deleted_countries.values():
                 for path in country_file_paths(self.mod_root, deleted_country):
                     rendered[resolve_mod_output_path(self.mod_root, path)] = None
@@ -2903,6 +4346,20 @@ class Mod:
                     and dirty_country.history_path not in country_files
                 ):
                     rendered[dirty_country.history_path] = None
+            colors_path = self.mod_root / "common" / "countries" / "colors.txt"
+            color_updates = {
+                tag: country.color
+                for tag in self._dirty_countries
+                if (country := self._countries.get(tag)) is not None
+                and ("*" in country.touched_fields or "color" in country.touched_fields)
+            }
+            colors_text = serialize_country_colors_file(
+                self._read_current_text(colors_path),
+                color_updates,
+                deleted_tags=set(self._deleted_countries),
+            )
+            if colors_text != self._read_current_text(colors_path):
+                rendered[colors_path] = colors_text or None
 
         if "states" in self._dirty:
             for state_id in self._dirty_states:
@@ -2927,23 +4384,45 @@ class Mod:
         if "events" in self._dirty:
             event_files, namespaces = self._group_events_by_file(dirty_only=True)
             for path, events in event_files.items():
+                self._assert_no_unmodeled_duplicates_in_file(
+                    path,
+                    sections=frozenset({"event"}),
+                )
                 rendered[path] = serialize_events_file(
                     namespaces.get(path), events, self._original_files.get(path, "")
                 )
 
         if "on_actions" in self._dirty:
             for path, actions in self._group_on_actions_by_file(dirty_only=True).items():
-                content = serialize_on_actions_file(actions, self._original_files.get(path, ""))
-                rendered[path] = None if not actions and self._on_actions else content
+                original = self._original_files.get(path)
+                if not actions and original is None:
+                    # A generated occurrence created and deleted before its
+                    # first save should not leave an empty file behind.
+                    rendered[path] = None
+                else:
+                    # Existing files may contain comments, scalar metadata, or
+                    # intentionally empty hooks.  Remove only the selected
+                    # modeled occurrence and retain the file itself.
+                    rendered[path] = serialize_on_actions_file(
+                        actions, original or ""
+                    )
 
         if "decisions" in self._dirty:
             for path, categories in self._group_decisions_by_file(dirty_only=True).items():
+                self._assert_no_unmodeled_duplicates_in_file(
+                    path,
+                    sections=frozenset({"decision", "decision_category"}),
+                )
                 rendered[path] = serialize_decisions_file(
                     categories, self._original_files.get(path, "")
                 )
 
         if "ideas" in self._dirty:
             for path, ideas in self._group_ideas_by_file(dirty_only=True).items():
+                self._assert_no_unmodeled_duplicates_in_file(
+                    path,
+                    sections=frozenset({"idea"}),
+                )
                 container = self._idea_file_containers.get(path)
                 if container is None:
                     container = "ideas" if path.parent.name == "ideas" else "country_ideas"
@@ -2953,13 +4432,85 @@ class Mod:
                     original=self._original_files.get(path, ""),
                 )
 
+        if "ideologies" in self._dirty:
+            for path in self._dirty_ideology_files:
+                self._assert_no_unmodeled_duplicates_in_file(
+                    path,
+                    sections=frozenset({"ideology"}),
+                )
+                ideologies = [
+                    ideology
+                    for ideology in self._ideologies.values()
+                    if ideology.path == path
+                ]
+                rendered[path] = serialize_ideologies_file(
+                    ideologies,
+                    original=self._original_files.get(path, ""),
+                )
+
+        if "dynamic_ideas" in self._dirty:
+            for path in self._dirty_dynamic_idea_files:
+                self._assert_no_unmodeled_duplicates_in_file(
+                    path,
+                    sections=frozenset({"dynamic_idea", "dynamic_idea_group"}),
+                )
+                groups = [
+                    group
+                    for group in self._dynamic_idea_groups.values()
+                    if group.path == path
+                ]
+                if not groups:
+                    original = self._original_files.get(path, "")
+                    remaining = remove_dynamic_ideas_container(original)
+                    rendered[path] = remaining if remaining.strip() else None
+                elif len(groups) > 1:
+                    raise ValueError(
+                        f"Multiple dynamic idea groups target one file: {path}"
+                    )
+                else:
+                    rendered[path] = serialize_dynamic_ideas_file(
+                        groups[0],
+                        original=self._original_files.get(path, ""),
+                    )
+
+        if "bookmarks" in self._dirty:
+            for path in self._dirty_bookmark_files:
+                self._assert_no_unmodeled_duplicates_in_file(
+                    path,
+                    sections=frozenset({"bookmark"}),
+                )
+                bookmarks = [bookmark for bookmark in self._bookmarks if bookmark.path == path]
+                rendered[path] = serialize_bookmarks_file(
+                    bookmarks,
+                    original=self._original_files.get(path, ""),
+                )
+
+        if "bookmark_dates" in self._dirty and self._bookmark_date_defines is not None:
+            path, start_date, end_date = self._bookmark_date_defines
+            rendered[path] = patch_bookmark_dates_defines(
+                self._original_files.get(path, ""),
+                start_date=start_date,
+                end_date=end_date,
+            )
+
         if "focus" in self._dirty:
             for path, trees in self._group_focus_trees_by_file(dirty_only=True).items():
+                self._assert_no_unmodeled_duplicates_in_file(
+                    path,
+                    sections=frozenset({"focus_tree", "focus"}),
+                )
                 rendered[path] = serialize_focus_file(trees, self._original_files.get(path, ""))
 
         if "localization" in self._dirty:
             for path, entries in self._group_loc_by_file(dirty_only=True).items():
-                rendered[path] = serialize_localization_file(entries) if entries else None
+                rendered[path] = (
+                    serialize_localization_file(
+                        entries,
+                        original=self._original_files.get(path, ""),
+                    )
+                    if entries
+                    else None
+                )
 
         return {
             resolve_mod_output_path(self.mod_root, path): content
@@ -2969,6 +4520,38 @@ class Mod:
     @staticmethod
     def _read_current_text(path: Path) -> str:
         return path.read_text(encoding="utf-8-sig", errors="ignore") if path.exists() else ""
+
+    def _capture_source_baseline(self) -> None:
+        """Fingerprint text sources so legacy writers cannot be overwritten silently."""
+
+        suffixes = {".txt", ".yml", ".gfx", ".lua", ".mod"}
+        self._source_baseline = {
+            path.resolve(strict=False): path.read_bytes()
+            for path in self.mod_root.rglob("*")
+            if path.is_file() and path.suffix.lower() in suffixes
+        }
+
+    def _assert_no_external_modifications(
+        self, rendered: dict[Path, str | None]
+    ) -> None:
+        conflicts: list[Path] = []
+        for raw_path in rendered:
+            path = raw_path.resolve(strict=False)
+            baseline = self._source_baseline.get(path)
+            if baseline is None:
+                if path.exists():
+                    conflicts.append(path)
+                continue
+            if not path.is_file() or path.read_bytes() != baseline:
+                conflicts.append(path)
+        if conflicts:
+            displayed = ", ".join(
+                str(path.relative_to(self.mod_root)) for path in sorted(conflicts)
+            )
+            raise ExternalModificationError(
+                "Refusing to overwrite files changed after Mod loaded them: "
+                f"{displayed}. Call reload() and reapply the intended edit."
+            )
 
     def _commit_rendered_files(self, rendered: dict[Path, str | None]) -> None:
         backups = {path: path.read_bytes() if path.exists() else None for path in rendered}
@@ -3019,12 +4602,15 @@ class Mod:
             raise
 
     def discard(self) -> None:
+        self._load_diagnostics.clear()
         self._countries.clear()
         self._states.clear()
         self._state_ids.clear()
+        self._state_source_paths.clear()
         self._events.clear()
         self._event_namespaces.clear()
         self._on_actions.clear()
+        self._on_action_occurrences.clear()
         self._decisions.clear()
         self._decision_categories.clear()
         self._ideas.clear()
@@ -3044,6 +4630,22 @@ class Mod:
         self._dirty_decision_files.clear()
         self._dirty_ideas.clear()
         self._dirty_idea_files.clear()
+        self._idea_file_containers.clear()
+        self._cached_idea_file.clear()
+        self._ideologies.clear()
+        self._vanilla_ideologies.clear()
+        self._dirty_ideologies.clear()
+        self._dirty_ideology_files.clear()
+        self._dynamic_idea_groups.clear()
+        self._dynamic_idea_ids.clear()
+        self._dynamic_idea_sources.clear()
+        self._dirty_dynamic_idea_groups.clear()
+        self._dirty_dynamic_idea_files.clear()
+        self._deleted_dynamic_idea_files.clear()
+        self._bookmarks.clear()
+        self._dirty_bookmarks.clear()
+        self._dirty_bookmark_files.clear()
+        self._bookmark_date_defines = None
         self._loc_entries.clear()
         self._loc_sources.clear()
         self._dirty_loc_keys.clear()
@@ -3059,6 +4661,12 @@ class Mod:
             if base is not None
         }
         self._load()
+        self._capture_source_baseline()
+
+    def reload(self) -> None:
+        """Discard queued changes and reload current files from disk."""
+
+        self.discard()
 
     def _snapshot(self) -> dict[str, object]:
         keys = [
@@ -3070,6 +4678,7 @@ class Mod:
             "_deleted_countries",
             "_states",
             "_state_ids",
+            "_state_source_paths",
             "_dirty_states",
             "_state_history_patches",
             "_events",
@@ -3078,6 +4687,7 @@ class Mod:
             "_dirty_event_files",
             "_event_file_namespaces",
             "_on_actions",
+            "_on_action_occurrences",
             "_dirty_on_actions",
             "_dirty_on_action_files",
             "_decisions",
@@ -3089,6 +4699,20 @@ class Mod:
             "_dirty_idea_files",
             "_idea_file_containers",
             "_cached_idea_file",
+            "_ideologies",
+            "_vanilla_ideologies",
+            "_dirty_ideologies",
+            "_dirty_ideology_files",
+            "_dynamic_idea_groups",
+            "_dynamic_idea_ids",
+            "_dynamic_idea_sources",
+            "_dirty_dynamic_idea_groups",
+            "_dirty_dynamic_idea_files",
+            "_deleted_dynamic_idea_files",
+            "_bookmarks",
+            "_dirty_bookmarks",
+            "_dirty_bookmark_files",
+            "_bookmark_date_defines",
             "_loc_entries",
             "_loc_sources",
             "_dirty_loc_keys",
@@ -3098,7 +4722,7 @@ class Mod:
             "_country_context_cache",
             "_country_tag_mappings",
         ]
-        return {key: copy.deepcopy(getattr(self, key)) for key in keys}
+        return copy.deepcopy({key: getattr(self, key) for key in keys})
 
     def _restore(self, snapshot: dict[str, object]) -> None:
         for key, value in snapshot.items():
@@ -3125,6 +4749,33 @@ class Mod:
                     lines.append(
                         f"idea {iid}: category={idea.category or '<none>'} modifiers={','.join(sorted(idea.modifier)) or '<none>'}"
                     )
+        if "ideologies" in self._dirty:
+            for ideology_id in sorted(self._dirty_ideologies):
+                ideology = self._ideologies.get(ideology_id)
+                if ideology is not None:
+                    lines.append(
+                        f"ideology {ideology_id}: {len(ideology.types)} subtype(s)"
+                    )
+            for path in sorted(self._dirty_ideology_files):
+                lines.append(f"ideology file {self._display_path(path)}: updated")
+        if "dynamic_ideas" in self._dirty:
+            for group_name in sorted(self._dirty_dynamic_idea_groups):
+                group = self._dynamic_idea_groups.get(group_name)
+                if group is not None:
+                    lines.append(
+                        f"dynamic idea group {group_name}: {len(group.ideas)} idea(s)"
+                    )
+            for path in sorted(self._deleted_dynamic_idea_files):
+                lines.append(f"dynamic idea file {self._display_path(path)}: deleted")
+        if "bookmarks" in self._dirty:
+            for path in sorted(self._dirty_bookmark_files):
+                count = sum(bookmark.path == path for bookmark in self._bookmarks)
+                lines.append(
+                    f"bookmark file {self._display_path(path)}: {count} bookmark(s)"
+                )
+        if "bookmark_dates" in self._dirty and self._bookmark_date_defines is not None:
+            _, start_date, end_date = self._bookmark_date_defines
+            lines.append(f"bookmark date range: {start_date} through {end_date}")
         if "events" in self._dirty:
             for eid in sorted(self._dirty_events):
                 event = self._events.get(eid)
@@ -3288,21 +4939,28 @@ class Mod:
             entries.append(
                 ("\n".join(scripts), "event", event.id, str(event.path) if event.path else None)
             )
-        for action in self._on_actions.values():
-            entries.append(
-                (action.effect, "on_action", action.id, str(action.path) if action.path else None)
-            )
-            if action.events:
+        for occurrences in self._on_action_occurrences.values():
+            for action in occurrences:
                 entries.append(
                     (
-                        "\n".join(
-                            f"country_event = {{ id = {event_id} }}" for event_id in action.events
-                        ),
+                        action.effect,
                         "on_action",
                         action.id,
                         str(action.path) if action.path else None,
                     )
                 )
+                if action.events:
+                    entries.append(
+                        (
+                            "\n".join(
+                                f"country_event = {{ id = {event_id} }}"
+                                for event_id in action.events
+                            ),
+                            "on_action",
+                            action.id,
+                            str(action.path) if action.path else None,
+                        )
+                    )
         for decision in self._decisions.values():
             entries.append(
                 (
@@ -3646,10 +5304,9 @@ class Mod:
                     continue
                 for path in ideas_dir.glob("*.txt"):
                     try:
-                        ideas, _ = read_ideas_file(path)
-                    except Exception:
+                        scanned.update(scan_idea_ids_file(path))
+                    except (OSError, ValueError):
                         continue
-                    scanned.update(idea.id for idea in ideas)
         self._scan_cache["ideas"] = scanned
         ids.update(scanned)
         return ids
@@ -3667,13 +5324,20 @@ class Mod:
                 continue
             for path in events_dir.glob("*.txt"):
                 try:
-                    _, events = load_events_file(path)
-                except Exception:
+                    scanned.update(scan_event_ids_file(path))
+                except (OSError, ValueError):
                     continue
-                scanned.update(event.id for event in events)
         self._scan_cache["events"] = scanned
         ids.update(scanned)
         return ids
+
+    def _known_character_ids(self) -> set[str]:
+        cached = self._scan_cache.get("characters")
+        if cached is not None:
+            return set(cached)
+        character_ids = collect_character_ids(self.mod_root, self.hoi4_install)
+        self._scan_cache["characters"] = character_ids
+        return set(character_ids)
 
     def _known_focus_icons(self) -> set[str]:
         cached = self._scan_cache.get("focus_icons")
@@ -3753,7 +5417,7 @@ class Mod:
         adj = country.adjective or name
         dirty_keys: list[str] = []
         target = self.mod_root / "localisation" / "english" / f"{country.tag}_country_l_english.yml"
-        for suffix in ["", "_neutrality", "_democratic", "_fascism", "_communism"]:
+        for suffix in _country_localisation_suffixes(country):
             k = f"{country.tag}{suffix}"
             self._loc_entries[k] = name
             self._loc_entries[f"{k}_DEF"] = name
@@ -3767,8 +5431,12 @@ class Mod:
             )
             dirty_keys.extend([country.leader.character_id, f"{country.leader.character_id}_desc"])
         for key in dirty_keys:
-            self._loc_sources[key] = target
-        self._dirty_loc_files.add(target)
+            # Existing country localization may intentionally live in a shared
+            # file. Keep that routing instead of creating a second definition
+            # in the generated country file. Only newly introduced keys use the
+            # country-specific default target.
+            self._loc_sources.setdefault(key, target)
+            self._dirty_loc_files.add(self._loc_sources[key])
         self._dirty_loc_keys.update(dirty_keys)
         self._dirty.add("localization")
 
@@ -3831,22 +5499,19 @@ class Mod:
         file_actions: dict[Path, list[OnAction]] = {}
         dirty_files: set[Path] = set(self._dirty_on_action_files) if dirty_only else set()
         if dirty_only:
-            for action_id in self._dirty_on_actions:
-                action = self._on_actions.get(action_id)
-                if action is None:
-                    continue
-                dirty_files.add(
-                    action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
-                )
             for path in dirty_files:
                 file_actions[path] = []
-        for action in self._on_actions.values():
-            p = action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
-            if dirty_only and p not in dirty_files:
-                continue
-            if p not in file_actions:
-                file_actions[p] = []
-            file_actions[p].append(action)
+        for occurrences in self._on_action_occurrences.values():
+            for action in occurrences:
+                p = (
+                    action.path
+                    or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
+                )
+                if dirty_only and p not in dirty_files:
+                    continue
+                if p not in file_actions:
+                    file_actions[p] = []
+                file_actions[p].append(action)
         return file_actions
 
     def _group_decisions_by_file(

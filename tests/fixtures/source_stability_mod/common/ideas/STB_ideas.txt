@@ -1,0 +1,13 @@
+# Current-game nested idea shape.
+ideas = {
+	country={
+		STB_source_stability = {
+			picture = GFX_idea_generic
+			custom_idea_field = keep_me
+			modifier={
+				stability_factor = 0.10 # retain balance context
+				war_support_factor=0.05
+			}
+		}
+	}
+}

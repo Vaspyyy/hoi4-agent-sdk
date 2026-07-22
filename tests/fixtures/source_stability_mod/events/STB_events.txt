@@ -1,0 +1,17 @@
+# Mixed formatting and an unknown field model a real, evolving mod.
+add_namespace   = stb # namespace comment
+
+country_event={
+	id=stb.1
+	title = stb.1.t
+	desc=stb.1.d
+	picture   = GFX_report_event_generic # preserve presentation note
+	is_triggered_only = yes
+	custom_event_metadata = { release_gate = yes }
+	option = {
+		name = stb.1.a
+		# option comments must not move
+		add_political_power = 10
+		custom_option_field = keep_me
+	}
+}

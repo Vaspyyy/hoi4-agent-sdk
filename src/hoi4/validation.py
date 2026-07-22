@@ -5,18 +5,32 @@ Validation rules for HOI4 mod data.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from .effects_catalog import TECHNOLOGY_CATEGORIES
+from .events import VALID_EVENT_TYPES
 from .parser import iter_assignment_blocks
+from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
 from .script import validate_script_syntax
 from .types import Country, Event, FocusTree, Idea, State, ValidationError
 
 TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
+_TAG_DEFINITION_RE = re.compile(
+    r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"(?:\s*#.*)?\s*$'
+)
+_CAPITAL_RE = re.compile(r"\bcapital\s*=\s*(\d+)\b")
+_RECRUIT_CHARACTER_RE = re.compile(
+    r'\brecruit_character\s*=\s*"?([A-Za-z0-9_.:%-]+)"?'
+)
 _UNSET = object()
 
 VALIDATION_CODES: dict[str, str] = {
+    "load_failure": "A discovered file could not be loaded by its structured reader.",
     "script_syntax": "Raw Paradox script has mismatched braces or quotes.",
+    "localization_bom": "A localization file is missing the UTF-8 byte-order mark HOI4 expects.",
+    "localization_encoding": "A localization file is not valid UTF-8.",
+    "localization_header": "A localization file has no valid l_<language>: header.",
     "country_scope_core_effect": "Core add/remove effect appears outside an explicit state scope.",
     "history_set_owner_in_effect": "State history owner directive appears in runtime effect script.",
     "unknown_tech_bonus_category": "add_tech_bonus category is not in the technology category catalog.",
@@ -43,13 +57,216 @@ VALIDATION_CODES: dict[str, str] = {
     "resistance_on_core_state": "Resistance effects target a state that is already a core of its owner.",
     "event_option_no_effect": "Triggered event option has no gameplay effect.",
     "revolt_state_already_owned": "Revolt script transfers a state already owned by the target country.",
+    "state_buildings_outside_history": "State buildings must be declared inside the history block.",
+    "duplicate_country_tag": "A country tag is declared in more than one mod file.",
+    "duplicate_state_id": "A state ID is defined in more than one state file.",
+    "duplicate_focus_tree_id": "A focus tree ID is defined more than once.",
+    "duplicate_focus_id": "A focus ID is defined more than once in one tree.",
+    "duplicate_event_id": "An event ID is defined more than once.",
+    "duplicate_decision_category_id": "A decision category repeats within one file.",
+    "duplicate_decision_id": "A decision ID is defined more than once.",
+    "duplicate_idea_id": "An idea ID is defined more than once.",
+    "duplicate_ideology_id": "An ideology ID is defined more than once.",
+    "duplicate_dynamic_idea_group": "A dynamic idea group is defined more than once.",
+    "duplicate_dynamic_idea_id": "A dynamic idea ID is defined more than once.",
+    "duplicate_bookmark_name": "A bookmark name is defined more than once.",
+    "tag_definition": "A country tag points to a missing country definition file.",
+    "capital_ref": "A country history capital points to a missing state.",
+    "character_ref": "A recruited character is not defined in mod or vanilla data.",
+    "focus_cycle": "A focus tree contains a prerequisite cycle.",
+    "invalid_ideology_id": "An ideology ID is not valid Paradox Script syntax.",
+    "invalid_ideology_color": "An ideology color channel is outside 0..255.",
+    "duplicate_subideology_id": "A subtype is repeated within an ideology.",
+    "invalid_subideology_id": "An ideology subtype ID is invalid.",
+    "invalid_ideology_ai_behavior": "An ideology AI behavior is unknown.",
+    "invalid_dynamic_idea_group": "A dynamic idea group name is invalid.",
+    "invalid_dynamic_idea_id": "A dynamic idea ID is invalid.",
+    "invalid_dynamic_idea_script": "A dynamic idea contains malformed script.",
+    "invalid_bookmark_date": "A bookmark date is invalid.",
+    "invalid_bookmark_country_tag": "A bookmark country tag is invalid.",
+    "invalid_bookmark_available": "A bookmark availability block is malformed.",
+    "invalid_bookmark_required_dlc": "A bookmark required DLC list is invalid.",
+    "invalid_bookmark_effect": "A bookmark effect block is malformed.",
+    "bookmark_randomize_weather_missing": (
+        "A bookmark is missing its obligatory randomize_weather effect."
+    ),
+    "bookmark_default_country_missing": "The default country has no bookmark entry.",
+    "duplicate_bookmark_country_variant": "A bookmark repeats an indistinguishable country variant.",
+}
+
+_ERROR_CODES = {
+    "load_failure",
+    "script_syntax",
+    "localization_bom",
+    "localization_encoding",
+    "localization_header",
+    "missing_effect_target",
+    "state_buildings_outside_history",
+    "duplicate_country_tag",
+    "duplicate_state_id",
+    "duplicate_focus_tree_id",
+    "duplicate_focus_id",
+    "duplicate_event_id",
+    "duplicate_decision_category_id",
+    "duplicate_decision_id",
+    "duplicate_idea_id",
+    "duplicate_ideology_id",
+    "duplicate_dynamic_idea_group",
+    "duplicate_dynamic_idea_id",
+    "duplicate_bookmark_name",
+    "tag_definition",
+    "capital_ref",
+    "focus_cycle",
+    "invalid_ideology_id",
+    "invalid_ideology_color",
+    "duplicate_subideology_id",
+    "invalid_subideology_id",
+    "invalid_ideology_ai_behavior",
+    "invalid_dynamic_idea_group",
+    "invalid_dynamic_idea_id",
+    "invalid_dynamic_idea_script",
+    "invalid_bookmark_date",
+    "invalid_bookmark_country_tag",
+    "invalid_bookmark_available",
+    "invalid_bookmark_required_dlc",
+    "invalid_bookmark_effect",
+    "bookmark_randomize_weather_missing",
 }
 
 VALIDATION_WARNING_CODES: dict[str, str] = {
     code: description
     for code, description in VALIDATION_CODES.items()
-    if code != "script_syntax" and code != "missing_effect_target"
+    if code not in _ERROR_CODES
 }
+
+
+def validate_tag_definition_targets(mod_root: Path) -> list[ValidationError]:
+    """Report mod tag declarations whose country definition file is absent."""
+
+    issues: list[ValidationError] = []
+    tags_dir = mod_root / "common" / "country_tags"
+    countries_dir = mod_root / "common" / "countries"
+    if not tags_dir.is_dir():
+        return issues
+    for path in sorted(tags_dir.glob("*.txt")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for line_number, line in enumerate(text.splitlines(), 1):
+            match = _TAG_DEFINITION_RE.match(line)
+            if match is None:
+                continue
+            tag, declared_path = match.groups()
+            target = countries_dir / Path(declared_path).name
+            if target.is_file():
+                continue
+            issues.append(
+                ValidationError(
+                    message=(
+                        f"Tag {tag} references {declared_path} but file does not exist"
+                    ),
+                    severity="error",
+                    code="tag_definition",
+                    file_path=str(path),
+                    country_tag=tag,
+                    line=line_number,
+                )
+            )
+    return issues
+
+
+def collect_character_ids(*roots: Path | None) -> set[str]:
+    """Collect direct character IDs from ``characters = { ... }`` containers."""
+
+    character_ids: set[str] = set()
+    for root in roots:
+        if root is None:
+            continue
+        directory = root / "common" / "characters"
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.glob("*.txt")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                for body, _, _ in iter_assignment_blocks(text, "characters"):
+                    character_ids.update(
+                        span.key
+                        for span in top_level_assignments(body)
+                        if span.is_block
+                    )
+            except (OSError, ValueError):
+                # Source syntax/read failures are surfaced by the source-tree
+                # validation pass; do not turn one malformed catalog into a
+                # validation crash here.
+                continue
+    return character_ids
+
+
+def validate_country_history_references(
+    mod_root: Path,
+    *,
+    known_state_ids: set[int],
+    known_character_ids: set[str],
+) -> list[ValidationError]:
+    """Validate capital and recruited-character references in mod histories."""
+
+    issues: list[ValidationError] = []
+    histories_dir = mod_root / "history" / "countries"
+    if not histories_dir.is_dir():
+        return issues
+    for path in sorted(histories_dir.glob("*.txt")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        source = _mask_script_comments(text)
+        for match in _CAPITAL_RE.finditer(source):
+            state_id = int(match.group(1))
+            if state_id in known_state_ids:
+                continue
+            issues.append(
+                ValidationError(
+                    message=f"Capital state {state_id} does not exist",
+                    severity="error",
+                    code="capital_ref",
+                    file_path=str(path),
+                    state_id=state_id,
+                    line=source.count("\n", 0, match.start()) + 1,
+                )
+            )
+        for match in _RECRUIT_CHARACTER_RE.finditer(source):
+            character_id = match.group(1)
+            if character_id in known_character_ids:
+                continue
+            issues.append(
+                ValidationError(
+                    message=f"Character {character_id} is not defined",
+                    severity="warning",
+                    code="character_ref",
+                    file_path=str(path),
+                    line=source.count("\n", 0, match.start()) + 1,
+                )
+            )
+    return issues
+
+
+def _mask_script_comments(text: str) -> str:
+    """Replace comment bytes with spaces while preserving offsets and newlines."""
+
+    chars = list(text)
+    in_quote = False
+    index = 0
+    while index < len(chars):
+        char = chars[index]
+        if char == "\\" and in_quote:
+            index += 2
+            continue
+        if char == '"':
+            in_quote = not in_quote
+            index += 1
+            continue
+        if char == "#" and not in_quote:
+            while index < len(chars) and chars[index] != "\n":
+                chars[index] = " "
+                index += 1
+            continue
+        index += 1
+    return "".join(chars)
 
 
 def _script_warnings(
@@ -250,7 +467,9 @@ def _script_warnings(
     return errors
 
 
-def validate_country(country: Country) -> list[ValidationError]:
+def validate_country(
+    country: Country, *, known_parties: set[str] | None = None
+) -> list[ValidationError]:
     errors: list[ValidationError] = []
 
     if not TAG_RE.match(country.tag):
@@ -281,7 +500,7 @@ def validate_country(country: Country) -> list[ValidationError]:
             )
         )
 
-    valid_parties = set(RULING_PARTIES)
+    valid_parties = set(RULING_PARTIES) | set(known_parties or ())
     if country.ruling_party not in valid_parties:
         errors.append(
             ValidationError(
@@ -379,6 +598,7 @@ def validate_focus_tree(
                 ValidationError(
                     message=f"Duplicate focus ID '{focus.id}'",
                     severity="error",
+                    code="duplicate_focus_id",
                     focus_id=focus.id,
                     file_path=str(tree.path) if tree.path else None,
                 )
@@ -469,7 +689,51 @@ def validate_focus_tree(
             )
         )
 
+    cycle_root = _focus_prerequisite_cycle_root(tree)
+    if cycle_root is not None:
+        errors.append(
+            ValidationError(
+                message=f"Focus prerequisite cycle detected involving {cycle_root}",
+                severity="error",
+                code="focus_cycle",
+                focus_id=cycle_root,
+                file_path=str(tree.path) if tree.path else None,
+            )
+        )
+
     return errors
+
+
+def _focus_prerequisite_cycle_root(tree: FocusTree) -> str | None:
+    """Return the first focus whose dependency walk encounters a cycle."""
+
+    adjacency = {
+        focus.id: [
+            prerequisite
+            for group in focus.prerequisites
+            for prerequisite in group
+        ]
+        for focus in tree.focuses
+        if focus.id
+    }
+    visited: set[str] = set()
+    in_stack: set[str] = set()
+
+    def visit(focus_id: str) -> bool:
+        visited.add(focus_id)
+        in_stack.add(focus_id)
+        for prerequisite in adjacency.get(focus_id, []):
+            if prerequisite in in_stack:
+                return True
+            if prerequisite not in visited and visit(prerequisite):
+                return True
+        in_stack.discard(focus_id)
+        return False
+
+    for focus in tree.focuses:
+        if focus.id not in visited and visit(focus.id):
+            return focus.id
+    return None
 
 
 def validate_state(
@@ -477,6 +741,8 @@ def validate_state(
     known_tags: set[str] | None = None,
 ) -> list[ValidationError]:
     errors: list[ValidationError] = []
+    source_path = state.source_path or state.path
+    file_path = str(source_path) if source_path else None
 
     if not state.id:
         errors.append(
@@ -484,6 +750,7 @@ def validate_state(
                 message="State has no ID",
                 severity="error",
                 state_id=state.id,
+                file_path=file_path,
             )
         )
 
@@ -493,6 +760,7 @@ def validate_state(
                 message=f"State {state.id} has no owner",
                 severity="warning",
                 state_id=state.id,
+                file_path=file_path,
             )
         )
 
@@ -502,6 +770,7 @@ def validate_state(
                 message=f"State {state.id} owner '{state.owner}' is not a known country tag",
                 severity="warning",
                 state_id=state.id,
+                file_path=file_path,
             )
         )
 
@@ -512,8 +781,42 @@ def validate_state(
                     message=f"State {state.id} core '{core}' is not a known country tag",
                     severity="warning",
                     state_id=state.id,
+                    file_path=file_path,
                 )
             )
+
+    if state.raw_text:
+        try:
+            state_span = next(
+                (
+                    span
+                    for span in top_level_assignments(state.raw_text)
+                    if span.key == "state"
+                    and span.is_block
+                    and span.body_start is not None
+                    and span.body_end is not None
+                ),
+                None,
+            )
+            if state_span is not None:
+                state_body = state.raw_text[state_span.body_start : state_span.body_end]
+                if any(span.key == "buildings" for span in top_level_assignments(state_body)):
+                    errors.append(
+                        ValidationError(
+                            message=(
+                                f"State {state.id} declares buildings at state scope; "
+                                "move the buildings block inside history"
+                            ),
+                            severity="error",
+                            code="state_buildings_outside_history",
+                            state_id=state.id,
+                            file_path=file_path,
+                        )
+                    )
+        except ValueError:
+            # Parser diagnostics are reported separately; validation should not
+            # crash while inspecting already-loaded raw text.
+            pass
 
     return errors
 
@@ -562,7 +865,7 @@ def validate_event(
             )
         )
 
-    if event.event_type not in ("country_event", "state_event", "news_event"):
+    if event.event_type not in VALID_EVENT_TYPES:
         errors.append(
             ValidationError(
                 message=f"Event '{event.id}' has invalid type '{event.event_type}'",

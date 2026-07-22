@@ -159,7 +159,7 @@ For a quick grounded industrial branch:
 mod.create_industrial_branch("lux_focus", "LUX", anchor_focus_id="LUX_existing_anchor")
 ```
 
-Use `get_country_context("LUX")` before generating content. It returns country basics, owned/core states, matching ideas/advisors/designers, localization, and matching focus trees from the mod and vanilla install. By default it is read-only. Use `get_country_context("LUX", copy_states=True)` or `ensure_country_states_in_mod("LUX")` before generating effects that will directly modify vanilla states.
+Use `get_country_context("LUX")` before generating content. It returns country basics, owned/core states, matching ideas/advisors/designers, localization, and matching focus trees from the mod and vanilla install. By default it is read-only. `get_state()` and validation also read vanilla fallback states without copying them. Use `get_country_context("LUX", copy_states=True)` or `ensure_country_states_in_mod("LUX")` to queue state overrides, review them with `preview()`, and persist them with `save()` before direct state-file work.
 
 Effect builders:
 

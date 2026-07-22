@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]'
+      - run: python -m pytest tests/
+      - run: python -m ruff check src/ tests/
+      - run: python -m mypy src/
+
+  package-and-map:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev,map]'
+      - run: python -m pip install build
+      - run: python -m pytest tests/
+      - run: python -m build
+      - name: Smoke-test wheel without optional dependencies
+        run: |
+          python -m venv /tmp/hoi4-wheel-smoke
+          /tmp/hoi4-wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/hoi4-wheel-smoke/bin/python -c "from importlib.metadata import version; import hoi4; from hoi4 import Mod, create_mod_structure, export_flag_from_mod; assert hoi4.__version__ == version('hoi4-agent-sdk'); print(Mod, create_mod_structure, export_flag_from_mod)"
+      - name: Smoke-test sdist without optional dependencies
+        run: |
+          python -m venv /tmp/hoi4-sdist-smoke
+          /tmp/hoi4-sdist-smoke/bin/python -m pip install --no-deps dist/*.tar.gz
+          cd /tmp
+          /tmp/hoi4-sdist-smoke/bin/python -c "from importlib.metadata import version; import hoi4; from hoi4 import Mod, create_mod_structure, export_flag_from_mod; assert hoi4.__version__ == version('hoi4-agent-sdk'); print(Mod, create_mod_structure, export_flag_from_mod)"

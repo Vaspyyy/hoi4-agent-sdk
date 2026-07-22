@@ -1,0 +1,19 @@
+bookmarks = {
+	bookmark = {
+		name = "STB_START"
+		desc = "STB_START_DESC"
+		date = 1936.1.1.12
+		picture = GFX_select_date_1936 # keep picture note
+		default_country = "STB"
+		"STB" = {
+			history = STB_BOOKMARK_DESC
+			ideology = democratic
+			required_dlc = { "DLC One" "DLC Two" }
+		}
+		"---" = { history = "OTHER_COUNTRIES_DESC" }
+		effect = {
+			randomize_weather = 22345 # obligatory bookmark seed
+		}
+		future_bookmark_setting = yes
+	}
+}

@@ -118,7 +118,7 @@ def test_state_patch_is_transactional_and_preserves_dated_history(tmp_path: Path
     assert "add_core_of = TST" in saved
     assert "add_core_of = GER" not in saved.split("1939.1.1", 1)[0]
     assert "1939.1.1 = { owner = FRA add_core_of = FRA }" in saved
-    assert "\n \t1939.1.1" in saved
+    assert "\n  1939.1.1" in saved
 
 
 def test_transaction_rolls_back_in_memory_without_touching_disk(tmp_path: Path) -> None:
@@ -190,7 +190,9 @@ ideas = { country = { TST_spirit = { picture = GFX_idea_generic custom_idea_fiel
     assert "custom_action_field = keep" in (tmp_path / "common/on_actions/custom.txt").read_text()
 
 
-def test_file_move_removes_old_file_and_identifiers_are_immutable(tmp_path: Path) -> None:
+def test_file_move_preserves_old_container_and_identifiers_are_immutable(
+    tmp_path: Path,
+) -> None:
     mod = Mod(tmp_path)
     mod.create_on_action("on_test", effect="add_stability = 0.1", path="common/on_actions/old.txt")
     mod.save(require_changes=True)
@@ -199,7 +201,11 @@ def test_file_move_removes_old_file_and_identifiers_are_immutable(tmp_path: Path
         reloaded.update_on_action("on_test", id="renamed")
     reloaded.update_on_action("on_test", path="common/on_actions/new.txt")
     reloaded.save(require_changes=True)
-    assert not (tmp_path / "common/on_actions/old.txt").exists()
+    old_content = (tmp_path / "common/on_actions/old.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "on_actions = {" in old_content
+    assert "on_test" not in old_content
     assert (tmp_path / "common/on_actions/new.txt").exists()
 
 

@@ -10,8 +10,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .parser import find_assignment_block
-from .patching import append_assignment, replace_assignment, set_block, top_level_assignments
+from .parser import TokenType, find_assignment_block, tokenize
+from .patching import (
+    AssignmentSpan,
+    append_assignment,
+    dedent_block_body,
+    replace_assignment,
+    replace_assignment_body,
+    set_block,
+    top_level_assignments,
+)
 from .script import normalize_block_body
 from .types import OnAction
 
@@ -21,7 +29,10 @@ def load_on_actions_file(path: Path) -> list[OnAction]:
     root = find_assignment_block(txt, "on_actions")
     body = root[0] if root else txt
     actions: list[OnAction] = []
+    occurrences: dict[str, int] = {}
     for action_id, action_body in _top_level_blocks(body):
+        source_occurrence = occurrences.get(action_id, 0)
+        occurrences[action_id] = source_occurrence + 1
         action = OnAction(
             id=action_id,
             effect=_extract_block(action_body, "effect"),
@@ -29,6 +40,8 @@ def load_on_actions_file(path: Path) -> list[OnAction]:
             random_events=_extract_list(action_body, "random_events"),
             path=path,
             raw_block=action_body.strip(),
+            source_path=path,
+            source_occurrence=source_occurrence,
         )
         actions.append(action)
     return actions
@@ -36,11 +49,7 @@ def load_on_actions_file(path: Path) -> list[OnAction]:
 
 def serialize_on_action(action: OnAction) -> str:
     if action.raw_block:
-        body = action.raw_block
-        if action.touched:
-            body = set_block(body, "events", "\n".join(action.events) or None)
-            body = set_block(body, "random_events", "\n".join(action.random_events) or None)
-            body = set_block(body, "effect", action.effect or None)
+        body = _patch_on_action_body(action, action.raw_block)
         return f"\t{action.id} = {{\n{_indent(body, 2)}\n\t}}"
     parts = [f"\t{action.id} = {{"]
     if action.events:
@@ -66,23 +75,23 @@ def serialize_on_action(action: OnAction) -> str:
 
 def serialize_on_actions_file(actions: list[OnAction], original: str = "") -> str:
     if original:
-        root = find_assignment_block(original, "on_actions")
-        if root is not None:
-            body = root[0]
-            current = {action.id: action for action in actions}
-            for span in sorted(
-                top_level_assignments(body), key=lambda item: item.start, reverse=True
-            ):
-                if not span.is_block:
-                    continue
-                action = current.pop(span.key, None)
-                replacement = None if action is None else serialize_on_action(action).strip()
-                body = replace_assignment(body, span, replacement)
-            for action in current.values():
-                body = append_assignment(body, serialize_on_action(action).strip())
-            replacement = f"on_actions = {{\n{_indent(body, 1)}\n}}"
-            start, end = root[1], root[2]
-            return original[:start] + replacement + original[end:]
+        root_span = next(
+            (
+                span
+                for span in top_level_assignments(original)
+                if span.key == "on_actions"
+                and span.is_block
+                and span.body_start is not None
+                and span.body_end is not None
+            ),
+            None,
+        )
+        if root_span is not None:
+            assert root_span.body_start is not None
+            assert root_span.body_end is not None
+            body = original[root_span.body_start : root_span.body_end]
+            return replace_assignment_body(original, root_span, _patch_actions_body(actions, body))
+        return _patch_actions_body(actions, original)
     parts = ["on_actions = {"]
     for action in actions:
         parts.append(serialize_on_action(action))
@@ -100,14 +109,18 @@ def write_on_actions_file(path: Path, actions: list[OnAction]) -> Path:
 
 def _extract_block(text: str, key: str) -> str:
     match = find_assignment_block(text, key)
-    return match[0].strip() if match else ""
+    return dedent_block_body(match[0]) if match else ""
 
 
 def _extract_list(text: str, key: str) -> list[str]:
     body = _extract_block(text, key)
     if not body:
         return []
-    return [item for item in body.split() if item and not item.startswith("#")]
+    return [
+        token.value
+        for token in tokenize(body)
+        if token.type in {TokenType.IDENT, TokenType.NUMBER, TokenType.STRING}
+    ]
 
 
 def _top_level_blocks(text: str) -> list[tuple[str, str]]:
@@ -116,6 +129,55 @@ def _top_level_blocks(text: str) -> list[tuple[str, str]]:
         for span in top_level_assignments(text)
         if span.is_block and span.body_start is not None and span.body_end is not None
     ]
+
+
+def _patch_on_action_body(action: OnAction, body: str) -> str:
+    if not action.touched:
+        return body
+    body = set_block(body, "events", "\n".join(action.events) or None)
+    body = set_block(body, "random_events", "\n".join(action.random_events) or None)
+    body = set_block(body, "effect", action.effect or None)
+    return body
+
+
+def _patch_actions_body(actions: list[OnAction], body: str) -> str:
+    spans = [span for span in top_level_assignments(body) if span.is_block]
+    source_actions = {
+        (action.id, action.source_occurrence): action
+        for action in actions
+        if action.source_path is not None
+        and action.path is not None
+        and action.source_path.resolve(strict=False) == action.path.resolve(strict=False)
+        and action.source_occurrence >= 0
+    }
+    occurrences: dict[str, int] = {}
+    matches: list[tuple[AssignmentSpan, OnAction | None]] = []
+    for span in spans:
+        source_occurrence = occurrences.get(span.key, 0)
+        occurrences[span.key] = source_occurrence + 1
+        matches.append((span, source_actions.get((span.key, source_occurrence))))
+
+    for span, action in reversed(matches):
+        if action is None:
+            body = replace_assignment(body, span, None)
+        elif span.body_start is not None and span.body_end is not None:
+            action_body = body[span.body_start : span.body_end]
+            body = replace_assignment_body(
+                body, span, _patch_on_action_body(action, action_body)
+            )
+        else:
+            body = replace_assignment(body, span, serialize_on_action(action).strip())
+    for action in actions:
+        is_source_occurrence = (
+            action.source_path is not None
+            and action.path is not None
+            and action.source_path.resolve(strict=False) == action.path.resolve(strict=False)
+            and action.source_occurrence >= 0
+        )
+        if is_source_occurrence:
+            continue
+        body = append_assignment(body, serialize_on_action(action).strip())
+    return body
 
 
 def _indent(text: str, count: int) -> str:

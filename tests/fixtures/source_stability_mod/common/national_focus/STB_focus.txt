@@ -1,0 +1,23 @@
+# This fixture is synthetic, but shaped like a hand-maintained overhaul file.
+focus_tree   = {
+	id = stb_focus
+	country = { factor = 0 modifier = { add = 10 original_tag = STB } }
+	custom_tree_metadata = { author = "fixture" revision = 7 }
+
+	focus = {
+		id = STB_opening
+		icon = GFX_goal_generic_construct_civ_factory # retain this note
+		x=2
+		y = 0
+		cost   = 5 # only this token should change
+		search_filters = { FOCUS_FILTER_INDUSTRY }
+		completion_reward = { add_political_power = 25 }
+		unknown_focus_field = keep_me
+	}
+
+	focus = { id = STB_followup icon = GFX_goal_generic_production x = 2 y = 1 cost = 10
+		prerequisite = { focus = STB_opening }
+		prerequisite={ focus=STB_opening } # repeated block on purpose
+		completion_reward = { add_stability = 0.05 }
+	}
+}

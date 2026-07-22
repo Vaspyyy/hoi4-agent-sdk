@@ -1,0 +1,2 @@
+# A comment before the declaration must survive unrelated country edits.
+STB = "countries/STB.txt"

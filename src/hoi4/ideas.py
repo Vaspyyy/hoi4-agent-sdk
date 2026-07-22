@@ -14,12 +14,16 @@ from typing import Any
 from .parser import extract_braced_block, find_assignment_block, strip_comments
 from .patching import (
     append_assignment,
+    assignment_spans,
+    dedent_block_body,
     replace_assignment,
+    replace_assignment_body,
     set_block,
     set_scalar,
     top_level_assignments,
 )
 from .script import pdx_string, pdx_value
+from .structured_patching import patch_scalar_mapping
 from .types import Idea
 
 KV_RE = re.compile(r"^\s*([a-zA-Z0-9_]+)\s*=\s*([^\n\r]+)", re.MULTILINE)
@@ -34,7 +38,7 @@ def _extract_block(text: str, keyword: str) -> str:
     match = find_assignment_block(text, keyword)
     if not match:
         return ""
-    return match[0]
+    return dedent_block_body(match[0])
 
 
 def detect_ideas_container(text: str) -> str:
@@ -66,6 +70,8 @@ def _is_idea_body(text: str) -> bool:
         {
             "icon",
             "picture",
+            "desc",
+            "removal_cost",
             "modifier",
             "research_bonus",
             "traits",
@@ -78,10 +84,36 @@ def _is_idea_body(text: str) -> bool:
     )
 
 
+def scan_idea_ids_file(path: Path) -> set[str]:
+    """Extract idea IDs without parsing every modeled property."""
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    ids: set[str] = set()
+    for container_name in (*VALID_CONTAINERS, "dynamic_country_ideas"):
+        match = find_assignment_block(text, container_name)
+        if match is None:
+            continue
+        container = match[0]
+        for span in top_level_assignments(container):
+            if not span.is_block or span.body_start is None or span.body_end is None:
+                continue
+            body = container[span.body_start : span.body_end]
+            if container_name == "dynamic_country_ideas" or _is_idea_body(body):
+                ids.add(span.key)
+                continue
+            ids.update(
+                nested.key for nested in top_level_assignments(body) if nested.is_block
+            )
+    return ids
+
+
 def _parse_kv(text: str) -> dict[str, Any]:
     props: dict[str, Any] = {}
-    for key, value in KV_RE.findall(text):
-        value = value.strip().strip('"')
+    for span in top_level_assignments(text):
+        if span.is_block:
+            continue
+        key = span.key
+        value = text[span.value_start : span.value_end].strip().strip('"')
         if value.lower() in ("yes", "no"):
             props[key.strip()] = value.lower() == "yes"
         elif "." in value:
@@ -99,9 +131,22 @@ def _parse_kv(text: str) -> dict[str, Any]:
 
 def _parse_idea_body(idea_id: str, body: str) -> Idea:
     idea = Idea(id=idea_id.strip())
-    pic = PICTURE_RE.search(body) or ICON_RE.search(body)
-    if pic:
-        idea.icon = pic.group(1).strip()
+    picture = _extract_scalar(body, "picture")
+    icon = _extract_scalar(body, "icon")
+    if picture or icon:
+        idea.icon = picture or icon
+    idea.desc = _extract_scalar(body, "desc")
+    removal_cost = _extract_scalar(body, "removal_cost")
+    if removal_cost:
+        try:
+            idea.removal_cost = int(removal_cost)
+        except ValueError:
+            try:
+                idea.removal_cost = float(removal_cost)
+            except ValueError:
+                # Preserve scripted/custom scalar values instead of dropping
+                # them when another modeled field is edited.
+                idea.removal_cost = removal_cost
     modifier_body = _extract_block(body, "modifier")
     if modifier_body:
         idea.modifier = _parse_kv(modifier_body)
@@ -146,33 +191,14 @@ def read_ideas_file(path: Path) -> tuple[list[Idea], str]:
 def serialize_idea(idea: Idea, indent: int = 1) -> str:
     tab = "\t" * indent
     if idea.raw_block:
-        body = idea.raw_block
-        if idea.touched:
-            body = set_scalar(body, "icon", idea.icon or None)
-            body = set_scalar(body, "picture", None)
-            body = set_block(body, "allowed", idea.allowed or None)
-            body = set_block(
-                body,
-                "modifier",
-                "\n".join(
-                    f"{key} = {pdx_string(value) if isinstance(value, str) else pdx_value(value)}"
-                    for key, value in idea.modifier.items()
-                )
-                or None,
-            )
-            body = set_block(
-                body,
-                "research_bonus",
-                "\n".join(
-                    f"{key} = {pdx_value(value)}" for key, value in idea.research_bonus.items()
-                )
-                or None,
-            )
-            body = set_block(body, "traits", " ".join(idea.traits) or None)
-            body = set_block(body, "ai_will_do", idea.ai_will_do or None)
+        body = _patch_idea_body(idea, idea.raw_block)
         return f"{tab}{idea.id} = {{\n{_indent(body, indent + 1)}\n{tab}}}"
     lines = [f"{tab}{idea.id} = {{"]
     lines.append(f"{tab}\ticon = {idea.icon}")
+    if idea.desc:
+        lines.append(f"{tab}\tdesc = {pdx_value(idea.desc)}")
+    if idea.removal_cost is not None:
+        lines.append(f"{tab}\tremoval_cost = {pdx_value(idea.removal_cost)}")
     if idea.allowed:
         lines.append(f"{tab}\tallowed = {{")
         for line in idea.allowed.strip().split("\n"):
@@ -219,50 +245,23 @@ def serialize_ideas_file(
             continue
         categories.setdefault(idea.category, []).append(idea)
     if original:
-        match = find_assignment_block(original, container_name)
-        if match is not None:
-            body = match[0]
-            direct = {idea.id: idea for idea in uncategorized}
-            remaining_categories = dict(categories)
-            spans = top_level_assignments(body)
-            for span in sorted(spans, key=lambda item: item.start, reverse=True):
-                if not span.is_block or span.body_start is None or span.body_end is None:
-                    continue
-                span_body = body[span.body_start : span.body_end]
-                replacement: str | None
-                if _is_idea_body(span_body):
-                    matched_idea = direct.pop(span.key) if span.key in direct else None
-                    replacement = (
-                        None
-                        if matched_idea is None
-                        else serialize_idea(matched_idea, indent=0).strip()
-                    )
-                else:
-                    category_ideas = remaining_categories.pop(span.key, None)
-                    if category_ideas is None:
-                        nested = [
-                            nested_span
-                            for nested_span in top_level_assignments(span_body)
-                            if nested_span.is_block
-                            and nested_span.body_start is not None
-                            and nested_span.body_end is not None
-                        ]
-                        if nested and all(
-                            _is_idea_body(span_body[nested_span.body_start : nested_span.body_end])
-                            for nested_span in nested
-                        ):
-                            body = replace_assignment(body, span, None)
-                        continue
-                    replacement = _serialize_category(span.key, category_ideas, indent=0)
-                body = replace_assignment(body, span, replacement)
-            for idea in direct.values():
-                body = append_assignment(body, serialize_idea(idea, indent=0).strip())
-            for category, category_ideas in remaining_categories.items():
-                body = append_assignment(
-                    body, _serialize_category(category, category_ideas, indent=0)
-                )
-            replacement = f"{container_name} = {{\n{_indent(body, 1)}\n}}"
-            return original[: match[1]] + replacement + original[match[2] :]
+        container_span = next(
+            (
+                span
+                for span in top_level_assignments(original)
+                if span.key == container_name
+                and span.is_block
+                and span.body_start is not None
+                and span.body_end is not None
+            ),
+            None,
+        )
+        if container_span is not None:
+            assert container_span.body_start is not None
+            assert container_span.body_end is not None
+            body = original[container_span.body_start : container_span.body_end]
+            body = _patch_ideas_container(uncategorized, categories, body)
+            return replace_assignment_body(original, container_span, body)
 
     parts = [f"{container_name} = {{"]
     for idea in uncategorized:
@@ -280,22 +279,7 @@ def _serialize_category(category: str, ideas: list[Idea], indent: int) -> str:
     prefix = "\t" * indent
     raw = next((idea.category_raw_block for idea in ideas if idea.category_raw_block), "")
     if raw:
-        current = {idea.id: idea for idea in ideas}
-        spans = {
-            span.key: span
-            for span in top_level_assignments(raw)
-            if span.is_block
-            and span.body_start is not None
-            and span.body_end is not None
-            and _is_idea_body(raw[span.body_start : span.body_end])
-        }
-        for idea_id, span in sorted(spans.items(), key=lambda item: item[1].start, reverse=True):
-            idea = current.pop(idea_id, None)
-            raw = replace_assignment(
-                raw, span, None if idea is None else serialize_idea(idea, indent=0).strip()
-            )
-        for idea in current.values():
-            raw = append_assignment(raw, serialize_idea(idea, indent=0).strip())
+        raw = _patch_idea_category(ideas, raw)
         return f"{prefix}{category} = {{\n{_indent(raw, indent + 1)}\n{prefix}}}"
     lines = [f"{prefix}{category} = {{"]
     for idea in ideas:
@@ -303,6 +287,173 @@ def _serialize_category(category: str, ideas: list[Idea], indent: int) -> str:
         lines.append("")
     lines.append(f"{prefix}}}")
     return "\n".join(lines)
+
+
+def _extract_scalar(text: str, key: str) -> str:
+    for span in assignment_spans(text, key):
+        if not span.is_block:
+            return text[span.value_start : span.value_end].strip().strip('"')
+    return ""
+
+
+def _serialize_scalar_like(text: str, key: str, value: object) -> str:
+    """Render a replacement scalar using the source's quoting style when possible."""
+
+    for span in assignment_spans(text, key):
+        if span.is_block:
+            continue
+        current = text[span.value_start : span.value_end].strip()
+        if current.startswith('"'):
+            return pdx_string(value)
+        break
+    return pdx_value(value)
+
+
+def _patch_idea_body(idea: Idea, body: str) -> str:
+    if not idea.touched:
+        return body
+    fields = idea.touched_fields or {
+        "icon",
+        "desc",
+        "removal_cost",
+        "allowed",
+        "modifier",
+        "research_bonus",
+        "traits",
+        "ai_will_do",
+    }
+    if "icon" in fields:
+        picture_spans = assignment_spans(body, "picture")
+        icon_spans = assignment_spans(body, "icon")
+        if picture_spans:
+            body = set_scalar(body, "picture", idea.icon or None)
+        elif icon_spans or (idea.icon and idea.icon != "GFX_idea_generic"):
+            body = set_scalar(body, "icon", idea.icon or None)
+    if "desc" in fields:
+        desc_spans = assignment_spans(body, "desc")
+        # A few game files use nested ``desc`` blocks for unrelated rule
+        # descriptions. Do not erase an unmodeled block during another idea edit;
+        # an explicit scalar description still replaces it.
+        if idea.desc or not any(span.is_block for span in desc_spans):
+            body = set_scalar(
+                body,
+                "desc",
+                _serialize_scalar_like(body, "desc", idea.desc) if idea.desc else None,
+            )
+    if "removal_cost" in fields:
+        body = set_scalar(
+            body,
+            "removal_cost",
+            pdx_value(idea.removal_cost) if idea.removal_cost is not None else None,
+        )
+    if "allowed" in fields:
+        body = set_block(body, "allowed", idea.allowed or None)
+    if "modifier" in fields:
+        modifier_spans = assignment_spans(body, "modifier")
+        if (
+            idea.modifier_merge
+            and modifier_spans
+            and modifier_spans[0].is_block
+            and modifier_spans[0].body_start is not None
+            and modifier_spans[0].body_end is not None
+        ):
+            span = modifier_spans[0]
+            modifier_body = body[span.body_start : span.body_end]
+            modifier_body = patch_scalar_mapping(
+                modifier_body,
+                idea.modifier,
+                remove_missing=False,
+            )
+            body = replace_assignment_body(body, span, modifier_body)
+        else:
+            body = set_block(
+                body,
+                "modifier",
+                "\n".join(
+                    f"{key} = {pdx_string(value) if isinstance(value, str) else pdx_value(value)}"
+                    for key, value in idea.modifier.items()
+                )
+                or None,
+            )
+    if "research_bonus" in fields:
+        body = set_block(
+            body,
+            "research_bonus",
+            "\n".join(
+                f"{key} = {pdx_value(value)}" for key, value in idea.research_bonus.items()
+            )
+            or None,
+        )
+    if "traits" in fields:
+        body = set_block(body, "traits", " ".join(idea.traits) or None)
+    if "ai_will_do" in fields:
+        body = set_block(body, "ai_will_do", idea.ai_will_do or None)
+    return body
+
+
+def _patch_ideas_container(
+    uncategorized: list[Idea], categories: dict[str, list[Idea]], body: str
+) -> str:
+    direct = {idea.id: idea for idea in uncategorized}
+    remaining_categories = dict(categories)
+    for span in sorted(top_level_assignments(body), key=lambda item: item.start, reverse=True):
+        if not span.is_block or span.body_start is None or span.body_end is None:
+            continue
+        span_body = body[span.body_start : span.body_end]
+        if _is_idea_body(span_body):
+            idea = direct.pop(span.key, None)
+            if idea is None:
+                body = replace_assignment(body, span, None)
+            elif idea.raw_block:
+                body = replace_assignment_body(body, span, _patch_idea_body(idea, span_body))
+            else:
+                body = replace_assignment(body, span, serialize_idea(idea, indent=0).strip())
+            continue
+        category_ideas = remaining_categories.pop(span.key, None)
+        if category_ideas is None:
+            nested = [
+                nested_span
+                for nested_span in top_level_assignments(span_body)
+                if nested_span.is_block
+                and nested_span.body_start is not None
+                and nested_span.body_end is not None
+            ]
+            if nested and all(
+                _is_idea_body(span_body[nested_span.body_start : nested_span.body_end])
+                for nested_span in nested
+            ):
+                body = replace_assignment(body, span, None)
+            continue
+        body = replace_assignment_body(body, span, _patch_idea_category(category_ideas, span_body))
+    for idea in direct.values():
+        body = append_assignment(body, serialize_idea(idea, indent=0).strip())
+    for category, category_ideas in remaining_categories.items():
+        body = append_assignment(body, _serialize_category(category, category_ideas, indent=0))
+    return body
+
+
+def _patch_idea_category(ideas: list[Idea], body: str) -> str:
+    current = {idea.id: idea for idea in ideas}
+    spans = [
+        span
+        for span in top_level_assignments(body)
+        if span.is_block
+        and span.body_start is not None
+        and span.body_end is not None
+        and _is_idea_body(body[span.body_start : span.body_end])
+    ]
+    for span in sorted(spans, key=lambda item: item.start, reverse=True):
+        idea = current.pop(span.key, None)
+        if idea is None:
+            body = replace_assignment(body, span, None)
+        elif span.body_start is not None and span.body_end is not None and idea.raw_block:
+            idea_body = body[span.body_start : span.body_end]
+            body = replace_assignment_body(body, span, _patch_idea_body(idea, idea_body))
+        else:
+            body = replace_assignment(body, span, serialize_idea(idea, indent=0).strip())
+    for idea in current.values():
+        body = append_assignment(body, serialize_idea(idea, indent=0).strip())
+    return body
 
 
 def _indent(text: str, count: int) -> str:

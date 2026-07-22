@@ -82,6 +82,27 @@ ideas = {
         assert ideas[0].research_bonus["industry"] == 0.05
         assert ideas[0].traits == ["industrial_steel_mills_trait"]
 
+    def test_reads_description_and_removal_cost(self, tmp_path):
+        path = tmp_path / "ideas.txt"
+        path.write_text(
+            """ideas = {
+    country = {
+        TST_spirit = {
+            desc = "TST_spirit_desc"
+            removal_cost = -1
+            modifier = { stability_factor = 0.1 }
+        }
+    }
+}
+""",
+            encoding="utf-8",
+        )
+
+        ideas, _ = read_ideas_file(path)
+
+        assert ideas[0].desc == "TST_spirit_desc"
+        assert ideas[0].removal_cost == -1
+
 
 class TestSerializeIdea:
     def test_serializes_id(self):
@@ -100,6 +121,61 @@ class TestSerializeIdea:
         assert "bool_val = yes" in text
         assert 'str_val = "hello"' in text
 
+    def test_serializes_description_and_removal_cost(self):
+        idea = Idea(id="TST_spirit", desc="TST_spirit_desc", removal_cost=-1)
+
+        text = serialize_idea(idea)
+
+        assert "desc = TST_spirit_desc" in text
+        assert "removal_cost = -1" in text
+
+    def test_description_edit_preserves_surrounding_source(self, tmp_path):
+        original = """ideas = {
+    country = {
+        TST_spirit = {
+            picture = GFX_idea_TST
+            desc   = "TST_old_desc" # keep description note
+            removal_cost = -1 # keep removal note
+            custom_idea_field = keep
+            modifier = { stability_factor = 0.10 }
+        }
+    }
+}
+"""
+        path = tmp_path / "ideas.txt"
+        path.write_text(original, encoding="utf-8")
+        ideas, container = read_ideas_file(path)
+        ideas[0].desc = "TST_new_desc"
+        ideas[0].removal_cost = 10
+        ideas[0].touched = True
+
+        text = serialize_ideas_file(ideas, container_name=container, original=original)
+
+        expected = original.replace("TST_old_desc", "TST_new_desc").replace(
+            "removal_cost = -1", "removal_cost = 10"
+        )
+        assert text == expected
+
+    def test_unmodeled_description_block_survives_other_edits(self, tmp_path):
+        original = """ideas = {
+    country = {
+        TST_spirit = {
+            icon = GFX_old
+            desc = { text = TST_conditional_desc trigger = { always = yes } }
+        }
+    }
+}
+"""
+        path = tmp_path / "ideas.txt"
+        path.write_text(original, encoding="utf-8")
+        ideas, container = read_ideas_file(path)
+        ideas[0].icon = "GFX_new"
+        ideas[0].touched = True
+
+        text = serialize_ideas_file(ideas, container_name=container, original=original)
+
+        assert text == original.replace("GFX_old", "GFX_new")
+
 
 class TestSerializeIdeasFile:
     def test_wraps_in_country_ideas(self):
@@ -112,6 +188,66 @@ class TestSerializeIdeasFile:
         text = serialize_ideas_file(ideas)
         assert "id_a" in text or "a = {" in text
         assert "b = {" in text
+
+
+def test_mod_description_edit_does_not_rebuild_unrelated_nested_blocks(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "common/ideas/custom.txt"
+    path.parent.mkdir(parents=True)
+    original = """ideas = { country = {
+    custom_spirit = {
+        desc = OLD_DESC
+        modifier = {
+            stability_factor = 0.1
+            custom_nested = { future_value = yes }
+        }
+        research_bonus = {
+            industry = 0.05
+            custom_research = { future_value = yes }
+        }
+    }
+} }
+"""
+    path.write_text(original, encoding="utf-8")
+
+    from hoi4 import Mod
+
+    mod = Mod(tmp_path)
+    assert mod.update_idea("custom_spirit", desc="NEW_DESC")
+    mod.save()
+
+    assert path.read_text(encoding="utf-8") == original.replace("OLD_DESC", "NEW_DESC")
+
+
+def test_modifier_merge_preserves_nested_unmodeled_modifier_content(tmp_path: Path) -> None:
+    path = tmp_path / "common/ideas/custom.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """ideas = { country = {
+    custom_spirit = { modifier = {
+        stability_factor = 0.1
+        custom_nested = { future_value = yes }
+    } }
+} }
+""",
+        encoding="utf-8",
+    )
+
+    from hoi4 import Mod
+
+    mod = Mod(tmp_path)
+    assert mod.update_idea(
+        "custom_spirit",
+        modifier={"political_power_gain": 0.2},
+        merge_modifier=True,
+    )
+    mod.save()
+
+    rendered = path.read_text(encoding="utf-8")
+    assert "stability_factor = 0.1" in rendered
+    assert "custom_nested = { future_value = yes }" in rendered
+    assert "political_power_gain = 0.2" in rendered
 
 
 class TestWriteIdeasFile:

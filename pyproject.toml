@@ -1,19 +1,44 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "hoi4-agent-sdk"
-version = "0.1.0"
-description = "Python SDK for AI agents to mod Hearts of Iron 4"
+version = "0.2.0"
+description = "Source-preserving Python SDK for Hearts of Iron IV modding"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Vaspyyy" }]
 requires-python = ">=3.11"
 dependencies = []
+keywords = ["hearts-of-iron-iv", "hoi4", "modding", "paradox-script"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/Vaspyyy/hoi4-agent-sdk"
+Issues = "https://github.com/Vaspyyy/hoi4-agent-sdk/issues"
 
 [project.optional-dependencies]
+assets = [
+    "Pillow>=10.0,<13.0",
+]
+map = [
+    "Pillow>=10.0,<13.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
+]
 dev = [
     "pytest>=7.0",
     "mypy>=1.0",
     "ruff>=0.1",
+    "build>=1.2",
 ]
 
 [tool.mypy]
@@ -36,3 +61,6 @@ line-length = 100
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+hoi4 = ["py.typed"]

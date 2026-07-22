@@ -1,0 +1,7 @@
+on_actions = {
+	on_startup = {
+		effect={ add_political_power = 1 }
+		events = { stb.1 }
+		custom_on_action_field = keep_me
+	}
+}

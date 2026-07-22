@@ -1,0 +1,12 @@
+stb_fixture_category = {
+	icon = generic_decision
+	custom_category_field = keep_me
+
+	STB_fixture_decision={
+		icon = generic_industry
+		cost   = 25 # political-power balancing note
+		available = { has_government = democratic }
+		complete_effect={ add_political_power = -25 }
+		custom_decision_field = keep_me
+	}
+}

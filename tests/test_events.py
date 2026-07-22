@@ -24,6 +24,36 @@ class TestLoadEventsFile:
         _, events = load_events_file(FIXTURES / "events" / "mymod_events.txt")
         assert events[0].event_type == "country_event"
 
+    def test_reads_all_supported_leader_event_types(self, tmp_path):
+        path = tmp_path / "leader_events.txt"
+        path.write_text(
+            """add_namespace = leaders
+unit_leader_event = {
+    id = leaders.1
+    title = leaders.1.t
+    desc = leaders.1.d
+    option = { name = leaders.1.a }
+}
+operative_leader_event = {
+    id = leaders.2
+    title = leaders.2.t
+    desc = leaders.2.d
+    option = { name = leaders.2.a }
+}
+""",
+            encoding="utf-8",
+        )
+
+        namespace, events = load_events_file(path)
+
+        assert namespace == "leaders"
+        assert [event.id for event in events] == ["leaders.1", "leaders.2"]
+        assert [event.event_type for event in events] == [
+            "unit_leader_event",
+            "operative_leader_event",
+        ]
+        assert serialize_events_file(namespace, events, original=path.read_text()) == path.read_text()
+
     def test_reads_title_and_desc(self):
         _, events = load_events_file(FIXTURES / "events" / "mymod_events.txt")
         assert events[0].title == "mymod.1.1.t"

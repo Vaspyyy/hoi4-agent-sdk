@@ -1,8 +1,8 @@
 """
 Event system - read, create, and write HOI4 events.
 
-Events live in events/*.txt files. Each file declares a namespace
-and contains one or more country_event / state_event blocks.
+Events live in events/*.txt files. Each file declares a namespace and contains
+one or more supported event blocks.
 """
 
 from __future__ import annotations
@@ -15,7 +15,11 @@ from .parser import find_assignment_block, strip_comments
 from .patching import (
     AssignmentSpan,
     append_assignment,
+    assignment_spans,
+    block_bodies_equivalent,
+    dedent_block_body,
     replace_assignment,
+    replace_assignment_body,
     set_block,
     set_scalar,
     top_level_assignments,
@@ -24,12 +28,45 @@ from .script import normalize_block_body
 from .types import Event, EventOption
 
 NAMESPACE_RE = re.compile(r"add_namespace\s*=\s*(\S+)")
-EVENT_TYPE_RE = re.compile(r"(country_event|state_event|news_event)\s*=\s*\{")
+VALID_EVENT_TYPES = frozenset(
+    {
+        "country_event",
+        "state_event",
+        "news_event",
+        "unit_leader_event",
+        "operative_leader_event",
+    }
+)
 EVENT_ID_RE = re.compile(r"\bid\s*=\s*(\S+)")
 TITLE_RE = re.compile(r"\btitle\s*=\s*(\S+)")
 DESC_RE = re.compile(r"\bdesc\s*=\s*(\S+)")
 PICTURE_RE = re.compile(r"\bpicture\s*=\s*(\S+)")
 TRIGGERED_ONLY_RE = re.compile(r"\bis_triggered_only\s*=\s*(yes|no)")
+
+
+def scan_event_ids_file(path: Path) -> set[str]:
+    """Extract event IDs without constructing full event/option models."""
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    ids: set[str] = set()
+    for span in top_level_assignments(text):
+        if (
+            not span.is_block
+            or span.body_start is None
+            or span.body_end is None
+            or not (span.key in VALID_EVENT_TYPES or span.key.endswith("_event"))
+        ):
+            continue
+        body = text[span.body_start : span.body_end]
+        id_spans = assignment_spans(body, "id")
+        if not id_spans or id_spans[0].is_block:
+            continue
+        raw = body[id_spans[0].value_start : id_spans[0].value_end].strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+            raw = raw[1:-1]
+        if raw:
+            ids.add(raw)
+    return ids
 
 
 def load_events_file(path: Path) -> tuple[Optional[str], list[Event]]:
@@ -42,7 +79,7 @@ def load_events_file(path: Path) -> tuple[Optional[str], list[Event]]:
     event_blocks: list[tuple[int, str, str]] = []
     for span in top_level_assignments(txt):
         if (
-            span.key in {"country_event", "state_event", "news_event"}
+            span.key in VALID_EVENT_TYPES
             and span.is_block
             and span.body_start is not None
             and span.body_end is not None
@@ -105,7 +142,7 @@ def _extract_block(chunk: str, block_name: str) -> str:
     match = find_assignment_block(chunk, block_name)
     if not match:
         return ""
-    return match[0]
+    return dedent_block_body(match[0])
 
 
 def _extract_options(chunk: str) -> list[EventOption]:
@@ -163,32 +200,7 @@ def _extract_options(chunk: str) -> list[EventOption]:
 
 def serialize_event(event: Event) -> str:
     if event.raw_block:
-        body = event.raw_block
-        if event.touched:
-            body = set_scalar(body, "id", event.id)
-            body = set_scalar(body, "title", event.title or None)
-            body = set_scalar(body, "desc", event.description or None)
-            body = set_scalar(body, "picture", event.picture or None)
-            body = set_scalar(body, "is_triggered_only", "yes" if event.is_triggered_only else None)
-            body = set_scalar(
-                body,
-                "fire_only_once",
-                None if event.fire_only_once is None else ("yes" if event.fire_only_once else "no"),
-            )
-            body = set_block(body, "trigger", event.trigger or None)
-            body = set_block(body, "immediate", event.immediate or None)
-            body = set_block(body, "mean_time_to_happen", event.mean_time_to_happen or None)
-        current_options = list(event.options)
-        option_spans = [
-            span for span in top_level_assignments(body) if span.key == "option" and span.is_block
-        ]
-        for index, span in reversed(list(enumerate(option_spans))):
-            option = current_options[index] if index < len(current_options) else None
-            body = replace_assignment(
-                body, span, None if option is None else _serialize_option(option, indent=0)
-            )
-        for option in current_options[len(option_spans) :]:
-            body = append_assignment(body, _serialize_option(option, indent=0))
+        body = _patch_event_body(event, event.raw_block)
         return f"{event.event_type} = {{\n{_indent(body, 1)}\n}}"
 
     parts: list[str] = []
@@ -246,7 +258,7 @@ def serialize_events_file(namespace: Optional[str], events: list[Event], origina
         spans: list[tuple[str, AssignmentSpan]] = []
         for span in top_level_assignments(text):
             if (
-                span.key not in {"country_event", "state_event", "news_event"}
+                span.key not in VALID_EVENT_TYPES
                 or not span.is_block
                 or span.body_start is None
                 or span.body_end is None
@@ -258,7 +270,18 @@ def serialize_events_file(namespace: Optional[str], events: list[Event], origina
                 spans.append((match.group(1), span))
         for event_id, span in sorted(spans, key=lambda item: item[1].start, reverse=True):
             event = current.pop(event_id, None)
-            text = replace_assignment(text, span, None if event is None else serialize_event(event))
+            if event is None:
+                text = replace_assignment(text, span, None)
+            elif (
+                event.raw_block
+                and event.event_type == span.key
+                and span.body_start is not None
+                and span.body_end is not None
+            ):
+                event_body = text[span.body_start : span.body_end]
+                text = replace_assignment_body(text, span, _patch_event_body(event, event_body))
+            else:
+                text = replace_assignment(text, span, serialize_event(event))
         for event in current.values():
             text = append_assignment(text, serialize_event(event))
         return text
@@ -284,20 +307,7 @@ def write_events_file(path: Path, namespace: Optional[str], events: list[Event])
 def _serialize_option(option: EventOption, indent: int) -> str:
     prefix = "\t" * indent
     if option.raw_block:
-        body = option.raw_block
-        if option.touched:
-            body = set_scalar(body, "name", option.name or None)
-            body = set_block(body, "ai_chance", option.ai_chance or None)
-            body = set_block(body, "trigger", option.trigger or None)
-            # Effects are the unmodeled remainder. Replacing them losslessly requires
-            # remembering their original spans, so only replace when explicitly touched.
-            if option.effect:
-                known = {"name", "ai_chance", "trigger"}
-                for span in reversed(
-                    [span for span in top_level_assignments(body) if span.key not in known]
-                ):
-                    body = replace_assignment(body, span, None)
-                body = append_assignment(body, option.effect)
+        body = _patch_option_body(option, option.raw_block)
         return f"{prefix}option = {{\n{_indent(body, indent + 1)}\n{prefix}}}"
     lines = [f"{prefix}option = {{"]
     if option.name:
@@ -313,6 +323,89 @@ def _serialize_option(option: EventOption, indent: int) -> str:
         lines.extend(f"{prefix}\t{line.strip()}" for line in option.effect.strip().splitlines())
     lines.append(f"{prefix}}}")
     return "\n".join(lines)
+
+
+def _patch_event_body(event: Event, body: str) -> str:
+    if event.touched:
+        body = set_scalar(body, "id", event.id)
+        body = set_scalar(body, "title", event.title or None)
+        body = set_scalar(body, "desc", event.description or None)
+        if any(span.key == "picture" for span in top_level_assignments(body)) or (
+            event.picture and event.picture != "GFX_report_event_generic"
+        ):
+            body = set_scalar(body, "picture", event.picture or None)
+        triggered_spans = [
+            span for span in top_level_assignments(body) if span.key == "is_triggered_only"
+        ]
+        if triggered_spans or event.is_triggered_only:
+            body = set_scalar(
+                body, "is_triggered_only", "yes" if event.is_triggered_only else "no"
+            )
+        body = set_scalar(
+            body,
+            "fire_only_once",
+            None if event.fire_only_once is None else ("yes" if event.fire_only_once else "no"),
+        )
+        body = set_block(body, "trigger", event.trigger or None)
+        body = set_block(body, "immediate", event.immediate or None)
+        body = set_block(body, "mean_time_to_happen", event.mean_time_to_happen or None)
+
+    current_options = list(event.options)
+    option_spans = [
+        span
+        for span in top_level_assignments(body)
+        if span.key == "option" and span.is_block
+    ]
+    for index, span in reversed(list(enumerate(option_spans))):
+        option = current_options[index] if index < len(current_options) else None
+        if option is None:
+            body = replace_assignment(body, span, None)
+        elif span.body_start is not None and span.body_end is not None and option.raw_block:
+            option_body = body[span.body_start : span.body_end]
+            body = replace_assignment_body(body, span, _patch_option_body(option, option_body))
+        else:
+            body = replace_assignment(body, span, _serialize_option(option, indent=0))
+    for option in current_options[len(option_spans) :]:
+        body = append_assignment(body, _serialize_option(option, indent=0))
+    return body
+
+
+def _patch_option_body(option: EventOption, body: str) -> str:
+    if not option.touched:
+        return body
+    original_effect = _option_effect(body)
+    body = set_scalar(body, "name", option.name or None)
+    body = set_block(body, "ai_chance", option.ai_chance or None)
+    body = set_block(body, "trigger", option.trigger or None)
+    if not block_bodies_equivalent(original_effect, option.effect):
+        known = {"name", "ai_chance", "trigger"}
+        for span in reversed(
+            [span for span in top_level_assignments(body) if span.key not in known]
+        ):
+            body = replace_assignment(body, span, None)
+        if option.effect:
+            body = append_assignment(body, option.effect)
+    return body
+
+
+def _option_effect(block_text: str) -> str:
+    trigger_body = _extract_block(block_text, "trigger")
+    ai_body = _extract_block(block_text, "ai_chance")
+    cleaned = block_text.strip()
+    if trigger_body:
+        trigger_match = find_assignment_block(cleaned, "trigger")
+        if trigger_match:
+            cleaned = (cleaned[: trigger_match[1]] + "\n" + cleaned[trigger_match[2] :]).strip()
+    if ai_body:
+        ai_match = find_assignment_block(cleaned, "ai_chance")
+        if ai_match:
+            cleaned = (cleaned[: ai_match[1]] + "\n" + cleaned[ai_match[2] :]).strip()
+    lines = [
+        line.strip()
+        for line in cleaned.splitlines()
+        if not re.match(r"^name\s*=", line.strip())
+    ]
+    return normalize_block_body("\n".join(lines).strip())
 
 
 def _indent(text: str, count: int) -> str:

@@ -13,6 +13,7 @@ from hoi4 import (
     Idea,
     Leader,
     VALIDATION_WARNING_CODES,
+    ExternalModificationError,
 )
 from hoi4 import TECHNOLOGY_CATEGORIES, effect_block, scope_block
 from hoi4.config import Config, find_config
@@ -133,6 +134,23 @@ class TestModLocalization:
         mod.set_loc("B", "2")
         assert mod.all_loc() == {"A": "1", "B": "2"}
 
+    def test_first_key_preserves_header_only_localization_file(self, tmp_path):
+        path = tmp_path / "localisation" / "english" / "mod_l_english.yml"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "\ufeff# translator note\nl_english:\n # reserved section\n",
+            encoding="utf-8",
+        )
+
+        mod = Mod(tmp_path)
+        mod.set_loc("FIRST_KEY", "First value")
+        mod.save(require_changes=True)
+
+        rendered = path.read_text(encoding="utf-8-sig")
+        assert "# translator note" in rendered
+        assert "# reserved section" in rendered
+        assert 'FIRST_KEY:0 "First value"' in rendered
+
 
 class TestModSave:
     def test_save_persists_focus_tree(self, tmp_mod):
@@ -235,9 +253,9 @@ class TestPreview:
 
     def test_preview_state(self, tmp_mod):
         mod = tmp_mod.with_states()
-        mod.set_state_owner(1, "GER")
+        mod.set_state_owner(1, "SOV")
         diff = mod.preview()
-        assert "GER" in diff
+        assert "SOV" in diff
 
     def test_preview_event(self, tmp_mod):
         mod = tmp_mod.with_events()
@@ -829,7 +847,12 @@ class TestAgentFacingApis:
 
         idea = mod.ensure_idea("SCL_spirit", modifier={"political_power_gain": 0.1})
         assert idea.id == "SCL_spirit"
-        mod.ensure_idea("SCL_spirit", icon="GFX_new", modifier={"stability_factor": 0.05})
+        mod.ensure_idea(
+            "SCL_spirit",
+            icon="GFX_new",
+            modifier={"stability_factor": 0.05},
+            merge_modifier=True,
+        )
         assert mod.get_idea("SCL_spirit").icon == "GFX_new"
         assert mod.get_idea("SCL_spirit").modifier["political_power_gain"] == 0.1
         assert mod.get_idea("SCL_spirit").modifier["stability_factor"] == 0.05
@@ -1127,7 +1150,11 @@ class TestAgentFacingApis:
         mod = Mod(mod_root, hoi4_install=hoi4_root)
         context = mod.get_country_context("TST", copy_states=True)
         assert context["states"][0]["id"] == 1
-        assert (mod_root / "history" / "states" / "1-Testland.txt").exists()
+        target = mod_root / "history" / "states" / "1-Testland.txt"
+        assert not target.exists()
+        assert "history/states/1-Testland.txt" in mod.preview()
+        mod.save()
+        assert target.exists()
 
 
 class TestModCountries:
@@ -1139,6 +1166,87 @@ class TestModCountries:
         assert country.tag == "WST"
         assert country.name == "Westralia"
         assert "WST" in mod.list_countries()
+
+    def test_overwrite_country_keeps_custom_definition_target_and_loc_source(
+        self, tmp_path
+    ):
+        tags = tmp_path / "common" / "country_tags"
+        definitions = tmp_path / "common" / "countries"
+        histories = tmp_path / "history" / "countries"
+        localization = tmp_path / "localisation" / "english"
+        for directory in (tags, definitions, histories, localization):
+            directory.mkdir(parents=True, exist_ok=True)
+        tags.joinpath("tags.txt").write_text(
+            'ABC = "countries/Custom Definition.txt"\n', encoding="utf-8"
+        )
+        custom_definition = definitions / "Custom Definition.txt"
+        custom_definition.write_text(
+            "graphical_culture = western_european_gfx\ncolor = { 1 2 3 }\n",
+            encoding="utf-8",
+        )
+        old_history = histories / "ABC - Oldland.txt"
+        old_history.write_text("capital = 1\n", encoding="utf-8")
+        shared_loc = localization / "shared_l_english.yml"
+        shared_loc.write_text(
+            '\ufeffl_english:\n ABC:0 "Oldland"\n ABC_ADJ:0 "Oldlander"\n',
+            encoding="utf-8",
+        )
+
+        mod = Mod(tmp_path)
+        mod.create_country("ABC", "Newland", overwrite=True)
+        mod.save(require_changes=True)
+
+        assert not (definitions / "ABC.txt").exists()
+        assert "color = { 128 128 128 }" in custom_definition.read_text(encoding="utf-8")
+        assert not old_history.exists()
+        assert (histories / "ABC - Newland.txt").exists()
+        assert 'ABC:0 "Newland"' in shared_loc.read_text(encoding="utf-8-sig")
+        generated_loc = localization / "ABC_country_l_english.yml"
+        assert 'ABC:0 "Newland"' not in generated_loc.read_text(encoding="utf-8-sig")
+
+    def test_overwrite_loaded_vanilla_country_targets_mod_not_install(self, tmp_path):
+        mod_root = tmp_path / "mod"
+        hoi4_root = tmp_path / "hoi4"
+        mod_root.mkdir()
+        tags = hoi4_root / "common" / "country_tags"
+        definition = hoi4_root / "common" / "countries" / "Custom ABC.txt"
+        history = hoi4_root / "history" / "countries" / "ABC - Oldland.txt"
+        tags.mkdir(parents=True)
+        definition.parent.mkdir(parents=True)
+        history.parent.mkdir(parents=True)
+        tags.joinpath("tags.txt").write_text(
+            'ABC = "countries/Custom ABC.txt"\n', encoding="utf-8"
+        )
+        definition.write_text("color = { 1 2 3 }\n", encoding="utf-8")
+        history.write_text("capital = 1\n", encoding="utf-8")
+
+        mod = Mod(mod_root, hoi4_install=hoi4_root)
+        mod.get_country("ABC")
+        mod.create_country(
+            "ABC",
+            "Override Land",
+            overwrite=True,
+            allow_vanilla_override=True,
+        )
+        preview = mod.preview()
+
+        assert "common/countries/Custom ABC.txt" in preview
+        mod.save(require_changes=True)
+        assert (mod_root / "common" / "countries" / "Custom ABC.txt").exists()
+        assert definition.read_text(encoding="utf-8") == "color = { 1 2 3 }\n"
+
+    def test_create_country_refuses_unregistered_orphan_files(self, tmp_path):
+        definition = tmp_path / "common" / "countries" / "ABC.txt"
+        definition.parent.mkdir(parents=True)
+        original = "# not registered yet\nfuture_setting = yes\n"
+        definition.write_text(original, encoding="utf-8")
+
+        mod = Mod(tmp_path)
+        with pytest.raises(FileExistsError, match="not registered"):
+            mod.create_country("ABC", "Newland")
+
+        assert definition.read_text(encoding="utf-8") == original
+        assert mod.preview() == ""
 
     def test_create_country_defaults_leader_ideology_to_ruling_party(self, tmp_mod):
         country = tmp_mod.mod.create_country("RED", "Redland", ruling_party="communism")
@@ -1266,6 +1374,55 @@ class TestModStates:
         state = mod.get_state(1)
         assert state.owner == "GER"
         assert state.manpower == "3200000"
+
+    def test_vanilla_get_state_and_validation_are_read_only(self, tmp_path):
+        mod_root = tmp_path / "mod"
+        hoi4_root = tmp_path / "hoi4"
+        mod_root.mkdir()
+        vanilla_state = hoi4_root / "history" / "states" / "115-Sicily.txt"
+        vanilla_state.parent.mkdir(parents=True)
+        vanilla_state.write_text(
+            "state = { id = 115 name = STATE_115 manpower = 1 state_category = town "
+            "provinces = { 1 } history = { owner = ITA add_core_of = ITA } }",
+            encoding="utf-8",
+        )
+
+        mod = Mod(mod_root, hoi4_install=hoi4_root)
+        state = mod.get_state(115)
+
+        assert state.path == vanilla_state
+        assert state.source_path == vanilla_state
+        assert not (mod_root / "history").exists()
+        assert mod.preview() == ""
+
+        mod.validate()
+        assert not (mod_root / "history").exists()
+
+    def test_vanilla_state_override_is_deferred_until_save(self, tmp_path):
+        mod_root = tmp_path / "mod"
+        hoi4_root = tmp_path / "hoi4"
+        mod_root.mkdir()
+        vanilla_state = hoi4_root / "history" / "states" / "115-Sicily.txt"
+        vanilla_state.parent.mkdir(parents=True)
+        original = (
+            "state = { id = 115 name = STATE_115 manpower = 1 state_category = town "
+            "provinces = { 1 } history = { owner = ITA add_core_of = ITA } }"
+        )
+        vanilla_state.write_text(original, encoding="utf-8")
+
+        mod = Mod(mod_root, hoi4_install=hoi4_root)
+        state = mod.set_state_owner(115, "GER")
+        target = mod_root / "history" / "states" / "115-Sicily.txt"
+
+        assert state.path == target
+        assert state.source_path == vanilla_state
+        assert not target.exists()
+        assert "history/states/115-Sicily.txt" in mod.preview()
+
+        result = mod.save(require_changes=True)
+        assert target in result.written_files
+        assert "owner = GER" in target.read_text(encoding="utf-8")
+        assert vanilla_state.read_text(encoding="utf-8") == original
 
     def test_set_state_owner(self, tmp_mod):
         mod = tmp_mod.with_states()
@@ -1630,6 +1787,20 @@ class TestModIdeas:
         assert idea.path == tmp_mod.root / "common" / "ideas" / "TST_ideas.txt"
         assert "TST_spirit" in mod.list_ideas()
 
+    def test_create_idea_description_and_removal_cost_round_trip(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_idea(
+            "TST_spirit",
+            modifier={"stability_factor": 0.1},
+            desc="TST_spirit_desc",
+            removal_cost=-1,
+        )
+        mod.save()
+
+        loaded = Mod(tmp_mod.root).get_idea("TST_spirit")
+        assert loaded.desc == "TST_spirit_desc"
+        assert loaded.removal_cost == -1
+
     def test_create_idea_requires_explicit_overwrite(self, tmp_mod):
         mod = tmp_mod.mod
         mod.create_idea("TST_spirit", icon="GFX_old")
@@ -1644,12 +1815,22 @@ class TestModIdeas:
         idea = mod.get_idea("GER_spirit_1")
         assert idea.icon == "GFX_new_icon"
 
-    def test_update_idea_modifier(self, tmp_mod):
+    def test_update_idea_modifier_merge_is_explicit(self, tmp_mod):
         mod = tmp_mod.with_ideas()
-        mod.update_idea("GER_spirit_1", modifier={"new_modifier": 0.5})
+        mod.update_idea("GER_spirit_1", modifier={"new_modifier": 0.5}, merge_modifier=True)
         idea = mod.get_idea("GER_spirit_1")
         assert idea.modifier["new_modifier"] == 0.5
         assert "army_morale_factor" in idea.modifier
+
+    def test_update_idea_modifier_replaces_by_default_and_can_clear(self, tmp_mod):
+        mod = tmp_mod.with_ideas()
+        mod.update_idea("GER_spirit_1", modifier={"new_modifier": 0.5})
+        assert mod.get_idea("GER_spirit_1").modifier == {"new_modifier": 0.5}
+
+        mod.update_idea("GER_spirit_1", modifier={})
+        assert mod.get_idea("GER_spirit_1").modifier == {}
+        mod.save()
+        assert Mod(tmp_mod.root).get_idea("GER_spirit_1").modifier == {}
 
     def test_delete_idea(self, tmp_mod):
         mod = tmp_mod.with_ideas()
@@ -1803,6 +1984,19 @@ class TestEventValidation:
         errors = validate_event(event)
         assert any("invalid type" in e.message for e in errors)
 
+    def test_leader_event_types_are_valid(self):
+        for event_type in ("unit_leader_event", "operative_leader_event"):
+            event = Event(
+                id="t.1",
+                event_type=event_type,
+                title="T",
+                description="D",
+                options=[EventOption(name="a")],
+            )
+            assert not any(
+                "invalid type" in error.message for error in validate_event(event)
+            )
+
 
 class TestStateValidation:
     def test_valid_state(self):
@@ -1939,3 +2133,26 @@ class ModHelper:
 def tmp_mod(tmp_path):
     mod = Mod(tmp_path)
     return ModHelper(tmp_path, mod)
+
+
+def test_save_rejects_external_changes_until_reload(tmp_path: Path) -> None:
+    path = tmp_path / "common/ideas/custom.txt"
+    path.parent.mkdir(parents=True)
+    source = "ideas = { country = { custom_spirit = { desc = OLD_DESC } } }\n"
+    path.write_text(source, encoding="utf-8")
+    mod = Mod(tmp_path)
+    assert mod.update_idea("custom_spirit", desc="NEW_DESC")
+
+    external = source.rstrip() + "\n# legacy writer changed this file\n"
+    path.write_text(external, encoding="utf-8")
+
+    with pytest.raises(ExternalModificationError, match="changed after Mod loaded"):
+        mod.preview()
+    with pytest.raises(ExternalModificationError, match="Call reload"):
+        mod.save()
+    assert path.read_text(encoding="utf-8") == external
+
+    mod.reload()
+    assert mod.update_idea("custom_spirit", desc="NEW_DESC")
+    mod.save()
+    assert path.read_text(encoding="utf-8") == external.replace("OLD_DESC", "NEW_DESC")

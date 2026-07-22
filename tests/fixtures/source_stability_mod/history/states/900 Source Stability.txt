@@ -1,0 +1,23 @@
+state={
+	id = 900
+	name="STATE_900"
+	manpower   = 123456 # population note
+	state_category = city
+	resources = { steel = 4 chromium=1 }
+	provinces={ 9001 9002 9003 }
+	local_supplies = 1.25
+	custom_state_field = { nested = { unknown = yes } }
+
+	history={
+		owner=STB
+		add_core_of = STB
+		victory_points = { 9001 5 }
+		victory_points={ 9002 1 } # repeated block must stay repeated
+		buildings = { infrastructure = 3 industrial_complex = 2 }
+		1939.1.1 = {
+			buildings={ arms_factory = 1 }
+			set_demilitarized_zone = no
+		}
+		unknown_history_block = { value = keep_me }
+	}
+}

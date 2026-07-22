@@ -1,0 +1,10 @@
+capital   = 900 # source-stability capital
+set_research_slots = 3
+set_popularities = {
+	democratic = 100
+	fascism = 0
+	communism = 0
+	neutrality = 0
+}
+set_politics={ ruling_party = democratic elections_allowed = yes }
+unknown_history_directive = keep_me

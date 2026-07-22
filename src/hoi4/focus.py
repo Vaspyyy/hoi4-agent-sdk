@@ -15,7 +15,9 @@ from .patching import (
     AssignmentSpan,
     append_assignment,
     assignment_spans,
+    dedent_block_body,
     replace_assignment,
+    replace_assignment_body,
     set_block,
     set_scalar,
     top_level_assignments,
@@ -131,7 +133,7 @@ def _parse_focus_block(chunk: str) -> Focus | None:
     for span in spans:
         if span.is_block and span.body_start is not None and span.body_end is not None:
             block_values.setdefault(span.key, []).append(
-                chunk[span.body_start : span.body_end].strip()
+                dedent_block_body(chunk[span.body_start : span.body_end])
             )
         else:
             scalar_values.setdefault(span.key, []).append(
@@ -188,7 +190,7 @@ def _extract_block_content(chunk: str, block_name: str) -> str:
     match = find_assignment_block(chunk, block_name)
     if not match:
         return ""
-    return match[0].strip()
+    return dedent_block_body(match[0])
 
 
 def _extract_scalar_all(chunk: str, key: str) -> list[str]:
@@ -213,41 +215,7 @@ def _extract_bare_block_values(chunk: str, block_name: str) -> list[str]:
 
 def serialize_focus_tree(tree: FocusTree) -> str:
     if tree.raw_block:
-        body = tree.raw_block
-        if tree.touched:
-            body = set_scalar(body, "id", tree.id)
-            body = set_scalar(
-                body, "default", None if tree.default is None else ("yes" if tree.default else "no")
-            )
-            body = set_block(
-                body, "continuous_focus_position", tree.continuous_focus_position or None
-            )
-            for span in reversed(assignment_spans(body, "shared_focus")):
-                body = replace_assignment(body, span, None)
-            for shared in tree.shared_focuses:
-                body = append_assignment(body, f"shared_focus = {shared}")
-        current = {focus.id: focus for focus in tree.focuses}
-        focus_spans: list[tuple[str, AssignmentSpan]] = []
-        for span in top_level_assignments(body):
-            if (
-                span.key != "focus"
-                or not span.is_block
-                or span.body_start is None
-                or span.body_end is None
-            ):
-                continue
-            focus_body = body[span.body_start : span.body_end]
-            match = FOCUS_ID_RE.search(strip_comments(focus_body))
-            if match:
-                focus_spans.append((match.group(1), span))
-        for focus_id, span in sorted(focus_spans, key=lambda item: item[1].start, reverse=True):
-            focus = current.pop(focus_id, None)
-            replacement = (
-                None if focus is None else "\n".join(_serialize_focus(focus, indent=0)).strip()
-            )
-            body = replace_assignment(body, span, replacement)
-        for focus in current.values():
-            body = append_assignment(body, "\n".join(_serialize_focus(focus, indent=0)).strip())
+        body = _patch_focus_tree_body(tree, tree.raw_block)
         return "focus_tree = {\n" + _indent(body, 1) + "\n}\n"
     parts: list[str] = []
     if tree.country_tag:
@@ -300,43 +268,7 @@ def _serialize_focus(focus: Focus, indent: int = 1) -> list[str]:
         return lines
 
     if focus.raw_block:
-        body = focus.raw_block
-        body = set_scalar(body, "id", focus.id)
-        body = set_scalar(body, "icon", focus.icon)
-        body = set_scalar(body, "x", str(focus.x))
-        body = set_scalar(body, "y", str(focus.y))
-        body = set_scalar(body, "cost", str(focus.cost))
-        body = set_scalar(body, "relative_position_id", focus.relative_position_id or None)
-        for key, flag_value in [
-            ("cancel_if_invalid", focus.cancel_if_invalid),
-            ("continue_if_invalid", focus.continue_if_invalid),
-            ("available_if_capitulated", focus.available_if_capitulated),
-        ]:
-            body = set_scalar(
-                body, key, None if flag_value is None else ("yes" if flag_value else "no")
-            )
-        body = set_scalar(body, "will_lead_to_war_with", focus.will_lead_to_war_with or None)
-        for key, block_value in [
-            ("search_filters", " ".join(focus.search_filters)),
-            ("available", focus.available),
-            ("bypass", focus.bypass),
-            ("select_effect", focus.select_effect),
-            ("completion_reward", focus.completion_reward),
-            ("complete_tooltip", focus.complete_tooltip),
-            ("allow_branch", focus.allow_branch),
-            ("ai_will_do", focus.ai_will_do),
-        ]:
-            body = set_block(body, key, block_value or None)
-        for key, groups in [
-            ("prerequisite", focus.prerequisites),
-            ("mutually_exclusive", focus.mutually_exclusive),
-        ]:
-            for span in reversed(assignment_spans(body, key)):
-                body = replace_assignment(body, span, None)
-            for group in groups:
-                body = append_assignment(
-                    body, f"{key} = {{ " + " ".join(f"focus = {ref}" for ref in group) + " }"
-                )
+        body = _patch_focus_body(focus, focus.raw_block)
         return [f"{prefix}focus = {{", _indent(body, indent + 1), f"{prefix}}}", ""]
 
     lines = [f"{prefix}focus = {{"]
@@ -455,12 +387,124 @@ def serialize_focus_file(trees: list[FocusTree], original: str = "") -> str:
             spans.append((match.group(1), span))
     for tree_id, span in sorted(spans, key=lambda item: item[1].start, reverse=True):
         tree = current.pop(tree_id, None)
-        text = replace_assignment(
-            text, span, None if tree is None else serialize_focus_tree(tree).strip()
-        )
+        if tree is None:
+            text = replace_assignment(text, span, None)
+        elif tree.raw_block and span.body_start is not None and span.body_end is not None:
+            tree_body = text[span.body_start : span.body_end]
+            text = replace_assignment_body(text, span, _patch_focus_tree_body(tree, tree_body))
+        else:
+            text = replace_assignment(text, span, serialize_focus_tree(tree).strip())
     for tree in current.values():
         text = append_assignment(text, serialize_focus_tree(tree).strip())
     return text
+
+
+def _patch_focus_tree_body(tree: FocusTree, body: str) -> str:
+    if tree.touched:
+        body = set_scalar(body, "id", tree.id)
+        body = set_scalar(
+            body, "default", None if tree.default is None else ("yes" if tree.default else "no")
+        )
+        body = set_block(body, "continuous_focus_position", tree.continuous_focus_position or None)
+        current_shared = [
+            body[span.value_start : span.value_end].strip().strip('"')
+            for span in assignment_spans(body, "shared_focus")
+            if not span.is_block
+        ]
+        if current_shared != tree.shared_focuses:
+            for span in reversed(assignment_spans(body, "shared_focus")):
+                body = replace_assignment(body, span, None)
+            for shared in tree.shared_focuses:
+                body = append_assignment(body, f"shared_focus = {shared}")
+
+    current = {focus.id: focus for focus in tree.focuses}
+    focus_spans: list[tuple[str, AssignmentSpan]] = []
+    for span in top_level_assignments(body):
+        if (
+            span.key != "focus"
+            or not span.is_block
+            or span.body_start is None
+            or span.body_end is None
+        ):
+            continue
+        focus_body = body[span.body_start : span.body_end]
+        match = FOCUS_ID_RE.search(strip_comments(focus_body))
+        if match:
+            focus_spans.append((match.group(1), span))
+    for focus_id, span in sorted(focus_spans, key=lambda item: item[1].start, reverse=True):
+        focus = current.pop(focus_id, None)
+        if focus is None:
+            body = replace_assignment(body, span, None)
+        elif span.body_start is not None and span.body_end is not None:
+            focus_body = body[span.body_start : span.body_end]
+            if focus.raw_block:
+                body = replace_assignment_body(body, span, _patch_focus_body(focus, focus_body))
+            else:
+                body = replace_assignment(
+                    body, span, "\n".join(_serialize_focus(focus, indent=0)).strip()
+                )
+    for focus in current.values():
+        body = append_assignment(body, "\n".join(_serialize_focus(focus, indent=0)).strip())
+    return body
+
+
+def _patch_focus_body(focus: Focus, body: str) -> str:
+    if not focus.touched:
+        return body
+    body = set_scalar(body, "id", focus.id)
+    body = _set_scalar_unless_implicit_default(
+        body, "icon", focus.icon, "GFX_goal_generic_construct_civilian"
+    )
+    body = _set_scalar_unless_implicit_default(body, "x", str(focus.x), "0")
+    body = _set_scalar_unless_implicit_default(body, "y", str(focus.y), "0")
+    body = _set_scalar_unless_implicit_default(body, "cost", str(focus.cost), "10")
+    body = set_scalar(body, "relative_position_id", focus.relative_position_id or None)
+    for key, flag_value in [
+        ("cancel_if_invalid", focus.cancel_if_invalid),
+        ("continue_if_invalid", focus.continue_if_invalid),
+        ("available_if_capitulated", focus.available_if_capitulated),
+    ]:
+        body = set_scalar(body, key, None if flag_value is None else ("yes" if flag_value else "no"))
+    body = set_scalar(body, "will_lead_to_war_with", focus.will_lead_to_war_with or None)
+    for key, block_value in [
+        ("search_filters", " ".join(focus.search_filters)),
+        ("available", focus.available),
+        ("bypass", focus.bypass),
+        ("select_effect", focus.select_effect),
+        ("completion_reward", focus.completion_reward),
+        ("complete_tooltip", focus.complete_tooltip),
+        ("allow_branch", focus.allow_branch),
+        ("ai_will_do", focus.ai_will_do),
+    ]:
+        body = set_block(body, key, block_value or None)
+    for key, groups in [
+        ("prerequisite", focus.prerequisites),
+        ("mutually_exclusive", focus.mutually_exclusive),
+    ]:
+        existing = _ref_groups(
+            [
+                body[span.body_start : span.body_end]
+                for span in assignment_spans(body, key)
+                if span.is_block and span.body_start is not None and span.body_end is not None
+            ]
+        )
+        if existing == groups:
+            continue
+        for span in reversed(assignment_spans(body, key)):
+            body = replace_assignment(body, span, None)
+        for group in groups:
+            body = append_assignment(
+                body, f"{key} = {{ " + " ".join(f"focus = {ref}" for ref in group) + " }"
+            )
+    return body
+
+
+def _set_scalar_unless_implicit_default(
+    body: str, key: str, value: str, implicit_default: str
+) -> str:
+    if assignment_spans(body, key) or value != implicit_default:
+        return set_scalar(body, key, value)
+    return body
 
 
 def _indent(text: str, count: int) -> str:
