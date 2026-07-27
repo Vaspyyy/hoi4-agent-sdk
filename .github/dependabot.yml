@@ -9,6 +9,7 @@ updates:
       timezone: Europe/Berlin
     cooldown:
       default-days: 7
+    versioning-strategy: increase-if-necessary
     open-pull-requests-limit: 3
     groups:
       python-tooling:

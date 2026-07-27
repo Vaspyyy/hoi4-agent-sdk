@@ -80,7 +80,7 @@ jobs:
           cache-dependency-path: requirements/*.txt
       - run: >-
           python -m pip install -e . pytest hypothesis
-          -r requirements/optional-minimum.txt
+          Pillow==10.0.0 numpy==1.26.0 scipy==1.11.0
           -c requirements/ci.txt
       - env:
           HOI4_HYPOTHESIS_PROFILE: ci
