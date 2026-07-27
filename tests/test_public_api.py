@@ -7,6 +7,7 @@ def test_root_api_exposes_project_and_asset_workflows_without_optional_dependenc
     expected = {
         "create_mod_structure",
         "detect_launcher_mod_directory",
+        "DynamicModifier",
         "export_flag_from_mod",
         "export_portrait_from_mod",
         "ExternalModificationError",

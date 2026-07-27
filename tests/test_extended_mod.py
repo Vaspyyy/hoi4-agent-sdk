@@ -19,14 +19,10 @@ IDEOLOGY_SOURCE = """ideologies = {
 }
 """
 
-DYNAMIC_SOURCE = """dynamic_country_ideas = {
-    name = ABC_dynamic
-    ABC_growth = {
-        potential = { original_tag = ABC }
-        modifier = { political_power_gain = 0.1 # modifier comment
-        }
-        future_setting = yes
-    }
+DYNAMIC_SOURCE = """ABC_growth = {
+    enable = { original_tag = ABC }
+    political_power_gain = 0.1 # modifier comment
+    future_setting = yes
 }
 """
 
@@ -58,10 +54,10 @@ BOOKMARK_SOURCE = '''bookmarks = {
 
 def _write_extended_mod(root: Path) -> None:
     (root / "common/ideologies").mkdir(parents=True)
-    (root / "common/national_ideas").mkdir(parents=True)
+    (root / "common/dynamic_modifiers").mkdir(parents=True)
     (root / "common/bookmarks").mkdir(parents=True)
     (root / "common/ideologies/custom.txt").write_text(IDEOLOGY_SOURCE, encoding="utf-8")
-    (root / "common/national_ideas/dynamic.txt").write_text(
+    (root / "common/dynamic_modifiers/dynamic.txt").write_text(
         DYNAMIC_SOURCE, encoding="utf-8"
     )
     (root / "common/bookmarks/start.txt").write_text(BOOKMARK_SOURCE, encoding="utf-8")
@@ -72,7 +68,7 @@ def test_extended_domains_load_update_preview_save_and_preserve_source(tmp_path:
     mod = Mod(tmp_path)
 
     assert mod.list_ideologies() == ["custom"]
-    assert mod.list_dynamic_ideas() == ["ABC_growth"]
+    assert mod.list_dynamic_modifiers() == ["ABC_growth"]
     assert mod.list_bookmarks() == ["TEST_START"]
     assert mod.get_bookmark("TEST_START").countries[0].required_dlc == [
         "DLC One",
@@ -80,7 +76,10 @@ def test_extended_domains_load_update_preview_save_and_preserve_source(tmp_path:
     ]
 
     assert mod.update_ideology("custom", color=(9, 8, 7))
-    assert mod.update_dynamic_idea("ABC_growth", modifier={"political_power_gain": 0.2})
+    assert mod.update_dynamic_modifier(
+        "ABC_growth",
+        modifier={"political_power_gain": 0.2, "future_setting": True},
+    )
     assert mod.update_bookmark_country(
         "TEST_START", "ABC", occurrence=1, ideology="fascism"
     )
@@ -105,7 +104,7 @@ def test_extended_domains_load_update_preview_save_and_preserve_source(tmp_path:
     assert len(result.written_files) == 3
 
     ideology_text = (tmp_path / "common/ideologies/custom.txt").read_text(encoding="utf-8")
-    dynamic_text = (tmp_path / "common/national_ideas/dynamic.txt").read_text(
+    dynamic_text = (tmp_path / "common/dynamic_modifiers/dynamic.txt").read_text(
         encoding="utf-8"
     )
     bookmark_text = (tmp_path / "common/bookmarks/start.txt").read_text(encoding="utf-8")
@@ -147,8 +146,10 @@ def test_can_override_vanilla_ideology_into_mod_without_editing_game(tmp_path: P
 def test_create_extended_content_and_transaction_rollback(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     mod.create_ideology("new_ideology", color=(10, 20, 30))
-    mod.create_dynamic_idea_group("ABC_dynamic")
-    mod.create_dynamic_idea("ABC_dynamic", "ABC_new", modifier={"stability_factor": 0.1})
+    mod.create_dynamic_modifier(
+        "ABC_new",
+        modifier={"stability_factor": 0.1},
+    )
     bookmark = mod.create_bookmark(
         "NEW_START",
         default_country="ABC",
@@ -167,9 +168,12 @@ def test_create_extended_content_and_transaction_rollback(tmp_path: Path) -> Non
 
     reloaded = Mod(tmp_path)
     with reloaded.transaction():
-        assert reloaded.update_dynamic_idea("ABC_new", modifier={"stability_factor": 0.2})
+        assert reloaded.update_dynamic_modifier(
+            "ABC_new",
+            modifier={"stability_factor": 0.2},
+        )
         assert "0.2" in reloaded.preview()
-    assert reloaded.get_dynamic_idea("ABC_new").modifier["stability_factor"] == 0.1
+    assert reloaded.get_dynamic_modifier("ABC_new").modifier["stability_factor"] == 0.1
 
 
 def test_extended_duplicate_diagnostics_and_strict_loading(tmp_path: Path) -> None:
@@ -227,10 +231,10 @@ def test_existing_country_update_does_not_emit_duplicate_generated_tag_and_delet
     assert not tag_file.exists() or "ABC =" not in tag_file.read_text(encoding="utf-8")
 
 
-def test_delete_dynamic_group_preserves_unrelated_content_in_same_file(
+def test_delete_dynamic_modifier_preserves_unrelated_content_in_same_file(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "common/national_ideas/dynamic.txt"
+    path = tmp_path / "common/dynamic_modifiers/dynamic.txt"
     path.parent.mkdir(parents=True)
     path.write_text(
         DYNAMIC_SOURCE + "\n# unrelated footer\nother_setting = yes\n",
@@ -238,11 +242,11 @@ def test_delete_dynamic_group_preserves_unrelated_content_in_same_file(
     )
     mod = Mod(tmp_path)
 
-    assert mod.delete_dynamic_idea_group("ABC_dynamic")
+    assert mod.delete_dynamic_modifier("ABC_growth")
     mod.save()
 
     rendered = path.read_text(encoding="utf-8")
-    assert "dynamic_country_ideas" not in rendered
+    assert "ABC_growth" not in rendered
     assert "# unrelated footer" in rendered
     assert "other_setting = yes" in rendered
 

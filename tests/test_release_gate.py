@@ -72,7 +72,7 @@ def test_release_gate_is_read_only_and_exercises_every_fixture_domain(
         "country",
         "state",
         "ideology",
-        "dynamic_idea",
+        "dynamic_modifier",
         "bookmark",
     }
     assert not report.filesystem_changes

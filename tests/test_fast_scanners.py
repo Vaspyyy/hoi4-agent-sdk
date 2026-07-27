@@ -22,7 +22,7 @@ character_event = {
     assert scan_event_ids_file(path) == {"test.1", "test.2"}
 
 
-def test_idea_id_scanner_handles_categories_direct_and_dynamic(tmp_path: Path) -> None:
+def test_idea_id_scanner_handles_categories_and_direct_ideas(tmp_path: Path) -> None:
     path = tmp_path / "ideas.txt"
     path.write_text(
         """ideas = {
@@ -39,4 +39,4 @@ dynamic_country_ideas = {
         encoding="utf-8",
     )
 
-    assert scan_idea_ids_file(path) == {"nested_idea", "direct_idea", "dynamic_idea"}
+    assert scan_idea_ids_file(path) == {"nested_idea", "direct_idea"}

@@ -17,10 +17,10 @@ def normalize_localization_key(key: str) -> str:
 
 
 def _escape_localization_value(value: str) -> str:
-    text = str(value)
-    if "\n" in text or "\r" in text or "\x00" in text:
-        raise ValueError("HOI4 localization values must be single-line strings")
-    return text.replace("\\", "\\\\").replace('"', '\\"')
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    if "\x00" in text:
+        raise ValueError("HOI4 localization values cannot contain NUL characters")
+    return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def _parse_quoted_value(line: str, start: int) -> str | None:
@@ -29,7 +29,10 @@ def _parse_quoted_value(line: str, start: int) -> str | None:
     while i < len(line):
         if line[i] == "\\" and i + 1 < len(line):
             nxt = line[i + 1]
-            value.append(nxt if nxt in {'"', "\\"} else "\\" + nxt)
+            if nxt == "n":
+                value.append("\n")
+            else:
+                value.append(nxt if nxt in {'"', "\\"} else "\\" + nxt)
             i += 2
             continue
         if line[i] == '"':

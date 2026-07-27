@@ -50,7 +50,7 @@ history, characters, and localization.
 | `suggest_tag(name: str) -> str` | `str` | Pick an available 3-character tag from a country/place name |
 | `suggest_tags(name: str, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
-| `create_country(tag, name, adjective="", color=(128,128,128), capital=1, research_slots=None, ruling_party="democratic", popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader, caches, marks dirty. If omitted, `leader_ideology` is picked from `ruling_party`. `research_slots` writes `set_research_slots = N`. Raises `ValueError` for existing mod tags or vanilla tags unless explicitly allowed. |
+| `create_country(tag, name, adjective="", color=(128,128,128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. Raises for existing mod or vanilla tags unless explicitly allowed. |
 | `update_country(tag: str, **kwargs) -> bool` | `bool` | Update modeled country fields. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
 | `delete_country(tag: str) -> bool` | `bool` | Stage deletion of a mod-owned country and its generated localization. Vanilla-backed countries require an explicit total-conversion strategy. |
 
@@ -60,7 +60,11 @@ history, characters, and localization.
 mod.create_country("WST", "Westralia", adjective="Westralian",
                    color=(59, 130, 246), capital=345, research_slots=3,
                    ruling_party="democratic",
+                   elections_allowed=True,
                    popularities={"democratic": 60, "fascism": 20, "communism": 10, "neutrality": 10},
+                   stability=0.7, war_support=0.5,
+                   technologies={"infantry_weapons": 1},
+                   oob="WST_1936",
                    leader_name="John Curtin", leader_ideology="liberalism")
 
 mod.update_country("WST", capital=999, leader_name="New Leader")
@@ -86,6 +90,8 @@ omitted, the SDK picks a matching default for the chosen ruling party. Use
 `Mod.default_leader_ideology("communism")` helpers instead of guessing.
 `popularities` is data-driven too: it retains arbitrary ideology-group IDs, so
 supply a distribution containing the custom ruling party when creating one.
+`elections_allowed` is independent of the ruling-party group and is written
+inside `set_politics`.
 
 For an existing country, the loader follows top-level `recruit_character` and
 `set_country_leader` references and selects the matching `country_leader`
@@ -113,10 +119,15 @@ Mod.effect_transfer_state(115, "SCL")  # SCL = { transfer_state = 115 }
 `save()` auto-generates localization keys for the country, adjective, standard
 ideology variants, every custom group present in `popularities` or
 `ruling_party`, and the selected leader's exact character ID.
+`TAG_<ideology>` and `TAG_<ideology>_DEF` are country-name variants, not party
+names. Define party text separately with `TAG_<ideology>_party` and
+`TAG_<ideology>_party_long` when the country needs custom party names.
 Country color reads follow game precedence: vanilla definition, vanilla
-`colors.txt`, mod definition, then mod `colors.txt`. Color edits keep the
-definition and map/UI color entry synchronized while preserving unrelated
-`colors.txt` content.
+`colors.txt`, mod definition, then mod `colors.txt`. New mod-only tags store
+their color in the country definition and do not create `colors.txt`. When a
+vanilla tag's color is overridden, the SDK seeds the complete configured
+vanilla `colors.txt` before patching it. Validation warns if an existing mod
+file omits vanilla entries because HOI4 replaces this file wholesale.
 
 ## States
 
@@ -133,9 +144,9 @@ states for copying, use `get_country_context(tag, copy_states=True)` or
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `list_states() -> list[int]` | Sorted state IDs | All loaded state IDs |
-| `state_index(include_vanilla=True) -> list[dict]` | `list[dict]` | Cached state metadata with `id`, `name`, `display_name`, `owner`, `path`, `source` |
+| `state_index(include_vanilla=True) -> list[dict]` | `list[dict]` | Cached state metadata with `id`, raw loc `name`, localized `display_name`, `file_name`, `owner`, `path`, and `source` |
 | `get_state_name_map(include_vanilla=True) -> dict[int, str]` | `dict[int,str]` | State ID to display name |
-| `find_state(query: str, include_vanilla=True, limit=10) -> list[dict]` | `list[dict]` | Search by ID, filename name, or state loc key |
+| `find_state(query: str, include_vanilla=True, limit=10) -> list[dict]` | `list[dict]` | Search by ID or localized state name, with stale filename fallback. Each result includes `matched`. |
 | `get_state(state_id: int) -> State` | `State` | Cached or reads from mod/vanilla without writing. Raises `KeyError`. |
 | `set_state_owner(state_id: int, tag: str, add_core: bool = True) -> State` | `State` | Change owner, optionally add core |
 | `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field. List fields such as `cores` and `provinces` append unique values instead of replacing. |
@@ -320,6 +331,8 @@ Without an explicit `path`, new ideas write to `common/ideas/{TAG}_ideas.txt` wh
 | `ensure_idea(idea_id, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
 | `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> bool` | `bool` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. |
 | `delete_idea(idea_id: str) -> bool` | `bool` | Remove from cache |
+| `suggest_idea_icons(query: str, count=5) -> list[str]` | `list[str]` | Rank loaded `GFX_idea*` keys by similarity. |
+| `suggest_idea_icon(query: str) -> str` | `str` | Return the closest loaded idea icon or raise if no icon catalog is available. |
 
 ### Example
 
@@ -331,7 +344,7 @@ mod.create_idea(
     modifier={
         "industrial_capacity_factory": 0.10,
         "consumer_goods_factor": -0.05,
-        "research_time_factor": -0.03,
+        "research_speed_factor": 0.03,
     },
 )
 
@@ -450,14 +463,21 @@ Localization uses HOI4 YML format (`l_english:` header, ` KEY:0 "value"` entries
 - Focus names: `"FOCUS_ID"`
 - Event titles: `"EVENT_ID.t"`
 - Country names: `"TAG"`, `"TAG_DEF"`, `"TAG_ADJ"`, `"TAG_fascism"`, etc.
+- Party names: `"TAG_fascism_party"` and `"TAG_fascism_party_long"`; these are
+  separate from the country-name variant `"TAG_fascism"`
 - Leader names: `"CHARACTER_ID"`
 - When reading existing YML files, numeric suffixes such as `:0` are normalized away. Both `"GER_anschluss"` and `"GER_anschluss:0"` work for `get_loc()`/`set_loc()`.
+- Python newline characters in values serialize as HOI4 `\n` escapes and parse
+  back to newline characters. Literal backslash-plus-`n` text remains literal.
 
 ### Example
 
 ```python
 mod.set_loc("WST_independence", "Declare Independence")
-mod.set_loc("WST_independence_desc", "The time has come to stand alone.")
+mod.set_loc(
+    "WST_independence_desc",
+    "The time has come to stand alone.\nThe nation awaits our decision.",
+)
 mod.search_loc("independence")
 ```
 
@@ -499,13 +519,14 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_join_faction(actor, faction_leader)` | Same output, named from the joining country's perspective |
 | `Mod.effect_white_peace(target="all")` | `white_peace = all` or `white_peace = TAG` |
 | `Mod.effect_set_rule(rule, value=True)` | `set_rule = { rule = yes }` |
+| `Mod.effect_start_civil_war(ideology, size=0.5, capital=None, effects=None)` | `start_civil_war = { ... }`, optionally with effects executed in the spawned-country scope |
 | `Mod.effect_spawn_revolution(tag, state_ids, ...)` | Transfer/core states and optionally add manpower, tech, stockpile, units, faction, and war |
 | `Mod.effect_add_tech_bonus(name, category, uses=1, bonus=0.5)` | Validated `add_tech_bonus` block |
 | `Mod.effect_create_wargoal(target, war_goal_type="annex_everything")` | `create_wargoal = { type = ... target = TAG }` |
 | `Mod.effect_declare_war(target, war_goal_type="annex_everything")` | Current-scope `declare_war_on` block |
 | `Mod.effect_declare_war_from(attacker, target, war_goal_type="annex_everything")` | Attacker-scoped war declaration |
 | `Mod.effect_load_focus_tree(tree_id, keep_completed=False, copy_completed_from=None, mark_layout_dirty=True)` | Runtime `load_focus_tree` plus optional `mark_focus_tree_layout_dirty = yes` |
-| `Mod.effect_spawn_civil_war_with_focus_tree(ideology, tree_id, size=0.5, capital=None, rebel_tag=None, ...)` | `start_civil_war` plus immediate focus tree assignment for the rebel tag |
+| `Mod.effect_spawn_civil_war_with_focus_tree(ideology, tree_id, size=0.5, capital=None, ...)` | Nests `load_focus_tree` inside `start_civil_war`, executing it in the spawned-country scope |
 | `Mod.effect_release(tag)` | `release = TAG` |
 | `Mod.effect_release_puppet(tag)` | `release_puppet = TAG` |
 | `Mod.effect_end_puppet(puppet, overlord=None)` | `end_puppet = PUP` or `OVER = { end_puppet = PUP }` |
@@ -541,7 +562,7 @@ mod.assert_no_visual_overlap("west_focus")
 ```
 ## Validation
 
-`mod.validate(validate_icons=False, strict_localization=False)` runs all validators and returns `list[ValidationError]`. Does **not** raise for content issues — returns an empty list if all valid. Pass `validate_icons=True` to scan real interface `.gfx` files and warn about missing focus icons. Pass `strict_localization=True` for a final audit of event, idea, country, and leader localization. Icon/reference scans are cached per `Mod` instance; call `reload()` (or the equivalent `discard()`) to discard queued edits and refresh from disk.
+`mod.validate(validate_icons=False, strict_localization=False)` runs all validators and returns `list[ValidationError]`. Does **not** raise for content issues — returns an empty list if all valid. Pass `validate_icons=True` to scan real interface `.gfx` files and warn about missing focus and idea icons. Pass `strict_localization=True` for a final audit of event, idea, country, and leader localization. Icon/reference scans are cached per `Mod` instance; call `reload()` (or the equivalent `discard()`) to discard queued edits and refresh from disk.
 
 `preview()` and `save()` compare every target source file with the byte snapshot captured when `Mod` loaded. If a legacy Studio writer or another worker changes one, they raise `ExternalModificationError` instead of overwriting it. Use one `Mod` per operation/thread; on this exception, call `reload()` and deliberately reapply the edit.
 
@@ -675,7 +696,9 @@ mod_root/
     ideas/
       {TAG}_ideas.txt                # Ideas (default current-HOI4 container)
     national_ideas/
-      mod_ideas.txt                  # Legacy and dynamic country ideas
+      mod_ideas.txt                  # Legacy static ideas only
+    dynamic_modifiers/
+      {modifier_id}.txt              # Native dynamic modifiers
     ideologies/
       00_mod_ideologies.txt          # Custom ideology definitions
     bookmarks/
@@ -693,7 +716,7 @@ mod_root/
       {TAG}_country_l_english.yml    # Country-specific localization
 ```
 
-## Ideologies, Dynamic Ideas, and Bookmarks
+## Ideologies, Dynamic Modifiers, and Bookmarks
 
 These domains participate in the same transaction, preview, validation, and
 atomic-save lifecycle as the original content model:
@@ -708,19 +731,18 @@ atomic-save lifecycle as the original content model:
 | `update_ideology(ideology_id, **kwargs) -> bool` | `bool` | Source-patches a mod ideology or materializes a vanilla definition as a mod override. |
 | `delete_ideology(ideology_id) -> bool` | `bool` | Stages deletion of a mod ideology. |
 
-### Dynamic-idea methods
+### Dynamic-modifier methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `list_dynamic_idea_groups() -> list[str]` | Group IDs | Lists loaded dynamic-idea groups. |
-| `list_dynamic_ideas() -> list[str]` | Idea IDs | Lists loaded dynamic ideas. |
-| `get_dynamic_idea_group(group_name) -> DynamicIdeaGroup` | Group | Gets one group. |
-| `get_dynamic_idea(idea_id) -> DynamicIdea` | Idea | Gets one dynamic idea by globally unique ID. |
-| `create_dynamic_idea_group(group_name, *, path=None, overwrite=False) -> DynamicIdeaGroup` | Group | Creates a group and target file. |
-| `create_dynamic_idea(group_name, idea_id, *, potential="", available="", modifier=None, overwrite=False) -> DynamicIdea` | Idea | Creates an idea inside a group. |
-| `update_dynamic_idea(idea_id, **kwargs) -> bool` | `bool` | Source-patches `potential`, `available`, or `modifier`. |
-| `delete_dynamic_idea(idea_id) -> bool` | `bool` | Stages deletion of one idea. |
-| `delete_dynamic_idea_group(group_name) -> bool` | `bool` | Stages deletion of a group and its dedicated file. |
+| `list_dynamic_modifiers() -> list[str]` | Modifier IDs | Lists loaded dynamic modifiers. |
+| `get_dynamic_modifier(modifier_id) -> DynamicModifier` | Modifier | Gets one dynamic modifier. |
+| `create_dynamic_modifier(modifier_id, *, icon="", enable="", remove_trigger="", attacker_modifier=None, modifier=None, path=None, overwrite=False) -> DynamicModifier` | Modifier | Creates a native top-level entry under `common/dynamic_modifiers`. |
+| `update_dynamic_modifier(modifier_id, **kwargs) -> bool` | `bool` | Source-patches modeled fields or the direct modifier mapping. |
+| `delete_dynamic_modifier(modifier_id) -> bool` | `bool` | Stages deletion while preserving unrelated file content. |
+| `Mod.effect_add_dynamic_modifier(modifier_id, days=None, scope=None)` | `str` | Builds `add_dynamic_modifier`; optionally timed or scoped. |
+| `Mod.effect_remove_dynamic_modifier(modifier_id, scope=None)` | `str` | Builds `remove_dynamic_modifier`; optionally scoped. |
+| `Mod.effect_force_update_dynamic_modifier()` | `str` | Builds `force_update_dynamic_modifier = yes`. |
 
 ### Bookmark methods
 
@@ -747,13 +769,12 @@ mod.create_ideology(
 )
 mod.update_ideology("social_democracy", can_collaborate=True)
 
-mod.create_dynamic_idea_group("ABC_dynamic_ideas")
-mod.create_dynamic_idea(
-    "ABC_dynamic_ideas",
+mod.create_dynamic_modifier(
     "ABC_reconstruction",
-    potential="original_tag = ABC",
+    enable="original_tag = ABC",
     modifier={"stability_factor": 0.1},
 )
+reward = Mod.effect_add_dynamic_modifier("ABC_reconstruction")
 
 mod.create_bookmark(
     "MY_START",
@@ -776,6 +797,11 @@ for DLC-specific variants. Use `occurrence=` when editing one such variant.
 New bookmarks include HOI4's obligatory `randomize_weather = 22345` effect by
 default. A custom `effect` replaces that body, so it must retain a top-level
 `randomize_weather` assignment; validation reports missing or malformed blocks.
+
+The former grouped `dynamic_country_ideas` API was removed because that
+container is not loaded by HOI4. Validation reports
+`unsupported_dynamic_country_ideas` as an error when legacy generated content
+still contains it.
 
 ## Release gate
 

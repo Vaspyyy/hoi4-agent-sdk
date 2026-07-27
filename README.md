@@ -56,7 +56,7 @@ with mod.transaction():
 
 - countries, characters, politics, tags, and localisation
 - states, ownership, cores, resources, buildings, and victory points
-- focus trees, events, on-actions, decisions, ideas, and dynamic ideas
+- focus trees, events, on-actions, decisions, ideas, and dynamic modifiers
 - ideology definitions and bookmark scenarios
 - project scaffolding, launcher descriptors, and safe mod discovery
 - flag, portrait, and bookmark-picture import/export with optional Pillow support

@@ -112,6 +112,9 @@ with mod.transaction():
    mod.is_country_tag_available("SIC")
    ```
 
+   `find_state()` resolves `STATE_<id>` localization before stale filenames.
+   Inspect each result's `display_name`, `file_name`, and `matched` fields.
+
 9. Focus prerequisites use `list[list[str]]`:
 
    ```python
@@ -146,13 +149,22 @@ with mod.transaction():
 
 22. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
 
-23. For civil-war countries that need custom focus trees, use `Mod.effect_spawn_civil_war_with_focus_tree(...)` or immediately pair `start_civil_war` with `Mod.effect_load_focus_tree(...)`. Do not rely only on focus tree selectors for dynamic rebel tags.
+23. For civil-war countries that need custom focus trees, use `Mod.effect_spawn_civil_war_with_focus_tree(...)`. It nests the tree load inside `start_civil_war`, where HOI4 scopes it to the spawned country. Do not guess dynamic `D01`-style rebel tags.
 
 24. For revolt chains where the tag might already exist or be a puppet, use `Mod.effect_convert_existing_or_spawn_revolt(...)` or explicit puppet helpers. Do not assume the target tag is unreleased.
 
 25. Do not use `add_resistance` as generic unrest on states that are cores of their current owner. Use flags, variables, decisions, and events for unrest/revolt progression.
 
 26. Triggered lore events should have at least one gameplay effect in each option, even if it is only a flag. Use `create_decision_chain()` for staged flag/event/cleanup decision chains and `create_recovery_decision()` for live-save repair hooks.
+
+27. Use native `create_dynamic_modifier()` and
+    `effect_add_dynamic_modifier()`. `dynamic_country_ideas` is not a HOI4
+    construct and validation rejects it.
+
+28. A new mod-only country keeps its color in
+    `common/countries/{TAG}.txt`; it must not create a partial global
+    `common/countries/colors.txt`. Vanilla color overrides require a configured
+    HOI4 install so the complete table can be retained.
 
 ## Documentation
 

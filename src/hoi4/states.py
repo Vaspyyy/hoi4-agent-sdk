@@ -579,6 +579,7 @@ def build_state_index(states_dir: Path) -> list[dict]:
                 "id": sid,
                 "name": name_m.group(1) if name_m else "",
                 "display_name": filename_name or (name_m.group(1) if name_m else ""),
+                "file_name": filename_name,
                 "owner": owner_m.group(1) if owner_m else None,
                 "path": str(f),
             }

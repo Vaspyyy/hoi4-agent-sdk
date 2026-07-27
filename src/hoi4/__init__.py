@@ -31,7 +31,7 @@ from .assets import (
 from .bookmarks import Bookmark, BookmarkCountry
 from .mod import ExternalModificationError, Mod
 from .config import Config, find_config
-from .dynamic_ideas import DynamicIdea, DynamicIdeaGroup
+from .dynamic_modifiers import DynamicModifier
 from .ideologies import Ideology, SubIdeology
 from .map_render import MapRenderCancelled, PoliticalMapResult, render_political_map
 from .parser import ParseError, PdxNode, parse_pdx, serialize_pdx
@@ -84,7 +84,7 @@ except ImportError:
 try:
     __version__ = version("hoi4-agent-sdk")
 except PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
-    __version__ = "0.2.0"
+    __version__ = "0.3.0"
 
 __all__ = [
     "Mod",
@@ -108,8 +108,7 @@ __all__ = [
     "ValidationError",
     "Bookmark",
     "BookmarkCountry",
-    "DynamicIdea",
-    "DynamicIdeaGroup",
+    "DynamicModifier",
     "Ideology",
     "SubIdeology",
     "ProgressEvent",

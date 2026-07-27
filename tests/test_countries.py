@@ -157,6 +157,29 @@ class TestWriteCountry:
         ).read_text(encoding="utf-8-sig")
         assert "CUS_futurism:0" in localisation
 
+    def test_history_setup_fields_roundtrip(self, tmp_path):
+        original = Country(
+            tag="HST",
+            name="Historyland",
+            elections_allowed=False,
+            stability=0.65,
+            war_support=0.45,
+            technologies={"infantry_weapons": 1, "tech_support": 2},
+            oob="HST_1936",
+        )
+
+        write_all_country_files(tmp_path, original)
+        loaded = read_country(tmp_path, "HST")
+
+        assert loaded.elections_allowed is False
+        assert loaded.stability == 0.65
+        assert loaded.war_support == 0.45
+        assert loaded.technologies == {
+            "infantry_weapons": 1,
+            "tech_support": 2,
+        }
+        assert loaded.oob == "HST_1936"
+
     def test_creates_tag_file(self, tmp_path):
         country = Country(tag="NEW", name="Newland")
         write_all_country_files(tmp_path, country)

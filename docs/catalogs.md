@@ -57,7 +57,11 @@ Mod.effect_add_tech_bonus("rifle_bonus", category="infantry_weapons", uses=1, bo
 Mod.effect_set_technology("infantry_weapons", 1, popup=False)
 ```
 
-Common valid `add_tech_bonus` categories include `industry`, `infantry_weapons`, `artillery`, `armor`, `electronics`, and `land_doctrine`.
+Common valid `add_tech_bonus` categories include `industry`,
+`infantry_weapons`, `artillery`, `armor`, `electronics`, `land_doctrine`,
+`air_doctrine`, `naval_doctrine`, `special_forces_doctrine`, and their
+`cat_*` doctrine branches. The exported catalog tracks the 133 unique
+categories present in HOI4 1.19.
 
 ### MODIFIER_CATEGORIES
 
@@ -79,4 +83,8 @@ Example entries:
 ("Industrial Capacity Factory", "industrial_capacity_factory", "0.05")
 ("Political Power Gain", "political_power_gain", "0.25")
 ("Army Attack Factor", "army_attack_factor", "0.05")
+("Research Speed Factor", "research_speed_factor", "0.05")
 ```
+
+`research_time_factor` is not a HOI4 modifier. Use positive
+`research_speed_factor` values for faster research.

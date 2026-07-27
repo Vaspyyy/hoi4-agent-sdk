@@ -19,6 +19,7 @@ import dataclasses
 import os
 import re
 import tempfile
+import unicodedata
 from heapq import nlargest
 import warnings
 from contextlib import contextmanager
@@ -40,24 +41,24 @@ from .bookmarks import (
 from .config import find_config
 from .content_validation import (
     validate_bookmark,
-    validate_dynamic_idea_group,
+    validate_dynamic_modifier,
     validate_ideology,
 )
 from .countries import (
     _country_localisation_suffixes,
+    country_color_tags,
     country_file_paths,
     read_country,
+    seed_country_colors_file,
     serialize_country_colors_file,
     serialize_country_files,
 )
 from .decisions import load_decisions_file, serialize_decisions_file
 from .diff import unified_diff
-from .dynamic_ideas import (
-    DynamicIdea,
-    DynamicIdeaGroup,
-    load_dynamic_ideas_file,
-    remove_dynamic_ideas_container,
-    serialize_dynamic_ideas_file,
+from .dynamic_modifiers import (
+    DynamicModifier,
+    load_dynamic_modifiers_file,
+    serialize_dynamic_modifiers_file,
 )
 from .events import load_events_file, scan_event_ids_file, serialize_events_file
 from .effects_catalog import TECHNOLOGY_CATEGORIES
@@ -77,6 +78,8 @@ from .paths import (
     resolve_mod_output_path,
     safe_file_stem,
 )
+from .parser import iter_assignment_blocks
+from .patching import top_level_assignments
 from .politics import LEADER_IDEOLOGIES_BY_PARTY, RULING_PARTIES
 from .progress import CancelCallback, ProgressCallback, check_cancelled, report_progress
 from .states import (
@@ -234,6 +237,11 @@ def _normalize_name_token(name: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", name.upper())
 
 
+def _fold_search_text(value: object) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value).strip().casefold())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
 def _filter_validation_errors(
     errors: list[ValidationError],
     suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
@@ -282,6 +290,26 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
                     file_path=str(path),
                     line=int(location.group(1)) if location else None,
                     column=int(location.group(2)) if location else None,
+                )
+            )
+        try:
+            has_unsupported_dynamic_ideas = any(
+                span.key == "dynamic_country_ideas"
+                for span in top_level_assignments(text)
+            )
+        except ValueError:
+            has_unsupported_dynamic_ideas = False
+        if has_unsupported_dynamic_ideas:
+            errors.append(
+                ValidationError(
+                    message=(
+                        f"{path}: dynamic_country_ideas is not a HOI4 construct. "
+                        "Migrate this content to common/dynamic_modifiers and use "
+                        "add_dynamic_modifier/remove_dynamic_modifier effects."
+                    ),
+                    severity="error",
+                    code="unsupported_dynamic_country_ideas",
+                    file_path=str(path),
                 )
             )
 
@@ -379,12 +407,10 @@ class Mod:
         self._vanilla_ideologies: dict[str, Ideology] = {}
         self._dirty_ideologies: set[str] = set()
         self._dirty_ideology_files: set[Path] = set()
-        self._dynamic_idea_groups: dict[str, DynamicIdeaGroup] = {}
-        self._dynamic_idea_ids: dict[str, str] = {}
-        self._dynamic_idea_sources: dict[str, Path] = {}
-        self._dirty_dynamic_idea_groups: set[str] = set()
-        self._dirty_dynamic_idea_files: set[Path] = set()
-        self._deleted_dynamic_idea_files: set[Path] = set()
+        self._dynamic_modifiers: dict[str, DynamicModifier] = {}
+        self._dynamic_modifier_sources: dict[str, Path] = {}
+        self._dirty_dynamic_modifiers: set[str] = set()
+        self._dirty_dynamic_modifier_files: set[Path] = set()
         self._bookmarks: list[Bookmark] = []
         self._dirty_bookmarks: set[tuple[Path, int | None]] = set()
         self._dirty_bookmark_files: set[Path] = set()
@@ -401,6 +427,7 @@ class Mod:
         )
         self._scan_cache: dict[str, set[str]] = {}
         self._state_index_cache: dict[bool, list[dict]] = {}
+        self._vanilla_state_loc_entries: dict[str, str] | None = None
         self._country_context_cache: dict[str, dict] = {}
         self._country_tag_mappings: dict[Path, dict[str, str]] = {
             base: _parse_tag_file_mapping(base / "common" / "country_tags")
@@ -435,7 +462,7 @@ class Mod:
         self._load_decisions()
         self._load_ideas()
         self._load_ideologies()
-        self._load_dynamic_ideas()
+        self._load_dynamic_modifiers()
         self._load_bookmarks()
         self._load_localization()
 
@@ -786,49 +813,33 @@ class Mod:
             except Exception as error:
                 self._record_load_error("ideology", path, error)
 
-    def _load_dynamic_ideas(self) -> None:
-        directory = self.mod_root / "common" / "national_ideas"
+    def _load_dynamic_modifiers(self) -> None:
+        directory = self.mod_root / "common" / "dynamic_modifiers"
         if not directory.is_dir():
             return
         for path in sorted(directory.glob("*.txt")):
             try:
-                group = load_dynamic_ideas_file(path)
-                # Mixed national-idea files without a dynamic container are
-                # still possible targets for a new group.
                 self._original_files[path] = path.read_text(
                     encoding="utf-8", errors="ignore"
                 )
-                if group is None:
-                    continue
-                existing_group = self._dynamic_idea_groups.get(group.name)
-                if existing_group is not None:
-                    self._record_duplicate_identifier(
-                        "dynamic_idea_group",
-                        group.name,
-                        existing_group.path or path,
-                        group.path or path,
-                    )
-                    continue
-                unique_ideas: list[DynamicIdea] = []
-                for idea in group.ideas:
-                    first_group_name = self._dynamic_idea_ids.get(idea.id)
-                    if first_group_name is not None:
+                for modifier in load_dynamic_modifiers_file(path):
+                    existing = self._dynamic_modifiers.get(modifier.id)
+                    if existing is not None:
                         self._record_duplicate_identifier(
-                            "dynamic_idea",
-                            idea.id,
-                            self._dynamic_idea_sources[idea.id],
-                            idea.path or path,
+                            "dynamic_modifier",
+                            modifier.id,
+                            existing.path or path,
+                            modifier.path or path,
                         )
                         continue
-                    self._dynamic_idea_ids[idea.id] = group.name
-                    self._dynamic_idea_sources[idea.id] = idea.path or path
-                    unique_ideas.append(idea)
-                group.ideas = unique_ideas
-                self._dynamic_idea_groups[group.name] = group
+                    self._dynamic_modifiers[modifier.id] = modifier
+                    self._dynamic_modifier_sources[modifier.id] = (
+                        modifier.path or path
+                    )
             except _DuplicateIdentifierError:
                 raise
             except Exception as error:
-                self._record_load_error("dynamic_idea", path, error)
+                self._record_load_error("dynamic_modifier", path, error)
 
     def _load_bookmarks(self) -> None:
         directory = self.mod_root / "common" / "bookmarks"
@@ -964,10 +975,15 @@ class Mod:
         capital: int = 1,
         research_slots: int | None = None,
         ruling_party: str = "democratic",
+        elections_allowed: bool = True,
         popularities: dict[str, int] | None = None,
         leader_name: str = "Leader",
         leader_ideology: str | None = None,
         ideas: list[str] | None = None,
+        stability: str | int | float | None = None,
+        war_support: str | int | float | None = None,
+        technologies: dict[str, int] | None = None,
+        oob: str = "",
         overwrite: bool = False,
         allow_vanilla_override: bool = False,
     ) -> Country:
@@ -1030,9 +1046,14 @@ class Mod:
             capital=capital,
             research_slots=research_slots,
             ruling_party=ruling_party,
+            elections_allowed=elections_allowed,
             popularities=popularities or {},
             leader=leader,
             ideas=ideas or [],
+            stability=stability,
+            war_support=war_support,
+            technologies=dict(technologies or {}),
+            oob=oob,
             definition_path=(
                 preserved_mod_path(existing.definition_path) if existing is not None else None
             ),
@@ -1167,6 +1188,7 @@ class Mod:
         cached = self._state_index_cache.get(include_vanilla)
         if cached is not None:
             return [dict(entry) for entry in cached]
+        state_localization = self._state_localization_entries()
         entries: list[dict] = []
         for source, base in [("mod", self.mod_root), ("vanilla", self.hoi4_install)]:
             if base is None:
@@ -1177,6 +1199,11 @@ class Mod:
             for entry in build_state_index(states_dir):
                 item = dict(entry)
                 item["source"] = source
+                loc_key = str(item.get("name", ""))
+                localized_name = state_localization.get(loc_key)
+                item["localized"] = localized_name is not None
+                if localized_name is not None:
+                    item["display_name"] = localized_name
                 entries.append(item)
         by_id: dict[int, dict] = {}
         for entry in entries:
@@ -1196,30 +1223,72 @@ class Mod:
         }
 
     def find_state(self, query: str, include_vanilla: bool = True, limit: int = 10) -> list[dict]:
-        needle = query.strip().lower()
+        needle = _fold_search_text(query)
         if not needle:
             return []
-        scored: list[tuple[float, dict]] = []
+        scored: list[tuple[float, dict, str]] = []
         for entry in self.state_index(include_vanilla=include_vanilla):
             haystacks = [
-                str(entry.get("id", "")),
-                str(entry.get("name", "")),
-                str(entry.get("display_name", "")),
-                Path(str(entry.get("path", ""))).stem,
+                ("id", str(entry.get("id", "")), 1.0),
+                ("name", str(entry.get("name", "")), 1.0),
+                ("display_name", str(entry.get("display_name", "")), 1.0),
             ]
             best = 0.0
-            for haystack in haystacks:
-                text = haystack.lower()
+            matched = ""
+            for field_name, haystack, weight in haystacks:
+                text = _fold_search_text(haystack)
                 if text == needle:
-                    best = max(best, 1.0)
+                    score = 1.0 * weight
                 elif needle in text:
-                    best = max(best, 0.85)
+                    score = 0.85 * weight
                 else:
-                    best = max(best, SequenceMatcher(None, needle, text).ratio())
+                    score = SequenceMatcher(None, needle, text).ratio() * weight
+                if score > best:
+                    best = score
+                    matched = field_name
+            file_name = str(entry.get("file_name", ""))
+            if file_name:
+                file_weight = 0.7 if entry.get("localized") else 1.0
+                text = _fold_search_text(file_name)
+                if text == needle:
+                    score = 1.0 * file_weight
+                elif needle in text:
+                    score = 0.85 * file_weight
+                else:
+                    score = SequenceMatcher(None, needle, text).ratio() * file_weight
+                if score > best:
+                    best = score
+                    matched = "file_name"
             if best >= 0.45:
-                scored.append((best, entry))
+                scored.append((best, entry, matched))
         scored.sort(key=lambda item: (-item[0], item[1]["id"]))
-        return [entry for _, entry in scored[:limit]]
+        results: list[dict] = []
+        for _, entry, matched in scored[:limit]:
+            result = dict(entry)
+            result["matched"] = matched
+            results.append(result)
+        return results
+
+    def _state_localization_entries(self) -> dict[str, str]:
+        if self._vanilla_state_loc_entries is None:
+            vanilla_entries: dict[str, str] = {}
+            if self.hoi4_install is not None:
+                loaded, _ = parse_localization_dir(
+                    self.hoi4_install / "localisation" / "english"
+                )
+                vanilla_entries = {
+                    key: value for key, value in loaded.items() if key.startswith("STATE_")
+                }
+            self._vanilla_state_loc_entries = vanilla_entries
+        entries = dict(self._vanilla_state_loc_entries)
+        entries.update(
+            {
+                key: value
+                for key, value in self._loc_entries.items()
+                if key.startswith("STATE_")
+            }
+        )
+        return entries
 
     def get_state(self, state_id: int) -> State:
         """Load a state without changing the mod directory.
@@ -2358,154 +2427,94 @@ class Mod:
         self._dirty.add("ideologies")
         return True
 
-    # ── Dynamic Ideas ────────────────────────────────────────────
+    # ── Dynamic Modifiers ────────────────────────────────────────
 
-    def list_dynamic_idea_groups(self) -> list[str]:
-        return sorted(self._dynamic_idea_groups)
+    def list_dynamic_modifiers(self) -> list[str]:
+        return sorted(self._dynamic_modifiers)
 
-    def list_dynamic_ideas(self) -> list[str]:
-        return sorted(self._dynamic_idea_ids)
-
-    def get_dynamic_idea_group(self, group_name: str) -> DynamicIdeaGroup:
+    def get_dynamic_modifier(self, modifier_id: str) -> DynamicModifier:
         try:
-            return self._dynamic_idea_groups[group_name]
+            return self._dynamic_modifiers[modifier_id]
         except KeyError as error:
             raise KeyError(
-                f"Dynamic idea group '{group_name}' not found. Available: {self.list_dynamic_idea_groups()}"
+                f"Dynamic modifier '{modifier_id}' not found. "
+                f"Available: {self.list_dynamic_modifiers()}"
             ) from error
 
-    def get_dynamic_idea(self, idea_id: str) -> DynamicIdea:
-        group_name = self._dynamic_idea_ids.get(idea_id)
-        if group_name is None:
-            raise KeyError(
-                f"Dynamic idea '{idea_id}' not found. Available: {self.list_dynamic_ideas()}"
-            )
-        return next(
-            idea for idea in self._dynamic_idea_groups[group_name].ideas if idea.id == idea_id
-        )
-
-    def create_dynamic_idea_group(
+    def create_dynamic_modifier(
         self,
-        group_name: str,
+        modifier_id: str,
         *,
+        icon: str = "",
+        enable: str = "",
+        remove_trigger: str = "",
+        attacker_modifier: bool | None = None,
+        modifier: dict[str, str | int | float | bool] | None = None,
         path: str | Path | None = None,
         overwrite: bool = False,
-    ) -> DynamicIdeaGroup:
-        group_name = require_script_id(group_name, label="dynamic idea group")
-        existing = self._dynamic_idea_groups.get(group_name)
+    ) -> DynamicModifier:
+        modifier_id = require_script_id(
+            modifier_id,
+            label="dynamic modifier ID",
+        )
+        existing = self._dynamic_modifiers.get(modifier_id)
         if existing is not None and not overwrite:
-            raise ValueError(f"Dynamic idea group '{group_name}' already exists")
+            raise ValueError(f"Dynamic modifier '{modifier_id}' already exists")
         target = (
             resolve_mod_output_path(self.mod_root, path)
             if path is not None
             else self.mod_root
             / "common"
-            / "national_ideas"
-            / f"{safe_file_stem(group_name)}.txt"
+            / "dynamic_modifiers"
+            / f"{safe_file_stem(modifier_id)}.txt"
         )
-        conflicting_group = next(
-            (
-                group.name
-                for group in self._dynamic_idea_groups.values()
-                if group.name != group_name and group.path == target
-            ),
-            None,
-        )
-        if conflicting_group is not None:
-            raise ValueError(
-                f"Dynamic idea group '{conflicting_group}' already uses target file {target}"
-            )
-        if existing is not None:
-            for idea in existing.ideas:
-                self._dynamic_idea_ids.pop(idea.id, None)
-                self._dynamic_idea_sources.pop(idea.id, None)
-            if existing.path is not None:
-                self._dirty_dynamic_idea_files.add(existing.path)
-        group = DynamicIdeaGroup(name=group_name, path=target)
-        self._dynamic_idea_groups[group_name] = group
-        self._dirty_dynamic_idea_groups.add(group_name)
-        self._dirty_dynamic_idea_files.add(target)
-        self._deleted_dynamic_idea_files.discard(target)
-        self._dirty.add("dynamic_ideas")
-        return group
-
-    def create_dynamic_idea(
-        self,
-        group_name: str,
-        idea_id: str,
-        *,
-        potential: str = "",
-        available: str = "",
-        modifier: dict[str, str | int | float | bool] | None = None,
-        overwrite: bool = False,
-    ) -> DynamicIdea:
-        idea_id = require_script_id(idea_id, label="dynamic idea ID")
-        if idea_id in self._dynamic_idea_ids:
-            if not overwrite:
-                raise ValueError(f"Dynamic idea '{idea_id}' already exists")
-            self.delete_dynamic_idea(idea_id)
-        group = self.get_dynamic_idea_group(group_name)
-        idea = DynamicIdea(
-            id=idea_id,
-            potential=normalize_block_body(potential),
-            available=normalize_block_body(available),
+        if existing is not None and existing.path is not None:
+            self._dirty_dynamic_modifier_files.add(existing.path)
+        dynamic_modifier = DynamicModifier(
+            id=modifier_id,
+            icon=icon,
+            enable=normalize_block_body(enable),
+            remove_trigger=normalize_block_body(remove_trigger),
+            attacker_modifier=attacker_modifier,
             modifier=dict(modifier or {}),
-            path=group.path,
+            path=target,
         )
-        group.ideas.append(idea)
-        self._dynamic_idea_ids[idea_id] = group_name
-        if group.path is not None:
-            self._dynamic_idea_sources[idea_id] = group.path
-            self._dirty_dynamic_idea_files.add(group.path)
-        self._dirty_dynamic_idea_groups.add(group_name)
-        self._dirty.add("dynamic_ideas")
-        return idea
+        self._dynamic_modifiers[modifier_id] = dynamic_modifier
+        self._dynamic_modifier_sources[modifier_id] = target
+        self._dirty_dynamic_modifiers.add(modifier_id)
+        self._dirty_dynamic_modifier_files.add(target)
+        self._dirty.add("dynamic_modifiers")
+        return dynamic_modifier
 
-    def update_dynamic_idea(self, idea_id: str, **kwargs) -> bool:
-        group_name = self._dynamic_idea_ids.get(idea_id)
-        if group_name is None:
+    def update_dynamic_modifier(self, modifier_id: str, **kwargs: object) -> bool:
+        dynamic_modifier = self._dynamic_modifiers.get(modifier_id)
+        if dynamic_modifier is None:
             return False
-        idea = self.get_dynamic_idea(idea_id)
         forbidden = {"id", "path", "raw_block", "touched_fields"} & set(kwargs)
         if forbidden:
-            raise ValueError(f"Immutable/internal dynamic idea fields: {sorted(forbidden)}")
-        for key in ("potential", "available"):
+            raise ValueError(
+                f"Immutable/internal dynamic modifier fields: {sorted(forbidden)}"
+            )
+        for key in ("enable", "remove_trigger"):
             if key in kwargs:
-                kwargs[key] = normalize_block_body(kwargs[key])
-        _set_fields(idea, kwargs)
-        idea.touched_fields.update(kwargs)
-        group = self._dynamic_idea_groups[group_name]
-        if group.path is not None:
-            self._dirty_dynamic_idea_files.add(group.path)
-        self._dirty_dynamic_idea_groups.add(group_name)
-        self._dirty.add("dynamic_ideas")
+                kwargs[key] = normalize_block_body(str(kwargs[key]))
+        _set_fields(dynamic_modifier, dict(kwargs))
+        dynamic_modifier.touched_fields.update(kwargs)
+        if dynamic_modifier.path is not None:
+            self._dirty_dynamic_modifier_files.add(dynamic_modifier.path)
+        self._dirty_dynamic_modifiers.add(modifier_id)
+        self._dirty.add("dynamic_modifiers")
         return True
 
-    def delete_dynamic_idea(self, idea_id: str) -> bool:
-        group_name = self._dynamic_idea_ids.pop(idea_id, None)
-        if group_name is None:
+    def delete_dynamic_modifier(self, modifier_id: str) -> bool:
+        dynamic_modifier = self._dynamic_modifiers.pop(modifier_id, None)
+        if dynamic_modifier is None:
             return False
-        group = self._dynamic_idea_groups[group_name]
-        group.ideas = [idea for idea in group.ideas if idea.id != idea_id]
-        self._dynamic_idea_sources.pop(idea_id, None)
-        if group.path is not None:
-            self._dirty_dynamic_idea_files.add(group.path)
-        self._dirty_dynamic_idea_groups.add(group_name)
-        self._dirty.add("dynamic_ideas")
-        return True
-
-    def delete_dynamic_idea_group(self, group_name: str) -> bool:
-        group = self._dynamic_idea_groups.pop(group_name, None)
-        if group is None:
-            return False
-        for idea in group.ideas:
-            self._dynamic_idea_ids.pop(idea.id, None)
-            self._dynamic_idea_sources.pop(idea.id, None)
-        if group.path is not None:
-            self._dirty_dynamic_idea_files.add(group.path)
-            self._deleted_dynamic_idea_files.add(group.path)
-        self._dirty_dynamic_idea_groups.discard(group_name)
-        self._dirty.add("dynamic_ideas")
+        self._dynamic_modifier_sources.pop(modifier_id, None)
+        if dynamic_modifier.path is not None:
+            self._dirty_dynamic_modifier_files.add(dynamic_modifier.path)
+        self._dirty_dynamic_modifiers.add(modifier_id)
+        self._dirty.add("dynamic_modifiers")
         return True
 
     # ── Bookmarks ────────────────────────────────────────────────
@@ -3160,6 +3169,45 @@ class Mod:
         return f"add_timed_idea = {{ idea = {idea_id} days = {days} }}"
 
     @staticmethod
+    def effect_add_dynamic_modifier(
+        modifier_id: str,
+        *,
+        days: int | str | None = None,
+        scope: str | int | None = None,
+    ) -> str:
+        fields: dict[str, object] = {
+            "modifier": require_script_id(
+                modifier_id,
+                label="dynamic modifier ID",
+            )
+        }
+        if days is not None:
+            fields["days"] = days
+        if scope is not None:
+            fields["scope"] = scope
+        return effect_block("add_dynamic_modifier", fields)
+
+    @staticmethod
+    def effect_remove_dynamic_modifier(
+        modifier_id: str,
+        *,
+        scope: str | int | None = None,
+    ) -> str:
+        fields: dict[str, object] = {
+            "modifier": require_script_id(
+                modifier_id,
+                label="dynamic modifier ID",
+            )
+        }
+        if scope is not None:
+            fields["scope"] = scope
+        return effect_block("remove_dynamic_modifier", fields)
+
+    @staticmethod
+    def effect_force_update_dynamic_modifier() -> str:
+        return "force_update_dynamic_modifier = yes"
+
+    @staticmethod
     def effect_swap_idea(old: str, new: str, target: str | None = None) -> str:
         old = require_script_id(old, label="idea ID")
         new = require_script_id(new, label="idea ID")
@@ -3205,12 +3253,32 @@ class Mod:
         )
 
     @staticmethod
-    def effect_start_civil_war(ideology: str, size: float = 0.5, capital: int | None = None) -> str:
+    def effect_start_civil_war(
+        ideology: str,
+        size: float = 0.5,
+        capital: int | None = None,
+        *,
+        effects: Sequence[str] | None = None,
+    ) -> str:
         ideology = require_script_id(ideology, label="ideology ID")
         parts = [f"ideology = {ideology}", f"size = {size}"]
         if capital is not None:
+            if not isinstance(capital, int) or isinstance(capital, bool) or capital <= 0:
+                raise ValueError("Civil-war capital must be a positive state ID")
             parts.append(f"capital = {capital}")
-        return f"start_civil_war = {{ {' '.join(parts)} }}"
+        nested = [effect.strip() for effect in effects or () if effect and effect.strip()]
+        if not nested:
+            return f"start_civil_war = {{ {' '.join(parts)} }}"
+        body = "\n".join(
+            [
+                *(f"\t{part}" for part in parts),
+                *(
+                    "\n".join(f"\t{line}" for line in effect.splitlines())
+                    for effect in nested
+                ),
+            ]
+        )
+        return f"start_civil_war = {{\n{body}\n}}"
 
     @staticmethod
     def effect_load_focus_tree(
@@ -3237,22 +3305,22 @@ class Mod:
         *,
         size: float = 0.5,
         capital: int | None = None,
-        rebel_tag: str | None = None,
         keep_completed: bool = False,
         copy_completed_from: str | None = None,
         mark_layout_dirty: bool = True,
     ) -> str:
-        effects = [cls.effect_start_civil_war(ideology, size=size, capital=capital)]
         load_tree = cls.effect_load_focus_tree(
             tree_id,
             keep_completed=keep_completed,
             copy_completed_from=copy_completed_from,
             mark_layout_dirty=mark_layout_dirty,
         )
-        effects.append(
-            cls.scope_block(require_country_tag(rebel_tag), load_tree) if rebel_tag else load_tree
+        return cls.effect_start_civil_war(
+            ideology,
+            size=size,
+            capital=capital,
+            effects=[load_tree],
         )
-        return "\n".join(effects)
 
     @staticmethod
     def effect_set_politics(
@@ -3739,6 +3807,8 @@ class Mod:
         key = self._normalize_loc_key(key)
         old_source = self._loc_sources.get(key)
         self._loc_entries[key] = value
+        if key.startswith("STATE_"):
+            self._state_index_cache.clear()
         if file_path is not None:
             self._loc_sources[key] = resolve_mod_output_path(self.mod_root, file_path)
         elif key not in self._loc_sources:
@@ -3755,6 +3825,8 @@ class Mod:
             source = self._loc_sources.get(key, self.default_loc_file)
             del self._loc_entries[key]
             self._loc_sources.pop(key, None)
+            if key.startswith("STATE_"):
+                self._state_index_cache.clear()
             self._dirty.add("localization")
             self._dirty_loc_keys.add(key)
             self._dirty_loc_files.add(source)
@@ -3878,6 +3950,16 @@ class Mod:
         icons = sorted(self._known_focus_icons())
         if not icons:
             icons = sorted(COMMON_FOCUS_ICONS)
+        return self._rank_icons(query, icons, count)
+
+    def suggest_idea_icons(self, query: str, count: int = 5) -> list[str]:
+        icons = sorted(
+            icon for icon in self._known_focus_icons() if icon.startswith("GFX_idea")
+        )
+        return self._rank_icons(query, icons, count)
+
+    @staticmethod
+    def _rank_icons(query: str, icons: Sequence[str], count: int) -> list[str]:
         needle = query.lower().replace(" ", "_")
 
         needle_parts = {part for part in needle.split("_") if part}
@@ -3901,6 +3983,48 @@ class Mod:
                 "No focus icons available from mod, vanilla install, or built-in fallback list"
             )
         return suggestions[0]
+
+    def suggest_idea_icon(self, query: str) -> str:
+        suggestions = self.suggest_idea_icons(query, count=1)
+        if not suggestions:
+            raise ValueError(
+                "No idea icons available from mod or configured vanilla install"
+            )
+        return suggestions[0]
+
+    def _validate_country_colors_shadow(self) -> list[ValidationError]:
+        if self.hoi4_install is None:
+            return []
+        mod_colors = self.mod_root / "common" / "countries" / "colors.txt"
+        vanilla_colors = self.hoi4_install / "common" / "countries" / "colors.txt"
+        if not mod_colors.is_file() or not vanilla_colors.is_file():
+            return []
+        mod_tags = country_color_tags(
+            mod_colors.read_text(encoding="utf-8", errors="ignore")
+        )
+        vanilla_tags = country_color_tags(
+            vanilla_colors.read_text(encoding="utf-8", errors="ignore")
+        )
+        missing = sorted(vanilla_tags - mod_tags)
+        if not missing:
+            return []
+        sample = ", ".join(missing[:8])
+        if len(missing) > 8:
+            sample += ", …"
+        return [
+            ValidationError(
+                message=(
+                    f"{mod_colors} defines {len(mod_tags)} country color entries but "
+                    f"the configured HOI4 install defines {len(vanilla_tags)}. HOI4 "
+                    f"shadows this file wholesale; {len(missing)} vanilla entries are "
+                    f"missing ({sample}). Remove colors.txt for mod-only tags or seed it "
+                    "from vanilla before overriding an existing tag."
+                ),
+                severity="warning",
+                code="country_colors_shadow_vanilla",
+                file_path=str(mod_colors),
+            )
+        ]
 
     # ── Validation ───────────────────────────────────────────────
 
@@ -3941,8 +4065,7 @@ class Mod:
             "decision": "duplicate_decision_id",
             "idea": "duplicate_idea_id",
             "ideology": "duplicate_ideology_id",
-            "dynamic_idea_group": "duplicate_dynamic_idea_group",
-            "dynamic_idea": "duplicate_dynamic_idea_id",
+            "dynamic_modifier": "duplicate_dynamic_modifier_id",
             "bookmark": "duplicate_bookmark_name",
         }
         for diagnostic in self._load_diagnostics:
@@ -4008,9 +4131,9 @@ class Mod:
                         if diagnostic.section == "ideology"
                         else None
                     ),
-                    dynamic_idea_id=(
+                    dynamic_modifier_id=(
                         diagnostic.identifier
-                        if diagnostic.section == "dynamic_idea"
+                        if diagnostic.section == "dynamic_modifier"
                         else None
                     ),
                     bookmark_name=(
@@ -4044,7 +4167,9 @@ class Mod:
         )
         known_focus_trees = set(self._focus_trees)
         known_focus_icons = (
-            self._known_focus_icons() if validate_icons and self._focus_trees else set()
+            self._known_focus_icons()
+            if validate_icons and (self._focus_trees or self._ideas)
+            else set()
         )
         known_state_ids = {entry["id"] for entry in self.state_index()}
         known_character_ids = self._known_character_ids()
@@ -4058,6 +4183,7 @@ class Mod:
         )
 
         begin_phase("countries", "Validating countries")
+        errors.extend(self._validate_country_colors_shadow())
         known_parties = set(self._vanilla_ideologies) | set(self._ideologies)
         for country in self._countries.values():
             errors.extend(validate_country(country, known_parties=known_parties))
@@ -4109,11 +4235,34 @@ class Mod:
         begin_phase("ideas", "Validating ideas and assignments")
         for idea in self._ideas.values():
             errors.extend(validate_idea(idea))
+            if (
+                validate_icons
+                and known_focus_icons
+                and idea.icon not in known_focus_icons
+            ):
+                suggestions = self.suggest_idea_icons(idea.icon, count=1)
+                suggestion = (
+                    f" Suggested close match: {suggestions[0]}"
+                    if suggestions
+                    else ""
+                )
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"Idea '{idea.id}' icon '{idea.icon}' was not found."
+                            f"{suggestion}"
+                        ),
+                        severity="warning",
+                        code="unknown_idea_icon",
+                        idea_id=idea.id,
+                        file_path=str(idea.path) if idea.path else None,
+                    )
+                )
 
         for ideology in self._ideologies.values():
             errors.extend(validate_ideology(ideology))
-        for group in self._dynamic_idea_groups.values():
-            errors.extend(validate_dynamic_idea_group(group))
+        for dynamic_modifier in self._dynamic_modifiers.values():
+            errors.extend(validate_dynamic_modifier(dynamic_modifier))
         for bookmark in self._bookmarks:
             errors.extend(validate_bookmark(bookmark))
 
@@ -4347,18 +4496,41 @@ class Mod:
                 ):
                     rendered[dirty_country.history_path] = None
             colors_path = self.mod_root / "common" / "countries" / "colors.txt"
+            colors_original = self._read_current_text(colors_path)
+            existing_color_tags = country_color_tags(colors_original)
             color_updates = {
                 tag: country.color
                 for tag in self._dirty_countries
                 if (country := self._countries.get(tag)) is not None
                 and ("*" in country.touched_fields or "color" in country.touched_fields)
+                and (tag in self._vanilla_tags or tag in existing_color_tags)
             }
+            deleted_color_tags = set(self._deleted_countries) & existing_color_tags
+            colors_base = colors_original
+            if (color_updates or deleted_color_tags) and self.hoi4_install is not None:
+                vanilla_colors_path = (
+                    self.hoi4_install / "common" / "countries" / "colors.txt"
+                )
+                if vanilla_colors_path.is_file():
+                    colors_base = seed_country_colors_file(
+                        colors_base,
+                        vanilla_colors_path.read_text(
+                            encoding="utf-8", errors="ignore"
+                        ),
+                    )
+                elif set(color_updates) & self._vanilla_tags:
+                    raise RuntimeError(
+                        "Cannot safely override a vanilla country color because "
+                        f"{vanilla_colors_path} is missing. HOI4 replaces colors.txt "
+                        "wholesale, so writing a partial table would remove other "
+                        "countries' map colors."
+                    )
             colors_text = serialize_country_colors_file(
-                self._read_current_text(colors_path),
+                colors_base,
                 color_updates,
-                deleted_tags=set(self._deleted_countries),
+                deleted_tags=deleted_color_tags,
             )
-            if colors_text != self._read_current_text(colors_path):
+            if colors_text != colors_original:
                 rendered[colors_path] = colors_text or None
 
         if "states" in self._dirty:
@@ -4448,30 +4620,22 @@ class Mod:
                     original=self._original_files.get(path, ""),
                 )
 
-        if "dynamic_ideas" in self._dirty:
-            for path in self._dirty_dynamic_idea_files:
+        if "dynamic_modifiers" in self._dirty:
+            for path in self._dirty_dynamic_modifier_files:
                 self._assert_no_unmodeled_duplicates_in_file(
                     path,
-                    sections=frozenset({"dynamic_idea", "dynamic_idea_group"}),
+                    sections=frozenset({"dynamic_modifier"}),
                 )
-                groups = [
-                    group
-                    for group in self._dynamic_idea_groups.values()
-                    if group.path == path
+                modifiers = [
+                    modifier
+                    for modifier in self._dynamic_modifiers.values()
+                    if modifier.path == path
                 ]
-                if not groups:
-                    original = self._original_files.get(path, "")
-                    remaining = remove_dynamic_ideas_container(original)
-                    rendered[path] = remaining if remaining.strip() else None
-                elif len(groups) > 1:
-                    raise ValueError(
-                        f"Multiple dynamic idea groups target one file: {path}"
-                    )
-                else:
-                    rendered[path] = serialize_dynamic_ideas_file(
-                        groups[0],
-                        original=self._original_files.get(path, ""),
-                    )
+                dynamic_text = serialize_dynamic_modifiers_file(
+                    modifiers,
+                    original=self._original_files.get(path, ""),
+                )
+                rendered[path] = dynamic_text if dynamic_text.strip() else None
 
         if "bookmarks" in self._dirty:
             for path in self._dirty_bookmark_files:
@@ -4636,12 +4800,10 @@ class Mod:
         self._vanilla_ideologies.clear()
         self._dirty_ideologies.clear()
         self._dirty_ideology_files.clear()
-        self._dynamic_idea_groups.clear()
-        self._dynamic_idea_ids.clear()
-        self._dynamic_idea_sources.clear()
-        self._dirty_dynamic_idea_groups.clear()
-        self._dirty_dynamic_idea_files.clear()
-        self._deleted_dynamic_idea_files.clear()
+        self._dynamic_modifiers.clear()
+        self._dynamic_modifier_sources.clear()
+        self._dirty_dynamic_modifiers.clear()
+        self._dirty_dynamic_modifier_files.clear()
         self._bookmarks.clear()
         self._dirty_bookmarks.clear()
         self._dirty_bookmark_files.clear()
@@ -4654,6 +4816,7 @@ class Mod:
         self._dirty.clear()
         self._scan_cache.clear()
         self._state_index_cache.clear()
+        self._vanilla_state_loc_entries = None
         self._country_context_cache.clear()
         self._country_tag_mappings = {
             base: _parse_tag_file_mapping(base / "common" / "country_tags")
@@ -4703,12 +4866,10 @@ class Mod:
             "_vanilla_ideologies",
             "_dirty_ideologies",
             "_dirty_ideology_files",
-            "_dynamic_idea_groups",
-            "_dynamic_idea_ids",
-            "_dynamic_idea_sources",
-            "_dirty_dynamic_idea_groups",
-            "_dirty_dynamic_idea_files",
-            "_deleted_dynamic_idea_files",
+            "_dynamic_modifiers",
+            "_dynamic_modifier_sources",
+            "_dirty_dynamic_modifiers",
+            "_dirty_dynamic_modifier_files",
             "_bookmarks",
             "_dirty_bookmarks",
             "_dirty_bookmark_files",
@@ -4758,15 +4919,12 @@ class Mod:
                     )
             for path in sorted(self._dirty_ideology_files):
                 lines.append(f"ideology file {self._display_path(path)}: updated")
-        if "dynamic_ideas" in self._dirty:
-            for group_name in sorted(self._dirty_dynamic_idea_groups):
-                group = self._dynamic_idea_groups.get(group_name)
-                if group is not None:
-                    lines.append(
-                        f"dynamic idea group {group_name}: {len(group.ideas)} idea(s)"
-                    )
-            for path in sorted(self._deleted_dynamic_idea_files):
-                lines.append(f"dynamic idea file {self._display_path(path)}: deleted")
+        if "dynamic_modifiers" in self._dirty:
+            for modifier_id in sorted(self._dirty_dynamic_modifiers):
+                if modifier_id in self._dynamic_modifiers:
+                    lines.append(f"dynamic modifier {modifier_id}: create/update")
+                else:
+                    lines.append(f"dynamic modifier {modifier_id}: deleted")
         if "bookmarks" in self._dirty:
             for path in sorted(self._dirty_bookmark_files):
                 count = sum(bookmark.path == path for bookmark in self._bookmarks)
@@ -4990,7 +5148,13 @@ class Mod:
         entries: list[tuple[str, str, str | None, str | None]] | None = None,
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
-        for script, kind, obj_id, file_path in entries or self._script_entries():
+        script_entries = entries or self._script_entries()
+        known_state_ids = (
+            {entry["id"] for entry in self.state_index()}
+            if any("start_civil_war" in script for script, _, _, _ in script_entries)
+            else set()
+        )
+        for script, kind, obj_id, file_path in script_entries:
             if not script:
                 continue
             for idea_id in sorted(
@@ -5043,6 +5207,25 @@ class Mod:
                             file_path,
                         )
                     )
+            if known_state_ids:
+                for body, _, _ in iter_assignment_blocks(script, "start_civil_war"):
+                    capital_match = re.search(r"\bcapital\s*=\s*(\d+)\b", body)
+                    if (
+                        capital_match is not None
+                        and int(capital_match.group(1)) not in known_state_ids
+                    ):
+                        errors.append(
+                            self._script_ref_error(
+                                (
+                                    f"{kind} '{obj_id}' uses civil-war capital "
+                                    f"{capital_match.group(1)}, which is not a known state ID"
+                                ),
+                                "civil_war_capital_ref",
+                                kind,
+                                obj_id,
+                                file_path,
+                            )
+                        )
             if known_technologies:
                 for tech_id in sorted(set(self._technology_refs(script))):
                     if tech_id not in known_technologies:

@@ -136,7 +136,7 @@ MODIFIER_CATEGORIES: list[tuple[str, list[tuple[str, str, str]]]] = [
     (
         "Research",
         [
-            ("Research Time Factor", "research_time_factor", "-0.05"),
+            ("Research Speed Factor", "research_speed_factor", "0.05"),
             ("Research Time (Infantry)", "research_time_infantry_factor", "-0.10"),
             ("Research Time (Armor)", "research_time_armor_factor", "-0.10"),
             ("Research Time (Naval)", "research_time_naval_factor", "-0.10"),

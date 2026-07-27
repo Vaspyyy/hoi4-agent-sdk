@@ -128,11 +128,15 @@ Mod.effect_spawn_civil_war_with_focus_tree(
     "FB_AUS_focus",
     size=0.4,
     capital=4,
-    rebel_tag="D01",
 )
 ```
 
-Validation warning: `civil_war_focus_tree_missing` when `start_civil_war` is not paired with `load_focus_tree`. Unknown tree IDs warn as `unknown_focus_tree_reference`.
+The helper places `load_focus_tree` inside `start_civil_war`, whose inner
+effects run in the spawned country's scope. Dynamic tags such as `D01` are
+assigned by the game and must not be guessed. Validation warns with
+`civil_war_focus_tree_missing` when no tree load is present, reports unknown
+trees as `unknown_focus_tree_reference`, and reports invalid capital state IDs
+as `civil_war_capital_ref`.
 
 ## Existing or Puppet Revolt Tags
 

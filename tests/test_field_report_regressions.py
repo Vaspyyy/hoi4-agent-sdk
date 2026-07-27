@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from hoi4 import Mod, TECHNOLOGY_CATEGORIES
+from hoi4.effects_catalog import TECHNOLOGY_CATEGORIES as CATALOG_CATEGORIES
+from hoi4.modifiers_catalog import MODIFIER_CATEGORIES
+from hoi4.patching import top_level_assignments
+
+
+NEW_TECHNOLOGY_CATEGORIES = {
+    "air_doctrine",
+    "naval_doctrine",
+    "submarine_doctrine",
+    "special_forces_doctrine",
+    "strategic_destruction_tree",
+    "battlefield_support_tree",
+    "operational_integrity_tree",
+    "trade_interdiction_tree",
+    "convoy_defense_tree",
+    "fleet_in_being_tree",
+    "base_strike_main",
+    "cat_mobile_warfare",
+    "cat_superior_firepower",
+    "cat_grand_battle_plan",
+    "cat_mass_assault",
+    "cat_deep_battle",
+    "cat_mass_mobilization",
+    "cat_base_strike",
+    "cat_trade_interdiction",
+    "cat_fleet_in_being",
+    "cat_strategic_destruction",
+    "cat_battlefield_support",
+    "cat_operational_integrity",
+    "cat_mountaineers_doctrine",
+    "cat_marines_doctrine",
+    "cat_paratroopers_doctrine",
+    "cat_rangers_doctrine",
+}
+
+
+def _write_vanilla_countries(game_root: Path) -> None:
+    tags = game_root / "common/country_tags/tags.txt"
+    tags.parent.mkdir(parents=True)
+    tags.write_text(
+        'GER = "countries/Germany.txt"\nFRA = "countries/France.txt"\n',
+        encoding="utf-8",
+    )
+    countries = game_root / "common/countries"
+    countries.mkdir(parents=True, exist_ok=True)
+    (countries / "Germany.txt").write_text("color = { 1 2 3 }\n", encoding="utf-8")
+    (countries / "France.txt").write_text("color = { 4 5 6 }\n", encoding="utf-8")
+    (countries / "colors.txt").write_text(
+        "GER = { color = rgb { 1 2 3 } color_ui = rgb { 1 2 3 } }\n"
+        "FRA = { color = rgb { 4 5 6 } color_ui = rgb { 4 5 6 } }\n",
+        encoding="utf-8",
+    )
+
+
+def test_new_country_does_not_create_global_colors_file(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Example", color=(10, 20, 30))
+
+    mod.save()
+
+    assert not (tmp_path / "common/countries/colors.txt").exists()
+    assert "color = { 10 20 30 }" in (
+        tmp_path / "common/countries/ABC.txt"
+    ).read_text(encoding="utf-8")
+
+
+def test_vanilla_color_override_seeds_complete_vanilla_table(tmp_path: Path) -> None:
+    game_root = tmp_path / "game"
+    mod_root = tmp_path / "mod"
+    _write_vanilla_countries(game_root)
+    mod = Mod(mod_root, hoi4_install=game_root)
+    mod.get_country("GER")
+
+    assert mod.update_country("GER", color=(9, 8, 7))
+    mod.save()
+
+    colors = (mod_root / "common/countries/colors.txt").read_text(encoding="utf-8")
+    assert "GER = {" in colors
+    assert colors.count("9 8 7") == 2
+    assert "FRA = { color = rgb { 4 5 6 }" in colors
+
+
+def test_vanilla_color_override_fails_without_source_table(tmp_path: Path) -> None:
+    game_root = tmp_path / "game"
+    mod_root = tmp_path / "mod"
+    _write_vanilla_countries(game_root)
+    (game_root / "common/countries/colors.txt").unlink()
+    mod = Mod(mod_root, hoi4_install=game_root)
+    mod.get_country("GER")
+    assert mod.update_country("GER", color=(9, 8, 7))
+
+    try:
+        mod.save()
+    except RuntimeError as error:
+        assert "writing a partial table" in str(error)
+    else:
+        raise AssertionError("unsafe vanilla color override should fail closed")
+
+    assert not (mod_root / "common/countries/colors.txt").exists()
+
+
+def test_truncated_country_colors_file_is_reported(tmp_path: Path) -> None:
+    game_root = tmp_path / "game"
+    mod_root = tmp_path / "mod"
+    _write_vanilla_countries(game_root)
+    colors = mod_root / "common/countries/colors.txt"
+    colors.parent.mkdir(parents=True)
+    colors.write_text(
+        "GER = { color = rgb { 9 8 7 } color_ui = rgb { 9 8 7 } }\n",
+        encoding="utf-8",
+    )
+
+    codes = {issue.code for issue in Mod(mod_root, hoi4_install=game_root).validate()}
+
+    assert "country_colors_shadow_vanilla" in codes
+
+
+def test_numeric_and_date_keys_are_top_level_assignments() -> None:
+    spans = top_level_assignments(
+        "1938.3.12 = { add_political_power = 5 }\n"
+        "1 = { owner = GER }\n"
+        "normal_key = yes\n"
+    )
+
+    assert [span.key for span in spans] == ["1938.3.12", "1", "normal_key"]
+
+
+def test_all_reported_technology_categories_are_supported() -> None:
+    assert TECHNOLOGY_CATEGORIES == CATALOG_CATEGORIES
+    assert NEW_TECHNOLOGY_CATEGORIES <= set(TECHNOLOGY_CATEGORIES)
+    for category in NEW_TECHNOLOGY_CATEGORIES:
+        assert f"category = {category}" in Mod.effect_add_tech_bonus(
+            "test_bonus",
+            category=category,
+        )
+
+
+def test_modifier_catalog_uses_real_research_speed_modifier() -> None:
+    keys = {
+        key
+        for _, modifiers in MODIFIER_CATEGORIES
+        for _, key, _ in modifiers
+    }
+
+    assert "research_speed_factor" in keys
+    assert "research_time_factor" not in keys
+
+
+def test_idea_icon_validation_and_suggestion(tmp_path: Path) -> None:
+    interface = tmp_path / "interface/ideas.gfx"
+    interface.parent.mkdir(parents=True)
+    interface.write_text(
+        'spriteTypes = { spriteType = { name = "GFX_idea_industry" } }\n',
+        encoding="utf-8",
+    )
+    mod = Mod(tmp_path)
+    mod.create_idea("ABC_spirit", icon="GFX_idea_indstry")
+
+    issues = mod.validate(validate_icons=True)
+
+    icon_issue = next(issue for issue in issues if issue.code == "unknown_idea_icon")
+    assert icon_issue.idea_id == "ABC_spirit"
+    assert "GFX_idea_industry" in icon_issue.message
+    assert mod.suggest_idea_icon("GFX_idea_indstry") == "GFX_idea_industry"
+
+
+def test_legacy_dynamic_country_ideas_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "common/national_ideas/legacy.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "dynamic_country_ideas = { name = legacy broken = { } }\n",
+        encoding="utf-8",
+    )
+
+    issues = Mod(tmp_path).validate()
+
+    assert any(
+        issue.code == "unsupported_dynamic_country_ideas"
+        and issue.severity == "error"
+        for issue in issues
+    )

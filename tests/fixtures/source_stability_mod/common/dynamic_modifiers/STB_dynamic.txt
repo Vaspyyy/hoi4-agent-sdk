@@ -1,0 +1,5 @@
+STB_dynamic_growth = {
+	enable = { original_tag = STB }
+	political_power_gain = 0.1 # keep modifier note
+	future_dynamic_setting = yes
+}

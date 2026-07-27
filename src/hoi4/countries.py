@@ -29,7 +29,8 @@ from .patching import (
 )
 from .paths import require_country_tag, safe_file_stem
 from .parser import find_assignment_block
-from .script import pdx_string
+from .script import pdx_string, pdx_value
+from .structured_patching import patch_scalar_mapping
 from .types import Country, Leader
 
 COLOR_RE = re.compile(
@@ -137,6 +138,44 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
         research_slots = RESEARCH_SLOTS_RE.search(txt)
         if research_slots:
             country.research_slots = int(research_slots.group(1))
+
+        assignments = {span.key: span for span in top_level_assignments(txt)}
+        for key, field_name in (
+            ("set_stability", "stability"),
+            ("set_war_support", "war_support"),
+        ):
+            span = assignments.get(key)
+            if span is not None and not span.is_block:
+                setattr(
+                    country,
+                    field_name,
+                    _coerce_history_scalar(txt[span.value_start : span.value_end]),
+                )
+        oob_span = assignments.get("oob")
+        if oob_span is not None and not oob_span.is_block:
+            country.oob = _unquote_history_scalar(
+                txt[oob_span.value_start : oob_span.value_end]
+            )
+        technology_span = assignments.get("set_technology")
+        if (
+            technology_span is not None
+            and technology_span.is_block
+            and technology_span.body_start is not None
+            and technology_span.body_end is not None
+        ):
+            technology_body = txt[
+                technology_span.body_start : technology_span.body_end
+            ]
+            country.technologies = {
+                span.key: int(value)
+                for span in top_level_assignments(technology_body)
+                if not span.is_block
+                and (
+                    value := technology_body[
+                        span.value_start : span.value_end
+                    ].strip()
+                ).lstrip("-").isdigit()
+            }
 
         pops = _read_popularities(txt)
         if pops:
@@ -477,6 +516,34 @@ def serialize_country_colors_file(
     return text
 
 
+def country_color_tags(text: str) -> set[str]:
+    """Return country tags defined by a ``common/countries/colors.txt`` source."""
+
+    return {
+        span.key
+        for span in top_level_assignments(text)
+        if span.is_block and re.fullmatch(r"[A-Z0-9]{3}", span.key)
+    }
+
+
+def seed_country_colors_file(original: str, vanilla: str) -> str:
+    """Append every vanilla country color entry missing from a mod file."""
+
+    text = original
+    existing = country_color_tags(text)
+    for span in top_level_assignments(vanilla):
+        if (
+            not span.is_block
+            or span.key in existing
+            or not re.fullmatch(r"[A-Z0-9]{3}", span.key)
+        ):
+            continue
+        assignment = vanilla[span.start : span.end].strip()
+        text = text.rstrip() + ("\n\n" if text.strip() else "") + assignment + "\n"
+        existing.add(span.key)
+    return text
+
+
 def _find_history_file(history_dir: Path, tag: str) -> Optional[Path]:
     for f in history_dir.glob(f"{tag} - *.txt"):
         return f
@@ -631,11 +698,34 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         if country.research_slots is not None
         else ""
     )
+    stability = (
+        f"set_stability = {pdx_value(country.stability)}\n"
+        if country.stability is not None
+        else ""
+    )
+    war_support = (
+        f"set_war_support = {pdx_value(country.war_support)}\n"
+        if country.war_support is not None
+        else ""
+    )
+    oob = f"oob = {pdx_string(country.oob)}\n" if country.oob else ""
+    technologies = ""
+    if country.technologies:
+        technology_lines = "\n".join(
+            f" {technology} = {level}"
+            for technology, level in country.technologies.items()
+        )
+        technologies = f"set_technology = {{\n{technology_lines}\n}}\n"
     popularity_lines = "\n".join(
         f" {line}" for line in _popularity_body(pops).splitlines()
     )
     generated_history = (
         f"capital = {country.capital}\n"
+        f"\n"
+        f"{oob}"
+        f"{stability}"
+        f"{war_support}"
+        f"{technologies}"
         f"\n"
         f"{research_slots}"
         f"recruit_character = {leader.character_id}\n"
@@ -664,6 +754,30 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
                 history,
                 "set_research_slots",
                 None if country.research_slots is None else str(country.research_slots),
+            )
+        if "*" in touched or "stability" in touched:
+            history = set_scalar(
+                history,
+                "set_stability",
+                None if country.stability is None else pdx_value(country.stability),
+            )
+        if "*" in touched or "war_support" in touched:
+            history = set_scalar(
+                history,
+                "set_war_support",
+                None if country.war_support is None else pdx_value(country.war_support),
+            )
+        if "*" in touched or "oob" in touched:
+            history = set_scalar(
+                history,
+                "oob",
+                pdx_string(country.oob) if country.oob else None,
+            )
+        if "*" in touched or "technologies" in touched:
+            history = _set_scalar_mapping_block(
+                history,
+                "set_technology",
+                country.technologies,
             )
         if "*" in touched or "popularities" in touched:
             history = set_block(history, "set_popularities", _popularity_body(pops))
@@ -719,6 +833,43 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         files[char_path] = character or generated_character
 
     return files
+
+
+def _set_scalar_mapping_block(
+    text: str,
+    key: str,
+    values: dict[str, int],
+) -> str:
+    spans = [span for span in top_level_assignments(text) if span.key == key]
+    if not values:
+        return set_block(text, key, None)
+    rendered = "\n".join(f"{name} = {level}" for name, level in values.items())
+    if not spans:
+        return set_block(text, key, rendered)
+    span = spans[0]
+    if not span.is_block or span.body_start is None or span.body_end is None:
+        return set_block(text, key, rendered)
+    current = text[span.body_start : span.body_end]
+    patched = patch_scalar_mapping(current, values)
+    return replace_assignment_body(text, span, patched)
+
+
+def _unquote_history_scalar(value: str) -> str:
+    text = value.strip()
+    if len(text) >= 2 and text[0] == text[-1] == '"':
+        return text[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return text
+
+
+def _coerce_history_scalar(value: str) -> str | int | float:
+    text = _unquote_history_scalar(value)
+    try:
+        return int(text)
+    except ValueError:
+        try:
+            return float(text)
+        except ValueError:
+            return text
 
 
 def _patch_character(

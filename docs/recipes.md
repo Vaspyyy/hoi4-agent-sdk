@@ -187,7 +187,7 @@ Mod.effect_declare_war("GER")
 Mod.effect_declare_war_from("LUX", "GER")
 Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
 Mod.effect_load_focus_tree("TAG_focus")
-Mod.effect_spawn_civil_war_with_focus_tree("communism", "TAG_rebel_focus", capital=8, rebel_tag="D01")
+Mod.effect_spawn_civil_war_with_focus_tree("communism", "TAG_rebel_focus", capital=8)
 Mod.effect_release("SLV")
 Mod.effect_release_puppet("SLV")
 Mod.effect_end_puppet("SLV", "YUG")
@@ -249,10 +249,13 @@ reward = Mod.effect_spawn_civil_war_with_focus_tree(
     "FB_AUS_focus",
     size=0.4,
     capital=4,
-    rebel_tag="D01",
 )
 mod.append_to_focus_reward("AUS_focus", "AUS_arm_the_cells", reward)
 ```
+
+The helper nests `load_focus_tree` inside `start_civil_war`. HOI4 executes
+those inner effects in the newly spawned civil-war country's scope, so no
+guessed `D01`-style dynamic tag is needed.
 
 If a revolt tag may already exist, use the existing-or-spawn helper instead of assuming the tag is unreleased:
 

@@ -65,7 +65,7 @@ def top_level_assignments(text: str) -> list[AssignmentSpan]:
                 raise ParseError(f"Unexpected closing brace at offset {i}")
             i += 1
             continue
-        if depth == 0 and (ch.isalpha() or ch == "_"):
+        if depth == 0 and (ch.isalnum() or ch == "_"):
             start = i
             i += 1
             while i < len(text) and (text[i].isalnum() or text[i] in "_.:-"):

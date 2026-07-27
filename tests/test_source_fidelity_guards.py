@@ -41,30 +41,23 @@ def test_duplicate_ideology_cannot_be_lost_by_editing_same_file(tmp_path: Path) 
     _assert_guarded_rewrite(mod, second_path, second_source)
 
 
-def test_duplicate_dynamic_idea_cannot_be_lost_by_editing_same_file(
+def test_duplicate_dynamic_modifier_cannot_be_lost_by_editing_same_file(
     tmp_path: Path,
 ) -> None:
-    ideas_dir = tmp_path / "common" / "national_ideas"
-    ideas_dir.mkdir(parents=True)
-    (ideas_dir / "00_first.txt").write_text(
-        """dynamic_country_ideas = {
-    name = first_group
-    shared = { modifier = { stability_factor = 0.1 } }
-}
-""",
+    modifiers_dir = tmp_path / "common" / "dynamic_modifiers"
+    modifiers_dir.mkdir(parents=True)
+    (modifiers_dir / "00_first.txt").write_text(
+        "shared = { stability_factor = 0.1 }\n",
         encoding="utf-8",
     )
-    second_path = ideas_dir / "01_second.txt"
-    second_source = """dynamic_country_ideas = {
-    name = second_group
-    shared = { modifier = { stability_factor = 0.2 } }
-    editable = { modifier = { stability_factor = 0.3 } }
-}
+    second_path = modifiers_dir / "01_second.txt"
+    second_source = """shared = { stability_factor = 0.2 }
+editable = { stability_factor = 0.3 }
 """
     second_path.write_text(second_source, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_dynamic_idea("editable", modifier={"stability_factor": 0.4})
+    assert mod.update_dynamic_modifier("editable", modifier={"stability_factor": 0.4})
 
     _assert_guarded_rewrite(mod, second_path, second_source)
 
@@ -389,22 +382,20 @@ def test_new_focus_tree_preserves_non_focus_content_in_target_file(tmp_path: Pat
     assert "focus_tree = {" in rendered
 
 
-def test_new_dynamic_group_preserves_mixed_target_file(tmp_path: Path) -> None:
-    path = tmp_path / "common" / "national_ideas" / "ABC_dynamic.txt"
+def test_new_dynamic_modifier_preserves_mixed_target_file(tmp_path: Path) -> None:
+    path = tmp_path / "common" / "dynamic_modifiers" / "ABC_dynamic.txt"
     path.parent.mkdir(parents=True)
     original = "# shared declarations\nother_setting = yes\n"
     path.write_text(original, encoding="utf-8")
 
     mod = Mod(tmp_path)
-    mod.create_dynamic_idea_group("ABC_dynamic")
-    mod.create_dynamic_idea(
-        "ABC_dynamic",
+    mod.create_dynamic_modifier(
         "ABC_growing",
         modifier={"political_power_gain": 0.1},
+        path=path,
     )
     mod.save(require_changes=True)
 
     rendered = path.read_text(encoding="utf-8")
     assert original in rendered
-    assert "dynamic_country_ideas = {" in rendered
     assert "ABC_growing = {" in rendered

@@ -10,7 +10,7 @@ from .bookmarks import (
     normalize_required_dlc,
     require_bookmark_date,
 )
-from .dynamic_ideas import DynamicIdeaGroup
+from .dynamic_modifiers import DynamicModifier
 from .ideologies import Ideology, VANILLA_AI_BEHAVIORS
 from .parser import ParseError
 from .patching import top_level_assignments
@@ -72,36 +72,28 @@ def validate_ideology(ideology: Ideology) -> list[ValidationError]:
     return issues
 
 
-def validate_dynamic_idea_group(group: DynamicIdeaGroup) -> list[ValidationError]:
+def validate_dynamic_modifier(
+    modifier: DynamicModifier,
+) -> list[ValidationError]:
     issues: list[ValidationError] = []
-    location = str(group.path) if group.path else None
-    if not _SCRIPT_ID.fullmatch(group.name):
-        issues.append(
-            _error(f"Invalid dynamic idea group name '{group.name}'", "invalid_dynamic_idea_group", location)
-        )
-    ids = [idea.id for idea in group.ideas]
-    for idea in group.ideas:
-        if not _SCRIPT_ID.fullmatch(idea.id):
-            issues.append(
-                _error(f"Invalid dynamic idea ID '{idea.id}'", "invalid_dynamic_idea_id", location)
-            )
-        for field_name in ("potential", "available"):
-            for syntax_issue in validate_script_syntax(getattr(idea, field_name)):
-                issues.append(
-                    _error(
-                        f"Dynamic idea '{idea.id}' {field_name}: {syntax_issue}",
-                        "invalid_dynamic_idea_script",
-                        location,
-                    )
-                )
-    for duplicate in sorted({value for value in ids if ids.count(value) > 1}):
+    location = str(modifier.path) if modifier.path else None
+    if not _SCRIPT_ID.fullmatch(modifier.id):
         issues.append(
             _error(
-                f"Dynamic idea ID '{duplicate}' is defined more than once",
-                "duplicate_dynamic_idea_id",
+                f"Invalid dynamic modifier ID '{modifier.id}'",
+                "invalid_dynamic_modifier_id",
                 location,
             )
         )
+    for field_name in ("enable", "remove_trigger"):
+        for syntax_issue in validate_script_syntax(getattr(modifier, field_name)):
+            issues.append(
+                _error(
+                    f"Dynamic modifier '{modifier.id}' {field_name}: {syntax_issue}",
+                    "invalid_dynamic_modifier_script",
+                    location,
+                )
+            )
     return issues
 
 

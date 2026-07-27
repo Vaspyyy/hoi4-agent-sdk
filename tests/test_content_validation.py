@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from hoi4.bookmarks import Bookmark, BookmarkCountry
-from hoi4.content_validation import validate_bookmark, validate_dynamic_idea_group
+from hoi4.content_validation import validate_bookmark, validate_dynamic_modifier
 from hoi4.content_validation import validate_ideology
-from hoi4.dynamic_ideas import DynamicIdea, DynamicIdeaGroup
+from hoi4.dynamic_modifiers import DynamicModifier
 from hoi4.ideologies import Ideology, SubIdeology
 
 
@@ -25,19 +25,18 @@ def test_validate_ideology_reports_bad_color_duplicate_type_and_ai() -> None:
     }
 
 
-def test_validate_dynamic_ideas_reports_duplicate_and_bad_script() -> None:
-    group = DynamicIdeaGroup(
-        name="valid_group",
-        ideas=[
-            DynamicIdea(id="repeat", potential="if = {"),
-            DynamicIdea(id="repeat"),
-        ],
+def test_validate_dynamic_modifier_reports_bad_id_and_script() -> None:
+    modifier = DynamicModifier(
+        id="bad id",
+        enable="if = {",
     )
 
-    codes = {issue.code for issue in validate_dynamic_idea_group(group)}
+    codes = {issue.code for issue in validate_dynamic_modifier(modifier)}
 
-    assert "duplicate_dynamic_idea_id" in codes
-    assert "invalid_dynamic_idea_script" in codes
+    assert codes == {
+        "invalid_dynamic_modifier_id",
+        "invalid_dynamic_modifier_script",
+    }
 
 
 def test_bookmark_duplicate_dlc_variants_are_allowed() -> None:

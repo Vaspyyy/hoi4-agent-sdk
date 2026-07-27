@@ -419,27 +419,35 @@ def _probe_ideology(mod: Mod) -> str | None:
     return f"{ideology_id}.color"
 
 
-def _probe_dynamic_idea(mod: Mod) -> str | None:
+def _probe_dynamic_modifier(mod: Mod) -> str | None:
     candidates = [
-        idea_id for idea_id in mod.list_dynamic_ideas() if mod.get_dynamic_idea(idea_id).raw_block
+        modifier_id
+        for modifier_id in mod.list_dynamic_modifiers()
+        if mod.get_dynamic_modifier(modifier_id).raw_block
     ]
     if not candidates:
         return None
-    idea_id = max(
+    modifier_id = max(
         candidates,
-        key=lambda candidate: (len(mod.get_dynamic_idea(candidate).raw_block), candidate),
+        key=lambda candidate: (
+            len(mod.get_dynamic_modifier(candidate).raw_block),
+            candidate,
+        ),
     )
-    idea = mod.get_dynamic_idea(idea_id)
-    modifier = dict(idea.modifier)
-    if modifier:
-        key = sorted(modifier)[0]
-        modifier[key] = cast(str | int | float | bool, _increment_number(modifier[key]))
-        if not mod.update_dynamic_idea(idea_id, modifier=modifier):
-            raise RuntimeError(f"Could not update dynamic idea {idea_id}")
-        return f"{idea_id}.modifier.{key}"
-    if not mod.update_dynamic_idea(idea_id, available="always = yes"):
-        raise RuntimeError(f"Could not update dynamic idea {idea_id}")
-    return f"{idea_id}.available"
+    dynamic_modifier = mod.get_dynamic_modifier(modifier_id)
+    values = dict(dynamic_modifier.modifier)
+    if values:
+        key = sorted(values)[0]
+        values[key] = cast(
+            str | int | float | bool,
+            _increment_number(values[key]),
+        )
+        if not mod.update_dynamic_modifier(modifier_id, modifier=values):
+            raise RuntimeError(f"Could not update dynamic modifier {modifier_id}")
+        return f"{modifier_id}.modifier.{key}"
+    if not mod.update_dynamic_modifier(modifier_id, enable="always = yes"):
+        raise RuntimeError(f"Could not update dynamic modifier {modifier_id}")
+    return f"{modifier_id}.enable"
 
 
 def _probe_bookmark(mod: Mod) -> str | None:
@@ -467,7 +475,7 @@ DEFAULT_PROBES: tuple[_Probe, ...] = (
     _Probe("country", _probe_country),
     _Probe("state", _probe_state),
     _Probe("ideology", _probe_ideology),
-    _Probe("dynamic_idea", _probe_dynamic_idea),
+    _Probe("dynamic_modifier", _probe_dynamic_modifier),
     _Probe("bookmark", _probe_bookmark),
 )
 
@@ -486,7 +494,7 @@ def _validation_signature(issue: ValidationError) -> tuple[object, ...]:
         issue.decision_id,
         issue.focus_tree_id,
         issue.ideology_id,
-        issue.dynamic_idea_id,
+        issue.dynamic_modifier_id,
         issue.bookmark_name,
     )
 

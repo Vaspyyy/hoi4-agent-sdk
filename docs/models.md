@@ -52,7 +52,11 @@ Country(tag: str, name: str = "", adjective: str = "",
         elections_allowed: bool = True,
         leader: Leader | None = None,
         ideas: list[str] = [],
-        research_slots: int | None = None)
+        research_slots: int | None = None,
+        stability: str|int|float|None = None,
+        war_support: str|int|float|None = None,
+        technologies: dict[str,int] = {},
+        oob: str = "")
 ```
 
 ### Leader
@@ -69,6 +73,10 @@ Country popularity keys and `ruling_party` are data-driven and may reference
 custom ideology groups. The empty `popularities` default expands to the four
 vanilla groups; callers creating a custom-party country should provide the
 matching distribution explicitly.
+
+The history setup fields map to `set_stability`, `set_war_support`,
+`set_technology`, and `oob`. Strings are accepted for exact Paradox values;
+numeric stability and war-support values round-trip as numbers.
 
 ### State
 ```python
@@ -193,15 +201,22 @@ The loader retains the source color's channel count so validation can report a
 malformed non-RGB value instead of silently truncating it; newly created
 ideologies accept an RGB tuple.
 
-### DynamicIdea and DynamicIdeaGroup
+### DynamicModifier
 
 ```python
-DynamicIdea(id: str, potential: str = "", available: str = "",
-            modifier: dict[str, str|int|float|bool] = {})
-
-DynamicIdeaGroup(name: str, ideas: list[DynamicIdea] = [],
-                 path: Path | None = None)
+DynamicModifier(id: str,
+                icon: str = "",
+                enable: str = "",
+                remove_trigger: str = "",
+                attacker_modifier: bool|None = None,
+                modifier: dict[str, str|int|float|bool] = {},
+                path: Path|None = None)
 ```
+
+Dynamic modifiers are top-level entries in `common/dynamic_modifiers/*.txt`.
+`modifier` contains their direct modifier assignments; there is no surrounding
+`modifier = { }` block. `dynamic_country_ideas` and grouped dynamic ideas are
+not HOI4 constructs.
 
 ### Bookmark and BookmarkCountry
 

@@ -89,7 +89,7 @@ def scan_idea_ids_file(path: Path) -> set[str]:
 
     text = path.read_text(encoding="utf-8", errors="ignore")
     ids: set[str] = set()
-    for container_name in (*VALID_CONTAINERS, "dynamic_country_ideas"):
+    for container_name in VALID_CONTAINERS:
         match = find_assignment_block(text, container_name)
         if match is None:
             continue
@@ -98,7 +98,7 @@ def scan_idea_ids_file(path: Path) -> set[str]:
             if not span.is_block or span.body_start is None or span.body_end is None:
                 continue
             body = container[span.body_start : span.body_end]
-            if container_name == "dynamic_country_ideas" or _is_idea_body(body):
+            if _is_idea_body(body):
                 ids.add(span.key)
                 continue
             ids.update(

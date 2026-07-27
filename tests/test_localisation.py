@@ -34,3 +34,21 @@ class TestSerializeLocalizationFile:
         lines = result.split("\n")
         keys = [line.split(":0")[0].strip() for line in lines if ":0" in line]
         assert keys == ["A_KEY", "M_KEY", "Z_KEY"]
+
+    def test_real_line_break_round_trips_as_hoi4_escape(self, tmp_path):
+        source_value = "First paragraph.\nSecond paragraph."
+        result = serialize_localization_file({"EVENT_DESC": source_value})
+        path = tmp_path / "event_l_english.yml"
+        path.write_text(result, encoding="utf-8-sig")
+
+        assert 'EVENT_DESC:0 "First paragraph.\\nSecond paragraph."' in result
+        assert parse_localization_file(path)["EVENT_DESC"] == source_value
+
+    def test_literal_backslash_n_remains_literal_text(self, tmp_path):
+        source_value = r"Literal \n text"
+        result = serialize_localization_file({"LITERAL": source_value})
+        path = tmp_path / "literal_l_english.yml"
+        path.write_text(result, encoding="utf-8-sig")
+
+        assert r"Literal \\n text" in result
+        assert parse_localization_file(path)["LITERAL"] == source_value

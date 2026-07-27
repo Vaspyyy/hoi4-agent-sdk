@@ -657,13 +657,17 @@ class TestAgentFacingApis:
             "FB_AUS_focus",
             size=0.4,
             capital=4,
-            rebel_tag="d01",
         )
-        assert "start_civil_war = { ideology = communism size = 0.4 capital = 4 }" in civil_war_tree
+        assert "start_civil_war = {" in civil_war_tree
+        assert "ideology = communism" in civil_war_tree
+        assert "size = 0.4" in civil_war_tree
+        assert "capital = 4" in civil_war_tree
         assert (
-            "D01 = { load_focus_tree = { tree = FB_AUS_focus keep_completed = no }"
+            "load_focus_tree = { tree = FB_AUS_focus keep_completed = no }"
             in civil_war_tree
         )
+        assert "mark_focus_tree_layout_dirty = yes" in civil_war_tree
+        assert "D01 = {" not in civil_war_tree
         assert Mod.effect_add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
         assert Mod.effect_remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
         assert Mod.effect_transfer_state(115, "scl") == "SCL = { transfer_state = 115 }"
@@ -952,7 +956,7 @@ class TestAgentFacingApis:
         assert not any(error.code == "unknown_focus_tree_reference" for error in known_load_errors)
         civil_war_with_tree_errors = mod.validate_effect(
             Mod.effect_spawn_civil_war_with_focus_tree(
-                "communism", "FB_AUS_focus", capital=102, rebel_tag="D01"
+                "communism", "FB_AUS_focus", capital=102
             )
         )
         assert not any(
@@ -1218,6 +1222,10 @@ class TestModCountries:
             'ABC = "countries/Custom ABC.txt"\n', encoding="utf-8"
         )
         definition.write_text("color = { 1 2 3 }\n", encoding="utf-8")
+        definition.parent.joinpath("colors.txt").write_text(
+            "ABC = { color = rgb { 1 2 3 } color_ui = rgb { 1 2 3 } }\n",
+            encoding="utf-8",
+        )
         history.write_text("capital = 1\n", encoding="utf-8")
 
         mod = Mod(mod_root, hoi4_install=hoi4_root)
@@ -1442,20 +1450,33 @@ class TestModStates:
         state = mod.get_state(1)
         assert state.manpower == "9999999"
 
-    def test_find_state_by_vanilla_filename_name(self, tmp_path):
+    def test_find_state_uses_localization_before_stale_filename(self, tmp_path):
         mod_root = tmp_path / "mod"
         hoi4_root = tmp_path / "hoi4"
         states_dir = hoi4_root / "history" / "states"
         states_dir.mkdir(parents=True)
-        states_dir.joinpath("115-Sicily.txt").write_text(
-            "state = { id = 115 name = STATE_115 manpower = 1 state_category = town "
+        states_dir.joinpath("88-Kielce.txt").write_text(
+            "state = { id = 88 name = STATE_88 manpower = 1 state_category = town "
             "provinces = { 1 } history = { owner = ITA add_core_of = ITA } }",
             encoding="utf-8",
         )
+        states_dir.joinpath("89-Krakow.txt").write_text(
+            "state = { id = 89 name = STATE_89 manpower = 1 state_category = town "
+            "provinces = { 2 } history = { owner = ITA add_core_of = ITA } }",
+            encoding="utf-8",
+        )
+        localization = hoi4_root / "localisation" / "english" / "states_l_english.yml"
+        localization.parent.mkdir(parents=True)
+        localization.write_text(
+            '\ufeffl_english:\n STATE_88:0 "Kraków"\n STATE_89:0 "Stanisławów"\n',
+            encoding="utf-8",
+        )
         mod = Mod(mod_root, hoi4_install=hoi4_root)
-        matches = mod.find_state("Sicily")
-        assert matches[0]["id"] == 115
-        assert matches[0]["display_name"] == "Sicily"
+        matches = mod.find_state("Krakow")
+        assert matches[0]["id"] == 88
+        assert matches[0]["display_name"] == "Kraków"
+        assert matches[0]["file_name"] == "Kielce"
+        assert matches[0]["matched"] == "display_name"
         assert matches[0]["source"] == "vanilla"
 
     def test_set_state_properties_appends_cores(self, tmp_mod):

@@ -84,6 +84,10 @@ class Country:
     leader: Optional[Leader] = None
     ideas: list[str] = field(default_factory=list)
     research_slots: int | None = None
+    stability: str | int | float | None = None
+    war_support: str | int | float | None = None
+    technologies: dict[str, int] = field(default_factory=dict)
+    oob: str = ""
     raw_definition: str = ""
     raw_history: str = ""
     raw_character: str = ""
@@ -116,7 +120,7 @@ class ValidationError:
     decision_id: Optional[str] = None
     focus_tree_id: Optional[str] = None
     ideology_id: Optional[str] = None
-    dynamic_idea_id: Optional[str] = None
+    dynamic_modifier_id: Optional[str] = None
     bookmark_name: Optional[str] = None
     related_file_path: Optional[str] = None
     line: Optional[int] = None
