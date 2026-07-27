@@ -111,3 +111,25 @@ def test_default_gate_rejects_a_nearly_empty_probe_corpus(tmp_path: Path) -> Non
     assert report.completed_probe_count == 1
     assert not report.success
     assert "minimum 6" in format_report(report)
+
+
+def test_required_probes_must_pass(tmp_path: Path) -> None:
+    localization = tmp_path / "localisation/english/minimal_l_english.yml"
+    localization.parent.mkdir(parents=True)
+    localization.write_text("\ufeffl_english:\n key:0 \"Value\"\n", encoding="utf-8")
+
+    report = run_release_gate(
+        tmp_path,
+        min_probes=1,
+        required_probes=("localization", "dynamic_modifier"),
+    )
+
+    assert not report.success
+    assert report.missing_required_probes == ("dynamic_modifier",)
+    assert report.to_dict()["missing_required_probes"] == ["dynamic_modifier"]
+    assert "missing required probes: dynamic_modifier" in format_report(report)
+
+
+def test_required_probes_reject_unknown_names(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Unknown required probes: imaginary"):
+        run_release_gate(tmp_path, required_probes=("imaginary",))

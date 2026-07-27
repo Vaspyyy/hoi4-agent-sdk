@@ -1,0 +1,45 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+      time: "10:00"
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      python-tooling:
+        patterns:
+          - pytest
+          - pytest-cov
+          - hypothesis
+          - ruff
+          - mypy
+          - build
+          - twine
+          - pip-audit
+          - setuptools
+          - wheel
+      optional-dependencies:
+        patterns:
+          - Pillow
+          - numpy
+          - scipy
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+      time: "10:15"
+      timezone: Europe/Berlin
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"

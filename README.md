@@ -125,7 +125,7 @@ older SDK code edits a known field.
 
 ```bash
 python -m pytest tests/
-python -m ruff check src/ tests/
+python -m ruff check src/ scripts/ tests/
 python -m mypy src/
 python -m build
 ```
@@ -133,9 +133,15 @@ python -m build
 See [docs/api.md](docs/api.md), [docs/models.md](docs/models.md), and
 [CONTRIBUTING.md](CONTRIBUTING.md) for the detailed API and release checks.
 The real-mod gate requires at least six completed domain probes by default and
-revalidates every dry-run mutation while verifying that the mod tree remains
-unchanged. Run `python scripts/verify_real_mod.py /path/to/mod`; use
-`--min-probes` only for an intentionally narrow fixture.
+can require named probes with repeatable `--require-probe` flags. The installed
+game audit additionally checks the generated effect and modifier documentation,
+requires exact technology-category equality, enables strict loading and asset
+validation, and writes text plus JSON reports:
+
+```bash
+python scripts/audit_hoi4_install.py /path/to/mod --hoi4-install /path/to/hoi4 \
+  --fingerprint-manifest /private/path/mod.sha256.json
+```
 
 ## License
 

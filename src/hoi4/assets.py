@@ -35,7 +35,7 @@ BOOKMARK_PICTURE_SIZE = (180, 104)
 DDS_LIMITATION = (
     "DDS export uses Pillow's single-level DXT encoder and does not generate mipmaps. "
     "DXT5 is the recommended portrait output. Older Pillow releases may not provide "
-    "a DDS encoder; upgrade Pillow or export a TGA portrait instead."
+    "or may ignore the requested compression; upgrade Pillow or export a TGA portrait instead."
 )
 
 _ASSET_STEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -517,6 +517,16 @@ def _write_asset_batch_atomically(
                 raise DDSExportUnsupportedError(
                     f"Pillow did not produce a valid DDS file. {DDS_LIMITATION}"
                 )
+            if output_format == "DDS":
+                requested = options.get("pixel_format")
+                if isinstance(requested, str) and not _dds_uses_compression(
+                    temporary, requested
+                ):
+                    temporary.unlink(missing_ok=True)
+                    raise DDSExportUnsupportedError(
+                        f"Pillow did not produce the requested {requested} DDS. "
+                        f"{DDS_LIMITATION}"
+                    )
             temporary_paths[target] = temporary
         for target, content in byte_writes:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -642,3 +652,12 @@ def _is_dds(path: Path) -> bool:
             return handle.read(4) == b"DDS "
     except OSError:
         return False
+
+
+def _dds_uses_compression(path: Path, compression: str) -> bool:
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(88)
+    except OSError:
+        return False
+    return len(header) >= 88 and header[84:88] == compression.encode("ascii")

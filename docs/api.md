@@ -497,9 +497,9 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_add_war_support(amount)` | `add_war_support = 0.1` |
 | `Mod.effect_add_stability(amount)` | `add_stability = 0.05` |
 | `Mod.effect_add_manpower(amount)` | `add_manpower = 15000` |
-| `Mod.effect_add_army_experience(amount)` | `add_army_experience = 25` |
-| `Mod.effect_add_navy_experience(amount)` | `add_navy_experience = 25` |
-| `Mod.effect_add_air_experience(amount)` | `add_air_experience = 25` |
+| `Mod.effect_add_army_experience(amount)` | `army_experience = 25` |
+| `Mod.effect_add_navy_experience(amount)` | `navy_experience = 25` |
+| `Mod.effect_add_air_experience(amount)` | `air_experience = 25` |
 | `Mod.effect_add_civilian_factory(state_id, level=1)` | State-scoped `industrial_complex` construction |
 | `Mod.effect_add_military_factory(state_id, level=1)` | State-scoped `arms_factory` construction |
 | `Mod.effect_add_infrastructure(state_id, level=1)` | State-scoped infrastructure construction |
@@ -819,7 +819,22 @@ changed lines. It fails on filesystem changes, probe failures, load diagnostics,
 validation errors, or fewer than six completed domain probes. Optional strict
 localization and icon validation are available through
 `--strict-localization` and `--validate-icons`; `--json` emits a machine-readable
+report. Repeat `--require-probe NAME` to require specific populated domains;
+unknown probe names are rejected and missing required probes appear in the JSON
 report.
+
+The stricter installed-game compatibility audit is:
+
+```bash
+python scripts/audit_hoi4_install.py /path/to/mod --hoi4-install /path/to/hoi4 \
+  --fingerprint-manifest /private/path/mod.sha256.json
+```
+
+It validates every curated effect and modifier against HOI4's generated
+documentation, requires exact technology-category equality, runs strict loading,
+icon and localization validation, and writes timestamped text and JSON reports.
+The default real-corpus profile requires focus, event, decision, idea,
+on-action, localization, country, state, ideology, and bookmark probes.
 
 ## Projects, Images, and Maps
 

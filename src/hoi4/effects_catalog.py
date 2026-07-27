@@ -154,7 +154,6 @@ EFFECT_CATEGORIES: list[tuple[str, list[tuple[str, str]]]] = [
             ("Stability (+10%)", "add_stability = 0.10"),
             ("War Support (+5%)", "add_war_support = 0.05"),
             ("War Support (+10%)", "add_war_support = 0.10"),
-            ("National Unity (+10%)", "add_national_unity = 0.1"),
         ],
     ),
     (
@@ -231,9 +230,9 @@ EFFECT_CATEGORIES: list[tuple[str, list[tuple[str, str]]]] = [
     (
         "Military",
         [
-            ("Army Experience (+10)", "add_army_experience = 10"),
-            ("Navy Experience (+10)", "add_navy_experience = 10"),
-            ("Air Experience (+10)", "add_air_experience = 10"),
+            ("Army Experience (+10)", "army_experience = 10"),
+            ("Navy Experience (+10)", "navy_experience = 10"),
+            ("Air Experience (+10)", "air_experience = 10"),
             ("Command Power (+25)", "add_command_power = 25"),
             ("Manpower (+50k)", "add_manpower = 50000"),
             ("Manpower (+100k)", "add_manpower = 100000"),

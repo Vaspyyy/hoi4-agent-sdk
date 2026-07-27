@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from collections.abc import Iterable
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -83,6 +84,7 @@ class GateReport:
     probes: tuple[ProbeResult, ...]
     filesystem_changes: tuple[str, ...]
     min_probes: int = DEFAULT_MIN_PROBES
+    required_probes: tuple[str, ...] = ()
     fail_on_load_diagnostics: bool = True
     fail_on_validation_errors: bool = True
 
@@ -99,10 +101,17 @@ class GateReport:
         return sum(issue.severity == "warning" for issue in self.validation_issues)
 
     @property
+    def missing_required_probes(self) -> tuple[str, ...]:
+        passed = {probe.name for probe in self.probes if probe.status == "passed"}
+        return tuple(name for name in self.required_probes if name not in passed)
+
+    @property
     def success(self) -> bool:
         if self.filesystem_changes:
             return False
         if self.completed_probe_count < self.min_probes:
+            return False
+        if self.missing_required_probes:
             return False
         if any(probe.status == "failed" for probe in self.probes):
             return False
@@ -152,6 +161,8 @@ class GateReport:
                 for probe in self.probes
             ],
             "filesystem_changes": list(self.filesystem_changes),
+            "required_probes": list(self.required_probes),
+            "missing_required_probes": list(self.missing_required_probes),
         }
 
 
@@ -573,6 +584,8 @@ def run_release_gate(
     fail_on_load_diagnostics: bool = True,
     fail_on_validation_errors: bool = True,
     min_probes: int = DEFAULT_MIN_PROBES,
+    required_probes: Iterable[str] = (),
+    strict_loading: bool = False,
 ) -> GateReport:
     """Run the read-only validation and source-stability release gate.
 
@@ -589,12 +602,17 @@ def run_release_gate(
         raise FileNotFoundError(f"HOI4 install does not exist or is not a directory: {install}")
     if min_probes < 0:
         raise ValueError("min_probes must be non-negative")
+    known_probes = {probe.name for probe in DEFAULT_PROBES}
+    normalized_required = tuple(dict.fromkeys(required_probes))
+    unknown_probes = sorted(set(normalized_required) - known_probes)
+    if unknown_probes:
+        raise ValueError(f"Unknown required probes: {', '.join(unknown_probes)}")
 
     active_budget = budget or DiffBudget()
     before = _fingerprint_tree(root)
 
     started = perf_counter()
-    mod = Mod(root, hoi4_install=install)
+    mod = Mod(root, hoi4_install=install, strict_loading=strict_loading)
     load_seconds = perf_counter() - started
 
     started = perf_counter()
@@ -630,6 +648,7 @@ def run_release_gate(
         probes=probes,
         filesystem_changes=filesystem_changes,
         min_probes=min_probes,
+        required_probes=normalized_required,
         fail_on_load_diagnostics=fail_on_load_diagnostics,
         fail_on_validation_errors=fail_on_validation_errors,
     )
@@ -664,6 +683,11 @@ def format_report(report: GateReport, *, max_diagnostics: int = 20) -> str:
         target = f" ({probe.target})" if probe.target else ""
         reason = f" - {probe.reason}" if probe.reason else ""
         lines.append(f"  {probe.status.upper():7} {probe.name}{target}: {detail}{reason}")
+
+    if report.missing_required_probes:
+        lines.append(
+            "missing required probes: " + ", ".join(report.missing_required_probes)
+        )
 
     if report.filesystem_changes:
         lines.append("unexpected filesystem changes:")

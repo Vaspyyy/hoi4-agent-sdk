@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Deterministic Python 3.11-3.14 CI, minimum/latest optional-dependency jobs,
+  branch-coverage enforcement, property tests, grouped Dependabot updates, and
+  a gated tag-release workflow with install smoke tests and checksums.
+- A read-only installed-HOI4 compatibility audit that validates generated
+  effect/modifier documentation, exact technology categories, strict loading,
+  assets, localization, source-churn budgets, filesystem fingerprints, and
+  required real-mod probes.
+- Release-gate support for explicitly required probe names and machine-readable
+  reporting of missing required probes.
+
+### Changed
+
+- The curated effect and modifier catalogs now contain only exact entries
+  present in HOI4 1.19.2's generated documentation.
+
+### Fixed
+
+- Experience effect helpers and catalogs now emit the current HOI4
+  `army_experience`, `navy_experience`, and `air_experience` effects instead of
+  obsolete `add_*_experience` names.
+- DDS exports now reject older Pillow builds that silently ignore the requested
+  DXT compression instead of accepting a valid-looking but incompatible file.
+
 ## [0.3.0] - 2026-07-27
 
 ### Added

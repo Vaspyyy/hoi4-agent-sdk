@@ -223,6 +223,23 @@ class TestPortraits:
         assert target.read_bytes() == original
         assert {path for path in root.rglob("*") if path.is_file()} == {target}
 
+    def test_wrong_dds_compression_does_not_destroy_existing_portrait(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _make_image(tmp_path / "portrait.png", (156, 210))
+        root = tmp_path / "mod"
+        target = root / "gfx/leaders/TST/leader.dds"
+        target.parent.mkdir(parents=True)
+        original = b"DDS " + b"pre-existing portrait payload"
+        target.write_bytes(original)
+        monkeypatch.setattr(assets, "_dds_uses_compression", lambda *_args: False)
+
+        with pytest.raises(DDSExportUnsupportedError, match="requested DXT5"):
+            import_portrait_to_mod(root, "TST", "leader", source, overwrite=True)
+
+        assert target.read_bytes() == original
+        assert {path for path in root.rglob("*") if path.is_file()} == {target}
+
 
 class TestBookmarkPictures:
     def test_imports_texture_and_writes_matching_sprite(self, tmp_path: Path) -> None:

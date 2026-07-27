@@ -30,6 +30,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-changed-lines", type=int, default=20)
     parser.add_argument("--max-files", type=int, default=1)
     parser.add_argument("--min-probes", type=int, default=DEFAULT_MIN_PROBES)
+    parser.add_argument(
+        "--require-probe",
+        action="append",
+        default=[],
+        help="Require the named probe to pass; may be repeated",
+    )
+    parser.add_argument("--strict-loading", action="store_true")
     parser.add_argument("--validate-icons", action="store_true")
     parser.add_argument("--strict-localization", action="store_true")
     parser.add_argument("--allow-load-diagnostics", action="store_true")
@@ -65,6 +72,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         fail_on_load_diagnostics=not args.allow_load_diagnostics,
         fail_on_validation_errors=not args.allow_validation_errors,
         min_probes=args.min_probes,
+        required_probes=args.require_probe,
+        strict_loading=args.strict_loading,
     )
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))

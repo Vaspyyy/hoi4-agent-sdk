@@ -2,52 +2,147 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit or tag to test
+        required: false
+        type: string
 
 permissions:
   contents: read
 
+env:
+  PYTHONPATH: src
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  quality:
+    name: Quality and security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements/*.txt
+      - run: python -m pip install -e '.[dev]' -c requirements/ci.txt
+      - run: python -m ruff check src/ scripts/ tests/
+      - run: python -m mypy --no-site-packages src/
+      - run: python -m pip_audit --local --skip-editable
+      - run: git diff --check
+      - name: Validate package/runtime/changelog identity
+        run: |
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          python scripts/release_tools.py check --tag "v${version}"
+
   core:
+    name: Core tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e '.[dev]'
-      - run: python -m pytest tests/
-      - run: python -m ruff check src/ tests/
-      - run: python -m mypy src/
+          cache-dependency-path: |
+            pyproject.toml
+            requirements/*.txt
+      - run: python -m pip install -e . pytest hypothesis -c requirements/ci.txt
+      - env:
+          HOI4_HYPOTHESIS_PROFILE: ci
+        run: python -m pytest tests/
 
-  package-and-map:
+  minimum-optional:
+    name: Minimum optional dependencies (Python 3.11)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e '.[dev,map]'
-      - run: python -m pip install build
-      - run: python -m pytest tests/
+          cache-dependency-path: requirements/*.txt
+      - run: >-
+          python -m pip install -e . pytest hypothesis
+          -r requirements/optional-minimum.txt
+          -c requirements/ci.txt
+      - env:
+          HOI4_HYPOTHESIS_PROFILE: ci
+        run: python -m pytest tests/
+
+  coverage-latest:
+    name: Coverage and latest optional dependencies (Python 3.14)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements/*.txt
+      - run: >-
+          python -m pip install -e . pytest pytest-cov hypothesis
+          -r requirements/optional-latest.txt
+          -c requirements/ci.txt
+      - env:
+          HOI4_HYPOTHESIS_PROFILE: ci
+        run: >-
+          python -m pytest tests/
+          --cov=hoi4 --cov-branch --cov-report=term-missing
+          --cov-fail-under=80
+
+  package:
+    name: Build and install smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements/*.txt
+      - run: python -m pip install build twine -c requirements/ci.txt
       - run: python -m build
-      - name: Smoke-test wheel without optional dependencies
+      - run: python -m twine check dist/*
+      - name: Smoke-test wheel
         run: |
-          python -m venv /tmp/hoi4-wheel-smoke
-          /tmp/hoi4-wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
-          cd /tmp
-          /tmp/hoi4-wheel-smoke/bin/python -c "from importlib.metadata import version; import hoi4; from hoi4 import Mod, create_mod_structure, export_flag_from_mod; assert hoi4.__version__ == version('hoi4-agent-sdk'); print(Mod, create_mod_structure, export_flag_from_mod)"
-      - name: Smoke-test sdist without optional dependencies
+          python -m venv "$RUNNER_TEMP/hoi4-wheel-smoke"
+          "$RUNNER_TEMP/hoi4-wheel-smoke/bin/python" -m pip install --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/hoi4-wheel-smoke/bin/python" -c "from importlib.metadata import version; import hoi4; assert hoi4.__version__ == version('hoi4-agent-sdk')"
+      - name: Smoke-test sdist
         run: |
-          python -m venv /tmp/hoi4-sdist-smoke
-          /tmp/hoi4-sdist-smoke/bin/python -m pip install --no-deps dist/*.tar.gz
-          cd /tmp
-          /tmp/hoi4-sdist-smoke/bin/python -c "from importlib.metadata import version; import hoi4; from hoi4 import Mod, create_mod_structure, export_flag_from_mod; assert hoi4.__version__ == version('hoi4-agent-sdk'); print(Mod, create_mod_structure, export_flag_from_mod)"
+          python -m venv "$RUNNER_TEMP/hoi4-sdist-smoke"
+          "$RUNNER_TEMP/hoi4-sdist-smoke/bin/python" -m pip install --no-deps "$GITHUB_WORKSPACE"/dist/*.tar.gz
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/hoi4-sdist-smoke/bin/python" -c "from importlib.metadata import version; import hoi4; assert hoi4.__version__ == version('hoi4-agent-sdk')"
+      - run: python scripts/release_tools.py checksums --dist dist
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7

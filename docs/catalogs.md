@@ -76,7 +76,7 @@ for cat_name, modifiers in MODIFIER_CATEGORIES:
         print(f"{key} = {value}  # {display_name}")
 ```
 
-**Categories:** Economy, Politics, Army, Navy, Air, Intelligence, Manpower & Occupation, Research — 65 total entries.
+**Categories:** Economy, Politics, Army, Navy, Air, Intelligence, Manpower & Occupation, Research — 61 total entries.
 
 Example entries:
 ```python
@@ -88,3 +88,6 @@ Example entries:
 
 `research_time_factor` is not a HOI4 modifier. Use positive
 `research_speed_factor` values for faster research.
+
+The catalog is checked against the exact headings in the installed game's
+generated modifier documentation by `scripts/audit_hoi4_install.py`.

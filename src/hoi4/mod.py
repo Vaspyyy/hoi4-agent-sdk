@@ -3121,15 +3121,15 @@ class Mod:
 
     @staticmethod
     def effect_add_army_experience(amount: int | float) -> str:
-        return f"add_army_experience = {amount}"
+        return f"army_experience = {amount}"
 
     @staticmethod
     def effect_add_navy_experience(amount: int | float) -> str:
-        return f"add_navy_experience = {amount}"
+        return f"navy_experience = {amount}"
 
     @staticmethod
     def effect_add_air_experience(amount: int | float) -> str:
-        return f"add_air_experience = {amount}"
+        return f"air_experience = {amount}"
 
     @staticmethod
     def effect_add_equipment(

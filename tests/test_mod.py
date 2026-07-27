@@ -714,9 +714,9 @@ class TestAgentFacingApis:
         assert Mod.effect_set_technologies({"infantry_weapons": 1, "tech_support": 1}) == (
             "set_technology = { infantry_weapons = 1 tech_support = 1 }"
         )
-        assert Mod.effect_add_army_experience(25) == "add_army_experience = 25"
-        assert Mod.effect_add_navy_experience(25) == "add_navy_experience = 25"
-        assert Mod.effect_add_air_experience(25) == "add_air_experience = 25"
+        assert Mod.effect_add_army_experience(25) == "army_experience = 25"
+        assert Mod.effect_add_navy_experience(25) == "navy_experience = 25"
+        assert Mod.effect_add_air_experience(25) == "air_experience = 25"
         assert Mod.effect_set_politics("democratic", elections_allowed=True) == (
             "set_politics = { ruling_party = democratic elections_allowed = yes }"
         )

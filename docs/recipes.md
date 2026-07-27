@@ -18,7 +18,7 @@ mod.set_loc("ZAR_ADJ", "Zarlandian")
 
 tree = mod.create_focus_tree("zar_focus", "ZAR")
 mod.add_focus("zar_focus", Focus(id="ZAR_militarize", x=5, y=0, cost=10,
-    completion_reward="add_army_experience = 25"))
+    completion_reward="army_experience = 25"))
 mod.add_focus("zar_focus", Focus(id="ZAR_conquer", x=5, y=1, cost=10,
     prerequisites=[["ZAR_militarize"]],
     completion_reward="create_wargoal = { type = annex_everything target = NEI }"))
@@ -120,7 +120,7 @@ mod.add_focus("german_focus", Focus(
     prerequisites=[["GER_anschluss"]],
     completion_reward="""
         add_political_power = 200
-        add_army_experience = 50
+        army_experience = 50
         transfer_state = 52
     """,
 ))
