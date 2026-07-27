@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-27
+
+### Added
+
+- Optional Gemini Developer API generation of reviewable 3:2 flag and 3:4
+  leader-portrait PNG candidates, with HOI4-specific prompt presets, explicit
+  reference images, model/resolution validation, immutable result metadata,
+  and atomic failure behavior.
+- Mocked Python 3.11/3.14 Gemini-extra CI coverage and an explicitly authorized
+  billable live-smoke example.
+
+### Changed
+
+- Gemini's Python Interactions JPEG output is validated and converted to the
+  promised PNG candidate, small provider aspect-ratio variance is normalized,
+  and live-tested agent prompts now use exhaustive flag inventories and
+  positive-only historical portrait descriptions.
+- Agent guidance now treats broad country creation, release, restoration, and
+  independence requests as complete visual packages with a three-size flag,
+  leader, advisor, and commander portraits. Missing billing-enabled Gemini
+  credentials must be disclosed with a Google AI Studio setup link rather than
+  silently producing an incomplete country.
+
 ## [0.3.1] - 2026-07-27
 
 ### Added

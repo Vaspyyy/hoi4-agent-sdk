@@ -19,6 +19,7 @@ Optional image and map tooling is installed separately:
 
 ```bash
 python -m pip install 'hoi4-agent-sdk[assets]'
+python -m pip install 'hoi4-agent-sdk[gemini]'
 python -m pip install 'hoi4-agent-sdk[map]'
 ```
 
@@ -60,6 +61,7 @@ with mod.transaction():
 - ideology definitions and bookmark scenarios
 - project scaffolding, launcher descriptors, and safe mod discovery
 - flag, portrait, and bookmark-picture import/export with optional Pillow support
+- optional Gemini generation of reviewable flag and leader-portrait PNG candidates
 - political-map rendering and procedural map/province generation
 - structured validation, duplicate-ID diagnostics, previews, transactions, and
   atomic multi-file saves
@@ -95,6 +97,44 @@ import_flag_to_mod(root, "ABC", "flag.png")
 import_portrait_to_mod(root, "ABC", "alice", "alice.png")
 write_portrait_gfx(root, "ABC", "alice")
 ```
+
+Gemini generation is an optional, billable candidate step. It does not modify a
+mod; review the PNG before passing it to the existing import helpers:
+
+```python
+from pathlib import Path
+
+from hoi4 import GeminiImageGenerator, import_flag_to_mod
+
+candidate_path = Path("/tmp/hoi4-agent-assets/ABC.png")
+with GeminiImageGenerator() as generator:
+    candidate = generator.generate_flag_candidate(
+        "A blue alpine republic with a white mountain and gold star",
+        candidate_path,
+    )
+
+# Inspect candidate.path at full size and at 10x7 before importing.
+import_flag_to_mod(root, "ABC", candidate.path)
+```
+
+Install the `gemini` extra and set `GEMINI_API_KEY` or `GOOGLE_API_KEY`; keys are
+never stored by the SDK. The default is `gemini-3.1-flash-image` at 512px.
+For reliable flags, describe an exhaustive layout with exact symbol counts,
+color roles, and relative symbol size. For portraits, describe the desired
+historical subject, year, role, clothing, and expression positively instead of
+listing objectionable imagery that should not appear.
+
+Agents using this SDK should treat a broad request to create, release, restore,
+or make a country independent as a request for the complete player-facing
+package, not merely script files. That package includes the three flag sizes, a
+leader portrait, portraits for all new visible characters, at least two
+political advisors and two military commanders, historically appropriate
+additional officers, and the corresponding DDS/GFX, roles, and localization.
+A broad country request authorizes generation and import after visual review.
+If no API key is available, the agent must say that proper custom GFX requires a
+billing-enabled Gemini API key from [Google AI
+Studio](https://aistudio.google.com/), name the supported environment variables,
+and report the package as visually incomplete rather than silently omitting it.
 
 ## Safety workflow
 

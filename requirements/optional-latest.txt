@@ -1,3 +1,4 @@
 Pillow==12.3.0
+google-genai==2.14.0
 numpy==2.5.1
 scipy==1.18.0

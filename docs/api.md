@@ -860,9 +860,9 @@ Launcher descriptors contain an absolute project path. Supplying the intended
 project parent explicitly keeps discovery secure; external absolute paths stay
 rejected by default.
 
-`replace_path` entries are never inferred by default. Image operations require
-the `assets` extra; political rendering and procedural generation require the
-`map` extra:
+`replace_path` entries are never inferred by default. Image conversion requires
+the `assets` extra, Gemini candidate generation requires the `gemini` extra,
+and political rendering and procedural generation require the `map` extra:
 
 ```python
 from hoi4 import MapRenderCancelled, export_flag_from_mod, export_portrait_from_mod
@@ -890,6 +890,118 @@ one rollback-capable batch, so a failure cannot leave only half of the pair.
 `render_political_map()` raises the root-exported `MapRenderCancelled` exception
 when its `cancelled` callback returns true, so UI integrations can stop work
 without treating cancellation as a rendering failure.
+
+### Gemini flag and portrait candidates
+
+Install the provider-specific extra without adding dependencies to the core SDK:
+
+```bash
+python -m pip install 'hoi4-agent-sdk[gemini]'
+```
+
+`GeminiImageGenerator` uses the current Gemini Interactions API and reads
+credentials from `GEMINI_API_KEY` or `GOOGLE_API_KEY`. It never stores or prints
+credentials, retries a request, changes models, discovers reference images, or
+imports output into a mod:
+
+```python
+from pathlib import Path
+
+from hoi4 import GeminiImageGenerator
+
+candidate_dir = Path("/tmp/hoi4-agent-assets")
+with GeminiImageGenerator() as generator:
+    flag = generator.generate_flag_candidate(
+        "A fictional alpine republic with a white mountain and gold star",
+        candidate_dir / "alpine-flag.png",
+        ideology="neutrality",
+    )
+    portrait = generator.generate_portrait_candidate(
+        "A fictional 1940s alpine general in his late forties",
+        candidate_dir / "alpine-general.png",
+        reference_images=["/explicit/path/to/authorized-reference.png"],
+    )
+```
+
+| Method | Provider aspect ratio | Reference limit |
+|---|---:|---:|
+| `generate_flag_candidate(description, destination, *, style=None, ideology=None, reference_images=(), image_size=None, overwrite=False)` | 3:2 | 10 |
+| `generate_portrait_candidate(description, destination, *, style=None, reference_images=(), image_size=None, overwrite=False)` | 3:4 | 4 |
+
+Both return an immutable `GeminiImageResult` with the resolved PNG path, complete
+prompt, model, MIME type, `(width, height)` dimensions, and SHA-256 digest.
+The default model is `gemini-3.1-flash-image` with `image_size="512"`.
+Known restrictions are checked locally: Flash supports 512/1K/2K/4K, Flash Lite
+supports 1K, and Pro supports 1K/2K/4K. Use uppercase `K`.
+
+### Agent default for complete countries
+
+Agent integrations should treat “create this country,” “release this country,”
+“restore this country,” and “make this country independent” as full country
+requests. Unless the user narrows the scope, the deliverable includes:
+
+- an original flag imported at 82x52, 41x26, and 10x7;
+- a head-of-state portrait;
+- portraits for every newly created player-visible character, including at
+  least two political advisors and two military commanders;
+- additional historically appropriate service chiefs, high command, theorists,
+  field marshals, or admirals when warranted; and
+- corresponding character roles/history, localization, DDS assets, and GFX
+  sprite declarations.
+
+Prefer real people who plausibly fit the role and scenario date. The broad
+country request is sufficient authorization to generate, review, and import
+these assets; no separate “make graphics” wording is required. Before making
+billable calls, report the planned asset count and retain the three-candidate
+limit for each asset.
+
+If neither supported environment variable is present, the agent must tell the
+user that proper custom GFX requires a billing-enabled Gemini API key from
+[Google AI Studio](https://aistudio.google.com/), explain that the key belongs
+in `GEMINI_API_KEY` or `GOOGLE_API_KEY`, and explicitly report the country as
+visually incomplete. It may continue safe non-visual work, but must not silently
+substitute missing portraits or claim the full package is finished.
+
+Without `style=`, portraits use a chest-up, period-correct 1930s-1940s
+grand-strategy preset; flags use flat, high-contrast vexillology designed to
+remain legible at 10x7. A custom style replaces the aesthetic preset while the
+safe crop, no-text, and small-size constraints remain.
+
+Live prompting is more reliable when flag briefs state an exhaustive visual
+inventory: exact band layout, exact symbol count, allowed color roles, forbidden
+additions, and a minimum relative size for the defining symbol. Inspect the
+10x7 result anyway; image models may retain subtle shading even after a
+flat-fill instruction. For historical portraits, name the person, year, role,
+approximate age, expression, and desired period clothing using positive
+descriptions. Avoid enumerating extremist or violent imagery that should not
+appear, because naming it can itself trigger a safety filter. Without an
+explicitly authorized reference image, a real person's likeness remains the
+model's approximation and must be reviewed as such.
+
+References are uploaded only when their paths are explicitly passed. The encoded
+request must stay below Gemini's 20 MB inline limit. The current Python
+Interactions endpoint returns JPEG image output; the SDK validates that response
+and atomically converts it to the public PNG candidate. Small provider
+aspect-ratio variance is center-cropped to the exact requested ratio; materially
+wrong ratios are rejected. A missing dependency or key, provider refusal or rate
+limit, malformed response, invalid raster, or existing destination raises before
+any candidate or mod file is changed. The output is still only a candidate:
+inspect it before calling `import_flag_to_mod()` or `import_portrait_to_mod()`
+and `write_portrait_gfx()`.
+
+Gemini Developer API image generation is paid; a 512px Flash image is currently
+approximately $0.045, and generated images contain SynthID. Gemini 3.6 Flash is
+a text model rather than an image-output model; image generation uses the
+separately versioned Gemini image family. Confirm current details in Google's
+[image-generation guide](https://ai.google.dev/gemini-api/docs/image-generation)
+and [pricing](https://ai.google.dev/gemini-api/docs/pricing).
+
+The repository's
+[`examples/gemini_live_smoke.py`](../examples/gemini_live_smoke.py) performs
+exactly one live flag request and does not import it. It refuses to run unless a
+credential is present and
+`HOI4_GEMINI_BILLABLE_SMOKE=I_UNDERSTAND` is set, making both credentials and
+billable authorization explicit.
 
 Generate and atomically export a custom map with the optional map extra:
 

@@ -1,7 +1,10 @@
 include CHANGELOG.md
+include CLAUDE.md
 include CONTRIBUTING.md
+include AGENTS.md
 include LICENSE
 include README.md
+recursive-include examples *.py
 recursive-include scripts *.py
 recursive-include docs *.md
 recursive-include tests *.py *.txt *.yml

@@ -13,6 +13,8 @@ def test_root_api_exposes_project_and_asset_workflows_without_optional_dependenc
         "ExternalModificationError",
         "find_flag_path",
         "find_portrait_path",
+        "GeminiImageGenerator",
+        "GeminiImageResult",
         "MapRenderCancelled",
         "scan_mod_descriptors",
         "write_portrait_gfx",

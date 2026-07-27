@@ -32,6 +32,17 @@ from .bookmarks import Bookmark, BookmarkCountry
 from .mod import ExternalModificationError, Mod
 from .config import Config, find_config
 from .dynamic_modifiers import DynamicModifier
+from .gemini_images import (
+    DEFAULT_GEMINI_IMAGE_MODEL,
+    DEFAULT_GEMINI_IMAGE_SIZE,
+    GeminiAuthenticationError,
+    GeminiBackendUnavailableError,
+    GeminiImageError,
+    GeminiImageGenerationError,
+    GeminiImageGenerator,
+    GeminiImageResponseError,
+    GeminiImageResult,
+)
 from .ideologies import Ideology, SubIdeology
 from .map_render import MapRenderCancelled, PoliticalMapResult, render_political_map
 from .parser import ParseError, PdxNode, parse_pdx, serialize_pdx
@@ -84,7 +95,7 @@ except ImportError:
 try:
     __version__ = version("hoi4-agent-sdk")
 except PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
-    __version__ = "0.3.1"
+    __version__ = "0.4.0"
 
 __all__ = [
     "Mod",
@@ -109,6 +120,15 @@ __all__ = [
     "Bookmark",
     "BookmarkCountry",
     "DynamicModifier",
+    "DEFAULT_GEMINI_IMAGE_MODEL",
+    "DEFAULT_GEMINI_IMAGE_SIZE",
+    "GeminiAuthenticationError",
+    "GeminiBackendUnavailableError",
+    "GeminiImageError",
+    "GeminiImageGenerationError",
+    "GeminiImageGenerator",
+    "GeminiImageResponseError",
+    "GeminiImageResult",
     "Ideology",
     "SubIdeology",
     "ProgressEvent",

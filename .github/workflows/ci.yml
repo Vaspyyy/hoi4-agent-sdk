@@ -33,8 +33,9 @@ jobs:
           cache-dependency-path: |
             pyproject.toml
             requirements/*.txt
+      - run: python -m pip install pip -c requirements/ci.txt
       - run: python -m pip install -e '.[dev]' -c requirements/ci.txt
-      - run: python -m ruff check src/ scripts/ tests/
+      - run: python -m ruff check src/ examples/ scripts/ tests/
       - run: python -m mypy --no-site-packages src/
       - run: python -m pip_audit --local --skip-editable
       - run: git diff --check
@@ -85,6 +86,29 @@ jobs:
       - env:
           HOI4_HYPOTHESIS_PROFILE: ci
         run: python -m pytest tests/
+
+  gemini-optional:
+    name: Gemini optional dependency (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements/*.txt
+      - run: python -m pip install -e '.[gemini]' pytest hypothesis -c requirements/ci.txt
+      - env:
+          HOI4_HYPOTHESIS_PROFILE: ci
+        run: python -m pytest tests/test_gemini_images.py tests/test_assets.py
 
   coverage-latest:
     name: Coverage and latest optional dependencies (Python 3.14)

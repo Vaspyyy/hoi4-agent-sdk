@@ -22,11 +22,13 @@ updates:
           - build
           - twine
           - pip-audit
+          - pip
           - setuptools
           - wheel
       optional-dependencies:
         patterns:
           - Pillow
+          - google-genai
           - numpy
           - scipy
 

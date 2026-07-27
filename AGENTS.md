@@ -166,6 +166,75 @@ with mod.transaction():
     `common/countries/colors.txt`. Vanilla color overrides require a configured
     HOI4 install so the complete table can be retained.
 
+## Country Visual Completeness
+
+A broad request to create, release, restore, or make a country independent
+implicitly includes a complete player-facing country package even when the user
+does not separately ask for graphics. Do not stop at a tag, state transfer, and
+generic portrait. The default package includes:
+
+- one original flag, imported at all three HOI4 sizes;
+- one head-of-state portrait;
+- portraits for every newly created visible character, with a coherent roster
+  containing at least two political advisors and two military commanders;
+- appropriate service chiefs, high-command officers, theorists, field marshals,
+  or admirals when the country's history and gameplay scope warrant them; and
+- matching character definitions, roles, recruitment/history entries,
+  localization, portrait DDS files, and sprite declarations.
+
+Prefer real people who plausibly held or could have held each position at the
+scenario date. Research the historical fit instead of inventing a famous person
+at random. If a fictional person is necessary, make that clear. Without a
+requested art direction, use the built-in HOI4-compatible flag and historical
+portrait styles.
+
+Before promising this package, check only whether `GEMINI_API_KEY` or
+`GOOGLE_API_KEY` is present; never print its value. If neither is available,
+tell the user that proper custom flags and character portraits require a
+billing-enabled Gemini API key from <https://aistudio.google.com/>, explain
+which environment variable to set, and continue any safe non-visual work that
+can be completed. Do not silently omit the graphics or describe the country as
+complete. A broad country-creation request counts as authorization to generate
+and import the package once a key is available. Before billable calls, state the
+planned asset count and remember that each asset may require up to three
+candidates.
+
+## Gemini Image Candidate Workflow
+
+Gemini image generation is optional and billable. Install `.[gemini]`, keep the
+credential only in `GEMINI_API_KEY` or `GOOGLE_API_KEY`, and never write it to
+`.hoi4.json`, scripts, logs, prompts, or mod files.
+
+For an AI-generated flag or portrait:
+
+1. Generate one PNG candidate under `/tmp/hoi4-agent-assets/` with
+   `GeminiImageGenerator`. Supply reference-image paths only when the user
+   explicitly provided or authorized those exact files; never discover or
+   upload game or mod assets automatically.
+2. Inspect the full PNG and an exact-size preview: 10x7 for flags and 156x210
+   for portraits.
+3. Reject and regenerate with concrete corrective prompt language when anatomy,
+   composition, symbols, colors, crop margins, or tiny-size readability fail.
+   For flags, specify an exhaustive layout: exact bands, exact symbol counts,
+   allowed color roles, forbidden additions, and minimum relative symbol size.
+   Treat persistent gradients or shading as a failed flat-vexillology candidate.
+   For historical portraits, use positive descriptions of the person's year,
+   role, age, expression, and period clothing. Do not name extremist or violent
+   imagery merely to say it should be absent; that can trigger safety filtering.
+4. Stop after three billable candidates. If none passes, show the best candidate
+   and leave the mod unchanged.
+5. Import the first passing flag with `import_flag_to_mod()`. Import a passing
+   portrait with `import_portrait_to_mod()` and then `write_portrait_gfx()`.
+6. When the user's original request explicitly authorized asset creation,
+   import immediately after review. A broad country-creation request covered by
+   the visual-completeness policy is such authorization. Otherwise show the
+   candidate and wait for approval before touching the mod.
+
+If no style is requested, keep the generator's built-in HOI4 flag/portrait
+presets. A supplied style replaces only the aesthetic; preserve the no-text,
+safe-crop, and small-size-readability constraints. One generator call is one
+billable attempt: do not add retries or silently switch models.
+
 ## Documentation
 
 Read only the documentation relevant to the current task:
