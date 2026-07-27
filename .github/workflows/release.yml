@@ -13,9 +13,6 @@ on:
 permissions:
   contents: write
 
-env:
-  PYTHONPATH: src
-
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
@@ -40,6 +37,7 @@ jobs:
           path: dist
       - name: Validate release identity and artifacts
         env:
+          PYTHONPATH: src
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           python scripts/release_tools.py check --tag "$RELEASE_TAG"

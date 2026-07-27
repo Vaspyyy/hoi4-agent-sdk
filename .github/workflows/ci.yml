@@ -14,9 +14,6 @@ on:
 permissions:
   contents: read
 
-env:
-  PYTHONPATH: src
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -139,7 +136,7 @@ jobs:
           "$RUNNER_TEMP/hoi4-sdist-smoke/bin/python" -m pip install --no-deps "$GITHUB_WORKSPACE"/dist/*.tar.gz
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/hoi4-sdist-smoke/bin/python" -c "from importlib.metadata import version; import hoi4; assert hoi4.__version__ == version('hoi4-agent-sdk')"
-      - run: python scripts/release_tools.py checksums --dist dist
+      - run: PYTHONPATH=src python scripts/release_tools.py checksums --dist dist
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-dist
