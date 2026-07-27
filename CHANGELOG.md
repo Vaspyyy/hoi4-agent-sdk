@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-27
+
 ### Added
 
 - Deterministic Python 3.11-3.14 CI, minimum/latest optional-dependency jobs,
