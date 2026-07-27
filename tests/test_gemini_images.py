@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from hoi4 import gemini_images
-from hoi4.assets import FLAG_SIZES, PORTRAIT_SIZE
+from hoi4.assets import DDSExportUnsupportedError, FLAG_SIZES, PORTRAIT_SIZE
 from hoi4.gemini_images import (
     DEFAULT_GEMINI_IMAGE_MODEL,
     GeminiAuthenticationError,
@@ -493,12 +493,15 @@ class TestImporterIntegration:
         candidate = GeminiImageGenerator(
             client=_client_for_image((384, 512))
         ).generate_portrait_candidate("A leader", tmp_path / "candidate.png")
-        portrait = import_portrait_to_mod(
-            tmp_path / "mod",
-            "TST",
-            "leader",
-            candidate.path,
-        )
+        try:
+            portrait = import_portrait_to_mod(
+                tmp_path / "mod",
+                "TST",
+                "leader",
+                candidate.path,
+            )
+        except DDSExportUnsupportedError as exc:  # pragma: no cover - old optional Pillow
+            pytest.skip(str(exc))
         gfx = write_portrait_gfx(tmp_path / "mod", "TST", "leader")
 
         assert portrait.read_bytes()[:4] == b"DDS "
