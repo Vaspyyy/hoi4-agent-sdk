@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-27
+
+### Fixed
+
+- Newly created ideas now serialize their sprite with HOI4's supported
+  `picture` assignment instead of the ignored `icon` assignment.
+- Validation now warns about legacy idea-level `icon` assignments even when
+  their sprite name resolves, and editing an affected idea migrates the key to
+  `picture` without rebuilding the surrounding source.
+
 ## [0.4.0] - 2026-07-27
 
 ### Added

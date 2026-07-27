@@ -46,6 +46,9 @@ VALIDATION_CODES: dict[str, str] = {
     "unknown_equipment_reference": "Effect script references an equipment ID not found in configured data.",
     "unknown_focus_icon": "Focus icon GFX key was not found in interface files.",
     "unknown_idea_icon": "Idea icon GFX key was not found in interface files.",
+    "invalid_idea_icon_key": (
+        "Idea definitions must use picture, not icon, for their sprite assignment."
+    ),
     "country_colors_shadow_vanilla": (
         "A mod colors.txt shadows vanilla country color entries that it does not repeat."
     ),
@@ -969,6 +972,22 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
                 message=f"Idea '{idea.id}' has no modifiers",
                 severity="warning",
                 idea_id=idea.id,
+            )
+        )
+
+    if idea.raw_block and any(
+        span.key == "icon" for span in top_level_assignments(idea.raw_block)
+    ):
+        errors.append(
+            ValidationError(
+                message=(
+                    f"Idea '{idea.id}' uses 'icon ='. HOI4 ideas require "
+                    "'picture =' and a matching sprite declaration in interface/*.gfx."
+                ),
+                severity="warning",
+                code="invalid_idea_icon_key",
+                idea_id=idea.id,
+                file_path=str(idea.path) if idea.path else None,
             )
         )
 

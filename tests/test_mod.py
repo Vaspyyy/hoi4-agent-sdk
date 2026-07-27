@@ -1821,6 +1821,9 @@ class TestModIdeas:
         loaded = Mod(tmp_mod.root).get_idea("TST_spirit")
         assert loaded.desc == "TST_spirit_desc"
         assert loaded.removal_cost == -1
+        source = loaded.path.read_text(encoding="utf-8")
+        assert "picture = GFX_idea_generic" in source
+        assert "icon =" not in source
 
     def test_create_idea_requires_explicit_overwrite(self, tmp_mod):
         mod = tmp_mod.mod
@@ -1972,6 +1975,28 @@ class TestIdeaValidation:
         idea = Idea(id="")
         errors = validate_idea(idea)
         assert any("no ID" in e.message for e in errors)
+
+    def test_legacy_icon_assignment_warns_even_when_sprite_exists(self, tmp_path):
+        path = tmp_path / "common" / "ideas" / "ideas.txt"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "ideas = { country = { t = { icon = GFX_valid modifier = { x = 1 } } } }\n",
+            encoding="utf-8",
+        )
+        interface = tmp_path / "interface" / "ideas.gfx"
+        interface.parent.mkdir(parents=True)
+        interface.write_text(
+            'spriteTypes = { spriteType = { name = "GFX_valid" } }\n',
+            encoding="utf-8",
+        )
+
+        errors = Mod(tmp_path).validate(validate_icons=True)
+
+        issue = next(error for error in errors if error.code == "invalid_idea_icon_key")
+        assert issue.severity == "warning"
+        assert issue.idea_id == "t"
+        assert issue.file_path == str(path)
+        assert not any(error.code == "unknown_idea_icon" for error in errors)
 
 
 class TestEventValidation:

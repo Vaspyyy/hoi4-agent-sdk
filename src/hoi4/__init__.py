@@ -95,7 +95,7 @@ except ImportError:
 try:
     __version__ = version("hoi4-agent-sdk")
 except PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
-    __version__ = "0.4.0"
+    __version__ = "0.4.1"
 
 __all__ = [
     "Mod",

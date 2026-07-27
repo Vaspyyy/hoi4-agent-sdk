@@ -321,6 +321,11 @@ from both legacy `common/national_ideas/` and current `common/ideas/`. Both
 
 Without an explicit `path`, new ideas write to `common/ideas/{TAG}_ideas.txt` when the idea ID starts with a 3-letter tag, otherwise `common/ideas/mod_ideas.txt`. New ideas default to `category="country"`, producing current-HOI4 `ideas = { country = { ... } }`. Pass `category="political_advisor"` or similar for advisors/designers.
 
+HOI4 idea definitions use `picture = <sprite>` rather than `icon = <sprite>`.
+The named sprite must also be declared in an `interface/*.gfx` file. The SDK
+still reads legacy `icon` assignments, reports them as validation warnings, and
+migrates a legacy assignment to `picture` when that idea is edited and saved.
+
 ### Methods
 
 | Method | Returns | Description |

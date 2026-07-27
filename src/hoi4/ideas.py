@@ -194,7 +194,7 @@ def serialize_idea(idea: Idea, indent: int = 1) -> str:
         body = _patch_idea_body(idea, idea.raw_block)
         return f"{tab}{idea.id} = {{\n{_indent(body, indent + 1)}\n{tab}}}"
     lines = [f"{tab}{idea.id} = {{"]
-    lines.append(f"{tab}\ticon = {idea.icon}")
+    lines.append(f"{tab}\tpicture = {idea.icon}")
     if idea.desc:
         lines.append(f"{tab}\tdesc = {pdx_value(idea.desc)}")
     if idea.removal_cost is not None:
@@ -309,9 +309,22 @@ def _serialize_scalar_like(text: str, key: str, value: object) -> str:
     return pdx_value(value)
 
 
+def _migrate_legacy_icon_key(body: str) -> str:
+    """Rename a legacy top-level idea ``icon`` assignment without rebuilding it."""
+
+    if assignment_spans(body, "picture"):
+        return body
+    icon_spans = [span for span in assignment_spans(body, "icon") if not span.is_block]
+    if len(icon_spans) != 1:
+        return body
+    span = icon_spans[0]
+    return body[: span.start] + "picture" + body[span.start + len(span.key) :]
+
+
 def _patch_idea_body(idea: Idea, body: str) -> str:
     if not idea.touched:
         return body
+    body = _migrate_legacy_icon_key(body)
     fields = idea.touched_fields or {
         "icon",
         "desc",
@@ -324,11 +337,10 @@ def _patch_idea_body(idea: Idea, body: str) -> str:
     }
     if "icon" in fields:
         picture_spans = assignment_spans(body, "picture")
-        icon_spans = assignment_spans(body, "icon")
         if picture_spans:
             body = set_scalar(body, "picture", idea.icon or None)
-        elif icon_spans or (idea.icon and idea.icon != "GFX_idea_generic"):
-            body = set_scalar(body, "icon", idea.icon or None)
+        elif idea.icon and idea.icon != "GFX_idea_generic":
+            body = set_scalar(body, "picture", idea.icon)
     if "desc" in fields:
         desc_spans = assignment_spans(body, "desc")
         # A few game files use nested ``desc`` blocks for unrelated rule

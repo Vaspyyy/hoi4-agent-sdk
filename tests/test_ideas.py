@@ -109,7 +109,8 @@ class TestSerializeIdea:
         idea = Idea(id="test_idea", icon="GFX_test", modifier={"key": 0.1})
         text = serialize_idea(idea)
         assert "test_idea" in text
-        assert "GFX_test" in text
+        assert "picture = GFX_test" in text
+        assert "icon =" not in text
 
     def test_serializes_modifier_types(self):
         idea = Idea(
@@ -174,7 +175,31 @@ class TestSerializeIdea:
 
         text = serialize_ideas_file(ideas, container_name=container, original=original)
 
-        assert text == original.replace("GFX_old", "GFX_new")
+        assert text == original.replace("icon = GFX_old", "picture = GFX_new")
+
+    def test_unrelated_edit_migrates_legacy_icon_key_without_churn(self, tmp_path):
+        original = """ideas = {
+    country = {
+        TST_spirit = {
+            icon   = GFX_old # keep icon note
+            modifier = { stability_factor = 0.10 }
+        }
+    }
+}
+"""
+        path = tmp_path / "ideas.txt"
+        path.write_text(original, encoding="utf-8")
+        ideas, container = read_ideas_file(path)
+        ideas[0].modifier = {"stability_factor": 0.20}
+        ideas[0].touched = True
+        ideas[0].touched_fields.add("modifier")
+
+        text = serialize_ideas_file(ideas, container_name=container, original=original)
+
+        expected = original.replace("icon   =", "picture   =").replace(
+            "stability_factor = 0.10", "stability_factor = 0.2"
+        )
+        assert text == expected
 
 
 class TestSerializeIdeasFile:
