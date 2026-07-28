@@ -90,6 +90,7 @@ class Country:
     war_support: str | int | float | None = None
     technologies: dict[str, int] = field(default_factory=dict)
     oob: str = ""
+    recruited_characters: list[str] = field(default_factory=list)
     raw_definition: str = ""
     raw_history: str = ""
     raw_character: str = ""

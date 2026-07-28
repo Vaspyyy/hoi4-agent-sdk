@@ -176,6 +176,13 @@ with mod.transaction():
     `Mod.validate_game_log()` against the target mod. Do not treat a static
     release gate as proof that HOI4 accepted every generated token.
 
+30. Never hand-write a character roster or starting land OOB when the public
+    models can express it. Use `Character` plus explicit role/instance mutation
+    methods, and `create_oob()` with templates, battalions, and divisions.
+    Repeated roles or DLC instances require an occurrence selector; do not
+    guess. Before reporting any SDK-created country complete, require
+    `mod.validate_country_package(tag).complete`.
+
 ## Country Visual Completeness
 
 A broad request to create, release, restore, or make a country independent
@@ -187,10 +194,25 @@ generic portrait. The default package includes:
 - one head-of-state portrait;
 - portraits for every newly created visible character, with a coherent roster
   containing at least two political advisors and two military commanders;
+- for a country that exists at scenario start, an assigned land OOB with at
+  least one valid template and starting division, with every division placed
+  in an existing owned land province;
+- for a country released later, an explicit focus/event/decision/on-action
+  activation path that grants territory and correctly establishes its capital;
 - appropriate service chiefs, high-command officers, theorists, field marshals,
   or admirals when the country's history and gameplay scope warrant them; and
 - matching character definitions, roles, recruitment/history entries,
   localization, portrait DDS files, and sprite declarations.
+
+Build the roster through `create_character()` and the role models; pass
+`recruit=False` only for a character intentionally unlocked by an event. Build
+starting land forces through `create_oob(..., assign=True)`. Do not assign a
+starting OOB or starting ownership merely to satisfy validation for a tag that
+does not exist at scenario start; `validate_country_package()` classifies
+evidence-backed focus/event releases as `runtime`. Run
+`find_disconnected_states()` when the `map` extra is available, and allowlist
+only deliberate islands or overseas components. The final readiness check is
+`CountryPackageReport.complete`, not merely a clean preview or successful save.
 
 Prefer real people who plausibly held or could have held each position at the
 scenario date. Research the historical fit instead of inventing a famous person

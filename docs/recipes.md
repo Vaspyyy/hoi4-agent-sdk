@@ -4,17 +4,85 @@ Copyable workflows for common modding tasks. Read only the recipe relevant to th
 
 ## Common Recipes
 
-### Create a New Country with Focus Tree
+### Create a Complete New Country with Focus Tree
 
 ```python
-mod = Mod("/path/to/my_mod")
+from pathlib import Path
+
+from hoi4 import (
+    AdvisorRole, ArmyCommanderRole, Battalion, Character,
+    CharacterPortrait, DivisionTemplate, DivisionUnit, Focus, Mod,
+    import_flag_to_mod, import_portrait_to_mod, write_portrait_gfx,
+)
+
+root = Path("/path/to/my_mod")
+mod = Mod(root, hoi4_install="/path/to/Hearts of Iron IV")
 
 mod.create_country("ZAR", "Zarland", adjective="Zarlandian",
                    color=(200, 50, 50), capital=100,
                    leader_name="General Zar", leader_ideology="despotism")
-mod.set_loc("ZAR", "Zarland")
-mod.set_loc("ZAR_DEF", "Zarland")
-mod.set_loc("ZAR_ADJ", "Zarlandian")
+mod.set_state_owner(100, "ZAR")  # owner + core
+
+import_flag_to_mod(root, "ZAR", "/tmp/hoi4-agent-assets/ZAR_flag.png")
+
+def add_portrait(slug: str) -> str:
+    texture = import_portrait_to_mod(
+        root, "ZAR", slug,
+        f"/tmp/hoi4-agent-assets/ZAR_{slug}.png",
+    )
+    write_portrait_gfx(root, "ZAR", slug, portrait_path=texture)
+    return f"GFX_portrait_ZAR_{slug}"
+
+add_portrait("leader_1")  # create_country() already references this sprite
+for index in (1, 2):
+    mod.create_character(
+        "ZAR",
+        Character(
+            id=f"ZAR_advisor_{index}",
+            name=f"Advisor {index}",
+            portraits=[CharacterPortrait(
+                large=add_portrait(f"advisor_{index}")
+            )],
+            roles=[AdvisorRole(
+                slot="political_advisor",
+                traits=["silent_workhorse"],
+            )],
+        ),
+    )
+    mod.create_character(
+        "ZAR",
+        Character(
+            id=f"ZAR_commander_{index}",
+            name=f"Commander {index}",
+            portraits=[CharacterPortrait(
+                channel="army",
+                large=add_portrait(f"commander_{index}"),
+            )],
+            roles=[ArmyCommanderRole(
+                skill=2,
+                attack_skill=2,
+                defense_skill=2,
+                planning_skill=2,
+                logistics_skill=2,
+            )],
+        ),
+    )
+
+mod.create_oob(
+    "ZAR_1936",
+    "ZAR",
+    templates=[DivisionTemplate(
+        "Zar Infantry",
+        battalions=[Battalion("infantry", 0, 0)],
+    )],
+    divisions=[DivisionUnit(
+        "Zar Infantry",
+        location=1234,  # land province in owned state 100
+        name="1st Zar Division",
+        start_equipment_factor=1.0,
+    )],
+    assign=True,
+)
 
 tree = mod.create_focus_tree("zar_focus", "ZAR")
 mod.add_focus("zar_focus", Focus(id="ZAR_militarize", x=5, y=0, cost=10,
@@ -23,10 +91,23 @@ mod.add_focus("zar_focus", Focus(id="ZAR_conquer", x=5, y=1, cost=10,
     prerequisites=[["ZAR_militarize"]],
     completion_reward="create_wargoal = { type = annex_everything target = NEI }"))
 
-errors = mod.validate()
-assert all(e.severity == "warning" for e in errors), f"Errors: {errors}"
+package = mod.validate_country_package("ZAR")
+assert package.complete, package.to_dict()
+errors = mod.validate(validate_icons=True, strict_localization=True)
+assert not any(e.severity == "error" for e in errors), errors
 mod.save()
 ```
+
+Use `create_character(..., recruit=False)` only when an event deliberately
+unlocks the character later. A broad country request is not complete until
+`validate_country_package(tag).complete` is true.
+
+If the tag does not exist at scenario start, do not fabricate starting
+ownership or an OOB. Put the territory/core/release setup in the actual focus,
+event, decision, or on-action effect. The default `lifecycle="auto"` report
+then returns `lifecycle == "runtime"` and exposes the detected state IDs and
+source effects. A generated tag with no starting territory and no such path
+fails as `missing_country_activation`.
 
 ### Modify Vanilla State Ownership
 

@@ -1261,7 +1261,10 @@ class TestModCountries:
     def test_create_country_defaults_leader_ideology_to_ruling_party(self, tmp_mod):
         country = tmp_mod.mod.create_country("RED", "Redland", ruling_party="communism")
         assert country.leader.ideology == "marxism"
-        assert tmp_mod.mod.validate() == []
+        assert not any(
+            issue.code == "leader_party_mismatch"
+            for issue in tmp_mod.mod.validate()
+        )
         assert "stalinism" in Mod.leader_ideologies_for_party("communism")
 
     def test_create_country_persists_research_slots(self, tmp_mod):

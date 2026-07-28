@@ -56,7 +56,8 @@ Country(tag: str, name: str = "", adjective: str = "",
         stability: str|int|float|None = None,
         war_support: str|int|float|None = None,
         technologies: dict[str,int] = {},
-        oob: str = "")
+        oob: str = "",
+        recruited_characters: list[str] = [])
 ```
 
 ### Leader
@@ -77,6 +78,109 @@ matching distribution explicitly.
 The history setup fields map to `set_stability`, `set_war_support`,
 `set_technology`, and `oob`. Strings are accepted for exact Paradox values;
 numeric stability and war-support values round-trip as numbers.
+
+### Character and roles
+
+```python
+Character(id: str,
+          country_tag: str = "",
+          name: str = "",
+          portraits: list[CharacterPortrait] = [],
+          roles: list[CharacterRole] = [],
+          instances: list[CharacterInstance] = [],
+          path: Path | None = None)
+
+CharacterPortrait(channel: Literal["civilian", "army", "navy"] = "civilian",
+                  large: str = "",
+                  small: str = "")
+
+CharacterInstance(allowed: str = "",
+                  name: str = "",
+                  portraits: list[CharacterPortrait] = [],
+                  roles: list[CharacterRole] = [])
+```
+
+Direct `roles` and repeated `instances` are both retained. An instance's
+`allowed` value is the body of the HOI4 trigger block. Loaded source coordinates
+are internal fidelity metadata; mutation methods select repeated instances and
+roles by zero-based occurrence.
+
+```python
+CountryLeaderRole(ideology="liberalism", expire="1965.1.1.1",
+                  traits=[], id=-1)
+
+AdvisorRole(slot="political_advisor", traits=[], cost=100,
+            idea_token="", ledger="", allowed="", visible="",
+            available="", ai_will_do="factor = 1")
+
+ArmyCommanderRole(kind="corps_commander", skill=1,
+                  attack_skill=1, defense_skill=1,
+                  planning_skill=1, logistics_skill=1,
+                  traits=[], legacy_id=-1, visible="")
+
+NavyLeaderRole(skill=1, attack_skill=1, defense_skill=1,
+               maneuvering_skill=1, coordination_skill=1,
+               traits=[], legacy_id=-1, visible="")
+```
+
+Service chiefs, high command, and theorists use `AdvisorRole` with the
+appropriate HOI4 `slot`. One character may hold any number of roles.
+
+### Land order of battle
+
+```python
+Battalion(unit_type: str, x: int, y: int)
+
+DivisionTemplate(name: str,
+                 battalions: list[Battalion] = [],
+                 support: list[Battalion] = [],
+                 division_names_group: str = "",
+                 priority: int | None = None)
+
+DivisionUnit(division_template: str,
+             location: int,
+             name: str = "",
+             name_order: int | None = None,
+             start_experience_factor: float | None = None,
+             start_equipment_factor: float | None = None)
+
+OrderOfBattle(name: str,
+              country_tag: str = "",
+              templates: list[DivisionTemplate] = [],
+              divisions: list[DivisionUnit] = [],
+              path: Path | None = None)
+```
+
+Only land templates and divisions are modeled for authoring. Loaded naval,
+air, production, and unknown blocks remain in `raw_text` and are preserved
+unless their own future API explicitly models them.
+
+### CountryPackageReport and TerritoryComponent
+
+```python
+CountryPackageReport(tag: str,
+                     findings: tuple[ValidationError, ...] = (),
+                     lifecycle: str = "starting",
+                     advisor_count: int = 0,
+                     commander_count: int = 0,
+                     character_count: int = 0,
+                     owned_state_count: int = 0,
+                     runtime_state_ids: tuple[int, ...] = (),
+                     activation_sources: tuple[str, ...] = ())
+
+TerritoryComponent(state_ids: tuple[int, ...],
+                   province_ids: tuple[int, ...],
+                   land_province_count: int,
+                   contains_capital: bool = False)
+```
+
+`CountryPackageReport.lifecycle` distinguishes scenario-start countries from
+runtime-released countries and unresolved generated tags.
+`runtime_state_ids` and `activation_sources` expose the evidence used for
+automatic classification. `.errors`, `.warnings`, `.complete`, and `.to_dict()`
+are derived views. `TerritoryComponent` values returned by
+`find_disconnected_states()` are significant non-capital components after
+threshold and allowlist filtering.
 
 ### State
 ```python

@@ -21,6 +21,7 @@ from .tags import (
     resolve_country_filename,
 )
 from .patching import (
+    append_assignment,
     replace_assignment,
     replace_assignment_body,
     set_block,
@@ -194,6 +195,7 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
 
         leader_name = _extract_leader_name(txt)
         recruited_ids = _read_recruited_character_ids(txt)
+        country.recruited_characters = recruited_ids
         if recruited_ids:
             country.leader = Leader(
                 name=leader_name or "",
@@ -687,6 +689,18 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         else country.history_path
     )
     leader = country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1")
+    recruited_characters = list(
+        dict.fromkeys(
+            [
+                *(country.recruited_characters or []),
+                *([leader.character_id] if leader.character_id else []),
+            ]
+        )
+    )
+    recruitment_lines = "".join(
+        f"recruit_character = {character_id}\n"
+        for character_id in recruited_characters
+    )
     elections = "yes" if country.elections_allowed else "no"
     pops = country.popularities
     ideas_block = ""
@@ -728,7 +742,7 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         f"{technologies}"
         f"\n"
         f"{research_slots}"
-        f"recruit_character = {leader.character_id}\n"
+        f"{recruitment_lines}"
         f"\n"
         f"set_popularities = {{\n"
         f"{popularity_lines}\n"
@@ -772,6 +786,12 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
                 history,
                 "oob",
                 pdx_string(country.oob) if country.oob else None,
+            )
+        if "*" in touched or "recruited_characters" in touched:
+            history = _patch_repeated_scalars(
+                history,
+                "recruit_character",
+                recruited_characters,
             )
         if "*" in touched or "technologies" in touched:
             history = _set_scalar_mapping_block(
@@ -831,6 +851,31 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         files[char_path] = character or generated_character
 
     return files
+
+
+def _patch_repeated_scalars(text: str, key: str, values: list[str]) -> str:
+    """Patch a repeated scalar list while retaining surviving source entries."""
+
+    desired = list(dict.fromkeys(value for value in values if value))
+    spans = [
+        span
+        for span in top_level_assignments(text)
+        if span.key == key and not span.is_block
+    ]
+    seen: set[str] = set()
+    keep: set[int] = set()
+    for index, span in enumerate(spans):
+        value = _unquote_history_scalar(text[span.value_start : span.value_end])
+        if value in desired and value not in seen:
+            keep.add(index)
+            seen.add(value)
+    for index, span in reversed(list(enumerate(spans))):
+        if index not in keep:
+            text = replace_assignment(text, span, None)
+    for value in desired:
+        if value not in seen:
+            text = append_assignment(text, f"{key} = {value}")
+    return text
 
 
 def _set_scalar_mapping_block(

@@ -29,6 +29,16 @@ from .assets import (
     write_portrait_gfx,
 )
 from .bookmarks import Bookmark, BookmarkCountry
+from .characters import (
+    AdvisorRole,
+    ArmyCommanderRole,
+    Character,
+    CharacterInstance,
+    CharacterPortrait,
+    CountryLeaderRole,
+    NavyLeaderRole,
+)
+from .country_package import CountryPackageReport
 from .mod import ExternalModificationError, Mod
 from .config import Config, find_config
 from .dynamic_modifiers import DynamicModifier
@@ -51,6 +61,8 @@ from .game_log import (
 )
 from .ideologies import Ideology, SubIdeology
 from .map_render import MapRenderCancelled, PoliticalMapResult, render_political_map
+from .map_topology import TerritoryComponent
+from .oob import Battalion, DivisionTemplate, DivisionUnit, OrderOfBattle
 from .parser import ParseError, PdxNode, parse_pdx, serialize_pdx
 from .progress import OperationCancelled, ProgressEvent
 from .project import (
@@ -101,7 +113,7 @@ except ImportError:
 try:
     __version__ = version("hoi4-agent-sdk")
 except PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
-    __version__ = "0.4.3"
+    __version__ = "0.5.0"
 
 __all__ = [
     "Mod",
@@ -110,6 +122,18 @@ __all__ = [
     "Config",
     "find_config",
     "Country",
+    "CountryPackageReport",
+    "Character",
+    "CharacterInstance",
+    "CharacterPortrait",
+    "CountryLeaderRole",
+    "AdvisorRole",
+    "ArmyCommanderRole",
+    "NavyLeaderRole",
+    "OrderOfBattle",
+    "DivisionTemplate",
+    "Battalion",
+    "DivisionUnit",
     "Decision",
     "DecisionCategory",
     "Event",
@@ -158,6 +182,7 @@ __all__ = [
     "write_portrait_gfx",
     "MapRenderCancelled",
     "PoliticalMapResult",
+    "TerritoryComponent",
     "render_political_map",
     "ModDescriptorFiles",
     "DiscoveredMod",

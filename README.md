@@ -55,7 +55,9 @@ with mod.transaction():
 
 ## Supported content
 
-- countries, characters, politics, tags, and localisation
+- complete-country authoring with source-preserving character rosters, land
+  orders of battle, politics, tags, localisation, package reports, and
+  enforced release-gate completeness
 - states, ownership, cores, resources, buildings, and victory points
 - focus trees, events, on-actions, decisions, ideas, and dynamic modifiers
 - ideology definitions and bookmark scenarios
@@ -63,6 +65,7 @@ with mod.transaction():
 - flag, portrait, and bookmark-picture import/export with optional Pillow support
 - optional Gemini generation of reviewable flag and leader-portrait PNG candidates
 - political-map rendering and procedural map/province generation
+- disconnected-territory detection from the effective HOI4 province map
 - structured validation, duplicate-ID diagnostics, previews, transactions, and
   atomic multi-file saves
 
@@ -135,6 +138,15 @@ If no API key is available, the agent must say that proper custom GFX requires a
 billing-enabled Gemini API key from [Google AI
 Studio](https://aistudio.google.com/), name the supported environment variables,
 and report the package as visually incomplete rather than silently omitting it.
+Use `Character` plus its role models for every roster entry, use
+`create_oob(..., assign=True)` for countries that exist at scenario start, and
+finish with
+`mod.validate_country_package(tag)`. A country is not ready to report complete
+until `CountryPackageReport.complete` is true. Tags created through
+`create_country()` are checked automatically by normal validation and the
+release gate. The report distinguishes starting countries from tags released
+later by focus/event effects, so runtime countries are checked against their
+activation path rather than incorrectly against the 1936 ownership map.
 
 ## Safety workflow
 

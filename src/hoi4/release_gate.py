@@ -392,9 +392,12 @@ def _probe_country(mod: Mod) -> str | None:
     if selected is None:
         return None
     tag, country = selected
-    if not mod.update_country(tag, capital=country.capital + 1):
+    if not mod.update_country(
+        tag,
+        elections_allowed=not country.elections_allowed,
+    ):
         raise RuntimeError(f"Could not update country {tag}")
-    return f"{tag}.capital"
+    return f"{tag}.elections_allowed"
 
 
 def _probe_state(mod: Mod) -> str | None:

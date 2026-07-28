@@ -119,6 +119,50 @@ that key from the idea ID and rejects the assignment. Likewise, generated
 characters declare `country_leader`, `advisor`, or commander blocks directly;
 there is no top-level `roles = { ... }` field.
 
+## Do Not Hand-Write Character Rosters or Starting Armies
+
+`create_country()` creates the compatibility leader, but it does not invent a
+complete roster or army. Use `create_character()` with `AdvisorRole`,
+`ArmyCommanderRole`, `NavyLeaderRole`, and explicit DLC
+`CharacterInstance` values. Use `create_oob()` with `DivisionTemplate`,
+`Battalion`, and `DivisionUnit`; this also assigns country history when
+`assign=True`.
+
+Repeated character instances or repeated role kinds are intentionally
+ambiguous. Pass `occurrence=` and, for instance roles,
+`instance_occurrence=`. The SDK raises instead of guessing and editing the
+wrong DLC variant.
+
+Never place a starting land unit from memory. OOB validation checks that its
+province exists, is land, and belongs to the country at scenario start.
+Existing fleet, air, and production blocks are source-preserved when nearby
+land content is edited.
+
+## A New Tag Is Not a Complete Country
+
+Every tag created through the SDK is package-validated during normal
+`validate()` and the release gate. Before reporting success, require:
+
+```python
+report = mod.validate_country_package(tag)
+assert report.complete, report.to_dict()
+```
+
+The report catches missing three-size flags, portrait textures or GFX,
+undersized rosters, bad recruitment, and missing localization. A
+scenario-start country additionally needs its land OOB, territory, and
+owned/cored capital. A country released by a focus or event is classified as
+`runtime` from its effect path and is not compared to the starting map or
+required to have a starting OOB. A generated tag with neither starting
+territory nor runtime activation evidence fails as
+`missing_country_activation`. `save()` remains advisory, so agents must still
+stop on errors explicitly.
+
+Run `find_disconnected_states()` with the `map` extra for border QA. Tiny
+one-province islands are ignored by the default threshold; use
+`allowed_state_ids` only for deliberate islands or overseas holdings, not to
+hide an accidental enclave.
+
 ## Decision Category Files
 
 Category metadata and decisions are separate:

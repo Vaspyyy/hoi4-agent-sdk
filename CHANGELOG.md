@@ -6,6 +6,43 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-29
+
+### Added
+
+- Full source-preserving character CRUD with direct and repeated DLC
+  `instance` variants, multi-role characters, explicit occurrence-selected
+  role/instance mutations, automatic recruitment, and character localization.
+- Land OOB models and CRUD for division templates, battalion grids, and
+  starting divisions, including assignment to country history and validation
+  of templates, unit types, province type, ownership, and factor ranges.
+- `CountryPackageReport` and `Mod.validate_country_package()` for enforcing
+  flags, portraits/GFX, roster size, recruitment, localization, owned/cored
+  capitals, and valid land OOBs.
+- Optional-map `find_disconnected_states()` topology analysis with capital
+  anchoring, explicit adjacency links, minimum-size filtering, and state
+  allowlists for legitimate islands or overseas holdings.
+
+### Changed
+
+- `validate()` now treats countries registered through
+  `00_generated_tags.txt` or created in memory as complete-country packages.
+  Lifecycle-aware validation checks scenario-start countries against starting
+  ownership/OOB data, checks later focus/event releases against their runtime
+  activation path, and rejects generated tags with neither. `save()` remains
+  advisory-compatible, while release gates fail on package errors.
+- The compatibility `Leader` API now operates alongside the richer
+  `Character` model instead of being the only character-authoring surface.
+
+### Known audit status
+
+- The private Empire corpus passes HOI4 1.19.2 compatibility and all required
+  source-preservation probes. It retains one intentional release-time
+  diagnostic for investigation: generated tag `DSR` has neither scenario-start
+  territory nor a detected focus, event, decision, or on-action activation
+  path. Runtime-released `ILL` is correctly recognized from
+  `AUH_crown_of_zvonimir` and does not produce a starting-country error.
+
 ## [0.4.3] - 2026-07-28
 
 ### Changed

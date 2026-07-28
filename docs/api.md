@@ -99,6 +99,85 @@ character block. Leader updates patch that exact block, retaining its custom
 character ID, neighboring advisors or generals, comments, and unmodeled role
 fields. `leader_character_id` cannot be changed through `update_country()`.
 
+### Character roster methods
+
+Characters may hold several direct roles and may repeat DLC-dependent
+`instance` blocks. Source-backed updates retain comments, unknown fields,
+ordering, and untouched variants.
+
+| Method | Description |
+|--------|-------------|
+| `list_characters(tag=None, include_vanilla=True) -> list[str]` | List character IDs, optionally limited to one country |
+| `get_character(character_id, include_vanilla=True) -> Character` | Load a mod or vanilla character |
+| `create_character(tag, character, recruit=True, overwrite=False, path=None) -> Character` | Define a character, create localization, and normally add `recruit_character` to country history. Pass `recruit=False` for event-unlocked characters. |
+| `update_character(character_id, **kwargs) -> bool` | Patch top-level `name`, `portraits`, or `country_tag` |
+| `delete_character(character_id, remove_recruitment=True) -> bool` | Delete a mod character and its generated localization/recruitment |
+| `add_character_instance(character_id, instance)` | Append a DLC/source variant |
+| `update_character_instance(character_id, occurrence, **kwargs)` | Patch one selected repeated instance |
+| `delete_character_instance(character_id, occurrence)` | Delete one selected repeated instance |
+| `add_character_role(character_id, role, instance_occurrence=None)` | Add a direct or instance-scoped role |
+| `update_character_role(character_id, role_type, occurrence=None, instance_occurrence=None, **kwargs)` | Patch one role; repeated matches require `occurrence` |
+| `remove_character_role(character_id, role_type, occurrence=None, instance_occurrence=None)` | Remove one role; ambiguous removal raises |
+
+Use `AdvisorRole(slot="political_advisor")` for political advisors. Service
+chiefs, high command, and theorists are also `AdvisorRole` values with their
+HOI4 slot. `ArmyCommanderRole(kind="corps_commander")` and
+`ArmyCommanderRole(kind="field_marshal")` cover generals and field marshals;
+`NavyLeaderRole` covers admirals. The older `Leader` fields on `Country` remain
+a compatibility façade for the selected head of state.
+
+### Land OOB methods
+
+| Method | Description |
+|--------|-------------|
+| `list_oobs(include_vanilla=False) -> list[str]` | List known `history/units` stems |
+| `get_oob(name, include_vanilla=True) -> OrderOfBattle` | Load a mod or vanilla OOB |
+| `create_oob(name, country_tag, templates=(), divisions=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write land templates/divisions and normally assign `oob = "<name>"` in country history |
+| `update_oob(name, templates=None, divisions=None, country_tag=None, assign=False) -> bool` | Replace modeled land collections while preserving neighboring fleet, air, production, and unknown blocks |
+| `delete_oob(name, unassign=True) -> bool` | Delete a mod-owned OOB and optionally clear country references |
+
+Validation rejects duplicate template names or battalion positions, unknown
+templates or sub-unit types, out-of-range experience/equipment factors,
+missing/water provinces, and starting divisions outside the country's owned
+states. Version 0.5 authors land formations only; existing fleet, air-wing, and
+production blocks remain source-preserved.
+
+### Complete-country and geography methods
+
+| Method | Description |
+|--------|-------------|
+| `validate_country_package(tag, minimum_land_provinces=2, allowed_state_ids=(), check_geography=True, lifecycle="auto") -> CountryPackageReport` | Return an enforceable playable-package report. `lifecycle` is `auto`, `starting`, or `runtime`. |
+| `find_disconnected_states(tag, minimum_land_provinces=2, allowed_state_ids=()) -> tuple[TerritoryComponent, ...]` | Return significant owned components disconnected from the capital; requires the `map` extra |
+
+`CountryPackageReport.complete` is true only when it has no error findings.
+SDK-created tags are package-validated automatically by `validate()` and
+therefore block the release gate when incomplete. In `auto` mode, a tag that
+owns scenario-start states is validated as `starting`. A tag with no starting
+territory is validated as `runtime` only when loaded focus, event, decision, or
+on-action effects show an activation path; otherwise
+`missing_country_activation` blocks the gate. `save()` remains advisory and
+does not throw solely because the package is incomplete.
+
+Every lifecycle requires all three flag sizes; a recruited leader; portraits,
+textures, sprite declarations, and localization for visible characters; and at
+least two recruited political advisors and two recruited army commanders.
+Starting countries additionally require a non-empty valid land OOB, owned
+territory, and an owned/cored capital. Runtime-created countries instead
+require evidence that their activation path releases or grants territory; a
+direct transfer path is checked for the declared capital and its runtime core.
+Event-unlocked characters use `create_character(..., recruit=False)` so their
+absence from starting history is intentional.
+
+Normal authoring should assign the OOB with `create_oob(..., assign=True)`. A
+single tag-owned OOB loaded explicitly by scenario/on-action script is also
+accepted, which supports established custom-start workflows without weakening
+template, province, or ownership validation.
+
+Topology reads the effective `provinces.bmp`, `definition.csv`, state
+overrides, and `adjacencies.csv`, anchors at the capital component, and reports
+significant enclaves as warnings. Use `allowed_state_ids` for deliberate
+islands or overseas holdings; do not suppress accidental land enclaves.
+
 `set_state_owner()` and `batch_set_owner()` patch state history files. In event options, event immediate blocks, decisions, and focus rewards, use the runtime effect helper instead:
 
 ```python
@@ -114,6 +193,7 @@ Mod.effect_transfer_state(115, "SCL")  # SCL = { transfer_state = 115 }
 | Map/UI colors | `common/countries/colors.txt` |
 | History | `history/countries/WST - Westralia.txt` |
 | Characters | `common/characters/WST_characters.txt` |
+| Land OOB | `history/units/WST_1936.txt` |
 | Localization | `localisation/english/WST_country_l_english.yml` |
 
 `save()` auto-generates localization keys for the country, adjective, standard
@@ -603,7 +683,10 @@ except OperationCancelled:
 
 | Entity | Checks |
 |--------|--------|
-| **Country** | Tag format `^[A-Z0-9]{3}$`, tag definition target exists, has name, popularities sum to 100, valid ruling party, valid RGB color, capital state exists in mod/vanilla data, recruited characters exist in mod/vanilla data, leader ideology/ruling party mismatch |
+| **Country** | Tag format `^[A-Z0-9]{3}$`, tag definition target exists, has name, popularities sum to 100, valid ruling party, valid RGB color, capital state exists in mod/vanilla data, recruited characters exist in mod/vanilla data, leader ideology/ruling party mismatch; SDK-created tags additionally require a complete `CountryPackageReport` |
+| **Character** | Defined/recruited identity, localization, visible portraits, GFX declarations and textures, plus two recruited political advisors and two army commanders per complete country |
+| **Land OOB** | Unique templates/grid positions, known templates and sub-unit types, land/existing/owned locations, 0..1 factors, and valid country-history references |
+| **Geography** | Significant capital-disconnected owned components warn unless explicitly allowlisted |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
 | **Event** | Has ID, has title, has description, has options, option gameplay effects, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |

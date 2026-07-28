@@ -133,3 +133,24 @@ def test_required_probes_must_pass(tmp_path: Path) -> None:
 def test_required_probes_reject_unknown_names(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unknown required probes: imaginary"):
         run_release_gate(tmp_path, required_probes=("imaginary",))
+
+
+def test_release_gate_blocks_an_incomplete_sdk_created_country(
+    tmp_path: Path,
+) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Incomplete", capital=1)
+    mod.save()
+
+    report = run_release_gate(
+        tmp_path,
+        min_probes=0,
+    )
+
+    assert not report.success
+    assert "missing_country_flag" in {
+        issue.code for issue in report.validation_issues
+    }
+    assert "missing_country_activation" in {
+        issue.code for issue in report.validation_issues
+    }

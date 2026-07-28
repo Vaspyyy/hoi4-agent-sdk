@@ -14,6 +14,10 @@ def test_country_creation_guidance_requires_complete_gfx_package() -> None:
         "https://aistudio.google.com/",
         "billing-enabled Gemini API key",
         "Do not silently omit the graphics",
+        "create_oob(..., assign=True)",
+        "does not exist at scenario start",
+        "as `runtime`",
+        "CountryPackageReport.complete",
     )
     for requirement in required_contract:
         assert requirement in guidance
@@ -43,3 +47,7 @@ def test_claude_is_directed_to_the_country_visual_contract() -> None:
     assert "implicitly includes the complete original flag" in guidance
     assert "https://aistudio.google.com/" in guidance
     assert "billing-enabled Gemini" in guidance
+    assert "Character" in guidance
+    assert "create_oob()" in guidance
+    assert "runtime territory/capital setup" in guidance
+    assert "validate_country_package(tag).complete" in guidance

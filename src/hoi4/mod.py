@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import copy
+import csv
 import dataclasses
 import os
 import re
@@ -26,7 +27,7 @@ import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from difflib import SequenceMatcher
-from typing import Any, Optional, Sequence, TypedDict, cast
+from typing import Any, Literal, Optional, Sequence, TypedDict, cast
 
 from .bookmarks import (
     DEFAULT_BOOKMARK_EFFECT,
@@ -54,6 +55,19 @@ from .countries import (
     serialize_country_colors_file,
     serialize_country_files,
 )
+from .characters import (
+    AdvisorRole,
+    ArmyCommanderRole,
+    Character,
+    CharacterInstance,
+    CharacterPortrait,
+    CharacterRole,
+    CountryLeaderRole,
+    load_characters_file,
+    role_key,
+    serialize_characters_file,
+)
+from .country_package import CountryPackageReport
 from .decisions import (
     load_decision_categories_file,
     load_decisions_file,
@@ -82,7 +96,16 @@ from .localisation import (
     parse_localization_dir,
     serialize_localization_file,
 )
+from .map_topology import TerritoryComponent, find_country_territory_components
 from .on_actions import load_on_actions_file, serialize_on_actions_file
+from .oob import (
+    DivisionTemplate,
+    DivisionUnit,
+    OrderOfBattle,
+    load_oob_file,
+    serialize_oob,
+    validate_oob,
+)
 from .paths import (
     require_country_tag,
     require_event_namespace,
@@ -90,7 +113,7 @@ from .paths import (
     resolve_mod_output_path,
     safe_file_stem,
 )
-from .parser import iter_assignment_blocks
+from .parser import ParseError, PdxNode, iter_assignment_blocks, parse_pdx
 from .patching import top_level_assignments
 from .politics import LEADER_IDEOLOGIES_BY_PARTY, RULING_PARTIES
 from .progress import CancelCallback, ProgressCallback, check_cancelled, report_progress
@@ -517,6 +540,13 @@ class Mod:
         self._countries: dict[str, Country] = {}
         self._dirty_countries: set[str] = set()
         self._deleted_countries: dict[str, Country] = {}
+        self._created_country_tags: set[str] = set()
+        self._characters: dict[str, Character] = {}
+        self._dirty_characters: set[str] = set()
+        self._dirty_character_files: set[Path] = set()
+        self._oobs: dict[str, OrderOfBattle] = {}
+        self._dirty_oobs: set[str] = set()
+        self._dirty_oob_files: set[Path] = set()
         self._states: dict[int, State] = {}
         self._state_ids: list[int] = []
         self._state_source_paths: dict[int, Path] = {}
@@ -564,6 +594,7 @@ class Mod:
             load_vanilla_tags(self.hoi4_install) if self.hoi4_install else set()
         )
         self._scan_cache: dict[str, set[str]] = {}
+        self._sprite_texture_cache: dict[str, str] | None = None
         self._state_index_cache: dict[bool, list[dict]] = {}
         self._vanilla_state_loc_entries: dict[str, str] | None = None
         self._country_context_cache: dict[str, dict] = {}
@@ -593,6 +624,8 @@ class Mod:
 
     def _load(self) -> None:
         self._load_countries()
+        self._load_characters()
+        self._load_oobs()
         self._load_states()
         self._load_focus_trees()
         self._load_events()
@@ -703,6 +736,21 @@ class Mod:
         loc_cache = _build_loc_cache(self.mod_root)
         mod_mapping = self._load_mod_country_tag_mapping()
         self._country_tag_mappings[self.mod_root] = mod_mapping
+        generated_tags = (
+            self.mod_root
+            / "common"
+            / "country_tags"
+            / "00_generated_tags.txt"
+        )
+        if generated_tags.is_file():
+            self._created_country_tags.update(
+                match.group(1)
+                for line in generated_tags.read_text(
+                    encoding="utf-8",
+                    errors="ignore",
+                ).splitlines()
+                if (match := _COUNTRY_TAG_LINE_RE.match(line)) is not None
+            )
         for tag in sorted(mod_mapping):
             try:
                 self._countries[tag] = read_country(
@@ -735,6 +783,54 @@ class Mod:
                 continue
             self._state_source_paths[state_id] = path
             self._state_ids.append(state_id)
+
+    def _load_characters(self) -> None:
+        directory = self.mod_root / "common" / "characters"
+        if not directory.is_dir():
+            return
+        for path in sorted(directory.glob("*.txt")):
+            try:
+                for character in load_characters_file(path):
+                    existing = self._characters.get(character.id)
+                    if existing is not None:
+                        self._record_duplicate_identifier(
+                            "character",
+                            character.id,
+                            existing.path or path,
+                            character.path or path,
+                        )
+                        continue
+                    self._characters[character.id] = character
+                self._original_files[path] = path.read_text(
+                    encoding="utf-8", errors="ignore"
+                )
+            except _DuplicateIdentifierError:
+                raise
+            except Exception as error:
+                self._record_load_error("character", path, error)
+
+    def _load_oobs(self) -> None:
+        directory = self.mod_root / "history" / "units"
+        if not directory.is_dir():
+            return
+        assigned = {
+            country.oob: country.tag
+            for country in self._countries.values()
+            if country.oob
+        }
+        for path in sorted(directory.glob("*.txt")):
+            try:
+                oob = load_oob_file(
+                    path,
+                    name=path.stem,
+                    country_tag=assigned.get(path.stem, ""),
+                )
+                self._oobs[oob.name] = oob
+                self._original_files[path] = path.read_text(
+                    encoding="utf-8-sig", errors="ignore"
+                )
+            except Exception as error:
+                self._record_load_error("oob", path, error)
 
     def _load_focus_trees(self) -> None:
         focus_dir = self.mod_root / "common" / "national_focus"
@@ -1230,6 +1326,7 @@ class Mod:
             war_support=war_support,
             technologies=dict(technologies or {}),
             oob=oob,
+            recruited_characters=[leader.character_id],
             definition_path=(
                 preserved_mod_path(existing.definition_path) if existing is not None else None
             ),
@@ -1242,9 +1339,28 @@ class Mod:
             touched_fields={"*"},
         )
         self._countries[tag] = country
+        self._created_country_tags.add(tag)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
         self._sync_country_loc(country)
+        leader_character = Character(
+            id=leader.character_id,
+            country_tag=tag,
+            name=leader.name,
+            portraits=[
+                CharacterPortrait(
+                    channel="civilian",
+                    large=f"GFX_portrait_{tag}_{leader.portrait_slug}",
+                )
+            ],
+            roles=[CountryLeaderRole(ideology=leader.ideology)],
+        )
+        self.create_character(
+            tag,
+            leader_character,
+            recruit=False,
+            overwrite=overwrite,
+        )
 
         ideas_dir = self.mod_root / "common" / "ideas"
         if ideas_dir.exists():
@@ -1293,9 +1409,707 @@ class Mod:
             other_kwargs
         ) or leader_kwargs:
             self._sync_country_loc(country)
+        if leader_kwargs and country.leader is not None:
+            self._sync_leader_character_model(country)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
         return True
+
+    def _sync_leader_character_model(self, country: Country) -> None:
+        leader = country.leader
+        if leader is None:
+            return
+        character = self._characters.get(leader.character_id)
+        if character is None:
+            return
+        self._materialize_character_override(character)
+        character.name = leader.name
+        portrait_slug = (
+            leader.portrait_slug
+            or leader.character_id.removeprefix(country.tag + "_")
+        )
+        character.portraits = [
+            CharacterPortrait(
+                channel="civilian",
+                large=f"GFX_portrait_{country.tag}_{portrait_slug}",
+            )
+        ]
+        character.touched_fields.update({"name", "portraits"})
+        roles = [
+            role
+            for role in character.roles
+            if isinstance(role, CountryLeaderRole)
+        ]
+        if len(roles) == 1:
+            roles[0].ideology = leader.ideology
+            roles[0].touched_fields.add("ideology")
+            character.touched_fields.add("roles")
+        self._mark_character_dirty(character)
+
+    # ── Characters ──────────────────────────────────────────────
+
+    def list_characters(
+        self,
+        tag: str | None = None,
+        *,
+        include_vanilla: bool = True,
+    ) -> list[str]:
+        normalized = require_country_tag(tag) if tag is not None else None
+        if include_vanilla and self.hoi4_install is not None:
+            self._load_vanilla_characters(normalized)
+        return sorted(
+            character_id
+            for character_id, character in self._characters.items()
+            if normalized is None or character.country_tag == normalized
+        )
+
+    def get_character(
+        self,
+        character_id: str,
+        *,
+        include_vanilla: bool = True,
+    ) -> Character:
+        character_id = require_script_id(character_id, label="character ID")
+        character = self._characters.get(character_id)
+        if character is not None:
+            return character
+        if include_vanilla and self.hoi4_install is not None:
+            prefix = character_id.split("_", 1)[0]
+            tag = (
+                prefix
+                if len(prefix) == 3 and prefix.isalnum() and prefix.upper() == prefix
+                else None
+            )
+            self._load_vanilla_characters(tag)
+            character = self._characters.get(character_id)
+        if character is None:
+            raise KeyError(f"Character '{character_id}' not found")
+        return character
+
+    def create_character(
+        self,
+        tag: str,
+        character: Character,
+        *,
+        recruit: bool = True,
+        overwrite: bool = False,
+        path: str | Path | None = None,
+    ) -> Character:
+        tag = require_country_tag(tag)
+        character_id = require_script_id(character.id, label="character ID")
+        if recruit and not self._is_known_country_tag(tag):
+            raise KeyError(
+                f"Cannot recruit character '{character_id}': country '{tag}' "
+                "is not defined. Create or load the country first, or pass "
+                "recruit=False for an event-unlocked definition."
+            )
+        existing = self._characters.get(character_id)
+        if existing is not None and not overwrite:
+            raise ValueError(
+                f"Character '{character_id}' already exists. "
+                "Use overwrite=True only for deliberate replacement."
+            )
+        target = resolve_mod_output_path(
+            self.mod_root,
+            path
+            or (
+                existing.path
+                if existing is not None
+                and existing.path is not None
+                and existing.path.resolve(strict=False).is_relative_to(self.mod_root)
+                else Path("common") / "characters" / f"{tag}_characters.txt"
+            ),
+        )
+        replacement = copy.deepcopy(character)
+        replacement.id = character_id
+        replacement.country_tag = tag
+        replacement.path = target
+        replacement.recruitment_expected = recruit
+        if existing is not None:
+            replacement.source_index = existing.source_index
+            replacement.raw_block = existing.raw_block
+            replacement.touched_fields.update(
+                {"name", "portraits", "roles", "instances"}
+            )
+        else:
+            replacement.source_index = -1
+        self._prepare_character_roles(replacement, tag)
+        self._characters[character_id] = replacement
+        self._dirty_characters.add(character_id)
+        self._dirty_character_files.add(target)
+        self._dirty.add("characters")
+        if recruit:
+            self._set_character_recruited(tag, character_id, recruited=True)
+        self._sync_character_loc(replacement)
+        return replacement
+
+    def update_character(self, character_id: str, **kwargs: object) -> bool:
+        try:
+            character = self.get_character(character_id)
+        except (KeyError, ValueError):
+            return False
+        unknown = set(kwargs) - {"name", "portraits", "country_tag"}
+        if unknown:
+            raise TypeError(
+                f"Unknown character fields: {sorted(unknown)}. "
+                "Use the explicit instance and role mutation methods for nested content."
+            )
+        self._materialize_character_override(character)
+        for key, value in kwargs.items():
+            setattr(character, key, copy.deepcopy(value))
+        character.touched_fields.update(kwargs)
+        self._dirty_characters.add(character.id)
+        if character.path is not None:
+            self._dirty_character_files.add(character.path)
+        self._dirty.add("characters")
+        self._sync_character_loc(character)
+        return True
+
+    def delete_character(
+        self,
+        character_id: str,
+        *,
+        remove_recruitment: bool = True,
+    ) -> bool:
+        try:
+            character = self.get_character(character_id, include_vanilla=False)
+        except (KeyError, ValueError):
+            return False
+        self._materialize_character_override(character)
+        self._characters.pop(character.id, None)
+        if character.path is not None:
+            self._dirty_character_files.add(character.path)
+        self._dirty_characters.add(character.id)
+        self._dirty.add("characters")
+        if remove_recruitment and character.country_tag:
+            self._set_character_recruited(
+                character.country_tag,
+                character.id,
+                recruited=False,
+            )
+        self.delete_loc(character.id)
+        self.delete_loc(f"{character.id}_desc")
+        return True
+
+    def add_character_instance(
+        self,
+        character_id: str,
+        instance: CharacterInstance,
+    ) -> CharacterInstance:
+        character = self.get_character(character_id)
+        self._materialize_character_override(character)
+        new_instance = copy.deepcopy(instance)
+        new_instance.source_occurrence = -1
+        self._prepare_roles(
+            new_instance.roles,
+            character.country_tag,
+            character.id,
+        )
+        character.instances.append(new_instance)
+        character.touched_fields.add("instances")
+        self._mark_character_dirty(character)
+        return new_instance
+
+    def update_character_instance(
+        self,
+        character_id: str,
+        occurrence: int,
+        **kwargs: object,
+    ) -> bool:
+        character = self.get_character(character_id)
+        if occurrence < 0 or occurrence >= len(character.instances):
+            return False
+        unknown = set(kwargs) - {"allowed", "name", "portraits"}
+        if unknown:
+            raise TypeError(
+                f"Unknown character instance fields: {sorted(unknown)}. "
+                "Use role mutation methods for instance roles."
+            )
+        self._materialize_character_override(character)
+        instance = character.instances[occurrence]
+        for key, value in kwargs.items():
+            setattr(instance, key, copy.deepcopy(value))
+        instance.touched_fields.update(kwargs)
+        character.touched_fields.add("instances")
+        self._mark_character_dirty(character)
+        return True
+
+    def delete_character_instance(
+        self,
+        character_id: str,
+        occurrence: int,
+    ) -> bool:
+        character = self.get_character(character_id)
+        if occurrence < 0 or occurrence >= len(character.instances):
+            return False
+        self._materialize_character_override(character)
+        character.instances.pop(occurrence)
+        character.touched_fields.add("instances")
+        self._mark_character_dirty(character)
+        return True
+
+    def add_character_role(
+        self,
+        character_id: str,
+        role: CharacterRole,
+        *,
+        instance_occurrence: int | None = None,
+    ) -> CharacterRole:
+        character = self.get_character(character_id)
+        self._materialize_character_override(character)
+        roles, scope = self._character_role_scope(character, instance_occurrence)
+        new_role = copy.deepcopy(role)
+        new_role.source_occurrence = -1
+        self._prepare_roles([new_role], character.country_tag, character.id)
+        roles.append(new_role)
+        scope.touched_fields.add("roles")
+        if isinstance(scope, CharacterInstance):
+            character.touched_fields.add("instances")
+        self._mark_character_dirty(character)
+        return new_role
+
+    def update_character_role(
+        self,
+        character_id: str,
+        role_type: str,
+        *,
+        occurrence: int | None = None,
+        instance_occurrence: int | None = None,
+        **kwargs: object,
+    ) -> bool:
+        if role_type not in {
+            "country_leader",
+            "advisor",
+            "corps_commander",
+            "field_marshal",
+            "navy_leader",
+        }:
+            raise ValueError(f"Unsupported character role type: {role_type}")
+        character = self.get_character(character_id)
+        roles, scope = self._character_role_scope(character, instance_occurrence)
+        matches = [role for role in roles if role_key(role) == role_type]
+        if not matches:
+            return False
+        if occurrence is None:
+            if len(matches) != 1:
+                raise ValueError(
+                    f"Character '{character_id}' has {len(matches)} '{role_type}' "
+                    "roles; pass occurrence= to select one."
+                )
+            role = matches[0]
+        else:
+            if occurrence < 0 or occurrence >= len(matches):
+                return False
+            role = matches[occurrence]
+        self._materialize_character_override(character)
+        internal = {"raw_block", "touched_fields", "source_occurrence", "kind"}
+        valid = {
+            field.name for field in dataclasses.fields(role)
+        } - internal
+        unknown = set(kwargs) - valid
+        if unknown:
+            raise TypeError(
+                f"Unknown {role_type} fields: {sorted(unknown)}. "
+                f"Valid: {sorted(valid)}"
+            )
+        for key, value in kwargs.items():
+            setattr(role, key, copy.deepcopy(value))
+        role.touched_fields.update(kwargs)
+        scope.touched_fields.add("roles")
+        if isinstance(scope, CharacterInstance):
+            character.touched_fields.add("instances")
+        self._mark_character_dirty(character)
+        return True
+
+    def remove_character_role(
+        self,
+        character_id: str,
+        role_type: str,
+        *,
+        occurrence: int | None = None,
+        instance_occurrence: int | None = None,
+    ) -> bool:
+        character = self.get_character(character_id)
+        roles, scope = self._character_role_scope(character, instance_occurrence)
+        indexes = [
+            index for index, role in enumerate(roles) if role_key(role) == role_type
+        ]
+        if not indexes:
+            return False
+        if occurrence is None:
+            if len(indexes) != 1:
+                raise ValueError(
+                    f"Character '{character_id}' has {len(indexes)} '{role_type}' "
+                    "roles; pass occurrence= to select one."
+                )
+            index = indexes[0]
+        else:
+            if occurrence < 0 or occurrence >= len(indexes):
+                return False
+            index = indexes[occurrence]
+        self._materialize_character_override(character)
+        roles.pop(index)
+        scope.touched_fields.add("roles")
+        if isinstance(scope, CharacterInstance):
+            character.touched_fields.add("instances")
+        self._mark_character_dirty(character)
+        return True
+
+    def _character_role_scope(
+        self,
+        character: Character,
+        instance_occurrence: int | None,
+    ) -> tuple[
+        list[CharacterRole],
+        Character | CharacterInstance,
+    ]:
+        if instance_occurrence is None:
+            return character.roles, character
+        if instance_occurrence < 0 or instance_occurrence >= len(character.instances):
+            raise IndexError(
+                f"Character '{character.id}' has no instance occurrence "
+                f"{instance_occurrence}"
+            )
+        instance = character.instances[instance_occurrence]
+        return instance.roles, instance
+
+    def _prepare_character_roles(self, character: Character, tag: str) -> None:
+        self._prepare_roles(character.roles, tag, character.id)
+        for instance in character.instances:
+            self._prepare_roles(instance.roles, tag, character.id)
+
+    @staticmethod
+    def _prepare_roles(
+        roles: list[CharacterRole],
+        tag: str,
+        character_id: str = "",
+    ) -> None:
+        occurrences: dict[str, int] = {}
+        for role in roles:
+            if isinstance(role, AdvisorRole):
+                if not role.idea_token:
+                    role.idea_token = character_id
+                if not role.allowed and tag:
+                    role.allowed = f"original_tag = {tag}"
+            key = role_key(role)
+            if role.source_occurrence < 0 and role.raw_block:
+                role.source_occurrence = occurrences.get(key, 0)
+            occurrences[key] = occurrences.get(key, 0) + 1
+
+    def _set_character_recruited(
+        self,
+        tag: str,
+        character_id: str,
+        *,
+        recruited: bool,
+    ) -> None:
+        country = self.get_country(tag)
+        self._materialize_country_override(country)
+        values = list(country.recruited_characters)
+        if country.leader and country.leader.character_id not in values:
+            values.append(country.leader.character_id)
+        if recruited and character_id not in values:
+            values.append(character_id)
+        if not recruited:
+            values = [value for value in values if value != character_id]
+        country.recruited_characters = values
+        country.touched_fields.add("recruited_characters")
+        self._dirty_countries.add(tag)
+        self._dirty.add("countries")
+
+    def _mark_character_dirty(self, character: Character) -> None:
+        self._dirty_characters.add(character.id)
+        if character.path is not None:
+            self._dirty_character_files.add(character.path)
+        self._dirty.add("characters")
+
+    def _materialize_character_override(self, character: Character) -> None:
+        source = character.path
+        if source is None:
+            target = self.mod_root / "common" / "characters" / (
+                f"{character.country_tag or 'mod'}_characters.txt"
+            )
+            character.path = target
+            self._dirty_character_files.add(target)
+            return
+        if source.resolve(strict=False).is_relative_to(self.mod_root):
+            return
+        if self.hoi4_install is None:
+            raise ValueError(
+                f"Cannot retarget character '{character.id}' without a HOI4 install"
+            )
+        relative = source.resolve(strict=False).relative_to(self.hoi4_install)
+        target = resolve_mod_output_path(self.mod_root, relative)
+        source_text = source.read_text(encoding="utf-8", errors="ignore")
+        for item in load_characters_file(source, country_tag=character.country_tag):
+            cached = self._characters.get(item.id)
+            if cached is not None and cached.path == source:
+                cached.path = target
+        self._original_files.setdefault(
+            target,
+            self._read_current_text(target) or source_text,
+        )
+        character.path = target
+        self._dirty_character_files.add(target)
+
+    def _load_vanilla_characters(self, tag: str | None) -> None:
+        if self.hoi4_install is None:
+            return
+        directory = self.hoi4_install / "common" / "characters"
+        if not directory.is_dir():
+            return
+        if tag is None:
+            paths = sorted(directory.glob("*.txt"))
+        else:
+            preferred = [
+                directory / f"{tag}.txt",
+                directory / f"{tag}_characters.txt",
+            ]
+            paths = [path for path in preferred if path.is_file()]
+            if not paths:
+                paths = sorted(directory.glob(f"{tag}*.txt"))
+        for path in paths:
+            cache_key = f"character_file:{path}"
+            if cache_key in self._scan_cache:
+                continue
+            try:
+                for character in load_characters_file(path, country_tag=tag or ""):
+                    self._characters.setdefault(character.id, character)
+            except (OSError, ValueError):
+                pass
+            self._scan_cache[cache_key] = set()
+
+    # ── Land orders of battle ───────────────────────────────────
+
+    def list_oobs(self, *, include_vanilla: bool = False) -> list[str]:
+        if include_vanilla and self.hoi4_install is not None:
+            directory = self.hoi4_install / "history" / "units"
+            if directory.is_dir():
+                return sorted(
+                    set(self._oobs)
+                    | {path.stem for path in directory.glob("*.txt")}
+                )
+        return sorted(self._oobs)
+
+    def get_oob(
+        self,
+        name: str,
+        *,
+        include_vanilla: bool = True,
+    ) -> OrderOfBattle:
+        name = require_script_id(name, label="OOB name")
+        cached = self._oobs.get(name)
+        if cached is not None:
+            return cached
+        candidates = [self.mod_root / "history" / "units" / f"{name}.txt"]
+        if include_vanilla and self.hoi4_install is not None:
+            candidates.append(
+                self.hoi4_install / "history" / "units" / f"{name}.txt"
+            )
+        country_tag = next(
+            (
+                country.tag
+                for country in self._countries.values()
+                if country.oob == name
+            ),
+            "",
+        )
+        for path in candidates:
+            if not path.is_file():
+                continue
+            oob = load_oob_file(
+                path,
+                name=name,
+                country_tag=country_tag,
+            )
+            self._oobs[name] = oob
+            if path.resolve(strict=False).is_relative_to(self.mod_root):
+                self._original_files.setdefault(
+                    path,
+                    path.read_text(encoding="utf-8-sig", errors="ignore"),
+                )
+            return oob
+        raise KeyError(f"OOB '{name}' not found")
+
+    def create_oob(
+        self,
+        name: str,
+        country_tag: str,
+        *,
+        templates: Sequence[DivisionTemplate] = (),
+        divisions: Sequence[DivisionUnit] = (),
+        assign: bool = True,
+        overwrite: bool = False,
+        path: str | Path | None = None,
+    ) -> OrderOfBattle:
+        name = require_script_id(name, label="OOB name")
+        country_tag = require_country_tag(country_tag)
+        existing = self._oobs.get(name)
+        if existing is not None and not overwrite:
+            raise ValueError(
+                f"OOB '{name}' already exists. Use overwrite=True only for "
+                "deliberate replacement."
+            )
+        target = resolve_mod_output_path(
+            self.mod_root,
+            path or Path("history") / "units" / f"{name}.txt",
+        )
+        oob = OrderOfBattle(
+            name=name,
+            country_tag=country_tag,
+            templates=copy.deepcopy(list(templates)),
+            divisions=copy.deepcopy(list(divisions)),
+            path=target,
+            raw_text=existing.raw_text if existing is not None else "",
+            touched_fields={"templates", "divisions"} if existing is not None else set(),
+        )
+        if existing is not None:
+            for index, template in enumerate(oob.templates):
+                if index < len(existing.templates):
+                    template.source_index = existing.templates[index].source_index
+                    template.raw_block = existing.templates[index].raw_block
+                    template.touched_fields.update(
+                        {
+                            "name",
+                            "battalions",
+                            "support",
+                            "division_names_group",
+                            "priority",
+                        }
+                    )
+            for index, division in enumerate(oob.divisions):
+                if index < len(existing.divisions):
+                    division.source_index = existing.divisions[index].source_index
+                    division.raw_block = existing.divisions[index].raw_block
+                    division.touched_fields.update(
+                        {
+                            "name",
+                            "name_order",
+                            "location",
+                            "division_template",
+                            "start_experience_factor",
+                            "start_equipment_factor",
+                        }
+                    )
+        self._oobs[name] = oob
+        self._dirty_oobs.add(name)
+        self._dirty_oob_files.add(target)
+        self._dirty.add("oobs")
+        if assign:
+            self._assign_country_oob(country_tag, name)
+        return oob
+
+    def update_oob(
+        self,
+        name: str,
+        *,
+        templates: Sequence[DivisionTemplate] | None = None,
+        divisions: Sequence[DivisionUnit] | None = None,
+        country_tag: str | None = None,
+        assign: bool = False,
+    ) -> bool:
+        try:
+            oob = self.get_oob(name)
+        except (KeyError, ValueError):
+            return False
+        self._materialize_oob_override(oob)
+        if templates is not None:
+            template_replacements = copy.deepcopy(list(templates))
+            for index, template in enumerate(template_replacements):
+                if index < len(oob.templates):
+                    template.source_index = oob.templates[index].source_index
+                    template.raw_block = oob.templates[index].raw_block
+                    template.touched_fields.update(
+                        {
+                            "name",
+                            "battalions",
+                            "support",
+                            "division_names_group",
+                            "priority",
+                        }
+                    )
+            oob.templates = template_replacements
+            oob.touched_fields.add("templates")
+        if divisions is not None:
+            division_replacements = copy.deepcopy(list(divisions))
+            for index, division in enumerate(division_replacements):
+                if index < len(oob.divisions):
+                    division.source_index = oob.divisions[index].source_index
+                    division.raw_block = oob.divisions[index].raw_block
+                    division.touched_fields.update(
+                        {
+                            "name",
+                            "name_order",
+                            "location",
+                            "division_template",
+                            "start_experience_factor",
+                            "start_equipment_factor",
+                        }
+                    )
+            oob.divisions = division_replacements
+            oob.touched_fields.add("divisions")
+        if country_tag is not None:
+            oob.country_tag = require_country_tag(country_tag)
+        if assign:
+            if not oob.country_tag:
+                raise ValueError("Assigning an OOB requires country_tag")
+            self._assign_country_oob(oob.country_tag, oob.name)
+        self._dirty_oobs.add(oob.name)
+        if oob.path is not None:
+            self._dirty_oob_files.add(oob.path)
+        self._dirty.add("oobs")
+        return True
+
+    def delete_oob(self, name: str, *, unassign: bool = True) -> bool:
+        try:
+            oob = self.get_oob(name, include_vanilla=False)
+        except (KeyError, ValueError):
+            return False
+        if oob.path is not None and not oob.path.resolve(strict=False).is_relative_to(
+            self.mod_root
+        ):
+            raise ValueError(f"Cannot delete vanilla OOB '{name}'")
+        self._oobs.pop(oob.name, None)
+        self._dirty_oobs.add(oob.name)
+        if oob.path is not None:
+            self._dirty_oob_files.add(oob.path)
+        self._dirty.add("oobs")
+        if unassign:
+            for country in self._countries.values():
+                if country.oob == oob.name:
+                    self._assign_country_oob(country.tag, "")
+        return True
+
+    def _assign_country_oob(self, tag: str, name: str) -> None:
+        country = self.get_country(tag)
+        self._materialize_country_override(country)
+        country.oob = name
+        country.touched_fields.add("oob")
+        self._dirty_countries.add(tag)
+        self._dirty.add("countries")
+
+    def _materialize_oob_override(self, oob: OrderOfBattle) -> None:
+        source = oob.path
+        if source is None:
+            source = self.mod_root / "history" / "units" / f"{oob.name}.txt"
+            oob.path = source
+            self._dirty_oob_files.add(source)
+            return
+        if source.resolve(strict=False).is_relative_to(self.mod_root):
+            return
+        if self.hoi4_install is None:
+            raise ValueError(f"Cannot retarget OOB '{oob.name}' without a HOI4 install")
+        target = resolve_mod_output_path(
+            self.mod_root,
+            source.resolve(strict=False).relative_to(self.hoi4_install),
+        )
+        self._original_files.setdefault(
+            target,
+            self._read_current_text(target)
+            or source.read_text(encoding="utf-8-sig", errors="ignore"),
+        )
+        oob.path = target
+        self._dirty_oob_files.add(target)
 
     def delete_country(self, tag: str) -> bool:
         try:
@@ -1315,6 +2129,7 @@ class Mod:
                 "tag replacement strategy"
             )
         self._deleted_countries[tag] = country
+        self._created_country_tags.discard(tag)
         loc_keys: list[str] = []
         for suffix in _country_localisation_suffixes(country):
             key = f"{tag}{suffix}"
@@ -4250,6 +5065,584 @@ class Mod:
             )
         return suggestions[0]
 
+    # ── Complete country packages and geography ─────────────────
+
+    def find_disconnected_states(
+        self,
+        tag: str,
+        *,
+        minimum_land_provinces: int = 2,
+        allowed_state_ids: Sequence[int] = (),
+    ) -> tuple[TerritoryComponent, ...]:
+        """Find significant owned territory disconnected from the capital.
+
+        This method imports NumPy and Pillow lazily and therefore requires the
+        optional ``map`` extra only when it is called.
+        """
+
+        tag = require_country_tag(tag)
+        if not self._is_known_country_tag(tag):
+            raise KeyError(f"Country '{tag}' is not defined")
+        country = self.get_country(tag)
+        return find_country_territory_components(
+            self.mod_root,
+            self.hoi4_install,
+            self._effective_states(),
+            country_tag=tag,
+            capital_state_id=country.capital,
+            minimum_land_provinces=minimum_land_provinces,
+            allowed_state_ids=allowed_state_ids,
+        )
+
+    def _country_runtime_activation_evidence(
+        self,
+        tag: str,
+    ) -> tuple[set[int], set[int], set[str], set[str]]:
+        """Return runtime state transfers, cores, activators, and source labels."""
+
+        scripts: list[tuple[str, str]] = []
+
+        def add_script(label: str, body: str, path: Path | None) -> None:
+            if not body.strip():
+                return
+            source = f"{self._display_path(path)}:{label}" if path else label
+            scripts.append((source, body))
+
+        for tree in self._focus_trees.values():
+            for focus in tree.focuses:
+                add_script(
+                    f"focus {focus.id} completion_reward",
+                    focus.completion_reward,
+                    tree.path,
+                )
+                add_script(
+                    f"focus {focus.id} select_effect",
+                    focus.select_effect,
+                    tree.path,
+                )
+        for event in self._events.values():
+            add_script(f"event {event.id} immediate", event.immediate, event.path)
+            for index, option in enumerate(event.options):
+                add_script(
+                    f"event {event.id} option {index}",
+                    option.effect,
+                    event.path,
+                )
+        for decision in self._decisions.values():
+            add_script(
+                f"decision {decision.id} complete_effect",
+                decision.complete_effect,
+                decision.path,
+            )
+            add_script(
+                f"decision {decision.id} remove_effect",
+                decision.remove_effect,
+                decision.path,
+            )
+        for occurrences in self._on_action_occurrences.values():
+            for action in occurrences:
+                add_script(
+                    f"on_action {action.id} effect",
+                    action.effect,
+                    action.path,
+                )
+
+        transferred_states: set[int] = set()
+        cored_states: set[int] = set()
+        activators: set[str] = set()
+        sources: set[str] = set()
+
+        def scalar_int(node: PdxNode) -> int | None:
+            if node.value is None:
+                return None
+            try:
+                return int(node.value)
+            except ValueError:
+                return None
+
+        def walk(
+            node: PdxNode,
+            *,
+            in_country_scope: bool = False,
+            state_scope: int | None = None,
+        ) -> None:
+            country_scope = in_country_scope
+            nested_state_scope = state_scope
+            if node.is_block():
+                if node.key == tag:
+                    country_scope = True
+                    nested_state_scope = None
+                elif node.key and node.key.isdigit():
+                    nested_state_scope = int(node.key)
+                    country_scope = False
+            if country_scope and node.key == "transfer_state":
+                state_id = scalar_int(node)
+                if state_id is not None:
+                    transferred_states.add(state_id)
+            if (
+                nested_state_scope is not None
+                and node.key == "add_core_of"
+                and node.value == tag
+            ):
+                cored_states.add(nested_state_scope)
+            if node.key in {"release", "release_puppet", "puppet"} and node.value == tag:
+                activators.add(node.key)
+            if node.key == "create_subject" and node.is_block():
+                if any(
+                    child.key in {"subject", "target"} and child.value == tag
+                    for child in node.children
+                ):
+                    activators.add("create_subject")
+            for child in node.children:
+                walk(
+                    child,
+                    in_country_scope=country_scope,
+                    state_scope=nested_state_scope,
+                )
+
+        for source, body in scripts:
+            before = (
+                len(transferred_states),
+                len(cored_states),
+                len(activators),
+            )
+            try:
+                root = parse_pdx(body)
+            except ParseError:
+                # General script validation owns syntax diagnostics. Lifecycle
+                # inference must never conceal or duplicate those findings.
+                continue
+            walk(root)
+            after = (
+                len(transferred_states),
+                len(cored_states),
+                len(activators),
+            )
+            if after != before:
+                sources.add(source)
+
+        return transferred_states, cored_states, activators, sources
+
+    def validate_country_package(
+        self,
+        tag: str,
+        *,
+        minimum_land_provinces: int = 2,
+        allowed_state_ids: Sequence[int] = (),
+        check_geography: bool = True,
+        lifecycle: Literal["auto", "starting", "runtime"] = "auto",
+    ) -> CountryPackageReport:
+        """Validate one complete country package with lifecycle awareness.
+
+        ``auto`` treats a country owning scenario-start states as ``starting``.
+        A country with no starting territory is ``runtime`` only when loaded
+        focus, event, decision, or on-action effects provide activation
+        evidence. Otherwise its lifecycle remains unresolved and validation
+        fails with a targeted remediation.
+        """
+
+        tag = require_country_tag(tag)
+        if not self._is_known_country_tag(tag):
+            raise KeyError(f"Country '{tag}' is not defined")
+        if lifecycle not in {"auto", "starting", "runtime"}:
+            raise ValueError(
+                "lifecycle must be 'auto', 'starting', or 'runtime'"
+            )
+        country = self.get_country(tag)
+        findings: list[ValidationError] = []
+        recruited = set(country.recruited_characters)
+        roster = {
+            character.id: character
+            for character in self._characters.values()
+            if character.country_tag == tag or character.id in recruited
+        }
+
+        def issue(
+            code: str,
+            message: str,
+            *,
+            file_path: str | None = None,
+            state_id: int | None = None,
+            severity: str = "error",
+        ) -> None:
+            findings.append(
+                ValidationError(
+                    message=message,
+                    severity=severity,
+                    code=code,
+                    country_tag=tag,
+                    file_path=file_path,
+                    state_id=state_id,
+                )
+            )
+
+        flag_paths = (
+            self.mod_root / "gfx" / "flags" / f"{tag}.tga",
+            self.mod_root / "gfx" / "flags" / "medium" / f"{tag}.tga",
+            self.mod_root / "gfx" / "flags" / "small" / f"{tag}.tga",
+        )
+        missing_flags = [
+            path.relative_to(self.mod_root).as_posix()
+            for path in flag_paths
+            if not path.is_file()
+        ]
+        if missing_flags:
+            issue(
+                "missing_country_flag",
+                (
+                    f"Country '{tag}' is missing required flag size(s): "
+                    f"{', '.join(missing_flags)}. Import a source image with "
+                    "import_flag_to_mod()."
+                ),
+            )
+
+        undefined = sorted(recruited - set(roster))
+        for character_id in undefined:
+            issue(
+                "undefined_recruited_character",
+                (
+                    f"Country '{tag}' recruits undefined character "
+                    f"'{character_id}'. Create it or remove the recruitment entry."
+                ),
+            )
+
+        for character in roster.values():
+            if character.recruitment_expected is True and character.id not in recruited:
+                issue(
+                    "unrecruited_character",
+                    (
+                        f"Character '{character.id}' was created for immediate "
+                        f"recruitment but is not recruited by country '{tag}'."
+                    ),
+                    file_path=str(character.path) if character.path else None,
+                )
+
+        recruited_characters = [
+            character
+            for character_id, character in roster.items()
+            if character_id in recruited
+        ]
+        leader_ids = {
+            character.id
+            for character in recruited_characters
+            if any(
+                isinstance(role, CountryLeaderRole)
+                for role in self._all_character_roles(character)
+            )
+        }
+        if not leader_ids:
+            issue(
+                "missing_country_leader",
+                (
+                    f"Country '{tag}' has no recruited character with a "
+                    "country_leader role."
+                ),
+            )
+
+        advisor_ids = {
+            character.id
+            for character in recruited_characters
+            if any(
+                isinstance(role, AdvisorRole)
+                and role.slot == "political_advisor"
+                for role in self._all_character_roles(character)
+            )
+        }
+        commander_ids = {
+            character.id
+            for character in recruited_characters
+            if any(
+                isinstance(role, ArmyCommanderRole)
+                for role in self._all_character_roles(character)
+            )
+        }
+        if len(advisor_ids) < 2:
+            issue(
+                "insufficient_political_advisors",
+                (
+                    f"Country '{tag}' has {len(advisor_ids)} recruited political "
+                    "advisor(s); create and recruit at least 2."
+                ),
+            )
+        if len(commander_ids) < 2:
+            issue(
+                "insufficient_military_commanders",
+                (
+                    f"Country '{tag}' has {len(commander_ids)} recruited army "
+                    "commander(s); create and recruit at least 2."
+                ),
+            )
+
+        sprite_textures = self._known_sprite_textures()
+        visible_characters = [
+            character
+            for character in roster.values()
+            if self._all_character_roles(character)
+        ]
+        for character in visible_characters:
+            portraits = list(character.portraits)
+            portraits.extend(
+                portrait
+                for instance in character.instances
+                if instance.roles
+                for portrait in instance.portraits
+            )
+            sprite_names = {
+                sprite
+                for portrait in portraits
+                for sprite in (portrait.large, portrait.small)
+                if sprite
+            }
+            if not sprite_names:
+                issue(
+                    "missing_character_portrait",
+                    (
+                        f"Visible character '{character.id}' has no portrait. "
+                        "Import one and declare its sprite with write_portrait_gfx()."
+                    ),
+                    file_path=str(character.path) if character.path else None,
+                )
+            for sprite_name in sorted(sprite_names):
+                texture = sprite_textures.get(sprite_name)
+                if texture is None:
+                    issue(
+                        "missing_character_portrait_gfx",
+                        (
+                            f"Character '{character.id}' portrait sprite "
+                            f"'{sprite_name}' has no interface/*.gfx declaration."
+                        ),
+                        file_path=str(character.path) if character.path else None,
+                    )
+                    continue
+                if not self._texture_exists(texture):
+                    issue(
+                        "missing_character_portrait_texture",
+                        (
+                            f"Character '{character.id}' portrait sprite "
+                            f"'{sprite_name}' points to missing texture '{texture}'."
+                        ),
+                        file_path=str(character.path) if character.path else None,
+                    )
+            if character.id not in self._loc_entries:
+                issue(
+                    "missing_character_localization",
+                    (
+                        f"Character '{character.id}' is missing name "
+                        f"localization key '{character.id}'."
+                    ),
+                    file_path=str(character.path) if character.path else None,
+                )
+
+        owned_states = [
+            state for state in self._effective_states() if state.owner == tag
+        ]
+        owned_by_id = {state.id: state for state in owned_states}
+        (
+            runtime_state_ids,
+            runtime_core_ids,
+            runtime_activators,
+            activation_sources,
+        ) = self._country_runtime_activation_evidence(tag)
+        resolved_lifecycle: str = lifecycle
+        if lifecycle == "auto":
+            if owned_states:
+                resolved_lifecycle = "starting"
+            elif runtime_state_ids or runtime_activators:
+                resolved_lifecycle = "runtime"
+            else:
+                resolved_lifecycle = "unresolved"
+
+        if resolved_lifecycle == "unresolved" or (
+            resolved_lifecycle == "runtime"
+            and not runtime_state_ids
+            and not runtime_activators
+        ):
+            issue(
+                "missing_country_activation",
+                (
+                    f"Country '{tag}' owns no scenario-start states and has no "
+                    "runtime activation path. Assign starting territory and an "
+                    "OOB, or add a focus/event/decision/on-action release path "
+                    "that gives the country territory."
+                ),
+            )
+        elif resolved_lifecycle == "runtime" and runtime_state_ids:
+            if country.capital not in runtime_state_ids:
+                issue(
+                    "runtime_capital_not_assigned",
+                    (
+                        f"Runtime-created country '{tag}' receives states "
+                        f"{sorted(runtime_state_ids)}, but not its declared "
+                        f"capital state {country.capital}."
+                    ),
+                    state_id=country.capital,
+                )
+            elif (
+                country.capital in runtime_state_ids
+                and country.capital not in runtime_core_ids
+            ):
+                issue(
+                    "runtime_capital_not_cored",
+                    (
+                        f"Runtime-created country '{tag}' receives capital state "
+                        f"{country.capital}, but no runtime add_core_of = {tag} "
+                        "was found for that state."
+                    ),
+                    state_id=country.capital,
+                )
+
+        matching_oobs = [
+            oob
+            for oob in self._oobs.values()
+            if oob.country_tag == tag
+        ]
+        package_oob: OrderOfBattle | None = None
+        if resolved_lifecycle == "starting":
+            if country.oob:
+                try:
+                    package_oob = self.get_oob(country.oob)
+                except KeyError:
+                    issue(
+                        "missing_oob_reference",
+                        (
+                            f"Country '{tag}' references missing OOB "
+                            f"'{country.oob}'."
+                        ),
+                    )
+            elif len(matching_oobs) == 1:
+                # Some scenarios deliberately load their sole tag-prefixed OOB
+                # from an on-action rather than the country-history ``oob`` key.
+                package_oob = matching_oobs[0]
+            else:
+                issue(
+                    "missing_land_oob",
+                    (
+                        f"Starting country '{tag}' has no unambiguous land OOB. "
+                        "Use create_oob(..., assign=True), or explicitly load one "
+                        "tag-owned OOB from scenario script."
+                    ),
+                )
+        if package_oob is not None:
+            if not package_oob.templates or not package_oob.divisions:
+                issue(
+                    "empty_land_oob",
+                    (
+                        f"Country '{tag}' OOB '{package_oob.name}' must contain at "
+                        "least one land template and one starting division."
+                    ),
+                    file_path=(
+                        str(package_oob.path)
+                        if package_oob.path
+                        else None
+                    ),
+                )
+            findings.extend(validate_oob(package_oob))
+            findings.extend(self._validate_oob_context(package_oob, tag))
+
+        capital = owned_by_id.get(country.capital)
+        if resolved_lifecycle == "starting":
+            if not owned_states:
+                issue(
+                    "no_owned_territory",
+                    (
+                        f"Starting country '{tag}' owns no states. Assign "
+                        "scenario-start territory before treating the package "
+                        "as complete."
+                    ),
+                )
+            if capital is None:
+                issue(
+                    "capital_not_owned",
+                    (
+                        f"Starting country '{tag}' capital state "
+                        f"{country.capital} is not owned by {tag}."
+                    ),
+                    state_id=country.capital,
+                )
+            elif tag not in capital.cores:
+                issue(
+                    "capital_not_cored",
+                    (
+                        f"Starting country '{tag}' capital state "
+                        f"{country.capital} is not cored by {tag}."
+                    ),
+                    state_id=country.capital,
+                )
+
+        if (
+            resolved_lifecycle == "starting"
+            and check_geography
+            and capital is not None
+        ):
+            try:
+                components = self.find_disconnected_states(
+                    tag,
+                    minimum_land_provinces=minimum_land_provinces,
+                    allowed_state_ids=allowed_state_ids,
+                )
+            except (FileNotFoundError, RuntimeError):
+                # Topology is intentionally optional; callers who require it
+                # can invoke find_disconnected_states() directly.
+                components = ()
+            for component in components:
+                issue(
+                    "disconnected_country_territory",
+                    (
+                        f"Country '{tag}' owns a component disconnected from "
+                        f"capital state {country.capital}: states "
+                        f"{list(component.state_ids)}, "
+                        f"{component.land_province_count} land province(s). "
+                        "Fix the border or pass allowed_state_ids for a deliberate "
+                        "island/overseas component."
+                    ),
+                    state_id=component.state_ids[0],
+                    severity="warning",
+                )
+
+        return CountryPackageReport(
+            tag=tag,
+            findings=tuple(findings),
+            lifecycle=resolved_lifecycle,
+            advisor_count=len(advisor_ids),
+            commander_count=len(commander_ids),
+            character_count=len(roster),
+            owned_state_count=len(owned_states),
+            runtime_state_ids=tuple(sorted(runtime_state_ids)),
+            activation_sources=tuple(sorted(activation_sources)),
+        )
+
+    @staticmethod
+    def _all_character_roles(character: Character) -> tuple[CharacterRole, ...]:
+        return tuple(
+            [
+                *character.roles,
+                *(
+                    role
+                    for instance in character.instances
+                    for role in instance.roles
+                ),
+            ]
+        )
+
+    def _effective_states(self) -> list[State]:
+        result: list[State] = []
+        for state_id in sorted(set(self._state_ids) | set(self._states)):
+            try:
+                result.append(self.get_state(state_id))
+            except (KeyError, OSError, ValueError):
+                continue
+        return result
+
+    def _is_known_country_tag(self, tag: str) -> bool:
+        return (
+            tag in self._countries
+            or tag in self._vanilla_tags
+            or any(
+                tag in mapping
+                for mapping in self._country_tag_mappings.values()
+            )
+        )
+
     def _validate_country_colors_shadow(self) -> list[ValidationError]:
         if self.hoi4_install is None:
             return []
@@ -4295,7 +5688,7 @@ class Mod:
         cancelled: CancelCallback | None = None,
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
-        phase_total = 10
+        phase_total = 12
         phase_current = 0
 
         def begin_phase(phase: str, message: str) -> None:
@@ -4315,6 +5708,7 @@ class Mod:
 
         duplicate_codes = {
             "country_tag": "duplicate_country_tag",
+            "character": "duplicate_character_id",
             "state": "duplicate_state_id",
             "focus_tree": "duplicate_focus_tree_id",
             "focus": "duplicate_focus_id",
@@ -4445,6 +5839,37 @@ class Mod:
         known_parties = set(self._vanilla_ideologies) | set(self._ideologies)
         for country in self._countries.values():
             errors.extend(validate_country(country, known_parties=known_parties))
+        begin_phase("oobs", "Validating land orders of battle")
+        validated_oobs: set[str] = set()
+        for country in self._countries.values():
+            if not country.oob:
+                continue
+            try:
+                oob = self.get_oob(country.oob)
+            except KeyError:
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"Country '{country.tag}' references missing OOB "
+                            f"'{country.oob}'"
+                        ),
+                        severity="error",
+                        code="missing_oob_reference",
+                        country_tag=country.tag,
+                    )
+                )
+                continue
+            if oob.name not in validated_oobs:
+                errors.extend(validate_oob(oob))
+                validated_oobs.add(oob.name)
+            errors.extend(self._validate_oob_context(oob, country.tag))
+        for name, oob in self._oobs.items():
+            if name not in validated_oobs:
+                errors.extend(validate_oob(oob))
+                if oob.country_tag:
+                    errors.extend(
+                        self._validate_oob_context(oob, oob.country_tag)
+                    )
         begin_phase("states", "Validating states")
         for state_id in sorted(set(self._state_ids) | set(self._states)):
             check_cancelled(cancelled, operation="validation")
@@ -4466,6 +5891,32 @@ class Mod:
                 )
                 continue
             errors.extend(validate_state(state, known_tags))
+
+        begin_phase("country_packages", "Validating complete SDK-created countries")
+        existing_findings = {
+            (
+                finding.code,
+                finding.message,
+                finding.file_path,
+                finding.country_tag,
+                finding.state_id,
+            )
+            for finding in errors
+        }
+        for tag in sorted(self._created_country_tags & set(self._countries)):
+            package = self.validate_country_package(tag)
+            for finding in package.findings:
+                identity = (
+                    finding.code,
+                    finding.message,
+                    finding.file_path,
+                    finding.country_tag,
+                    finding.state_id,
+                )
+                if identity in existing_findings:
+                    continue
+                errors.append(finding)
+                existing_findings.add(identity)
 
         begin_phase("events", "Validating events and on-actions")
         for event_id, event in self._events.items():
@@ -4779,7 +6230,13 @@ class Mod:
                 if dirty_country is None:
                     continue
                 country_files = serialize_country_files(self.mod_root, dirty_country)
-                rendered.update(country_files)
+                rendered.update(
+                    {
+                        path: content
+                        for path, content in country_files.items()
+                        if path not in self._dirty_character_files
+                    }
+                )
                 if (
                     dirty_country.history_path is not None
                     and dirty_country.history_path not in country_files
@@ -4822,6 +6279,31 @@ class Mod:
             )
             if colors_text != colors_original:
                 rendered[colors_path] = colors_text or None
+
+        if "characters" in self._dirty:
+            for path, characters in self._group_characters_by_file(
+                dirty_only=True
+            ).items():
+                self._assert_no_unmodeled_duplicates_in_file(
+                    path,
+                    sections=frozenset({"character"}),
+                )
+                rendered[path] = serialize_characters_file(
+                    characters,
+                    self._original_files.get(path, ""),
+                )
+
+        if "oobs" in self._dirty:
+            for path in self._dirty_oob_files:
+                matching = next(
+                    (
+                        oob
+                        for oob in self._oobs.values()
+                        if oob.path == path
+                    ),
+                    None,
+                )
+                rendered[path] = serialize_oob(matching) if matching is not None else None
 
         if "states" in self._dirty:
             for state_id in self._dirty_states:
@@ -5069,6 +6551,8 @@ class Mod:
     def discard(self) -> None:
         self._load_diagnostics.clear()
         self._countries.clear()
+        self._characters.clear()
+        self._oobs.clear()
         self._states.clear()
         self._state_ids.clear()
         self._state_source_paths.clear()
@@ -5084,6 +6568,11 @@ class Mod:
         self._dirty_focus_files.clear()
         self._dirty_countries.clear()
         self._deleted_countries.clear()
+        self._created_country_tags.clear()
+        self._dirty_characters.clear()
+        self._dirty_character_files.clear()
+        self._dirty_oobs.clear()
+        self._dirty_oob_files.clear()
         self._dirty_states.clear()
         self._state_history_patches.clear()
         self._dirty_events.clear()
@@ -5117,6 +6606,7 @@ class Mod:
         self._original_files.clear()
         self._dirty.clear()
         self._scan_cache.clear()
+        self._sprite_texture_cache = None
         self._state_index_cache.clear()
         self._vanilla_state_loc_entries = None
         self._country_context_cache.clear()
@@ -5141,6 +6631,13 @@ class Mod:
             "_countries",
             "_dirty_countries",
             "_deleted_countries",
+            "_created_country_tags",
+            "_characters",
+            "_dirty_characters",
+            "_dirty_character_files",
+            "_oobs",
+            "_dirty_oobs",
+            "_dirty_oob_files",
             "_states",
             "_state_ids",
             "_state_source_paths",
@@ -5183,6 +6680,7 @@ class Mod:
             "_dirty_loc_files",
             "_original_files",
             "_dirty",
+            "_sprite_texture_cache",
             "_country_context_cache",
             "_country_tag_mappings",
         ]
@@ -5199,6 +6697,28 @@ class Mod:
                 country = self._countries.get(tag)
                 if country:
                     lines.append(f"country {tag}: create/update {country.name or tag}")
+        if "characters" in self._dirty:
+            for character_id in sorted(self._dirty_characters):
+                character = self._characters.get(character_id)
+                if character is None:
+                    lines.append(f"character {character_id}: delete")
+                else:
+                    role_names = ",".join(
+                        role_key(role) for role in character.roles
+                    )
+                    lines.append(
+                        f"character {character_id}: roles={role_names or '<instance-only>'}"
+                    )
+        if "oobs" in self._dirty:
+            for name in sorted(self._dirty_oobs):
+                oob = self._oobs.get(name)
+                if oob is None:
+                    lines.append(f"OOB {name}: delete")
+                else:
+                    lines.append(
+                        f"OOB {name}: {len(oob.templates)} template(s), "
+                        f"{len(oob.divisions)} division(s)"
+                    )
         if "states" in self._dirty:
             for sid in sorted(self._dirty_states):
                 state = self._states.get(sid)
@@ -5849,6 +7369,54 @@ class Mod:
         self._scan_cache["focus_icons"] = icons
         return icons
 
+    def _known_sprite_textures(self) -> dict[str, str]:
+        def scan(base: Path, textures: dict[str, str]) -> None:
+            interface_dir = base / "interface"
+            if not interface_dir.is_dir():
+                return
+            for path in interface_dir.rglob("*.gfx"):
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    for body, _, _ in iter_assignment_blocks(text, "spriteType"):
+                        assignments = {
+                            span.key: span
+                            for span in top_level_assignments(body)
+                            if not span.is_block
+                        }
+                        name_span = assignments.get("name")
+                        texture_span = assignments.get("texturefile")
+                        if name_span is None or texture_span is None:
+                            continue
+                        name = body[
+                            name_span.value_start : name_span.value_end
+                        ].strip().strip('"')
+                        texture = body[
+                            texture_span.value_start : texture_span.value_end
+                        ].strip().strip('"').replace("\\", "/")
+                        if name and texture:
+                            textures[name] = texture
+                except (OSError, ValueError):
+                    continue
+
+        if self._sprite_texture_cache is None:
+            vanilla: dict[str, str] = {}
+            if self.hoi4_install is not None:
+                scan(self.hoi4_install, vanilla)
+            self._sprite_texture_cache = vanilla
+        textures = dict(self._sprite_texture_cache)
+        # Asset helpers write outside Mod's transactional state. Re-scan the
+        # small mod interface tree so a second report sees newly imported GFX.
+        scan(self.mod_root, textures)
+        return dict(textures)
+
+    def _texture_exists(self, relative_path: str) -> bool:
+        normalized = relative_path.replace("\\", "/").lstrip("/")
+        return any(
+            (root / normalized).is_file()
+            for root in (self.mod_root, self.hoi4_install)
+            if root is not None
+        )
+
     def _known_technology_ids(self) -> set[str]:
         cached = self._scan_cache.get("technologies")
         if cached is not None:
@@ -5898,6 +7466,153 @@ class Mod:
         self._scan_cache["equipment"] = ids
         return ids
 
+    def _known_sub_unit_types(self) -> set[str]:
+        cached = self._scan_cache.get("sub_units")
+        if cached is not None:
+            return set(cached)
+        result: set[str] = set()
+        for root in self._data_roots():
+            directory = root / "common" / "units"
+            if not directory.is_dir():
+                continue
+            for path in directory.glob("*.txt"):
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    for body, _, _ in iter_assignment_blocks(text, "sub_units"):
+                        result.update(
+                            span.key
+                            for span in top_level_assignments(body)
+                            if span.is_block
+                        )
+                except (OSError, ValueError):
+                    continue
+        self._scan_cache["sub_units"] = result
+        return result
+
+    def _effective_province_types(self) -> dict[int, str]:
+        cached = self._scan_cache.get("province_type_rows")
+        if cached is not None:
+            # The scan cache stores strings, so encode ``id:type`` pairs.
+            cached_result: dict[int, str] = {}
+            for item in cached:
+                id_text, separator, province_type = item.partition(":")
+                if separator and id_text.isdigit():
+                    cached_result[int(id_text)] = province_type
+            return cached_result
+        path: Path | None = None
+        for root in (self.mod_root, self.hoi4_install):
+            if root is None:
+                continue
+            candidate = root / "map" / "definition.csv"
+            if candidate.is_file():
+                path = candidate
+                break
+        province_types: dict[int, str] = {}
+        if path is not None:
+            with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
+                for row in csv.reader(handle, delimiter=";"):
+                    if len(row) < 5:
+                        continue
+                    try:
+                        numeric_id = int(row[0].strip())
+                    except ValueError:
+                        continue
+                    province_types[numeric_id] = row[4].strip().lower()
+        self._scan_cache["province_type_rows"] = {
+            f"{province_id}:{province_type}"
+            for province_id, province_type in province_types.items()
+        }
+        return province_types
+
+    def _validate_oob_context(
+        self,
+        oob: OrderOfBattle,
+        country_tag: str,
+    ) -> list[ValidationError]:
+        errors: list[ValidationError] = []
+        known_units = self._known_sub_unit_types()
+        for template in oob.templates:
+            for battalion in (*template.battalions, *template.support):
+                if known_units and battalion.unit_type not in known_units:
+                    errors.append(
+                        ValidationError(
+                            message=(
+                                f"OOB '{oob.name}' template '{template.name}' uses "
+                                f"unknown sub-unit type '{battalion.unit_type}'"
+                            ),
+                            severity="error",
+                            code="unknown_oob_unit_type",
+                            country_tag=country_tag,
+                            file_path=str(oob.path) if oob.path is not None else None,
+                        )
+                    )
+
+        province_to_state: dict[int, State] = {}
+        for state_id in sorted(set(self._state_ids) | set(self._states)):
+            try:
+                state = self.get_state(state_id)
+            except (KeyError, OSError, ValueError):
+                continue
+            for province_id in state.provinces:
+                province_to_state[province_id] = state
+        province_types = self._effective_province_types()
+        for division in oob.divisions:
+            location_state = province_to_state.get(division.location)
+            label = division.name or "<ordered name>"
+            if location_state is None or (
+                province_types
+                and division.location not in province_types
+            ):
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"OOB '{oob.name}' division '{label}' uses unknown "
+                            f"province {division.location}"
+                        ),
+                        severity="error",
+                        code="unknown_oob_province",
+                        country_tag=country_tag,
+                        state_id=(
+                            location_state.id
+                            if location_state is not None
+                            else None
+                        ),
+                        file_path=str(oob.path) if oob.path is not None else None,
+                    )
+                )
+                continue
+            province_type = province_types.get(division.location)
+            if province_type is not None and province_type != "land":
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"OOB '{oob.name}' division '{label}' is placed in "
+                            f"{province_type} province {division.location}"
+                        ),
+                        severity="error",
+                        code="oob_water_location",
+                        country_tag=country_tag,
+                        state_id=location_state.id,
+                        file_path=str(oob.path) if oob.path is not None else None,
+                    )
+                )
+            if location_state.owner != country_tag:
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"OOB '{oob.name}' division '{label}' is placed in "
+                            f"province {division.location}, owned by {location_state.owner} "
+                            f"instead of {country_tag}"
+                        ),
+                        severity="error",
+                        code="oob_location_not_owned",
+                        country_tag=country_tag,
+                        state_id=location_state.id,
+                        file_path=str(oob.path) if oob.path is not None else None,
+                    )
+                )
+        return errors
+
     def _data_roots(self) -> list[Path]:
         roots = [self.mod_root]
         if self.hoi4_install is not None:
@@ -5931,6 +7646,53 @@ class Mod:
             self._dirty_loc_files.add(self._loc_sources[key])
         self._dirty_loc_keys.update(dirty_keys)
         self._dirty.add("localization")
+
+    def _sync_character_loc(self, character: Character) -> None:
+        display_name = character.name or character.id
+        target = (
+            self.mod_root
+            / "localisation"
+            / "english"
+            / f"{character.country_tag or 'mod'}_characters_l_english.yml"
+        )
+        values = {
+            character.id: display_name,
+            f"{character.id}_desc": f"{display_name}",
+        }
+        for key, value in values.items():
+            self._loc_entries[key] = value
+            self._loc_sources.setdefault(key, target)
+            self._dirty_loc_files.add(self._loc_sources[key])
+            self._dirty_loc_keys.add(key)
+        self._dirty.add("localization")
+
+    def _group_characters_by_file(
+        self,
+        *,
+        dirty_only: bool = False,
+    ) -> dict[Path, list[Character]]:
+        dirty_files = set(self._dirty_character_files) if dirty_only else set()
+        grouped: dict[Path, list[Character]] = {
+            path: [] for path in dirty_files
+        }
+        for character in self._characters.values():
+            path = character.path or (
+                self.mod_root
+                / "common"
+                / "characters"
+                / f"{character.country_tag or 'mod'}_characters.txt"
+            )
+            if dirty_only and path not in dirty_files:
+                continue
+            grouped.setdefault(path, []).append(character)
+        for characters in grouped.values():
+            characters.sort(
+                key=lambda item: (
+                    item.source_index if item.source_index >= 0 else 1_000_000,
+                    item.id,
+                )
+            )
+        return grouped
 
     def _group_loc_by_file(self, dirty_only: bool = False) -> dict[Path, dict[str, str]]:
         dirty_files: set[Path] = set(self._dirty_loc_files) if dirty_only else set()
