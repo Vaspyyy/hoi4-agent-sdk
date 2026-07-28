@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .idea_icons import DEFAULT_IDEA_ICON, normalize_idea_icon
 from .parser import extract_braced_block, find_assignment_block, strip_comments
 from .patching import (
     append_assignment,
@@ -134,7 +135,7 @@ def _parse_idea_body(idea_id: str, body: str) -> Idea:
     picture = _extract_scalar(body, "picture")
     icon = _extract_scalar(body, "icon")
     if picture or icon:
-        idea.icon = picture or icon
+        idea.icon = normalize_idea_icon(picture or icon)
     idea.desc = _extract_scalar(body, "desc")
     removal_cost = _extract_scalar(body, "removal_cost")
     if removal_cost:
@@ -194,7 +195,7 @@ def serialize_idea(idea: Idea, indent: int = 1) -> str:
         body = _patch_idea_body(idea, idea.raw_block)
         return f"{tab}{idea.id} = {{\n{_indent(body, indent + 1)}\n{tab}}}"
     lines = [f"{tab}{idea.id} = {{"]
-    lines.append(f"{tab}\tpicture = {idea.icon}")
+    lines.append(f"{tab}\tpicture = {normalize_idea_icon(idea.icon)}")
     if idea.removal_cost is not None:
         lines.append(f"{tab}\tremoval_cost = {pdx_value(idea.removal_cost)}")
     if idea.allowed:
@@ -334,6 +335,13 @@ def _patch_idea_body(idea: Idea, body: str) -> str:
         return body
     body = _migrate_legacy_icon_key(body)
     body = _remove_legacy_desc_key(body)
+    picture_spans = [
+        span for span in assignment_spans(body, "picture") if not span.is_block
+    ]
+    if picture_spans:
+        # Any touched idea is a write boundary, so repair prefixed values even
+        # when the caller changed a different modeled field.
+        body = set_scalar(body, "picture", normalize_idea_icon(idea.icon) or None)
     fields = idea.touched_fields or {
         "icon",
         "removal_cost",
@@ -346,9 +354,11 @@ def _patch_idea_body(idea: Idea, body: str) -> str:
     if "icon" in fields:
         picture_spans = assignment_spans(body, "picture")
         if picture_spans:
-            body = set_scalar(body, "picture", idea.icon or None)
-        elif idea.icon and idea.icon != "GFX_idea_generic":
-            body = set_scalar(body, "picture", idea.icon)
+            body = set_scalar(
+                body, "picture", normalize_idea_icon(idea.icon) or None
+            )
+        elif idea.icon and normalize_idea_icon(idea.icon) != DEFAULT_IDEA_ICON:
+            body = set_scalar(body, "picture", normalize_idea_icon(idea.icon))
     if "removal_cost" in fields:
         body = set_scalar(
             body,

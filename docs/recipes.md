@@ -45,7 +45,7 @@ mod.save()
 ```python
 mod = Mod("/path/to/my_mod")
 
-mod.create_idea("great_depression", modifier={
+mod.create_idea("great_depression", icon="generic_production_bonus", modifier={
     "consumer_goods_factor": 0.30,
     "political_power_gain": -0.50,
     "industrial_capacity_factory": -0.25,
@@ -55,6 +55,11 @@ mod.set_loc("great_depression_desc", "Economic collapse grips the nation.")
 
 mod.save()
 ```
+
+Idea `icon=` values are bare `picture` stems. HOI4 resolves
+`generic_production_bonus` as the interface sprite
+`GFX_idea_generic_production_bonus`; do not put the prefix in the saved
+`picture` assignment.
 
 ### Create Event Chain
 

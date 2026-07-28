@@ -167,8 +167,9 @@ def test_idea_icon_validation_and_suggestion(tmp_path: Path) -> None:
 
     icon_issue = next(issue for issue in issues if issue.code == "unknown_idea_icon")
     assert icon_issue.idea_id == "ABC_spirit"
-    assert "GFX_idea_industry" in icon_issue.message
-    assert mod.suggest_idea_icon("GFX_idea_indstry") == "GFX_idea_industry"
+    assert "GFX_idea_indstry" in icon_issue.message
+    assert "Suggested close match: industry" in icon_issue.message
+    assert mod.suggest_idea_icon("GFX_idea_indstry") == "industry"
 
 
 def test_legacy_dynamic_country_ideas_is_rejected(tmp_path: Path) -> None:

@@ -1799,16 +1799,26 @@ class TestModIdeas:
     def test_get_idea(self, tmp_mod):
         mod = tmp_mod.with_ideas()
         idea = mod.get_idea("GER_spirit_1")
-        assert idea.icon == "GFX_idea_generic_army"
+        assert idea.icon == "generic_army"
         assert idea.modifier["army_morale_factor"] == 0.1
 
     def test_create_idea(self, tmp_mod):
         mod = tmp_mod.mod
-        idea = mod.create_idea("TST_spirit", icon="GFX_test", modifier={"army_morale_factor": 0.2})
+        idea = mod.create_idea(
+            "TST_spirit",
+            icon="GFX_idea_generic_political_support",
+            modifier={"army_morale_factor": 0.2},
+        )
         assert idea.id == "TST_spirit"
+        assert idea.icon == "generic_political_support"
         assert idea.category == "country"
         assert idea.path == tmp_mod.root / "common" / "ideas" / "TST_ideas.txt"
         assert "TST_spirit" in mod.list_ideas()
+
+        mod.save()
+        source = idea.path.read_text(encoding="utf-8")
+        assert "picture = generic_political_support" in source
+        assert "picture = GFX_idea_" not in source
 
     def test_create_idea_description_and_removal_cost_round_trip(self, tmp_mod):
         mod = tmp_mod.mod
@@ -1824,23 +1834,23 @@ class TestModIdeas:
         assert loaded.desc == ""
         assert loaded.removal_cost == -1
         source = loaded.path.read_text(encoding="utf-8")
-        assert "picture = GFX_idea_generic" in source
+        assert "picture = generic_political_support" in source
         assert "icon =" not in source
         assert "desc =" not in source
 
     def test_create_idea_requires_explicit_overwrite(self, tmp_mod):
         mod = tmp_mod.mod
-        mod.create_idea("TST_spirit", icon="GFX_old")
+        mod.create_idea("TST_spirit", icon="GFX_idea_old")
         with pytest.raises(ValueError, match="overwrite=True"):
-            mod.create_idea("TST_spirit", icon="GFX_new")
-        idea = mod.create_idea("TST_spirit", icon="GFX_new", overwrite=True)
-        assert idea.icon == "GFX_new"
+            mod.create_idea("TST_spirit", icon="GFX_idea_new")
+        idea = mod.create_idea("TST_spirit", icon="GFX_idea_new", overwrite=True)
+        assert idea.icon == "new"
 
     def test_update_idea(self, tmp_mod):
         mod = tmp_mod.with_ideas()
-        mod.update_idea("GER_spirit_1", icon="GFX_new_icon")
+        mod.update_idea("GER_spirit_1", icon="GFX_idea_new_icon")
         idea = mod.get_idea("GER_spirit_1")
-        assert idea.icon == "GFX_new_icon"
+        assert idea.icon == "new_icon"
 
     def test_update_idea_modifier_merge_is_explicit(self, tmp_mod):
         mod = tmp_mod.with_ideas()
@@ -1983,13 +1993,13 @@ class TestIdeaValidation:
         path = tmp_path / "common" / "ideas" / "ideas.txt"
         path.parent.mkdir(parents=True)
         path.write_text(
-            "ideas = { country = { t = { icon = GFX_valid modifier = { x = 1 } } } }\n",
+            "ideas = { country = { t = { icon = GFX_idea_valid modifier = { x = 1 } } } }\n",
             encoding="utf-8",
         )
         interface = tmp_path / "interface" / "ideas.gfx"
         interface.parent.mkdir(parents=True)
         interface.write_text(
-            'spriteTypes = { spriteType = { name = "GFX_valid" } }\n',
+            'spriteTypes = { spriteType = { name = "GFX_idea_valid" } }\n',
             encoding="utf-8",
         )
 
@@ -2000,6 +2010,46 @@ class TestIdeaValidation:
         assert issue.idea_id == "t"
         assert issue.file_path == str(path)
         assert not any(error.code == "unknown_idea_icon" for error in errors)
+
+    def test_prefixed_picture_is_error_even_when_resolved_sprite_exists(self, tmp_path):
+        path = tmp_path / "common" / "ideas" / "ideas.txt"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "ideas = { country = { t = { picture = GFX_idea_valid modifier = { x = 1 } } } }\n",
+            encoding="utf-8",
+        )
+        interface = tmp_path / "interface" / "ideas.gfx"
+        interface.parent.mkdir(parents=True)
+        interface.write_text(
+            'spriteTypes = { spriteType = { name = "GFX_idea_valid" } }\n',
+            encoding="utf-8",
+        )
+
+        errors = Mod(tmp_path).validate(validate_icons=True)
+
+        issue = next(
+            error for error in errors if error.code == "invalid_idea_picture_prefix"
+        )
+        assert issue.severity == "error"
+        assert issue.idea_id == "t"
+        assert not any(error.code == "unknown_idea_icon" for error in errors)
+
+    def test_bare_picture_resolves_against_configured_vanilla_interface(self, tmp_path):
+        mod_root = tmp_path / "mod"
+        game_root = tmp_path / "game"
+        interface = game_root / "interface" / "ideas.gfx"
+        interface.parent.mkdir(parents=True)
+        interface.write_text(
+            'spriteTypes = { spriteType = { name = "GFX_idea_vanilla_valid" } }\n',
+            encoding="utf-8",
+        )
+        mod = Mod(mod_root, hoi4_install=game_root)
+        mod.create_idea("TST_spirit", icon="vanilla_valid", modifier={"x": 1})
+
+        errors = mod.validate(validate_icons=True)
+
+        assert not any(error.code == "unknown_idea_icon" for error in errors)
+        assert mod.suggest_idea_icon("GFX_idea_vanila_valid") == "vanilla_valid"
 
 
 class TestEventValidation:

@@ -133,7 +133,7 @@ with mod.transaction():
 
 14. Register startup hooks with `create_on_action()`, not manual `common/on_actions` file edits. Use `Mod.effect_schedule_country_event(...)` for delayed event firing.
 
-15. New ideas default to current HOI4 `common/ideas/...` files and `ideas = { country = { ... } }`. Use `create_idea(..., category="political_advisor")` or another explicit category for non-spirit ideas. National spirits and other ideas use `picture = <sprite>`, never `icon =`; the sprite must be declared in `interface/*.gfx`. Validate both the assignment shape and sprite resolution before treating the idea as renderable.
+15. New ideas default to current HOI4 `common/ideas/...` files and `ideas = { country = { ... } }`. Use `create_idea(..., category="political_advisor")` or another explicit category for non-spirit ideas. National spirits and other ideas use `picture = <bare_stem>`, never `icon =` and never `picture = GFX_idea_<stem>`. HOI4 prepends `GFX_idea_` itself, so `picture = generic_political_support` resolves the sprite declaration `GFX_idea_generic_political_support` in `interface/*.gfx`. The compatibility `icon=` API argument accepts either spelling but normalizes to the bare stem. Validate both the assignment shape and sprite resolution before treating the idea as renderable.
 
     Idea descriptions are localization-only: set `{idea_id}_desc` with
     `set_loc()`. Never write `desc =` inside an idea. Character roles are direct

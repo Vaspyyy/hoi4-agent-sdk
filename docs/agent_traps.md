@@ -83,6 +83,37 @@ mod.set_loc("TAG_crisis_desc", "The government is struggling to retain control."
 
 Validation warning: `idea_not_addable` when a loaded non-country idea is used with `add_ideas`.
 
+## Idea Picture Stems
+
+The `picture` value is not a complete sprite key. HOI4 prepends
+`GFX_idea_` during lookup.
+
+Bad:
+
+```text
+picture = GFX_idea_generic_political_support
+```
+
+That silently attempts to resolve
+`GFX_idea_GFX_idea_generic_political_support` and falls back to the question
+mark without writing an engine error.
+
+Good:
+
+```python
+mod.create_idea(
+    "TAG_crisis",
+    icon="generic_political_support",
+    modifier={"stability_factor": -0.05},
+)
+```
+
+The matching `interface/*.gfx` declaration remains
+`GFX_idea_generic_political_support`. The compatibility `icon=` argument also
+accepts the prefixed spelling, but normalizes it before writing.
+`invalid_idea_picture_prefix` rejects the broken on-disk form, while
+`unknown_idea_icon` checks the correctly resolved full sprite key.
+
 Never write `desc = TAG_crisis_desc` inside the idea block. Current HOI4 derives
 that key from the idea ID and rejects the assignment. Likewise, generated
 characters declare `country_leader`, `advisor`, or commander blocks directly;

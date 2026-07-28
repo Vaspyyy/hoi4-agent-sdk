@@ -6,6 +6,39 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-28
+
+### Changed
+
+- Idea `icon` values are now canonical bare `picture` stems. Existing
+  `GFX_idea_`-prefixed API inputs remain accepted but are normalized on create,
+  update, and serialization.
+- `suggest_idea_icon()` and `suggest_idea_icons()` now return bare stems that
+  can be passed directly back to `create_idea()`.
+- The default idea picture is now the real vanilla stem
+  `generic_political_support`, replacing the nonexistent
+  `GFX_idea_generic` sprite key.
+
+### Fixed
+
+- Idea validation now resolves a bare `picture` value as
+  `GFX_idea_<picture>` against both mod and configured vanilla interface
+  sprites. It no longer rejects correct stems or recommends the prefixed value
+  that HOI4 silently double-prefixes and renders as a question mark.
+- Prefixed on-disk `picture = GFX_idea_<stem>` values are validation errors,
+  and touching an affected idea source-preservingly removes the prefix.
+- Agent and API guidance now explains the engine's implicit `GFX_idea_`
+  lookup rather than describing the `picture` field as a full sprite name.
+
+### Migration
+
+- Prefer `icon="generic_political_support"` rather than
+  `icon="GFX_idea_generic_political_support"`. Both API forms work in 0.4.3,
+  but saved files always contain `picture = generic_political_support`.
+- Re-save prefixed idea definitions through the SDK or manually remove
+  `GFX_idea_` from each `picture` value. Keep the prefix on the matching
+  `interface/*.gfx` sprite declaration.
+
 ## [0.4.2] - 2026-07-28
 
 ### Added

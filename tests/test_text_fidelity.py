@@ -189,12 +189,12 @@ def test_decision_scalar_edit_changes_only_its_value_bytes(tmp_path: Path) -> No
 def test_idea_scalar_edit_does_not_rewrite_modifier_block(tmp_path: Path) -> None:
     path = _write(tmp_path / "ideas.txt", IDEA_FILE)
     ideas, container = read_ideas_file(path)
-    ideas[0].icon = "GFX_idea_SCL_resistance_new"
+    ideas[0].icon = "SCL_resistance_new"
     ideas[0].touched = True
 
     rendered = serialize_ideas_file(ideas, container, IDEA_FILE)
     assert rendered == IDEA_FILE.replace(
-        "GFX_idea_SCL_resistance", "GFX_idea_SCL_resistance_new", 1
+        "GFX_idea_SCL_resistance", "SCL_resistance_new", 1
     )
     assert len(_changed_content_lines(IDEA_FILE, rendered)) == 2
 

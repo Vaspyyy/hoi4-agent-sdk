@@ -20,6 +20,7 @@ from time import perf_counter
 from typing import Callable, Literal, TypeVar, cast
 
 from .mod import Mod
+from .idea_icons import DEFAULT_IDEA_ICON
 from .game_log import GameLogReport, parse_hoi4_error_log
 from .types import Focus, LoadDiagnostic, ValidationError
 
@@ -333,7 +334,7 @@ def _probe_idea(mod: Mod) -> str | None:
         if not mod.update_idea(idea_id, modifier={key: value}, merge_modifier=True):
             raise RuntimeError(f"Could not update idea {idea_id}")
         return f"{idea_id}.modifier.{key}"
-    icon = idea.icon or "GFX_idea_generic"
+    icon = idea.icon or DEFAULT_IDEA_ICON
     if not mod.update_idea(idea_id, icon=f"{icon}_sdk_gate"):
         raise RuntimeError(f"Could not update idea {idea_id}")
     return f"{idea_id}.icon"

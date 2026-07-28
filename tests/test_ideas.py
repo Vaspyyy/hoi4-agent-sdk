@@ -7,9 +7,23 @@ from hoi4.ideas import (
     serialize_ideas_file,
     write_ideas_file,
 )
+from hoi4.idea_icons import normalize_idea_icon, resolve_idea_sprite
 from hoi4.types import Idea
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_idea_picture_helpers_normalize_legacy_api_values() -> None:
+    assert normalize_idea_icon("generic_political_support") == "generic_political_support"
+    assert normalize_idea_icon("GFX_idea_generic_political_support") == (
+        "generic_political_support"
+    )
+    assert normalize_idea_icon("GFX_idea_GFX_idea_generic_political_support") == (
+        "generic_political_support"
+    )
+    assert resolve_idea_sprite("generic_political_support") == (
+        "GFX_idea_generic_political_support"
+    )
 
 
 class TestReadIdeasFile:
@@ -25,7 +39,7 @@ class TestReadIdeasFile:
 
     def test_reads_icon(self):
         ideas, _ = read_ideas_file(FIXTURES / "common" / "national_ideas" / "ger_ideas.txt")
-        assert ideas[0].icon == "GFX_idea_generic_army"
+        assert ideas[0].icon == "generic_army"
 
     def test_reads_modifier(self):
         ideas, _ = read_ideas_file(FIXTURES / "common" / "national_ideas" / "ger_ideas.txt")
@@ -106,10 +120,10 @@ ideas = {
 
 class TestSerializeIdea:
     def test_serializes_id(self):
-        idea = Idea(id="test_idea", icon="GFX_test", modifier={"key": 0.1})
+        idea = Idea(id="test_idea", icon="GFX_idea_test", modifier={"key": 0.1})
         text = serialize_idea(idea)
         assert "test_idea" in text
-        assert "picture = GFX_test" in text
+        assert "picture = test" in text
         assert "icon =" not in text
 
     def test_serializes_modifier_types(self):
@@ -121,6 +135,18 @@ class TestSerializeIdea:
         assert "int_val = 5" in text
         assert "bool_val = yes" in text
         assert 'str_val = "hello"' in text
+
+    def test_prefixed_and_bare_inputs_serialize_to_the_same_stem(self):
+        prefixed = serialize_idea(
+            Idea(id="prefixed", icon="GFX_idea_generic_political_support")
+        )
+        bare = serialize_idea(
+            Idea(id="bare", icon="generic_political_support")
+        )
+
+        assert "picture = generic_political_support" in prefixed
+        assert "picture = generic_political_support" in bare
+        assert "picture = GFX_idea_" not in prefixed
 
     def test_uses_localization_description_and_serializes_removal_cost(self):
         idea = Idea(id="TST_spirit", desc="TST_spirit_desc", removal_cost=-1)
@@ -153,14 +179,16 @@ class TestSerializeIdea:
 
         expected = original.replace(
             '            desc   = "TST_old_desc" # keep description note\n', ""
-        ).replace("removal_cost = -1", "removal_cost = 10")
+        ).replace("picture = GFX_idea_TST", "picture = TST").replace(
+            "removal_cost = -1", "removal_cost = 10"
+        )
         assert text == expected
 
     def test_unmodeled_description_block_survives_other_edits(self, tmp_path):
         original = """ideas = {
     country = {
         TST_spirit = {
-            icon = GFX_old
+            icon = GFX_idea_old
             desc = { text = TST_conditional_desc trigger = { always = yes } }
         }
     }
@@ -169,18 +197,18 @@ class TestSerializeIdea:
         path = tmp_path / "ideas.txt"
         path.write_text(original, encoding="utf-8")
         ideas, container = read_ideas_file(path)
-        ideas[0].icon = "GFX_new"
+        ideas[0].icon = "new"
         ideas[0].touched = True
 
         text = serialize_ideas_file(ideas, container_name=container, original=original)
 
-        assert text == original.replace("icon = GFX_old", "picture = GFX_new")
+        assert text == original.replace("icon = GFX_idea_old", "picture = new")
 
     def test_unrelated_edit_migrates_legacy_icon_key_without_churn(self, tmp_path):
         original = """ideas = {
     country = {
         TST_spirit = {
-            icon   = GFX_old # keep icon note
+            icon   = GFX_idea_old # keep icon note
             modifier = { stability_factor = 0.10 }
         }
     }
@@ -195,10 +223,38 @@ class TestSerializeIdea:
 
         text = serialize_ideas_file(ideas, container_name=container, original=original)
 
-        expected = original.replace("icon   =", "picture   =").replace(
-            "stability_factor = 0.10", "stability_factor = 0.2"
+        expected = (
+            original.replace("icon   = GFX_idea_old", "picture   = old")
+            .replace("stability_factor = 0.10", "stability_factor = 0.2")
         )
         assert text == expected
+
+    def test_untouched_prefixed_picture_round_trips_but_touched_picture_normalizes(
+        self, tmp_path
+    ):
+        original = """ideas = {
+    country = {
+        TST_spirit = {
+            picture = GFX_idea_generic_political_support
+            modifier = { stability_factor = 0.10 }
+        }
+    }
+}
+"""
+        path = tmp_path / "ideas.txt"
+        path.write_text(original, encoding="utf-8")
+        ideas, container = read_ideas_file(path)
+
+        assert ideas[0].icon == "generic_political_support"
+        assert serialize_ideas_file(ideas, container_name=container, original=original) == original
+
+        ideas[0].modifier = {"stability_factor": 0.20}
+        ideas[0].touched = True
+        ideas[0].touched_fields.add("modifier")
+        text = serialize_ideas_file(ideas, container_name=container, original=original)
+
+        assert "picture = generic_political_support" in text
+        assert "picture = GFX_idea_" not in text
 
 
 class TestSerializeIdeasFile:

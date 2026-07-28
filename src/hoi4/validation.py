@@ -45,9 +45,12 @@ VALIDATION_CODES: dict[str, str] = {
     "unknown_technology_reference": "Effect script references a technology ID not found in configured data.",
     "unknown_equipment_reference": "Effect script references an equipment ID not found in configured data.",
     "unknown_focus_icon": "Focus icon GFX key was not found in interface files.",
-    "unknown_idea_icon": "Idea icon GFX key was not found in interface files.",
+    "unknown_idea_icon": "Idea picture stem did not resolve to a GFX_idea_ sprite.",
     "invalid_idea_icon_key": (
-        "Idea definitions must use picture, not icon, for their sprite assignment."
+        "Idea definitions must use a bare picture stem, not an icon assignment."
+    ),
+    "invalid_idea_picture_prefix": (
+        "Idea picture values are bare stems; HOI4 prepends GFX_idea_ during lookup."
     ),
     "invalid_idea_desc_key": (
         "Idea descriptions use the fixed <idea_id>_desc localization key, not a desc assignment."
@@ -154,6 +157,7 @@ _ERROR_CODES = {
     "invalid_bookmark_effect",
     "bookmark_randomize_weather_missing",
     "invalid_idea_desc_key",
+    "invalid_idea_picture_prefix",
     "invalid_character_roles_key",
     "invalid_decision_category_layout",
     "invalid_set_politics_field",
@@ -1002,7 +1006,8 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
             ValidationError(
                 message=(
                     f"Idea '{idea.id}' uses 'icon ='. HOI4 ideas require "
-                    "'picture =' and a matching sprite declaration in interface/*.gfx."
+                    "'picture = <bare_stem>'; the matching interface sprite is "
+                    "'GFX_idea_<bare_stem>'."
                 ),
                 severity="warning",
                 code="invalid_idea_icon_key",
@@ -1010,6 +1015,35 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
                 file_path=str(idea.path) if idea.path else None,
             )
         )
+
+    if idea.raw_block:
+        prefixed_picture = next(
+            (
+                span
+                for span in top_level_assignments(idea.raw_block)
+                if span.key == "picture"
+                and not span.is_block
+                and idea.raw_block[span.value_start : span.value_end]
+                .strip()
+                .strip('"')
+                .startswith("GFX_idea_")
+            ),
+            None,
+        )
+        if prefixed_picture is not None:
+            errors.append(
+                ValidationError(
+                    message=(
+                        f"Idea '{idea.id}' picture value is prefixed with "
+                        "'GFX_idea_'. Store only the bare stem; HOI4 adds that "
+                        "prefix during sprite lookup."
+                    ),
+                    severity="error",
+                    code="invalid_idea_picture_prefix",
+                    idea_id=idea.id,
+                    file_path=str(idea.path) if idea.path else None,
+                )
+            )
 
     if idea.raw_block and any(
         span.key == "desc" and not span.is_block

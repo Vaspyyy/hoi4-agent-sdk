@@ -26,6 +26,16 @@ def test_country_creation_guidance_is_shipped_in_source_distribution() -> None:
     assert "include CLAUDE.md" in manifest
 
 
+def test_idea_picture_guidance_requires_bare_stems() -> None:
+    guidance = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "picture = <bare_stem>" in guidance
+    assert "never `picture = GFX_idea_<stem>`" in guidance
+    assert "HOI4 prepends `GFX_idea_` itself" in guidance
+    assert "picture = generic_political_support" in guidance
+    assert "GFX_idea_generic_political_support" in guidance
+
+
 def test_claude_is_directed_to_the_country_visual_contract() -> None:
     guidance = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
 

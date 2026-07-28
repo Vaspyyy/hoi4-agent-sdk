@@ -4,6 +4,8 @@ from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 from typing import Optional, cast
 
+from .idea_icons import DEFAULT_IDEA_ICON
+
 
 def _ensure_nested(value: str | list[str] | list[list[str]] | None) -> list[list[str]]:
     if not value:
@@ -262,7 +264,9 @@ class DecisionCategory:
 @dataclass
 class Idea:
     id: str
-    icon: str = "GFX_idea_generic"
+    # Compatibility name retained for the public API. HOI4's ``picture`` field
+    # stores a bare stem; the engine resolves it as ``GFX_idea_<stem>``.
+    icon: str = DEFAULT_IDEA_ICON
     modifier: dict[str, str | int | float | bool] = field(default_factory=dict)
     path: Optional[Path] = None
     category: str = ""

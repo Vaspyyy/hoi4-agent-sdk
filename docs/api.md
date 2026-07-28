@@ -324,10 +324,16 @@ from both legacy `common/national_ideas/` and current `common/ideas/`. Both
 
 Without an explicit `path`, new ideas write to `common/ideas/{TAG}_ideas.txt` when the idea ID starts with a 3-letter tag, otherwise `common/ideas/mod_ideas.txt`. New ideas default to `category="country"`, producing current-HOI4 `ideas = { country = { ... } }`. Pass `category="political_advisor"` or similar for advisors/designers.
 
-HOI4 idea definitions use `picture = <sprite>` rather than `icon = <sprite>`.
-The named sprite must also be declared in an `interface/*.gfx` file. The SDK
-still reads legacy `icon` assignments, reports them as validation warnings, and
-migrates a legacy assignment to `picture` when that idea is edited and saved.
+HOI4 idea definitions use `picture = <bare_stem>` rather than
+`icon = <sprite>` or `picture = GFX_idea_<stem>`. The engine prepends
+`GFX_idea_` during lookup: `picture = generic_political_support` resolves the
+sprite declaration `GFX_idea_generic_political_support` in `interface/*.gfx`.
+The public field remains named `icon` for compatibility. It accepts either a
+bare stem or an old `GFX_idea_`-prefixed value, but stores and serializes the
+bare stem. The SDK still reads legacy `icon` assignments, reports them as
+validation warnings, and migrates a legacy assignment to canonical `picture`
+syntax when that idea is edited and saved. A prefixed `picture` is a validation
+error because HOI4 would silently look for `GFX_idea_GFX_idea_<stem>`.
 Descriptions always resolve through the fixed `{idea_id}_desc` localization
 key. HOI4 rejects a top-level idea `desc =` assignment; validation reports old
 SDK output as an error and removes it when the idea is edited.
@@ -338,18 +344,19 @@ SDK output as an error and removes it when the idea is edited.
 |--------|---------|-------------|
 | `list_ideas() -> list[str]` | Sorted idea IDs | All loaded ideas |
 | `get_idea(idea_id: str) -> Idea` | `Idea` | Raises `KeyError` if not found |
-| `create_idea(idea_id, icon="GFX_idea_generic", modifier=None, category="country", path=None, overwrite=False, *, desc="", removal_cost=None) -> Idea` | `Idea` | Creates idea. Raises if it exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
+| `create_idea(idea_id, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, *, desc="", removal_cost=None) -> Idea` | `Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
 | `ensure_idea(idea_id, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
 | `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> bool` | `bool` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. |
 | `delete_idea(idea_id: str) -> bool` | `bool` | Remove from cache |
-| `suggest_idea_icons(query: str, count=5) -> list[str]` | `list[str]` | Rank loaded `GFX_idea*` keys by similarity. |
-| `suggest_idea_icon(query: str) -> str` | `str` | Return the closest loaded idea icon or raise if no icon catalog is available. |
+| `suggest_idea_icons(query: str, count=5) -> list[str]` | `list[str]` | Rank loaded `GFX_idea_` sprites and return canonical bare stems. Prefixed queries remain accepted. |
+| `suggest_idea_icon(query: str) -> str` | `str` | Return the closest canonical bare picture stem or raise if no icon catalog is available. |
 
 ### Example
 
 ```python
 mod.create_idea(
     "strong_economy",
+    icon="generic_production_bonus",
     removal_cost=-1,
     modifier={
         "industrial_capacity_factory": 0.10,

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hoi4-agent-sdk"
-version = "0.4.2"
+version = "0.4.3"
 description = "Source-preserving Python SDK for Hearts of Iron IV modding"
 readme = "README.md"
 license = "MIT"

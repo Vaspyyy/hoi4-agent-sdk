@@ -69,6 +69,12 @@ from .dynamic_modifiers import (
 from .events import load_events_file, scan_event_ids_file, serialize_events_file
 from .effects_catalog import TECHNOLOGY_CATEGORIES
 from .focus import load_focus_tree, load_focus_trees, serialize_focus_file
+from .idea_icons import (
+    DEFAULT_IDEA_ICON,
+    IDEA_SPRITE_PREFIX,
+    normalize_idea_icon,
+    resolve_idea_sprite,
+)
 from .ideas import read_ideas_file, scan_idea_ids_file, serialize_ideas_file
 from .ideologies import Ideology, SubIdeology, load_ideologies_file, serialize_ideologies_file
 from .localisation import (
@@ -2441,7 +2447,7 @@ class Mod:
     def create_idea(
         self,
         idea_id: str,
-        icon: str = "GFX_idea_generic",
+        icon: str = DEFAULT_IDEA_ICON,
         modifier: dict[str, str | int | float | bool] | None = None,
         category: str = "country",
         path: str | Path | None = None,
@@ -2464,7 +2470,7 @@ class Mod:
             )
         idea = Idea(
             id=idea_id,
-            icon=icon,
+            icon=normalize_idea_icon(icon),
             desc=desc,
             removal_cost=removal_cost,
             modifier=dict(modifier or {}),
@@ -2522,6 +2528,8 @@ class Mod:
                     "HOI4 idea descriptions use the fixed localization key "
                     f"'{expected_desc}'; call set_loc('{expected_desc}', text) instead"
                 )
+        if "icon" in kwargs:
+            kwargs["icon"] = normalize_idea_icon(kwargs["icon"])
         touched_fields = set(kwargs) - {"path"}
         old_path = idea.path
         if "path" in kwargs:
@@ -4202,9 +4210,11 @@ class Mod:
 
     def suggest_idea_icons(self, query: str, count: int = 5) -> list[str]:
         icons = sorted(
-            icon for icon in self._known_focus_icons() if icon.startswith("GFX_idea")
+            icon.removeprefix(IDEA_SPRITE_PREFIX)
+            for icon in self._known_focus_icons()
+            if icon.startswith(IDEA_SPRITE_PREFIX)
         )
-        return self._rank_icons(query, icons, count)
+        return self._rank_icons(normalize_idea_icon(query), icons, count)
 
     @staticmethod
     def _rank_icons(query: str, icons: Sequence[str], count: int) -> list[str]:
@@ -4486,7 +4496,7 @@ class Mod:
             if (
                 validate_icons
                 and known_focus_icons
-                and idea.icon not in known_focus_icons
+                and resolve_idea_sprite(idea.icon) not in known_focus_icons
             ):
                 suggestions = self.suggest_idea_icons(idea.icon, count=1)
                 suggestion = (
@@ -4497,7 +4507,8 @@ class Mod:
                 errors.append(
                     ValidationError(
                         message=(
-                            f"Idea '{idea.id}' icon '{idea.icon}' was not found."
+                            f"Idea '{idea.id}' picture stem '{idea.icon}' did not "
+                            f"resolve to sprite '{resolve_idea_sprite(idea.icon)}'."
                             f"{suggestion}"
                         ),
                         severity="warning",

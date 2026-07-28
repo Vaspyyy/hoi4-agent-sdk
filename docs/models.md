@@ -156,7 +156,7 @@ An ID is a compositional HOI4 hook, not a globally unique object ID. Use
 
 ### Idea
 ```python
-Idea(id: str, icon: str = "GFX_idea_generic",
+Idea(id: str, icon: str = "generic_political_support",
      modifier: dict[str, str|int|float|bool] = {},
      path: Path | None = None,
      category: str = "",                # e.g. industrial_concern, political_advisor
@@ -173,6 +173,11 @@ At the facade level, a supplied `modifier` replaces the mapping by default;
 or `ensure_idea()` for key-by-key merging.
 Idea descriptions use `{idea_id}_desc` localization and are not serialized as a
 field inside the idea definition.
+`icon` is retained as the compatibility field name, but its value is a bare
+HOI4 `picture` stem. For example, `generic_political_support` resolves the
+interface sprite `GFX_idea_generic_political_support`. Prefixed API input is
+accepted and normalized; serialized `picture` values never include
+`GFX_idea_`.
 
 ### Ideology and SubIdeology
 
