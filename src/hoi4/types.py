@@ -249,8 +249,13 @@ class DecisionCategory:
     allowed: str = ""
     visible: str = ""
     decisions: list[Decision] = field(default_factory=list)
+    # Category presentation belongs in common/decisions/categories while
+    # decision content belongs in common/decisions. ``path`` remains the
+    # decision-content path for public API compatibility.
     path: Optional[Path] = None
+    definition_path: Optional[Path] = None
     raw_block: str = ""
+    definition_raw_block: str = ""
     touched: bool = False
 
 
@@ -265,6 +270,8 @@ class Idea:
     research_bonus: dict[str, str | int | float | bool] = field(default_factory=dict)
     traits: list[str] = field(default_factory=list)
     ai_will_do: str = ""
+    # Compatibility-only view of unsupported idea-level ``desc`` scalars read
+    # from older SDK output. Current HOI4 uses ``{idea_id}_desc`` localization.
     desc: str = ""
     removal_cost: str | int | float | None = None
     raw_block: str = ""

@@ -1,0 +1,4 @@
+stb_fixture_category = {
+	icon = generic_decision
+	custom_category_field = keep_me
+}

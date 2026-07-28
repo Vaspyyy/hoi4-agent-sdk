@@ -180,8 +180,13 @@ validation, and writes text plus JSON reports:
 
 ```bash
 python scripts/audit_hoi4_install.py /path/to/mod --hoi4-install /path/to/hoi4 \
-  --fingerprint-manifest /private/path/mod.sha256.json
+  --fingerprint-manifest /private/path/mod.sha256.json \
+  --error-log "$HOME/.local/share/Paradox Interactive/Hearts of Iron IV/logs/error.log"
 ```
+
+`scripts/parse_hoi4_log.py` is also available as a focused post-launch build
+step. It reports only errors whose referenced files exist in the selected mod,
+groups them by class, and can continue from a saved byte offset.
 
 ## License
 

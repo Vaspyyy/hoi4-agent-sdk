@@ -20,6 +20,7 @@ import os
 import re
 import tempfile
 import unicodedata
+from datetime import datetime
 from heapq import nlargest
 import warnings
 from contextlib import contextmanager
@@ -53,7 +54,12 @@ from .countries import (
     serialize_country_colors_file,
     serialize_country_files,
 )
-from .decisions import load_decisions_file, serialize_decisions_file
+from .decisions import (
+    load_decision_categories_file,
+    load_decisions_file,
+    serialize_decision_categories_file,
+    serialize_decisions_file,
+)
 from .diff import unified_diff
 from .dynamic_modifiers import (
     DynamicModifier,
@@ -96,7 +102,12 @@ from .script import (
     scope_block,
     validate_script_syntax,
 )
-from .tags import _parse_tag_file_mapping, load_all_tags, load_vanilla_tags
+from .tags import (
+    _parse_tag_file_mapping,
+    load_all_tags,
+    load_vanilla_tags,
+    sort_generated_country_tags,
+)
 from .types import (
     Country,
     Decision,
@@ -194,6 +205,7 @@ def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False
         "source_path",
         "source_occurrence",
         "definition_path",
+        "definition_raw_block",
         "history_path",
         "character_path",
         "touched",
@@ -240,6 +252,21 @@ def _normalize_name_token(name: str) -> str:
 def _fold_search_text(value: object) -> str:
     normalized = unicodedata.normalize("NFKD", str(value).strip().casefold())
     return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _decision_category_definition_path(mod_root: Path, decision_path: Path) -> Path:
+    """Derive a category-metadata file from a decision-content file."""
+
+    resolved = resolve_mod_output_path(mod_root, decision_path)
+    decisions_root = mod_root / "common" / "decisions"
+    if resolved.parent == decisions_root / "categories":
+        raise ValueError(
+            "Decision content path must be under common/decisions, not its categories directory"
+        )
+    stem = resolved.stem
+    if stem.endswith("_decisions"):
+        stem = stem[: -len("_decisions")]
+    return decisions_root / "categories" / f"{stem}_decision_categories.txt"
 
 
 def _filter_validation_errors(
@@ -312,6 +339,110 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
                     file_path=str(path),
                 )
             )
+
+        relative = path.relative_to(mod_root).as_posix()
+        try:
+            if relative.startswith("common/characters/"):
+                for characters_body, characters_start, _ in iter_assignment_blocks(
+                    text, "characters"
+                ):
+                    body_offset = text.find("{", characters_start) + 1
+                    for character_span in top_level_assignments(characters_body):
+                        if (
+                            not character_span.is_block
+                            or character_span.body_start is None
+                            or character_span.body_end is None
+                        ):
+                            continue
+                        character_body = characters_body[
+                            character_span.body_start : character_span.body_end
+                        ]
+                        for role_span in top_level_assignments(character_body):
+                            if role_span.key != "roles":
+                                continue
+                            absolute = body_offset + character_span.body_start + role_span.start
+                            errors.append(
+                                ValidationError(
+                                    message=(
+                                        f"{path}: character '{character_span.key}' uses "
+                                        "unsupported top-level 'roles ='. Declare "
+                                        "country_leader, advisor, corps_commander, or "
+                                        "another role block directly."
+                                    ),
+                                    severity="error",
+                                    code="invalid_character_roles_key",
+                                    file_path=str(path),
+                                    line=text.count("\n", 0, absolute) + 1,
+                                )
+                            )
+
+            if relative.startswith("common/decisions/") and not relative.startswith(
+                "common/decisions/categories/"
+            ):
+                for category_span in top_level_assignments(text):
+                    if (
+                        not category_span.is_block
+                        or category_span.body_start is None
+                        or category_span.body_end is None
+                    ):
+                        continue
+                    category_body = text[
+                        category_span.body_start : category_span.body_end
+                    ]
+                    metadata = next(
+                        (
+                            span
+                            for span in top_level_assignments(category_body)
+                            if span.key in {"icon", "allowed", "visible"}
+                        ),
+                        None,
+                    )
+                    if metadata is None:
+                        continue
+                    absolute = category_span.body_start + metadata.start
+                    errors.append(
+                        ValidationError(
+                            message=(
+                                f"{path}: decision category '{category_span.key}' "
+                                f"declares '{metadata.key}' beside its decisions. Move "
+                                "category metadata to common/decisions/categories."
+                            ),
+                            severity="error",
+                            code="invalid_decision_category_layout",
+                            file_path=str(path),
+                            line=text.count("\n", 0, absolute) + 1,
+                        )
+                    )
+
+            for politics_body, politics_start, _ in iter_assignment_blocks(
+                text, "set_politics"
+            ):
+                invalid = next(
+                    (
+                        span
+                        for span in top_level_assignments(politics_body)
+                        if span.key == "elections_frequency"
+                    ),
+                    None,
+                )
+                if invalid is None:
+                    continue
+                body_offset = text.find("{", politics_start) + 1
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"{path}: set_politics does not support "
+                            "elections_frequency in current HOI4."
+                        ),
+                        severity="error",
+                        code="invalid_set_politics_field",
+                        file_path=str(path),
+                        line=text.count("\n", 0, body_offset + invalid.start) + 1,
+                    )
+                )
+        except ValueError:
+            # The syntax failure above already reports malformed source.
+            pass
 
     localization = mod_root / "localisation"
     if localization.is_dir():
@@ -398,6 +529,7 @@ class Mod:
         self._decision_categories: dict[str, DecisionCategory] = {}
         self._dirty_decision_categories: set[str] = set()
         self._dirty_decision_files: set[Path] = set()
+        self._dirty_decision_category_files: set[Path] = set()
         self._ideas: dict[str, Idea] = {}
         self._dirty_ideas: set[str] = set()
         self._dirty_idea_files: set[Path] = set()
@@ -700,6 +832,31 @@ class Mod:
         decisions_dir = self.mod_root / "common" / "decisions"
         if not decisions_dir.exists():
             return
+        category_sources: dict[str, Path] = {}
+        categories_dir = decisions_dir / "categories"
+        if categories_dir.is_dir():
+            for f in sorted(categories_dir.glob("*.txt")):
+                try:
+                    for category in load_decision_categories_file(f):
+                        first_path = category_sources.get(category.id)
+                        if first_path is not None:
+                            self._record_duplicate_identifier(
+                                "decision_category",
+                                category.id,
+                                first_path,
+                                category.definition_path or f,
+                            )
+                            continue
+                        category_sources[category.id] = category.definition_path or f
+                        self._decision_categories[category.id] = category
+                    self._original_files[f] = f.read_text(
+                        encoding="utf-8", errors="ignore"
+                    )
+                except _DuplicateIdentifierError:
+                    raise
+                except Exception as error:
+                    self._record_load_error("decision_category", f, error)
+                    continue
         for f in sorted(decisions_dir.glob("*.txt")):
             try:
                 categories = load_decisions_file(f)
@@ -738,6 +895,19 @@ class Mod:
                     for decision in unique_decisions:
                         self._decisions[decision.id] = decision
                     category.decisions = unique_decisions
+                    definition = self._decision_categories.get(category.id)
+                    if definition is not None:
+                        category.icon = definition.icon
+                        category.allowed = definition.allowed
+                        category.visible = definition.visible
+                        category.definition_path = definition.definition_path
+                        category.definition_raw_block = (
+                            definition.definition_raw_block
+                        )
+                    else:
+                        category.definition_path = _decision_category_definition_path(
+                            self.mod_root, category.path or f
+                        )
                     self._decision_categories[category.id] = category
                 self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
             except _DuplicateIdentifierError:
@@ -1866,6 +2036,7 @@ class Mod:
         allowed: str = "",
         visible: str = "",
         path: str | Path | None = None,
+        category_path: str | Path | None = None,
         overwrite: bool = False,
     ) -> DecisionCategory:
         category_id = require_script_id(category_id, label="decision category ID")
@@ -1906,19 +2077,41 @@ class Mod:
                 else self.mod_root / "common" / "decisions" / "mod_decisions.txt"
             )
         )
+        definition_target = (
+            resolve_mod_output_path(self.mod_root, category_path)
+            if category_path is not None
+            else (
+                existing.definition_path
+                if existing is not None and existing.definition_path is not None
+                else _decision_category_definition_path(self.mod_root, target)
+            )
+        )
+        expected_categories_dir = self.mod_root / "common" / "decisions" / "categories"
+        if definition_target.parent != expected_categories_dir:
+            raise ValueError(
+                "Decision category_path must point inside common/decisions/categories"
+            )
         if existing is not None:
             if existing.path is not None:
                 self._dirty_decision_files.add(existing.path)
+            if existing.definition_path is not None:
+                self._dirty_decision_category_files.add(existing.definition_path)
             for decision in existing_decisions:
                 self._decisions.pop(decision.id, None)
         category = DecisionCategory(
-            id=category_id, icon=icon, allowed=allowed, visible=visible, path=target
+            id=category_id,
+            icon=icon,
+            allowed=allowed,
+            visible=visible,
+            path=target,
+            definition_path=definition_target,
         )
         category.touched = True
         self._decision_categories[category_id] = category
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(category_id)
         self._dirty_decision_files.add(target)
+        self._dirty_decision_category_files.add(definition_target)
         return category
 
     def ensure_decision_category(self, category_id: str, **kwargs) -> DecisionCategory:
@@ -1934,14 +2127,36 @@ class Mod:
         if "id" in kwargs:
             raise ValueError("Decision category IDs are immutable")
         old_path = category.path
+        old_definition_path = category.definition_path
+        category_path = kwargs.pop("category_path", None)
         if "path" in kwargs:
             kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+        if category_path is not None:
+            category.definition_path = resolve_mod_output_path(
+                self.mod_root, category_path
+            )
+        elif "path" in kwargs and category.definition_path is None:
+            category.definition_path = _decision_category_definition_path(
+                self.mod_root, cast(Path, kwargs["path"])
+            )
+        if (
+            category.definition_path is not None
+            and category.definition_path.parent
+            != self.mod_root / "common" / "decisions" / "categories"
+        ):
+            raise ValueError(
+                "Decision category_path must point inside common/decisions/categories"
+            )
         _set_fields(category, kwargs, allow_path=True)
         category.touched = True
         if old_path is not None:
             self._dirty_decision_files.add(old_path)
         if category.path is not None:
             self._dirty_decision_files.add(category.path)
+        if old_definition_path is not None:
+            self._dirty_decision_category_files.add(old_definition_path)
+        if category.definition_path is not None:
+            self._dirty_decision_category_files.add(category.definition_path)
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(category_id)
         return True
@@ -2009,6 +2224,13 @@ class Mod:
         self._decisions[decision_id] = decision
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(category_id)
+        if category.path is not None:
+            self._dirty_decision_files.add(category.path)
+        if (
+            category.definition_path is not None
+            and (category.touched or not category.definition_raw_block)
+        ):
+            self._dirty_decision_category_files.add(category.definition_path)
         return decision
 
     def ensure_decision(self, category_id: str, decision_id: str, **kwargs) -> Decision:
@@ -2031,6 +2253,15 @@ class Mod:
         decision.touched = True
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(decision.category)
+        category = self._decision_categories.get(decision.category)
+        if category is not None:
+            if category.path is not None:
+                self._dirty_decision_files.add(category.path)
+            if (
+                category.definition_path is not None
+                and not category.definition_raw_block
+            ):
+                self._dirty_decision_category_files.add(category.definition_path)
         return True
 
     def delete_decision(self, decision_id: str) -> bool:
@@ -2220,6 +2451,12 @@ class Mod:
         removal_cost: str | int | float | None = None,
     ) -> Idea:
         idea_id = require_script_id(idea_id, label="idea ID")
+        expected_desc = f"{idea_id}_desc"
+        if desc and desc != expected_desc:
+            raise ValueError(
+                "HOI4 idea descriptions use the fixed localization key "
+                f"'{expected_desc}'; call set_loc('{expected_desc}', text) instead"
+            )
         existing = self._ideas.get(idea_id)
         if existing is not None and not overwrite:
             raise ValueError(
@@ -2277,6 +2514,14 @@ class Mod:
             return False
         if "id" in kwargs:
             raise ValueError("Idea IDs are immutable; create a new idea instead")
+        if "desc" in kwargs:
+            expected_desc = f"{idea_id}_desc"
+            desc = kwargs["desc"]
+            if desc and desc != expected_desc:
+                raise ValueError(
+                    "HOI4 idea descriptions use the fixed localization key "
+                    f"'{expected_desc}'; call set_loc('{expected_desc}', text) instead"
+                )
         touched_fields = set(kwargs) - {"path"}
         old_path = idea.path
         if "path" in kwargs:
@@ -3330,11 +3575,14 @@ class Mod:
         elections_frequency: int | None = None,
     ) -> str:
         ruling_party = require_script_id(ruling_party, label="ruling party")
+        if elections_frequency is not None:
+            raise ValueError(
+                "HOI4's set_politics effect does not support elections_frequency; "
+                "remove this argument"
+            )
         fields: dict[str, object] = {"ruling_party": ruling_party}
         if elections_allowed is not None:
             fields["elections_allowed"] = elections_allowed
-        if elections_frequency is not None:
-            fields["elections_frequency"] = elections_frequency
         return effect_block("set_politics", fields)
 
     @staticmethod
@@ -4393,6 +4641,36 @@ class Mod:
         )
         return _filter_validation_errors(errors, suppress_warnings=suppress_warnings)
 
+    def validate_game_log(
+        self,
+        log_path: str | Path,
+        *,
+        since: datetime | None = None,
+        start_offset: int = 0,
+        require_fresh: bool = False,
+    ) -> list[ValidationError]:
+        """Return HOI4 engine errors attributable to files in this mod."""
+
+        from .game_log import parse_hoi4_error_log
+
+        fresh_after: datetime | None = None
+        if require_fresh:
+            mtimes = [
+                path.stat().st_mtime
+                for path in self.mod_root.rglob("*")
+                if path.is_file()
+            ]
+            if mtimes:
+                fresh_after = datetime.fromtimestamp(max(mtimes)).astimezone()
+        report = parse_hoi4_error_log(
+            log_path,
+            self.mod_root,
+            since=since,
+            start_offset=start_offset,
+            fresh_after=fresh_after,
+        )
+        return list(report.validation_errors)
+
     # ── Preview & Save ───────────────────────────────────────────
 
     def preview_summary(self) -> str:
@@ -4453,9 +4731,9 @@ class Mod:
         if "countries" in self._dirty:
             tag_path = self.mod_root / "common" / "country_tags" / "00_generated_tags.txt"
             tag_text = self._read_current_text(tag_path)
-            for tag in self._deleted_countries:
+            for tag in sorted(self._deleted_countries):
                 tag_text = re.sub(rf"(?m)^\s*{re.escape(tag)}\s*=.*(?:\n|$)", "", tag_text)
-            for tag in self._dirty_countries:
+            for tag in sorted(self._dirty_countries):
                 if tag not in self._countries:
                     continue
                 line = f'{tag} = "countries/{tag}.txt"'
@@ -4465,6 +4743,7 @@ class Mod:
                     rf"(?m)^\s*{re.escape(tag)}\s*=", tag_text
                 ):
                     tag_text = tag_text.rstrip() + ("\n" if tag_text.strip() else "") + line + "\n"
+            tag_text = sort_generated_country_tags(tag_text)
             rendered[tag_path] = tag_text or None
             tags_dir = self.mod_root / "common" / "country_tags"
             if self._deleted_countries and tags_dir.is_dir():
@@ -4473,7 +4752,7 @@ class Mod:
                         continue
                     source_text = self._read_current_text(source_path)
                     updated_text = source_text
-                    for tag in self._deleted_countries:
+                    for tag in sorted(self._deleted_countries):
                         updated_text = re.sub(
                             rf"(?m)^\s*{re.escape(tag)}\s*=.*(?:\n|$)",
                             "",
@@ -4484,7 +4763,7 @@ class Mod:
             for deleted_country in self._deleted_countries.values():
                 for path in country_file_paths(self.mod_root, deleted_country):
                     rendered[resolve_mod_output_path(self.mod_root, path)] = None
-            for tag in self._dirty_countries:
+            for tag in sorted(self._dirty_countries):
                 dirty_country = self._countries.get(tag)
                 if dirty_country is None:
                     continue
@@ -4588,6 +4867,17 @@ class Mod:
                 rendered[path] = serialize_decisions_file(
                     categories, self._original_files.get(path, "")
                 )
+            for path, categories in self._group_decision_categories_by_file(
+                dirty_only=True
+            ).items():
+                self._assert_no_unmodeled_duplicates_in_file(
+                    path,
+                    sections=frozenset({"decision_category"}),
+                )
+                category_text = serialize_decision_categories_file(
+                    categories, self._original_files.get(path, "")
+                )
+                rendered[path] = category_text if category_text.strip() else None
 
         if "ideas" in self._dirty:
             for path, ideas in self._group_ideas_by_file(dirty_only=True).items():
@@ -4792,6 +5082,7 @@ class Mod:
         self._dirty_on_action_files.clear()
         self._dirty_decision_categories.clear()
         self._dirty_decision_files.clear()
+        self._dirty_decision_category_files.clear()
         self._dirty_ideas.clear()
         self._dirty_idea_files.clear()
         self._idea_file_containers.clear()
@@ -4857,6 +5148,7 @@ class Mod:
             "_decision_categories",
             "_dirty_decision_categories",
             "_dirty_decision_files",
+            "_dirty_decision_category_files",
             "_ideas",
             "_dirty_ideas",
             "_dirty_idea_files",
@@ -5389,6 +5681,12 @@ class Mod:
                     idea_id=idea.id,
                     file_path=str(idea.path) if idea.path else None,
                 )
+            if not self._has_loc(f"{idea.id}_desc"):
+                add_missing(
+                    f"Idea '{idea.id}' description localization '{idea.id}_desc' not found",
+                    idea_id=idea.id,
+                    file_path=str(idea.path) if idea.path else None,
+                )
 
         for country in self._countries.values():
             for key in (country.tag, f"{country.tag}_DEF", f"{country.tag}_ADJ"):
@@ -5720,6 +6018,33 @@ class Mod:
                 file_categories[p] = []
             file_categories[p].append(category)
         return file_categories
+
+    def _group_decision_categories_by_file(
+        self, dirty_only: bool = False
+    ) -> dict[Path, list[DecisionCategory]]:
+        dirty_files = (
+            set(self._dirty_decision_category_files) if dirty_only else set()
+        )
+        grouped: dict[Path, list[DecisionCategory]] = {
+            path: [] for path in dirty_files
+        }
+        for category in self._decision_categories.values():
+            path = category.definition_path
+            if path is None:
+                decision_path = (
+                    category.path
+                    or self.mod_root
+                    / "common"
+                    / "decisions"
+                    / "mod_decisions.txt"
+                )
+                path = _decision_category_definition_path(
+                    self.mod_root, decision_path
+                )
+            if dirty_only and path not in dirty_files:
+                continue
+            grouped.setdefault(path, []).append(category)
+        return grouped
 
     def _group_ideas_by_file(self, dirty_only: bool = False) -> dict[Path, list[Idea]]:
         file_ideas: dict[Path, list[Idea]] = {}

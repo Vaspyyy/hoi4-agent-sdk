@@ -195,8 +195,6 @@ def serialize_idea(idea: Idea, indent: int = 1) -> str:
         return f"{tab}{idea.id} = {{\n{_indent(body, indent + 1)}\n{tab}}}"
     lines = [f"{tab}{idea.id} = {{"]
     lines.append(f"{tab}\tpicture = {idea.icon}")
-    if idea.desc:
-        lines.append(f"{tab}\tdesc = {pdx_value(idea.desc)}")
     if idea.removal_cost is not None:
         lines.append(f"{tab}\tremoval_cost = {pdx_value(idea.removal_cost)}")
     if idea.allowed:
@@ -296,19 +294,6 @@ def _extract_scalar(text: str, key: str) -> str:
     return ""
 
 
-def _serialize_scalar_like(text: str, key: str, value: object) -> str:
-    """Render a replacement scalar using the source's quoting style when possible."""
-
-    for span in assignment_spans(text, key):
-        if span.is_block:
-            continue
-        current = text[span.value_start : span.value_end].strip()
-        if current.startswith('"'):
-            return pdx_string(value)
-        break
-    return pdx_value(value)
-
-
 def _migrate_legacy_icon_key(body: str) -> str:
     """Rename a legacy top-level idea ``icon`` assignment without rebuilding it."""
 
@@ -321,13 +306,36 @@ def _migrate_legacy_icon_key(body: str) -> str:
     return body[: span.start] + "picture" + body[span.start + len(span.key) :]
 
 
+def _remove_legacy_desc_key(body: str) -> str:
+    """Remove unsupported top-level scalar ``desc`` from older SDK output."""
+
+    for span in sorted(assignment_spans(body, "desc"), key=lambda item: item.start, reverse=True):
+        if span.is_block:
+            continue
+        line_start = body.rfind("\n", 0, span.start) + 1
+        line_end = body.find("\n", span.end)
+        if line_end < 0:
+            line_end = len(body)
+        prefix = body[line_start : span.start]
+        suffix = body[span.end : line_end]
+        if not prefix.strip() and (
+            not suffix.strip() or suffix.lstrip().startswith("#")
+        ):
+            if line_end < len(body):
+                line_end += 1
+            body = body[:line_start] + body[line_end:]
+        else:
+            body = replace_assignment(body, span, None)
+    return body
+
+
 def _patch_idea_body(idea: Idea, body: str) -> str:
     if not idea.touched:
         return body
     body = _migrate_legacy_icon_key(body)
+    body = _remove_legacy_desc_key(body)
     fields = idea.touched_fields or {
         "icon",
-        "desc",
         "removal_cost",
         "allowed",
         "modifier",
@@ -341,17 +349,6 @@ def _patch_idea_body(idea: Idea, body: str) -> str:
             body = set_scalar(body, "picture", idea.icon or None)
         elif idea.icon and idea.icon != "GFX_idea_generic":
             body = set_scalar(body, "picture", idea.icon)
-    if "desc" in fields:
-        desc_spans = assignment_spans(body, "desc")
-        # A few game files use nested ``desc`` blocks for unrelated rule
-        # descriptions. Do not erase an unmodeled block during another idea edit;
-        # an explicit scalar description still replaces it.
-        if idea.desc or not any(span.is_block for span in desc_spans):
-            body = set_scalar(
-                body,
-                "desc",
-                _serialize_scalar_like(body, "desc", idea.desc) if idea.desc else None,
-            )
     if "removal_cost" in fields:
         body = set_scalar(
             body,

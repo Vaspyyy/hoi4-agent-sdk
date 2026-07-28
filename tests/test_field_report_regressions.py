@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hoi4 import Mod, TECHNOLOGY_CATEGORIES
 from hoi4.effects_catalog import TECHNOLOGY_CATEGORIES as CATALOG_CATEGORIES
 from hoi4.modifiers_catalog import MODIFIER_CATEGORIES
@@ -184,3 +186,66 @@ def test_legacy_dynamic_country_ideas_is_rejected(tmp_path: Path) -> None:
         and issue.severity == "error"
         for issue in issues
     )
+
+
+def test_engine_rejected_sdk_shapes_are_static_validation_errors(tmp_path: Path) -> None:
+    ideas = tmp_path / "common/ideas/ABC_ideas.txt"
+    ideas.parent.mkdir(parents=True)
+    ideas.write_text(
+        "ideas = { country = { ABC_spirit = { desc = ABC_spirit_desc } } }\n",
+        encoding="utf-8",
+    )
+    characters = tmp_path / "common/characters/ABC_characters.txt"
+    characters.parent.mkdir(parents=True)
+    characters.write_text(
+        "characters = { ABC_leader = { roles = { country_leader } "
+        "country_leader = { ideology = liberalism } } }\n",
+        encoding="utf-8",
+    )
+    decisions = tmp_path / "common/decisions/ABC_decisions.txt"
+    decisions.parent.mkdir(parents=True)
+    decisions.write_text(
+        "ABC_category = { icon = generic_decision "
+        "ABC_decision = { complete_effect = { add_stability = 0.1 } } }\n",
+        encoding="utf-8",
+    )
+    focus = tmp_path / "common/national_focus/ABC_focus.txt"
+    focus.parent.mkdir(parents=True)
+    focus.write_text(
+        "focus_tree = { id = ABC focus = { id = ABC_bad completion_reward = { "
+        "set_politics = { ruling_party = democratic elections_frequency = 48 } } } }\n",
+        encoding="utf-8",
+    )
+
+    issues = Mod(tmp_path).validate()
+    codes = {issue.code for issue in issues if issue.severity == "error"}
+
+    assert {
+        "invalid_idea_desc_key",
+        "invalid_character_roles_key",
+        "invalid_decision_category_layout",
+        "invalid_set_politics_field",
+    } <= codes
+
+
+def test_generated_country_tags_are_deterministic(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ZZZ", "Last")
+    mod.create_country("AAA", "First")
+    mod.create_country("MMM", "Middle")
+
+    mod.save()
+
+    tag_path = tmp_path / "common/country_tags/00_generated_tags.txt"
+    assert tag_path.read_text(encoding="utf-8").splitlines() == [
+        'AAA = "countries/AAA.txt"',
+        'MMM = "countries/MMM.txt"',
+        'ZZZ = "countries/ZZZ.txt"',
+    ]
+
+
+def test_create_idea_rejects_noncanonical_description_key(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+
+    with pytest.raises(ValueError, match="fixed localization key 'ABC_spirit_desc'"):
+        mod.create_idea("ABC_spirit", desc="SOME_OTHER_KEY")

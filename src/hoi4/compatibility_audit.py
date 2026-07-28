@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from .effects_catalog import EFFECT_CATEGORIES, TECHNOLOGY_CATEGORIES
@@ -242,6 +243,9 @@ def run_compatibility_audit(
     required_probes: Iterable[str] = EMPIRE_REQUIRED_PROBES,
     budget: DiffBudget | None = None,
     fingerprint_manifest: str | Path | None = None,
+    error_log: str | Path | None = None,
+    error_log_since: datetime | None = None,
+    require_fresh_game_log: bool = False,
 ) -> CompatibilityAuditReport:
     """Run catalogs, strict validation, source-churn, and read-only checks."""
 
@@ -260,6 +264,9 @@ def run_compatibility_audit(
         strict_loading=True,
         required_probes=normalized_required,
         min_probes=len(normalized_required),
+        error_log=error_log,
+        error_log_since=error_log_since,
+        require_fresh_game_log=require_fresh_game_log,
     )
     return CompatibilityAuditReport(
         game_version=read_game_version(install),

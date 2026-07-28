@@ -1,7 +1,4 @@
 stb_fixture_category = {
-	icon = generic_decision
-	custom_category_field = keep_me
-
 	STB_fixture_decision={
 		icon = generic_industry
 		cost   = 25 # political-power balancing note

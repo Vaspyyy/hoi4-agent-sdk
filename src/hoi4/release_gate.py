@@ -14,11 +14,13 @@ import re
 from collections.abc import Iterable
 from collections import Counter
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Callable, Literal, TypeVar, cast
 
 from .mod import Mod
+from .game_log import GameLogReport, parse_hoi4_error_log
 from .types import Focus, LoadDiagnostic, ValidationError
 
 ProbeStatus = Literal["passed", "failed", "skipped"]
@@ -83,6 +85,7 @@ class GateReport:
     validation_issues: tuple[ValidationError, ...]
     probes: tuple[ProbeResult, ...]
     filesystem_changes: tuple[str, ...]
+    game_log: GameLogReport | None = None
     min_probes: int = DEFAULT_MIN_PROBES
     required_probes: tuple[str, ...] = ()
     fail_on_load_diagnostics: bool = True
@@ -161,6 +164,7 @@ class GateReport:
                 for probe in self.probes
             ],
             "filesystem_changes": list(self.filesystem_changes),
+            "game_log": self.game_log.to_dict() if self.game_log is not None else None,
             "required_probes": list(self.required_probes),
             "missing_required_probes": list(self.missing_required_probes),
         }
@@ -586,6 +590,9 @@ def run_release_gate(
     min_probes: int = DEFAULT_MIN_PROBES,
     required_probes: Iterable[str] = (),
     strict_loading: bool = False,
+    error_log: str | Path | None = None,
+    error_log_since: datetime | None = None,
+    require_fresh_game_log: bool = False,
 ) -> GateReport:
     """Run the read-only validation and source-stability release gate.
 
@@ -602,6 +609,8 @@ def run_release_gate(
         raise FileNotFoundError(f"HOI4 install does not exist or is not a directory: {install}")
     if min_probes < 0:
         raise ValueError("min_probes must be non-negative")
+    if require_fresh_game_log and error_log is None:
+        raise ValueError("require_fresh_game_log=True requires error_log")
     known_probes = {probe.name for probe in DEFAULT_PROBES}
     normalized_required = tuple(dict.fromkeys(required_probes))
     unknown_probes = sorted(set(normalized_required) - known_probes)
@@ -616,12 +625,31 @@ def run_release_gate(
     load_seconds = perf_counter() - started
 
     started = perf_counter()
-    validation_issues = tuple(
+    validation_issue_list = list(
         mod.validate(
             validate_icons=validate_icons,
             strict_localization=strict_localization,
         )
     )
+    game_log_report: GameLogReport | None = None
+    if error_log is not None:
+        fresh_after: datetime | None = None
+        if require_fresh_game_log:
+            mtimes = [
+                path.stat().st_mtime
+                for path in root.rglob("*")
+                if path.is_file()
+            ]
+            if mtimes:
+                fresh_after = datetime.fromtimestamp(max(mtimes)).astimezone()
+        game_log_report = parse_hoi4_error_log(
+            error_log,
+            root,
+            since=error_log_since,
+            fresh_after=fresh_after,
+        )
+        validation_issue_list.extend(game_log_report.validation_errors)
+    validation_issues = tuple(validation_issue_list)
     validation_seconds = perf_counter() - started
 
     probes = tuple(
@@ -647,6 +675,7 @@ def run_release_gate(
         validation_issues=validation_issues,
         probes=probes,
         filesystem_changes=filesystem_changes,
+        game_log=game_log_report,
         min_probes=min_probes,
         required_probes=normalized_required,
         fail_on_load_diagnostics=fail_on_load_diagnostics,
@@ -675,6 +704,15 @@ def format_report(report: GateReport, *, max_diagnostics: int = 20) -> str:
         ),
         "probes:",
     ]
+    if report.game_log is not None:
+        lines.insert(
+            6,
+            (
+                "game log: "
+                f"{len(report.game_log.entries)} mod-owned errors; "
+                f"fresh={'yes' if report.game_log.is_fresh else 'no'}"
+            ),
+        )
     for probe in report.probes:
         detail = (
             f"{probe.diff.changed_lines} changed lines, "

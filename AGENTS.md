@@ -135,6 +135,12 @@ with mod.transaction():
 
 15. New ideas default to current HOI4 `common/ideas/...` files and `ideas = { country = { ... } }`. Use `create_idea(..., category="political_advisor")` or another explicit category for non-spirit ideas. National spirits and other ideas use `picture = <sprite>`, never `icon =`; the sprite must be declared in `interface/*.gfx`. Validate both the assignment shape and sprite resolution before treating the idea as renderable.
 
+    Idea descriptions are localization-only: set `{idea_id}_desc` with
+    `set_loc()`. Never write `desc =` inside an idea. Character roles are direct
+    `country_leader`, `advisor`, or commander blocks, never `roles = { ... }`.
+    Decision-category metadata belongs in `common/decisions/categories`, while
+    decision definitions belong in `common/decisions`.
+
 16. `create_focus_tree()`, `create_decision_category()`, `create_decision()`, and `create_idea()` also raise on existing IDs unless `overwrite=True`.
 
 17. Use `Focus(..., requires="FOCUS_ID")` for a single prerequisite instead of manually writing `prerequisites=[["FOCUS_ID"]]`.
@@ -165,6 +171,10 @@ with mod.transaction():
     `common/countries/{TAG}.txt`; it must not create a partial global
     `common/countries/colors.txt`. Vanilla color overrides require a configured
     HOI4 install so the complete table can be retained.
+
+29. After a real game launch, run `scripts/parse_hoi4_log.py` or
+    `Mod.validate_game_log()` against the target mod. Do not treat a static
+    release gate as proof that HOI4 accepted every generated token.
 
 ## Country Visual Completeness
 

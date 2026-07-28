@@ -6,6 +6,48 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-28
+
+### Added
+
+- A HOI4 `error.log` parser and `Mod.validate_game_log()` API that filter
+  records to files owned by the target mod, group engine-error classes, support
+  timestamps and byte offsets, and integrate optional freshness/error checks
+  into the real-mod and installed-game release gates.
+- Static validation errors for engine-rejected idea descriptions, character
+  `roles`, combined decision-category files, and unsupported
+  `set_politics.elections_frequency`.
+
+### Changed
+
+- Decision-category metadata now writes to
+  `common/decisions/categories/*.txt`, separately from decision content.
+  Touching pre-0.4.2 combined output migrates it source-preservingly.
+- Strict localization validation now requires both an idea's display name and
+  its conventional `{idea_id}_desc` description.
+- `00_generated_tags.txt` is canonicalized by country tag so identical builds
+  produce identical bytes.
+
+### Fixed
+
+- Ideas no longer serialize the unsupported top-level `desc` assignment; HOI4
+  derives descriptions from `{idea_id}_desc` localization.
+- Generated country leaders no longer contain the unsupported top-level
+  `roles = { country_leader }` field, and touching an affected leader removes
+  the legacy field.
+- `effect_set_politics()` no longer emits `elections_frequency`, which current
+  HOI4 rejects.
+
+### Migration
+
+- Replace idea-level `desc = SOME_KEY` with localization at
+  `{idea_id}_desc`. The compatibility `desc` argument is accepted only when it
+  names that fixed key and is never serialized.
+- Remove `elections_frequency=` from `effect_set_politics()` calls; supplying it
+  now raises instead of generating dead script.
+- Edit and save legacy combined decisions once to move category metadata into
+  `common/decisions/categories`, or recreate them through the facade.
+
 ## [0.4.1] - 2026-07-27
 
 ### Fixed

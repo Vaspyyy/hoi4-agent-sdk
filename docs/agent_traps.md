@@ -78,9 +78,25 @@ Good:
 ```python
 mod.ensure_idea("TAG_crisis", category="country", modifier={"stability_factor": -0.05})
 mod.set_loc("TAG_crisis", "Political Crisis")
+mod.set_loc("TAG_crisis_desc", "The government is struggling to retain control.")
 ```
 
 Validation warning: `idea_not_addable` when a loaded non-country idea is used with `add_ideas`.
+
+Never write `desc = TAG_crisis_desc` inside the idea block. Current HOI4 derives
+that key from the idea ID and rejects the assignment. Likewise, generated
+characters declare `country_leader`, `advisor`, or commander blocks directly;
+there is no top-level `roles = { ... }` field.
+
+## Decision Category Files
+
+Category metadata and decisions are separate:
+
+- `common/decisions/categories/*.txt`: category `icon`, `allowed`, `visible`
+- `common/decisions/*.txt`: the category block containing its decisions
+
+Use `create_decision_category()` and `create_decision()` rather than combining
+both shapes manually. Validation rejects combined pre-0.4.2 output.
 
 ## Revolts Need a Playable Baseline
 

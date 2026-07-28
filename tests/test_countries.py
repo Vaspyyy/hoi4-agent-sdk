@@ -235,3 +235,5 @@ class TestWriteCountry:
         content = char_file.read_text()
         assert "Boss" in content
         assert "NEW_leader_1" in content
+        assert "country_leader = {" in content
+        assert "roles =" not in content

@@ -88,6 +88,22 @@ def add_country_tag(mod_root: Path, tag: str) -> Path:
     return p
 
 
+def sort_generated_country_tags(text: str) -> str:
+    """Canonicalize an SDK-owned generated country-tag table."""
+
+    other: list[str] = []
+    entries: dict[str, str] = {}
+    for line in text.splitlines():
+        match = TAG_FILE_RE.match(line)
+        if match is None:
+            if line.strip():
+                other.append(line.rstrip())
+            continue
+        entries[match.group(1)] = line.strip()
+    lines = [*other, *(entries[tag] for tag in sorted(entries))]
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def remove_country_tag(mod_root: Path, tag: str) -> Path | None:
     tag = require_country_tag(tag)
     path = mod_root / "common" / "country_tags" / "00_generated_tags.txt"

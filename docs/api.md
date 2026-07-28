@@ -259,7 +259,10 @@ and patch them by exact source occurrence.
 
 ## Decisions
 
-Decisions live in `common/decisions/*.txt` and are grouped by category.
+Decision content lives in `common/decisions/*.txt`; category presentation and
+visibility live in `common/decisions/categories/*.txt`. The SDK writes and
+patches those files separately. Touching legacy pre-0.4.2 combined output
+migrates its category metadata automatically.
 
 ### Methods
 
@@ -269,7 +272,7 @@ Decisions live in `common/decisions/*.txt` and are grouped by category.
 | `list_decisions() -> list[str]` | Sorted decision IDs | Loaded decisions |
 | `get_decision(decision_id: str) -> Decision` | `Decision` | Get a decision |
 | `get_decision_category(category_id: str) -> DecisionCategory` | `DecisionCategory` | Get a category |
-| `create_decision_category(category_id, icon="", allowed="", visible="", path=None, overwrite=False) -> DecisionCategory` | `DecisionCategory` | Create or route a category. Raises if it exists unless `overwrite=True`. |
+| `create_decision_category(category_id, icon="", allowed="", visible="", path=None, category_path=None, overwrite=False) -> DecisionCategory` | `DecisionCategory` | Create or route a category. `path` targets decision content; optional `category_path` must be under `common/decisions/categories`. Raises if it exists unless `overwrite=True`. |
 | `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. |
 | `ensure_decision_category(category_id, **kwargs) -> DecisionCategory` | `DecisionCategory` | Idempotent create-or-update wrapper |
 | `ensure_decision(category_id, decision_id, **kwargs) -> Decision` | `Decision` | Idempotent create-or-update wrapper |
@@ -314,8 +317,8 @@ Valid `event_type` values: `"country_event"`, `"state_event"`, `"news_event"`,
 Events without an explicit `path` write to `events/{namespace}_events.txt`. Events with no namespace write to `events/mod_events.txt`.
 ## Ideas
 
-Ideas (national spirits, advisors, etc.) store typed modifier dicts, an optional
-`desc` localization key, and an optional `removal_cost`. Idea files are loaded
+Ideas (national spirits, advisors, etc.) store typed modifier dicts and an
+optional `removal_cost`. Idea files are loaded
 from both legacy `common/national_ideas/` and current `common/ideas/`. Both
 `country_ideas = { }` and `ideas = { }` container formats are read.
 
@@ -325,6 +328,9 @@ HOI4 idea definitions use `picture = <sprite>` rather than `icon = <sprite>`.
 The named sprite must also be declared in an `interface/*.gfx` file. The SDK
 still reads legacy `icon` assignments, reports them as validation warnings, and
 migrates a legacy assignment to `picture` when that idea is edited and saved.
+Descriptions always resolve through the fixed `{idea_id}_desc` localization
+key. HOI4 rejects a top-level idea `desc =` assignment; validation reports old
+SDK output as an error and removes it when the idea is edited.
 
 ### Methods
 
@@ -332,7 +338,7 @@ migrates a legacy assignment to `picture` when that idea is edited and saved.
 |--------|---------|-------------|
 | `list_ideas() -> list[str]` | Sorted idea IDs | All loaded ideas |
 | `get_idea(idea_id: str) -> Idea` | `Idea` | Raises `KeyError` if not found |
-| `create_idea(idea_id, icon="GFX_idea_generic", modifier=None, category="country", path=None, overwrite=False, *, desc="", removal_cost=None) -> Idea` | `Idea` | Creates idea. Raises if it exists unless `overwrite=True`. `desc` is the Paradox localization key. `modifier` is `dict[str, str|int|float|bool]`. Optional `path` sets the target file. |
+| `create_idea(idea_id, icon="GFX_idea_generic", modifier=None, category="country", path=None, overwrite=False, *, desc="", removal_cost=None) -> Idea` | `Idea` | Creates idea. Raises if it exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
 | `ensure_idea(idea_id, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
 | `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> bool` | `bool` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. |
 | `delete_idea(idea_id: str) -> bool` | `bool` | Remove from cache |
@@ -344,7 +350,6 @@ migrates a legacy assignment to `picture` when that idea is edited and saved.
 ```python
 mod.create_idea(
     "strong_economy",
-    desc="strong_economy_desc",
     removal_cost=-1,
     modifier={
         "industrial_capacity_factory": 0.10,
@@ -352,6 +357,8 @@ mod.create_idea(
         "research_speed_factor": 0.03,
     },
 )
+mod.set_loc("strong_economy", "A Strong Economy")
+mod.set_loc("strong_economy_desc", "Industry drives national renewal.")
 
 # Replace the complete modifier block.
 mod.update_idea("strong_economy", modifier={"political_power_gain": 0.25})
@@ -517,7 +524,7 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_create_unit(division, owner=None, start_experience_factor=None)` | `create_unit = { division = "..." }` |
 | `Mod.effect_swap_idea(old, new, target=None)` | `swap_ideas = { remove_idea = old add_idea = new }`, optionally scoped |
 | `Mod.effect_upgrade_idea_chain([idea_1, idea_2, ...], target=None)` | Conditional staged-spirit upgrade chain using `swap_ideas` |
-| `Mod.effect_set_politics(ruling_party, elections_allowed=None, elections_frequency=None)` | `set_politics = { ... }` |
+| `Mod.effect_set_politics(ruling_party, elections_allowed=None)` | `set_politics = { ... }`; the compatibility-only `elections_frequency` argument raises because HOI4 rejects that field |
 | `Mod.effect_create_faction(name)` | `create_faction = "Name"` |
 | `Mod.effect_add_to_faction(tag)` | Bare current-scope `add_to_faction = TAG`; prefer explicit helpers below |
 | `Mod.effect_add_target_to_faction(faction_leader, target)` | `LEADER = { add_to_faction = TARGET }` |
@@ -827,6 +834,21 @@ localization and icon validation are available through
 report. Repeat `--require-probe NAME` to require specific populated domains;
 unknown probe names are rejected and missing required probes appear in the JSON
 report.
+
+After launching HOI4 once, attribute engine errors to the target mod instead of
+reading the whole shared log manually:
+
+```bash
+python scripts/parse_hoi4_log.py /path/to/mod \
+  --log "$HOME/.local/share/Paradox Interactive/Hearts of Iron IV/logs/error.log"
+```
+
+The parser filters records to relative files that actually exist in the target
+mod, groups error classes, supports `--since` and byte `--start-offset`, and
+returns a non-zero status for mod-owned errors. Add
+`--error-log PATH --require-fresh-game-log` to `verify_real_mod.py`; the installed-game audit
+accepts `--error-log PATH` and requires it to postdate the corpus unless
+`--allow-stale-log` is explicitly supplied.
 
 The stricter installed-game compatibility audit is:
 

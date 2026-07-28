@@ -806,8 +806,6 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
             f" {ld.character_id} = {{\n"
             f"  name = {pdx_string(ld.name)}\n"
             f"\n"
-            f"  roles = {{ country_leader }}\n"
-            f"\n"
             f"  portraits = {{\n"
             f"   civilian = {{\n"
             f"    large = GFX_portrait_{tag}_{portrait_key}\n"
@@ -896,6 +894,9 @@ def _patch_character(
             f"Cannot update leader '{leader.character_id}': matching character block not found"
         )
     leader_body = body[leader_span.body_start : leader_span.body_end]
+    # Migrate the invalid top-level field emitted by SDK 0.4.0/0.4.1. HOI4
+    # derives roles from the direct country_leader/advisor/commander blocks.
+    leader_body = set_block(leader_body, "roles", None)
     if "*" in touched_fields or "leader_name" in touched_fields:
         leader_body = set_scalar(leader_body, "name", pdx_string(leader.name))
     role = next(

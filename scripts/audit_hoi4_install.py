@@ -27,6 +27,13 @@ def main() -> int:
     )
     parser.add_argument("--require-probe", action="append", dest="required_probes")
     parser.add_argument("--fingerprint-manifest", type=Path)
+    parser.add_argument("--error-log", type=Path)
+    parser.add_argument("--log-since", type=datetime.fromisoformat)
+    parser.add_argument(
+        "--allow-stale-log",
+        action="store_true",
+        help="Do not require --error-log to postdate every audited mod file",
+    )
     parser.add_argument("--max-changed-lines", type=int, default=20)
     parser.add_argument("--max-files", type=int, default=1)
     args = parser.parse_args()
@@ -40,6 +47,11 @@ def main() -> int:
         budget=DiffBudget(
             max_changed_lines=args.max_changed_lines,
             max_files=args.max_files,
+        ),
+        error_log=args.error_log,
+        error_log_since=args.log_since,
+        require_fresh_game_log=(
+            args.error_log is not None and not args.allow_stale_log
         ),
     )
     summary = format_compatibility_report(report)

@@ -62,8 +62,6 @@ country_event = {
 
 DECISION_FILE = """# FB-shaped merged decisions
 scl_resistance = {
-    icon = generic_decision
-    custom_category_field = keep
     SCL_sabotage_italian_supply = {
         icon = generic_sabotage
         cost   = 25 # preserve PP note

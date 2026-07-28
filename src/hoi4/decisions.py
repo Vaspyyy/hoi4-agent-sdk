@@ -1,9 +1,9 @@
 """
 Decision system - read, create, and write HOI4 decisions.
 
-Decision files live in common/decisions/*.txt. The SDK models categories and
-their nested decisions while preserving common trigger/effect blocks as raw
-Paradox script strings.
+Decision files live in common/decisions/*.txt. Category metadata lives
+separately in common/decisions/categories/*.txt. The SDK models both while
+preserving common trigger/effect blocks as raw Paradox script strings.
 """
 
 from __future__ import annotations
@@ -119,6 +119,28 @@ def load_decisions_file(path: Path) -> list[DecisionCategory]:
     return categories
 
 
+def load_decision_categories_file(path: Path) -> list[DecisionCategory]:
+    """Load category metadata from ``common/decisions/categories``."""
+
+    txt = path.read_text(encoding="utf-8", errors="ignore")
+    categories: list[DecisionCategory] = []
+    for span in top_level_assignments(txt):
+        if not span.is_block or span.body_start is None or span.body_end is None:
+            continue
+        body = txt[span.body_start : span.body_end]
+        categories.append(
+            DecisionCategory(
+                id=span.key,
+                icon=_extract_scalar(body, "icon"),
+                allowed=_extract_block(body, "allowed"),
+                visible=_extract_block(body, "visible"),
+                definition_path=path,
+                definition_raw_block=body.strip(),
+            )
+        )
+    return categories
+
+
 def _iter_top_level_decision_blocks(category_body: str) -> list[tuple[str, str]]:
     blocks: list[tuple[str, str]] = []
     for span in top_level_assignments(category_body):
@@ -216,14 +238,6 @@ def _serialize_category(category: DecisionCategory) -> str:
         body = _patch_category_body(category, category.raw_block)
         return f"{category.id} = {{\n{_indent(body, 1)}\n}}"
     parts = [f"{category.id} = {{"]
-    if category.icon:
-        parts.append(f"\ticon = {category.icon}")
-    for key in ["allowed", "visible"]:
-        body = getattr(category, key)
-        if body:
-            parts.append(f"\t{key} = {{")
-            parts.extend(f"\t\t{line.strip()}" for line in body.strip().splitlines())
-            parts.append("\t}")
     for decision in category.decisions:
         parts.append(serialize_decision(decision))
         parts.append("")
@@ -253,10 +267,11 @@ def _patch_decision_body(decision: Decision, body: str) -> str:
 
 
 def _patch_category_body(category: DecisionCategory, body: str) -> str:
-    if category.touched:
-        body = set_scalar(body, "icon", category.icon or None)
-        body = set_block(body, "allowed", category.allowed or None)
-        body = set_block(body, "visible", category.visible or None)
+    # Migrate invalid pre-0.4.2 output by removing presentation metadata from
+    # the decision-content file. It is rendered through the category file.
+    body = set_scalar(body, "icon", None)
+    body = set_block(body, "allowed", None)
+    body = set_block(body, "visible", None)
     current = {decision.id: decision for decision in category.decisions}
     decision_spans = {
         span.key: span
@@ -281,6 +296,62 @@ def _patch_category_body(category: DecisionCategory, body: str) -> str:
             body = replace_assignment(body, span, serialize_decision(decision).strip())
     for decision in current.values():
         body = append_assignment(body, serialize_decision(decision).strip())
+    return body
+
+
+def serialize_decision_categories_file(
+    categories: list[DecisionCategory], original: str = ""
+) -> str:
+    """Serialize category metadata without decision definitions."""
+
+    if original:
+        text = original
+        current = {category.id: category for category in categories}
+        for span in sorted(
+            top_level_assignments(text), key=lambda item: item.start, reverse=True
+        ):
+            if not span.is_block:
+                continue
+            category = current.pop(span.key, None)
+            if category is None:
+                text = replace_assignment(text, span, None)
+            elif span.body_start is not None and span.body_end is not None:
+                body = text[span.body_start : span.body_end]
+                text = replace_assignment_body(
+                    text, span, _patch_category_definition_body(category, body)
+                )
+        for category in current.values():
+            text = append_assignment(text, _serialize_category_definition(category))
+        return text
+    parts = [_serialize_category_definition(category) for category in categories]
+    return "\n\n".join(parts) + ("\n" if parts else "")
+
+
+def _serialize_category_definition(category: DecisionCategory) -> str:
+    if category.definition_raw_block:
+        body = _patch_category_definition_body(
+            category, category.definition_raw_block
+        )
+        return f"{category.id} = {{\n{_indent(body, 1)}\n}}"
+    parts = [f"{category.id} = {{"]
+    if category.icon:
+        parts.append(f"\ticon = {category.icon}")
+    for key in ("allowed", "visible"):
+        body = getattr(category, key)
+        if body:
+            parts.append(f"\t{key} = {{")
+            parts.extend(f"\t\t{line.strip()}" for line in body.strip().splitlines())
+            parts.append("\t}")
+    parts.append("}")
+    return "\n".join(parts)
+
+
+def _patch_category_definition_body(category: DecisionCategory, body: str) -> str:
+    if not category.touched:
+        return body
+    body = set_scalar(body, "icon", category.icon or None)
+    body = set_block(body, "allowed", category.allowed or None)
+    body = set_block(body, "visible", category.visible or None)
     return body
 
 

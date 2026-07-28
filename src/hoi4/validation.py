@@ -49,6 +49,20 @@ VALIDATION_CODES: dict[str, str] = {
     "invalid_idea_icon_key": (
         "Idea definitions must use picture, not icon, for their sprite assignment."
     ),
+    "invalid_idea_desc_key": (
+        "Idea descriptions use the fixed <idea_id>_desc localization key, not a desc assignment."
+    ),
+    "invalid_character_roles_key": (
+        "Characters declare roles through role blocks, not a top-level roles assignment."
+    ),
+    "invalid_decision_category_layout": (
+        "Decision-category metadata belongs in common/decisions/categories."
+    ),
+    "invalid_set_politics_field": (
+        "The set_politics effect contains a field unsupported by the installed game grammar."
+    ),
+    "game_log_error": "HOI4 reported an engine error for a file owned by this mod.",
+    "stale_game_log": "The supplied HOI4 error log predates the audited mod files.",
     "country_colors_shadow_vanilla": (
         "A mod colors.txt shadows vanilla country color entries that it does not repeat."
     ),
@@ -139,6 +153,12 @@ _ERROR_CODES = {
     "invalid_bookmark_required_dlc",
     "invalid_bookmark_effect",
     "bookmark_randomize_weather_missing",
+    "invalid_idea_desc_key",
+    "invalid_character_roles_key",
+    "invalid_decision_category_layout",
+    "invalid_set_politics_field",
+    "game_log_error",
+    "stale_game_log",
 }
 
 VALIDATION_WARNING_CODES: dict[str, str] = {
@@ -986,6 +1006,23 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
                 ),
                 severity="warning",
                 code="invalid_idea_icon_key",
+                idea_id=idea.id,
+                file_path=str(idea.path) if idea.path else None,
+            )
+        )
+
+    if idea.raw_block and any(
+        span.key == "desc" and not span.is_block
+        for span in top_level_assignments(idea.raw_block)
+    ):
+        errors.append(
+            ValidationError(
+                message=(
+                    f"Idea '{idea.id}' uses unsupported 'desc ='. HOI4 resolves "
+                    f"its description from localization key '{idea.id}_desc'."
+                ),
+                severity="error",
+                code="invalid_idea_desc_key",
                 idea_id=idea.id,
                 file_path=str(idea.path) if idea.path else None,
             )

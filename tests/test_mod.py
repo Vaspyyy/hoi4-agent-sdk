@@ -720,6 +720,8 @@ class TestAgentFacingApis:
         assert Mod.effect_set_politics("democratic", elections_allowed=True) == (
             "set_politics = { ruling_party = democratic elections_allowed = yes }"
         )
+        with pytest.raises(ValueError, match="does not support elections_frequency"):
+            Mod.effect_set_politics("democratic", elections_frequency=48)
         assert (
             Mod.effect_create_faction("Mediterranean League")
             == 'create_faction = "Mediterranean League"'
@@ -1819,11 +1821,12 @@ class TestModIdeas:
         mod.save()
 
         loaded = Mod(tmp_mod.root).get_idea("TST_spirit")
-        assert loaded.desc == "TST_spirit_desc"
+        assert loaded.desc == ""
         assert loaded.removal_cost == -1
         source = loaded.path.read_text(encoding="utf-8")
         assert "picture = GFX_idea_generic" in source
         assert "icon =" not in source
+        assert "desc =" not in source
 
     def test_create_idea_requires_explicit_overwrite(self, tmp_mod):
         mod = tmp_mod.mod
@@ -2187,7 +2190,7 @@ def test_save_rejects_external_changes_until_reload(tmp_path: Path) -> None:
     source = "ideas = { country = { custom_spirit = { desc = OLD_DESC } } }\n"
     path.write_text(source, encoding="utf-8")
     mod = Mod(tmp_path)
-    assert mod.update_idea("custom_spirit", desc="NEW_DESC")
+    assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
 
     external = source.rstrip() + "\n# legacy writer changed this file\n"
     path.write_text(external, encoding="utf-8")
@@ -2199,6 +2202,8 @@ def test_save_rejects_external_changes_until_reload(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == external
 
     mod.reload()
-    assert mod.update_idea("custom_spirit", desc="NEW_DESC")
+    assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
     mod.save()
-    assert path.read_text(encoding="utf-8") == external.replace("OLD_DESC", "NEW_DESC")
+    assert path.read_text(encoding="utf-8") == external.replace(
+        "{ desc = OLD_DESC }", "{}"
+    )

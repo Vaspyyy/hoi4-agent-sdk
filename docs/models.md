@@ -116,7 +116,8 @@ DecisionCategory(id: str, icon: str = "",
                  allowed: str = "",
                  visible: str = "",
                  decisions: list[Decision] = [],
-                 path: Path | None = None)
+                 path: Path | None = None,             # decision content
+                 definition_path: Path | None = None)  # category metadata
 ```
 
 ### Event
@@ -163,13 +164,15 @@ Idea(id: str, icon: str = "GFX_idea_generic",
      research_bonus: dict[str, str|int|float|bool] = {},
      traits: list[str] = [],
      ai_will_do: str = "",
-     desc: str = "",                    # Paradox localization key
+     desc: str = "",                    # legacy unsupported source compatibility
      removal_cost: str|int|float|None = None)
 ```
 
 At the facade level, a supplied `modifier` replaces the mapping by default;
 `modifier={}` removes the block. Pass `merge_modifier=True` to `update_idea()`
 or `ensure_idea()` for key-by-key merging.
+Idea descriptions use `{idea_id}_desc` localization and are not serialized as a
+field inside the idea definition.
 
 ### Ideology and SubIdeology
 

@@ -43,6 +43,12 @@ from .gemini_images import (
     GeminiImageResponseError,
     GeminiImageResult,
 )
+from .game_log import (
+    GameLogEntry,
+    GameLogReport,
+    format_game_log_report,
+    parse_hoi4_error_log,
+)
 from .ideologies import Ideology, SubIdeology
 from .map_render import MapRenderCancelled, PoliticalMapResult, render_political_map
 from .parser import ParseError, PdxNode, parse_pdx, serialize_pdx
@@ -95,7 +101,7 @@ except ImportError:
 try:
     __version__ = version("hoi4-agent-sdk")
 except PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
-    __version__ = "0.4.1"
+    __version__ = "0.4.2"
 
 __all__ = [
     "Mod",
@@ -129,6 +135,10 @@ __all__ = [
     "GeminiImageGenerator",
     "GeminiImageResponseError",
     "GeminiImageResult",
+    "GameLogEntry",
+    "GameLogReport",
+    "format_game_log_report",
+    "parse_hoi4_error_log",
     "Ideology",
     "SubIdeology",
     "ProgressEvent",

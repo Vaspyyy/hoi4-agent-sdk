@@ -122,15 +122,15 @@ class TestSerializeIdea:
         assert "bool_val = yes" in text
         assert 'str_val = "hello"' in text
 
-    def test_serializes_description_and_removal_cost(self):
+    def test_uses_localization_description_and_serializes_removal_cost(self):
         idea = Idea(id="TST_spirit", desc="TST_spirit_desc", removal_cost=-1)
 
         text = serialize_idea(idea)
 
-        assert "desc = TST_spirit_desc" in text
+        assert "desc =" not in text
         assert "removal_cost = -1" in text
 
-    def test_description_edit_preserves_surrounding_source(self, tmp_path):
+    def test_touching_legacy_description_removes_it_without_rebuilding_source(self, tmp_path):
         original = """ideas = {
     country = {
         TST_spirit = {
@@ -146,15 +146,14 @@ class TestSerializeIdea:
         path = tmp_path / "ideas.txt"
         path.write_text(original, encoding="utf-8")
         ideas, container = read_ideas_file(path)
-        ideas[0].desc = "TST_new_desc"
         ideas[0].removal_cost = 10
         ideas[0].touched = True
 
         text = serialize_ideas_file(ideas, container_name=container, original=original)
 
-        expected = original.replace("TST_old_desc", "TST_new_desc").replace(
-            "removal_cost = -1", "removal_cost = 10"
-        )
+        expected = original.replace(
+            '            desc   = "TST_old_desc" # keep description note\n', ""
+        ).replace("removal_cost = -1", "removal_cost = 10")
         assert text == expected
 
     def test_unmodeled_description_block_survives_other_edits(self, tmp_path):
@@ -239,10 +238,12 @@ def test_mod_description_edit_does_not_rebuild_unrelated_nested_blocks(
     from hoi4 import Mod
 
     mod = Mod(tmp_path)
-    assert mod.update_idea("custom_spirit", desc="NEW_DESC")
+    assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
     mod.save()
 
-    assert path.read_text(encoding="utf-8") == original.replace("OLD_DESC", "NEW_DESC")
+    assert path.read_text(encoding="utf-8") == original.replace(
+        "        desc = OLD_DESC\n", ""
+    )
 
 
 def test_modifier_merge_preserves_nested_unmodeled_modifier_content(tmp_path: Path) -> None:

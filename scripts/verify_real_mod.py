@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -39,6 +40,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--strict-loading", action="store_true")
     parser.add_argument("--validate-icons", action="store_true")
     parser.add_argument("--strict-localization", action="store_true")
+    parser.add_argument("--error-log", type=Path)
+    parser.add_argument("--log-since", type=datetime.fromisoformat)
+    parser.add_argument("--require-fresh-game-log", action="store_true")
     parser.add_argument("--allow-load-diagnostics", action="store_true")
     parser.add_argument("--allow-validation-errors", action="store_true")
     parser.add_argument("--allow-empty-diff", action="store_true")
@@ -74,6 +78,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         min_probes=args.min_probes,
         required_probes=args.require_probe,
         strict_loading=args.strict_loading,
+        error_log=args.error_log,
+        error_log_since=args.log_since,
+        require_fresh_game_log=args.require_fresh_game_log,
     )
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
