@@ -2,6 +2,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+GEMINI_GUIDANCE_FILES = (
+    ROOT / "README.md",
+    ROOT / "AGENTS.md",
+    ROOT / "docs" / "api.md",
+    ROOT / "docs" / "recipes.md",
+    ROOT / "examples" / "gemini_live_smoke.py",
+)
 
 
 def test_country_creation_guidance_requires_complete_gfx_package() -> None:
@@ -51,3 +58,14 @@ def test_claude_is_directed_to_the_country_visual_contract() -> None:
     assert "create_oob()" in guidance
     assert "runtime territory/capital setup" in guidance
     assert "validate_country_package(tag).complete" in guidance
+
+
+def test_billable_image_candidates_use_durable_project_storage() -> None:
+    guidance = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "assets/candidates/" in guidance
+    assert "paid, non-reproducible build inputs" in guidance
+    assert "survive reboots" in guidance
+    assert "/tmp/hoi4-agent-scripts/" in guidance
+    for path in GEMINI_GUIDANCE_FILES:
+        assert "/tmp/hoi4-agent-assets" not in path.read_text(encoding="utf-8")

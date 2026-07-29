@@ -16,6 +16,7 @@ from hoi4 import (
 )
 
 root = Path("/path/to/my_mod")
+candidate_dir = root / "assets" / "candidates"
 mod = Mod(root, hoi4_install="/path/to/Hearts of Iron IV")
 
 mod.create_country("ZAR", "Zarland", adjective="Zarlandian",
@@ -23,12 +24,12 @@ mod.create_country("ZAR", "Zarland", adjective="Zarlandian",
                    leader_name="General Zar", leader_ideology="despotism")
 mod.set_state_owner(100, "ZAR")  # owner + core
 
-import_flag_to_mod(root, "ZAR", "/tmp/hoi4-agent-assets/ZAR_flag.png")
+import_flag_to_mod(root, "ZAR", candidate_dir / "ZAR_flag.png")
 
 def add_portrait(slug: str) -> str:
     texture = import_portrait_to_mod(
         root, "ZAR", slug,
-        f"/tmp/hoi4-agent-assets/ZAR_{slug}.png",
+        candidate_dir / f"ZAR_{slug}.png",
     )
     write_portrait_gfx(root, "ZAR", slug, portrait_path=texture)
     return f"GFX_portrait_ZAR_{slug}"

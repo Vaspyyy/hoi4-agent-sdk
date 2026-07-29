@@ -1026,19 +1026,29 @@ from pathlib import Path
 
 from hoi4 import GeminiImageGenerator
 
-candidate_dir = Path("/tmp/hoi4-agent-assets")
+project_root = Path.cwd()  # directory containing .hoi4.json
+candidate_dir = project_root / "assets" / "candidates"
 with GeminiImageGenerator() as generator:
     flag = generator.generate_flag_candidate(
         "A fictional alpine republic with a white mountain and gold star",
-        candidate_dir / "alpine-flag.png",
+        candidate_dir / "alpine-flag-01.png",
         ideology="neutrality",
     )
     portrait = generator.generate_portrait_candidate(
         "A fictional 1940s alpine general in his late forties",
-        candidate_dir / "alpine-general.png",
+        candidate_dir / "alpine-general-01.png",
         reference_images=["/explicit/path/to/authorized-reference.png"],
     )
 ```
+
+Candidate paths are caller-controlled, but billable generated images should be
+kept under the durable mod-project directory `assets/candidates/`, normally
+beside `.hoi4.json`. They are non-reproducible build inputs: use a unique
+filename for every attempt, keep the accepted PNG there, and import from that
+same path. Do not use an operating-system temporary directory for generated
+candidates because it may be memory-backed and disappear on reboot. If the
+project directory and published mod root differ, keep candidates in the project
+directory so source PNGs are not accidentally packaged with the playable mod.
 
 | Method | Provider aspect ratio | Reference limit |
 |---|---:|---:|

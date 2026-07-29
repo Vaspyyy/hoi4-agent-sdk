@@ -17,7 +17,12 @@ if os.environ.get("HOI4_GEMINI_BILLABLE_SMOKE") != "I_UNDERSTAND":
         "HOI4_GEMINI_BILLABLE_SMOKE=I_UNDERSTAND after supplying a Gemini API key."
     )
 
-destination = Path("/tmp/hoi4-agent-assets/gemini-live-smoke-flag.png")
+destination = (
+    Path.cwd()
+    / "assets"
+    / "candidates"
+    / "gemini-live-smoke-flag-01.png"
+)
 with GeminiImageGenerator() as generator:
     result = generator.generate_flag_candidate(
         "A fictional Alpine Republic. Use exactly two horizontal bands: uniform dark "

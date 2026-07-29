@@ -109,7 +109,8 @@ from pathlib import Path
 
 from hoi4 import GeminiImageGenerator, import_flag_to_mod
 
-candidate_path = Path("/tmp/hoi4-agent-assets/ABC.png")
+project_root = Path.cwd()  # directory containing .hoi4.json
+candidate_path = project_root / "assets" / "candidates" / "ABC-flag-01.png"
 with GeminiImageGenerator() as generator:
     candidate = generator.generate_flag_candidate(
         "A blue alpine republic with a white mountain and gold star",
@@ -119,6 +120,13 @@ with GeminiImageGenerator() as generator:
 # Inspect candidate.path at full size and at 10x7 before importing.
 import_flag_to_mod(root, "ABC", candidate.path)
 ```
+
+Gemini candidates are billed, non-reproducible build inputs. Keep every
+candidate under the mod project's durable `assets/candidates/` directory, use a
+unique filename for each attempt, and import the accepted PNG from that same
+path. Do not put generated candidates in an operating-system temporary
+directory: `/tmp` may be memory-backed and wiped on reboot. One-off automation
+scripts remain appropriately disposable under `/tmp/hoi4-agent-scripts/`.
 
 Install the `gemini` extra and set `GEMINI_API_KEY` or `GOOGLE_API_KEY`; keys are
 never stored by the SDK. The default is `gemini-3.1-flash-image` at 512px.

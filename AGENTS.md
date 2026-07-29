@@ -239,10 +239,14 @@ credential only in `GEMINI_API_KEY` or `GOOGLE_API_KEY`, and never write it to
 
 For an AI-generated flag or portrait:
 
-1. Generate one PNG candidate under `/tmp/hoi4-agent-assets/` with
-   `GeminiImageGenerator`. Supply reference-image paths only when the user
-   explicitly provided or authorized those exact files; never discover or
-   upload game or mod assets automatically.
+1. Resolve the mod project directory containing `.hoi4.json` and generate each
+   PNG candidate under its durable `assets/candidates/` directory with
+   `GeminiImageGenerator`. Use a unique filename for every billable attempt.
+   Generated candidates are paid, non-reproducible build inputs and must
+   survive reboots; never place them in an operating-system temporary
+   directory. Supply reference-image paths only when the user explicitly
+   provided or authorized those exact files; never discover or upload game or
+   mod assets automatically.
 2. Inspect the full PNG and an exact-size preview: 10x7 for flags and 156x210
    for portraits.
 3. Reject and regenerate with concrete corrective prompt language when anatomy,
@@ -253,9 +257,11 @@ For an AI-generated flag or portrait:
    For historical portraits, use positive descriptions of the person's year,
    role, age, expression, and period clothing. Do not name extremist or violent
    imagery merely to say it should be absent; that can trigger safety filtering.
-4. Stop after three billable candidates. If none passes, show the best candidate
-   and leave the mod unchanged.
-5. Import the first passing flag with `import_flag_to_mod()`. Import a passing
+4. Stop after three billable candidates. If none passes, show the best
+   candidate, retain the generated PNGs in `assets/candidates/`, and leave the
+   mod unchanged.
+5. Keep the first passing PNG in `assets/candidates/` before importing it.
+   Import that durable source with `import_flag_to_mod()`. Import a passing
    portrait with `import_portrait_to_mod()` and then `write_portrait_gfx()`.
 6. When the user's original request explicitly authorized asset creation,
    import immediately after review. A broad country-creation request covered by
@@ -265,7 +271,9 @@ For an AI-generated flag or portrait:
 If no style is requested, keep the generator's built-in HOI4 flag/portrait
 presets. A supplied style replaces only the aesthetic; preserve the no-text,
 safe-crop, and small-size-readability constraints. One generator call is one
-billable attempt: do not add retries or silently switch models.
+billable attempt: do not add retries or silently switch models. The separate
+`/tmp/hoi4-agent-scripts/` convention remains correct for disposable one-off
+automation and must not be used for generated art.
 
 ## Documentation
 

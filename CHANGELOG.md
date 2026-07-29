@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-29
+
+### Fixed
+
+- Gemini flag and portrait guidance now stores paid, non-reproducible PNG
+  candidates under the durable mod-project `assets/candidates/` directory
+  instead of an operating-system temporary directory that may be memory-backed
+  and wiped on reboot.
+- Agent instructions now require unique filenames for billable attempts and
+  retain the accepted source PNG beside the mod project before importing it.
+  Disposable one-off automation remains under `/tmp/hoi4-agent-scripts/`.
+
+### Migration
+
+- Existing generator calls remain API-compatible because candidate destinations
+  are caller-controlled. Change `/tmp/hoi4-agent-assets/...` destinations to
+  `<project>/assets/candidates/...` and keep the accepted PNG as a build input.
+
 ## [0.5.0] - 2026-07-29
 
 ### Added
