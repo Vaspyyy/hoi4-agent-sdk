@@ -27,7 +27,17 @@ def test_root_api_exposes_project_and_asset_workflows_without_optional_dependenc
         "DivisionTemplate",
         "DivisionUnit",
         "Battalion",
+        "Fleet",
+        "TaskForce",
+        "Ship",
+        "ShipEquipment",
+        "AirWing",
         "CountryPackageReport",
+        "ContentLivenessReport",
+        "GameScriptVocabulary",
+        "ScriptTokenInfo",
+        "ScriptSource",
+        "load_game_script_vocabulary",
         "TerritoryComponent",
         "scan_mod_descriptors",
         "write_portrait_gfx",
@@ -35,3 +45,4 @@ def test_root_api_exposes_project_and_asset_workflows_without_optional_dependenc
 
     assert expected <= set(hoi4.__all__)
     assert all(callable(getattr(hoi4, name)) for name in expected)
+    assert "ValidationStage" in hoi4.__all__

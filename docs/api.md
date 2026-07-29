@@ -126,21 +126,22 @@ HOI4 slot. `ArmyCommanderRole(kind="corps_commander")` and
 `NavyLeaderRole` covers admirals. The older `Leader` fields on `Country` remain
 a compatibility façade for the selected head of state.
 
-### Land OOB methods
+### Land, naval, and air OOB methods
 
 | Method | Description |
 |--------|-------------|
 | `list_oobs(include_vanilla=False) -> list[str]` | List known `history/units` stems |
 | `get_oob(name, include_vanilla=True) -> OrderOfBattle` | Load a mod or vanilla OOB |
-| `create_oob(name, country_tag, templates=(), divisions=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write land templates/divisions and normally assign `oob = "<name>"` in country history |
-| `update_oob(name, templates=None, divisions=None, country_tag=None, assign=False) -> bool` | Replace modeled land collections while preserving neighboring fleet, air, production, and unknown blocks |
+| `create_oob(name, country_tag, templates=(), divisions=(), fleets=(), air_wings=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write land, naval, and air starting forces and normally assign `oob = "<name>"` in country history |
+| `update_oob(name, templates=None, divisions=None, fleets=None, air_wings=None, country_tag=None, assign=False) -> bool` | Replace selected modeled collections while preserving neighboring production, comments, and unknown fields |
 | `delete_oob(name, unassign=True) -> bool` | Delete a mod-owned OOB and optionally clear country references |
 
 Validation rejects duplicate template names or battalion positions, unknown
-templates or sub-unit types, out-of-range experience/equipment factors,
-missing/water provinces, and starting divisions outside the country's owned
-states. Version 0.5 authors land formations only; existing fleet, air-wing, and
-production blocks remain source-preserved.
+templates, unit definitions, or equipment, out-of-range factors, invalid
+locations, foreign-owned starting positions, duplicate ships, and malformed
+fleet/task-force/air-wing entries. `Fleet`, `TaskForce`, `Ship`,
+`ShipEquipment`, and `AirWing` model both modern and legacy equipment IDs.
+Unmodeled production blocks and unknown fields remain source-preserved.
 
 ### Complete-country and geography methods
 
@@ -661,7 +662,33 @@ mod.assert_no_visual_overlap("west_focus")
 ```
 ## Validation
 
-`mod.validate(validate_icons=False, strict_localization=False)` runs all validators and returns `list[ValidationError]`. Does **not** raise for content issues — returns an empty list if all valid. Pass `validate_icons=True` to scan real interface `.gfx` files and warn about missing focus and idea icons. Pass `strict_localization=True` for a final audit of event, idea, country, and leader localization. Icon/reference scans are cached per `Mod` instance; call `reload()` (or the equivalent `discard()`) to discard queued edits and refresh from disk.
+`mod.validate(validate_icons=False, strict_localization=False, stage="package")`
+runs all validators and returns `list[ValidationError]`. It does **not** raise
+for content issues. Stages are:
+
+- `build`: syntax, references, OOBs, and installed-game vocabulary, while
+  deferring complete-country checks during a multi-step build;
+- `package` (default): build checks plus complete-country enforcement; and
+- `release`: package checks plus semantic liveness analysis.
+
+Pass `validate_icons=True` to scan real interface `.gfx` files and warn about
+missing focus and idea icons. Pass `strict_localization=True` for a final audit
+of event, idea, country, and leader localization. Icon/reference and installed
+vocabulary scans are cached per `Mod` instance; call `reload()` (or the
+equivalent `discard()`) to discard queued edits and refresh from disk.
+
+With `hoi4_install` configured, `game_script_vocabulary()` exposes documented
+effect, trigger, and modifier tokens, installed-game usage counts by domain,
+supported scopes, and modifier categories. `validate_script_vocabulary()` and
+`validate_effect()` warn on undocumented tokens and suggest a close,
+high-frequency installed token. Intentional extensions can be allowlisted as
+`effect:my_token`, `trigger:my_token`, or `modifier:my_token` through
+`script_token_allowlist=`.
+
+`analyze_content_liveness()` returns `ContentLivenessReport`, covering focus
+reachability, incoming event references, idea grants, flag reads/writes, and
+localization use. `flag_allowlist=` and `localization_allowlist=` accept glob
+patterns for deliberate bookkeeping and reserved/future content.
 
 `preview()` and `save()` compare every target source file with the byte snapshot captured when `Mod` loaded. If a legacy Studio writer or another worker changes one, they raise `ExternalModificationError` instead of overwriting it. Use one `Mod` per operation/thread; on this exception, call `reload()` and deliberately reapply the edit.
 
@@ -685,13 +712,13 @@ except OperationCancelled:
 |--------|--------|
 | **Country** | Tag format `^[A-Z0-9]{3}$`, tag definition target exists, has name, popularities sum to 100, valid ruling party, valid RGB color, capital state exists in mod/vanilla data, recruited characters exist in mod/vanilla data, leader ideology/ruling party mismatch; SDK-created tags additionally require a complete `CountryPackageReport` |
 | **Character** | Defined/recruited identity, localization, visible portraits, GFX declarations and textures, plus two recruited political advisors and two army commanders per complete country |
-| **Land OOB** | Unique templates/grid positions, known templates and sub-unit types, land/existing/owned locations, 0..1 factors, and valid country-history references |
+| **OOB** | Unique land templates/grid positions, known unit and equipment IDs, valid owned land/naval/air locations, valid factors, fleet/task-force/ship structure, and valid country-history references |
 | **Geography** | Significant capital-disconnected owned components warn unless explicitly allowlisted |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
 | **Event** | Has ID, has title, has description, has options, option gameplay effects, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |
 | **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, no prerequisite cycles, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, continuous focus overlap risk, optional focus icon existence |
-| **Cross-cut** | Every focus has a localization entry (warning), optional strict localization for events/ideas/countries/leaders, effect references to loaded ideas/events/technology/equipment/focus trees, bad remove-many/add-one idea tooltip patterns, focus/event idea mutation collisions, faction-scope footguns, civil-war-without-runtime-tree warnings, resistance-on-owner-core warnings, no-op revolt state transfer warnings |
+| **Cross-cut** | Every focus has localization, optional strict localization, effect references, installed-game effect/trigger/modifier vocabulary, tooltip and scope footguns, and release-stage content liveness |
 
 ### ValidationError Fields
 
@@ -722,6 +749,12 @@ errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_sc
 ```
 
 Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `faction_scope_footgun`, `civil_war_scope_footgun`, `civil_war_focus_tree_missing`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_focus_tree_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `bad_idea_tooltip_pattern`, `idea_mutation_collision`, `idea_not_addable`, `resistance_on_core_state`, `revolt_state_already_owned`, `event_option_no_effect`, `missing_localization`, `visual_overlap`, and `script_syntax`.
+
+Vocabulary and liveness warning codes are `unknown_effect_token`,
+`unknown_trigger_token`, `unknown_modifier_token`, the corresponding
+`unseen_*_token` codes for documented zero-use tokens, `unreachable_focus`,
+`unfired_event`, `ungranted_idea`, `flag_set_never_read`,
+`flag_read_never_set`, and `unused_localization`.
 
 Structural reference checks use `tag_definition`, `capital_ref`, `character_ref`,
 and `focus_cycle`. Undefined recruited characters are warnings; missing tag

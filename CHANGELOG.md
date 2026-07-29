@@ -6,6 +6,46 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-29
+
+### Added
+
+- Installed-game `GameScriptVocabulary` support for documented effects,
+  triggers, and modifiers, including supported scopes/categories, usage counts
+  by script domain, high-frequency typo suggestions, mod-defined scripted
+  extensions, and explicit kind-qualified allowlists.
+- Source-preserving naval and air OOB authoring with `Fleet`, `TaskForce`,
+  `Ship`, `ShipEquipment`, and `AirWing`, including modern/legacy equipment
+  shapes, public `create_oob()`/`update_oob()` integration, and validation of
+  structure, equipment, locations, ownership, and country tags.
+- `ContentLivenessReport` and `Mod.analyze_content_liveness()` for focus
+  reachability, triggered-event incoming references, idea grants, flag
+  read/write asymmetry, and unused localization.
+- `build`, `package`, and `release` validation stages. Build pipelines can
+  defer complete-country checks without maintaining local error filters;
+  release validation adds semantic liveness.
+
+### Changed
+
+- The release gate now runs package/vocabulary validation plus semantic
+  liveness on its immutable baseline. Rollback-only source-preservation probes
+  intentionally use package validation so temporary probe content cannot
+  create false liveness failures.
+- Agent guidance now requires modeled naval/air starting forces, build-stage
+  validation between pipeline steps, and release-stage vocabulary/liveness
+  review before declaring a mod ready.
+- OOB documentation and examples now cover land, naval, and air authoring
+  while retaining production blocks, comments, ordering, and unknown fields.
+
+### Known audit status
+
+- The private Empire corpus has zero HOI4 1.19.2 compatibility findings, all
+  ten populated source-preservation probes pass, its 37 divisions, one fleet,
+  and five air wings validate through the modeled OOB, and the corpus remains
+  byte-identical after audit. The pre-existing `DSR` content gap remains
+  intentionally visible: the tag has definitions but neither scenario-start
+  territory nor any runtime activation path.
+
 ## [0.5.1] - 2026-07-29
 
 ### Fixed

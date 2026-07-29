@@ -10,8 +10,9 @@ Copyable workflows for common modding tasks. Read only the recipe relevant to th
 from pathlib import Path
 
 from hoi4 import (
-    AdvisorRole, ArmyCommanderRole, Battalion, Character,
-    CharacterPortrait, DivisionTemplate, DivisionUnit, Focus, Mod,
+    AdvisorRole, AirWing, ArmyCommanderRole, Battalion, Character,
+    CharacterPortrait, DivisionTemplate, DivisionUnit, Fleet, Focus, Mod,
+    Ship, ShipEquipment, TaskForce,
     import_flag_to_mod, import_portrait_to_mod, write_portrait_gfx,
 )
 
@@ -82,6 +83,29 @@ mod.create_oob(
         name="1st Zar Division",
         start_equipment_factor=1.0,
     )],
+    fleets=[Fleet(
+        name="Zar Navy",
+        naval_base=1234,
+        task_forces=[TaskForce(
+            name="Zar Squadron",
+            location=1234,
+            ships=[Ship(
+                name="ZNS Independence",
+                definition="destroyer",
+                equipment=[ShipEquipment(
+                    "ship_hull_light_1",
+                    owner="ZAR",
+                    version_name="Independence Class",
+                )],
+            )],
+        )],
+    )],
+    air_wings=[AirWing(
+        location=100,  # state ID containing the starting air base
+        equipment_type="small_plane_airframe_0",
+        amount=24,
+        owner="ZAR",
+    )],
     assign=True,
 )
 
@@ -94,7 +118,11 @@ mod.add_focus("zar_focus", Focus(id="ZAR_conquer", x=5, y=1, cost=10,
 
 package = mod.validate_country_package("ZAR")
 assert package.complete, package.to_dict()
-errors = mod.validate(validate_icons=True, strict_localization=True)
+errors = mod.validate(
+    stage="release",
+    validate_icons=True,
+    strict_localization=True,
+)
 assert not any(e.severity == "error" for e in errors), errors
 mod.save()
 ```

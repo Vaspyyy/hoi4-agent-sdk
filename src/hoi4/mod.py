@@ -46,6 +46,7 @@ from .content_validation import (
     validate_dynamic_modifier,
     validate_ideology,
 )
+from .content_graph import ContentLivenessReport, analyze_content_liveness
 from .countries import (
     _country_localisation_suffixes,
     country_color_tags,
@@ -99,8 +100,10 @@ from .localisation import (
 from .map_topology import TerritoryComponent, find_country_territory_components
 from .on_actions import load_on_actions_file, serialize_on_actions_file
 from .oob import (
+    AirWing,
     DivisionTemplate,
     DivisionUnit,
+    Fleet,
     OrderOfBattle,
     load_oob_file,
     serialize_oob,
@@ -130,6 +133,12 @@ from .script import (
     pdx_string,
     scope_block,
     validate_script_syntax,
+)
+from .script_vocabulary import (
+    GameScriptVocabulary,
+    ScriptSource,
+    load_game_script_vocabulary,
+    validate_script_sources,
 )
 from .tags import (
     _parse_tag_file_mapping,
@@ -163,6 +172,7 @@ from .validation import (
     validate_state,
     validate_tag_definition_targets,
 )
+from .validation_stages import ValidationStage, require_validation_stage
 
 COMMON_FOCUS_ICONS: tuple[str, ...] = (
     "GFX_goal_generic_construct_civ_factory",
@@ -262,6 +272,66 @@ def _append_unique(existing: list, values: list) -> list:
         if value not in out:
             out.append(value)
     return out
+
+
+def _inherit_fleet_sources(
+    replacements: list[Fleet],
+    existing: list[Fleet],
+) -> None:
+    """Carry source coordinates into explicit naval replacements."""
+
+    for fleet_index, fleet in enumerate(replacements):
+        if fleet_index >= len(existing):
+            continue
+        source_fleet = existing[fleet_index]
+        fleet.source_index = source_fleet.source_index
+        fleet.raw_block = source_fleet.raw_block
+        fleet.touched_fields.update({"name", "naval_base", "task_forces"})
+        for force_index, task_force in enumerate(fleet.task_forces):
+            if force_index >= len(source_fleet.task_forces):
+                continue
+            source_force = source_fleet.task_forces[force_index]
+            task_force.source_index = source_force.source_index
+            task_force.raw_block = source_force.raw_block
+            task_force.touched_fields.update({"name", "location", "ships"})
+            for ship_index, ship in enumerate(task_force.ships):
+                if ship_index >= len(source_force.ships):
+                    continue
+                source_ship = source_force.ships[ship_index]
+                ship.source_index = source_ship.source_index
+                ship.raw_block = source_ship.raw_block
+                ship.touched_fields.update(
+                    {"name", "definition", "equipment", "pride_of_the_fleet"}
+                )
+                for equipment_index, equipment in enumerate(ship.equipment):
+                    if equipment_index >= len(source_ship.equipment):
+                        continue
+                    source_equipment = source_ship.equipment[equipment_index]
+                    equipment.source_index = source_equipment.source_index
+                    equipment.raw_block = source_equipment.raw_block
+                    equipment.touched_fields.update(
+                        {"amount", "owner", "creator", "version_name"}
+                    )
+
+
+def _default_oob_equipment_owners(oob: OrderOfBattle) -> None:
+    """Fill the engine-required equipment owner from the OOB country."""
+
+    if not oob.country_tag:
+        return
+    for fleet in oob.fleets:
+        for task_force in fleet.task_forces:
+            for ship in task_force.ships:
+                for equipment in ship.equipment:
+                    if not equipment.owner:
+                        equipment.owner = oob.country_tag
+                        if equipment.raw_block:
+                            equipment.touched_fields.add("owner")
+    for wing in oob.air_wings:
+        if not wing.owner:
+            wing.owner = oob.country_tag
+            if wing.raw_block:
+                wing.touched_fields.add("owner")
 
 
 def _join_script_parts(parts: Sequence[str | None]) -> str:
@@ -594,6 +664,7 @@ class Mod:
             load_vanilla_tags(self.hoi4_install) if self.hoi4_install else set()
         )
         self._scan_cache: dict[str, set[str]] = {}
+        self._script_vocabulary_cache: GameScriptVocabulary | None = None
         self._sprite_texture_cache: dict[str, str] | None = None
         self._state_index_cache: dict[bool, list[dict]] = {}
         self._vanilla_state_loc_entries: dict[str, str] | None = None
@@ -1938,6 +2009,8 @@ class Mod:
         *,
         templates: Sequence[DivisionTemplate] = (),
         divisions: Sequence[DivisionUnit] = (),
+        fleets: Sequence[Fleet] = (),
+        air_wings: Sequence[AirWing] = (),
         assign: bool = True,
         overwrite: bool = False,
         path: str | Path | None = None,
@@ -1959,10 +2032,17 @@ class Mod:
             country_tag=country_tag,
             templates=copy.deepcopy(list(templates)),
             divisions=copy.deepcopy(list(divisions)),
+            fleets=copy.deepcopy(list(fleets)),
+            air_wings=copy.deepcopy(list(air_wings)),
             path=target,
             raw_text=existing.raw_text if existing is not None else "",
-            touched_fields={"templates", "divisions"} if existing is not None else set(),
+            touched_fields=(
+                {"templates", "divisions", "fleets", "air_wings"}
+                if existing is not None
+                else set()
+            ),
         )
+        _default_oob_equipment_owners(oob)
         if existing is not None:
             for index, template in enumerate(oob.templates):
                 if index < len(existing.templates):
@@ -1991,6 +2071,16 @@ class Mod:
                             "start_equipment_factor",
                         }
                     )
+            _inherit_fleet_sources(oob.fleets, existing.fleets)
+            for index, wing in enumerate(oob.air_wings):
+                if index < len(existing.air_wings):
+                    source = existing.air_wings[index]
+                    wing.source_index = source.source_index
+                    wing.source_location_index = source.source_location_index
+                    wing.raw_block = source.raw_block
+                    wing.touched_fields.update(
+                        {"amount", "owner", "creator", "version_name"}
+                    )
         self._oobs[name] = oob
         self._dirty_oobs.add(name)
         self._dirty_oob_files.add(target)
@@ -2005,6 +2095,8 @@ class Mod:
         *,
         templates: Sequence[DivisionTemplate] | None = None,
         divisions: Sequence[DivisionUnit] | None = None,
+        fleets: Sequence[Fleet] | None = None,
+        air_wings: Sequence[AirWing] | None = None,
         country_tag: str | None = None,
         assign: bool = False,
     ) -> bool:
@@ -2048,8 +2140,27 @@ class Mod:
                     )
             oob.divisions = division_replacements
             oob.touched_fields.add("divisions")
+        if fleets is not None:
+            fleet_replacements = copy.deepcopy(list(fleets))
+            _inherit_fleet_sources(fleet_replacements, oob.fleets)
+            oob.fleets = fleet_replacements
+            oob.touched_fields.add("fleets")
+        if air_wings is not None:
+            wing_replacements = copy.deepcopy(list(air_wings))
+            for index, wing in enumerate(wing_replacements):
+                if index < len(oob.air_wings):
+                    source = oob.air_wings[index]
+                    wing.source_index = source.source_index
+                    wing.source_location_index = source.source_location_index
+                    wing.raw_block = source.raw_block
+                    wing.touched_fields.update(
+                        {"amount", "owner", "creator", "version_name"}
+                    )
+            oob.air_wings = wing_replacements
+            oob.touched_fields.add("air_wings")
         if country_tag is not None:
             oob.country_tag = require_country_tag(country_tag)
+        _default_oob_equipment_owners(oob)
         if assign:
             if not oob.country_tag:
                 raise ValueError("Assigning an OOB requires country_tag")
@@ -4712,6 +4823,8 @@ class Mod:
         self,
         script: str,
         suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
+        *,
+        script_token_allowlist: Sequence[str] = (),
     ) -> list[ValidationError]:
         known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
         known_tags.update(self._countries.keys())
@@ -4753,6 +4866,15 @@ class Mod:
             )
         )
         errors.extend(self._validate_state_effect_assumptions(entries=entries))
+        if self.hoi4_install is not None:
+            errors.extend(
+                validate_script_sources(
+                    [ScriptSource(script, "effect", "effect", "effect_probe")],
+                    self.game_script_vocabulary(),
+                    mod_root=self.mod_root,
+                    allowlist=script_token_allowlist,
+                )
+            )
         return _filter_validation_errors(
             errors,
             suppress_warnings=suppress_warnings,
@@ -5684,11 +5806,20 @@ class Mod:
         suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
         validate_icons: bool = False,
         strict_localization: bool = False,
+        stage: ValidationStage = "package",
+        script_token_allowlist: Sequence[str] = (),
+        liveness_flag_allowlist: Sequence[str] = (),
+        liveness_localization_allowlist: Sequence[str] = (),
         progress: ProgressCallback | None = None,
         cancelled: CancelCallback | None = None,
     ) -> list[ValidationError]:
+        stage = require_validation_stage(stage)
         errors: list[ValidationError] = []
-        phase_total = 12
+        phase_total = 12 + (1 if self.hoi4_install is not None else 0)
+        if stage == "build":
+            phase_total -= 1
+        elif stage == "release":
+            phase_total += 1
         phase_current = 0
 
         def begin_phase(phase: str, message: str) -> None:
@@ -5892,31 +6023,32 @@ class Mod:
                 continue
             errors.extend(validate_state(state, known_tags))
 
-        begin_phase("country_packages", "Validating complete SDK-created countries")
-        existing_findings = {
-            (
-                finding.code,
-                finding.message,
-                finding.file_path,
-                finding.country_tag,
-                finding.state_id,
-            )
-            for finding in errors
-        }
-        for tag in sorted(self._created_country_tags & set(self._countries)):
-            package = self.validate_country_package(tag)
-            for finding in package.findings:
-                identity = (
+        if stage != "build":
+            begin_phase("country_packages", "Validating complete SDK-created countries")
+            existing_findings = {
+                (
                     finding.code,
                     finding.message,
                     finding.file_path,
                     finding.country_tag,
                     finding.state_id,
                 )
-                if identity in existing_findings:
-                    continue
-                errors.append(finding)
-                existing_findings.add(identity)
+                for finding in errors
+            }
+            for tag in sorted(self._created_country_tags & set(self._countries)):
+                package = self.validate_country_package(tag)
+                for finding in package.findings:
+                    identity = (
+                        finding.code,
+                        finding.message,
+                        finding.file_path,
+                        finding.country_tag,
+                        finding.state_id,
+                    )
+                    if identity in existing_findings:
+                        continue
+                    errors.append(finding)
+                    existing_findings.add(identity)
 
         begin_phase("events", "Validating events and on-actions")
         for event_id, event in self._events.items():
@@ -6089,8 +6221,29 @@ class Mod:
         )
         errors.extend(self._validate_state_effect_assumptions())
         errors.extend(self._validate_idea_mutation_collisions())
+        if self.hoi4_install is not None:
+            begin_phase(
+                "script_vocabulary",
+                "Checking effect, trigger, and modifier names",
+            )
+            errors.extend(
+                validate_script_sources(
+                    self._semantic_script_sources(),
+                    self.game_script_vocabulary(),
+                    mod_root=self.mod_root,
+                    allowlist=script_token_allowlist,
+                )
+            )
         if strict_localization:
             errors.extend(self._validate_localization_references())
+        if stage == "release":
+            begin_phase("content_liveness", "Analyzing semantic content liveness")
+            errors.extend(
+                self.analyze_content_liveness(
+                    flag_allowlist=liveness_flag_allowlist,
+                    localization_allowlist=liveness_localization_allowlist,
+                ).findings
+            )
 
         check_cancelled(cancelled, operation="validation")
         report_progress(
@@ -6102,6 +6255,20 @@ class Mod:
             message=f"Validation complete with {len(errors)} issue(s)",
         )
         return _filter_validation_errors(errors, suppress_warnings=suppress_warnings)
+
+    def analyze_content_liveness(
+        self,
+        *,
+        flag_allowlist: Sequence[str] = (),
+        localization_allowlist: Sequence[str] = (),
+    ) -> ContentLivenessReport:
+        """Return focus/event/idea/flag/localization liveness diagnostics."""
+
+        return analyze_content_liveness(
+            self,
+            flag_allowlist=flag_allowlist,
+            localization_allowlist=localization_allowlist,
+        )
 
     def validate_game_log(
         self,
@@ -6899,6 +7066,199 @@ class Mod:
             else str(path)
         )
 
+    def game_script_vocabulary(self) -> GameScriptVocabulary:
+        """Return documented script tokens and installed-game usage counts."""
+
+        if self.hoi4_install is None:
+            raise ValueError(
+                "game_script_vocabulary() requires a configured HOI4 installation"
+            )
+        if self._script_vocabulary_cache is None:
+            self._script_vocabulary_cache = load_game_script_vocabulary(
+                self.hoi4_install
+            )
+        return self._script_vocabulary_cache
+
+    def validate_script_vocabulary(
+        self,
+        *,
+        allowlist: Sequence[str] = (),
+    ) -> list[ValidationError]:
+        """Warn about undocumented effect, trigger, and modifier tokens."""
+
+        return validate_script_sources(
+            self._semantic_script_sources(),
+            self.game_script_vocabulary(),
+            mod_root=self.mod_root,
+            allowlist=allowlist,
+        )
+
+    def _semantic_script_sources(self) -> list[ScriptSource]:
+        sources: list[ScriptSource] = []
+
+        def add(
+            text: str,
+            kind: Literal["effect", "trigger", "modifier"],
+            owner_kind: str,
+            owner_id: str,
+            path: Path | None,
+        ) -> None:
+            if text.strip():
+                sources.append(
+                    ScriptSource(
+                        text=text,
+                        kind=kind,
+                        owner_kind=owner_kind,
+                        owner_id=owner_id,
+                        file_path=str(path) if path is not None else None,
+                    )
+                )
+
+        for tree in self._focus_trees.values():
+            for focus in tree.focuses:
+                for text in (
+                    focus.completion_reward,
+                    focus.select_effect,
+                    focus.complete_tooltip,
+                ):
+                    add(text, "effect", "focus", focus.id, tree.path)
+                for text in (focus.available, focus.bypass, focus.allow_branch):
+                    add(text, "trigger", "focus", focus.id, tree.path)
+        for event in self._events.values():
+            add(event.trigger, "trigger", "event", event.id, event.path)
+            add(event.immediate, "effect", "event", event.id, event.path)
+            for option in event.options:
+                add(option.trigger, "trigger", "event", event.id, event.path)
+                add(option.effect, "effect", "event", event.id, event.path)
+        for occurrences in self._on_action_occurrences.values():
+            for action in occurrences:
+                add(action.effect, "effect", "on_action", action.id, action.path)
+                if action.events or action.random_events:
+                    add(
+                        "\n".join(
+                            f"country_event = {{ id = {event_id} }}"
+                            for event_id in (*action.events, *action.random_events)
+                        ),
+                        "effect",
+                        "on_action",
+                        action.id,
+                        action.path,
+                    )
+        for decision in self._decisions.values():
+            add(decision.available, "trigger", "decision", decision.id, decision.path)
+            add(decision.visible, "trigger", "decision", decision.id, decision.path)
+            add(
+                decision.complete_effect,
+                "effect",
+                "decision",
+                decision.id,
+                decision.path,
+            )
+            add(
+                decision.remove_effect,
+                "effect",
+                "decision",
+                decision.id,
+                decision.path,
+            )
+        for idea in self._ideas.values():
+            add(idea.allowed, "trigger", "idea", idea.id, idea.path)
+            if idea.modifier:
+                add(
+                    "\n".join(f"{key} = 0" for key in idea.modifier),
+                    "modifier",
+                    "idea",
+                    idea.id,
+                    idea.path,
+                )
+        for modifier in self._dynamic_modifiers.values():
+            add(
+                modifier.enable,
+                "trigger",
+                "dynamic_modifier",
+                modifier.id,
+                modifier.path,
+            )
+            add(
+                modifier.remove_trigger,
+                "trigger",
+                "dynamic_modifier",
+                modifier.id,
+                modifier.path,
+            )
+            if modifier.modifier:
+                add(
+                    "\n".join(f"{key} = 0" for key in modifier.modifier),
+                    "modifier",
+                    "dynamic_modifier",
+                    modifier.id,
+                    modifier.path,
+                )
+        for bookmark in self._bookmarks:
+            add(bookmark.effect, "effect", "bookmark", bookmark.name, bookmark.path)
+            for country in bookmark.countries:
+                add(
+                    country.available,
+                    "trigger",
+                    "bookmark",
+                    bookmark.name,
+                    bookmark.path,
+                )
+        for character in self._characters.values():
+            scopes: list[tuple[list[CharacterRole], str | None]] = [
+                (character.roles, None)
+            ]
+            scopes.extend((instance.roles, instance.allowed) for instance in character.instances)
+            for roles, allowed in scopes:
+                add(
+                    allowed or "",
+                    "trigger",
+                    "character",
+                    character.id,
+                    character.path,
+                )
+                for role in roles:
+                    for attribute in ("allowed", "visible", "available"):
+                        add(
+                            str(getattr(role, attribute, "")),
+                            "trigger",
+                            "character",
+                            character.id,
+                            character.path,
+                        )
+        for kind, relative in (
+            ("effect", Path("common/scripted_effects")),
+            ("trigger", Path("common/scripted_triggers")),
+        ):
+            directory = self.mod_root / relative
+            if not directory.is_dir():
+                continue
+            for path in sorted(directory.glob("*.txt")):
+                try:
+                    text = path.read_text(
+                        encoding="utf-8-sig",
+                        errors="ignore",
+                    )
+                    for span in top_level_assignments(text):
+                        if (
+                            span.is_block
+                            and span.body_start is not None
+                            and span.body_end is not None
+                        ):
+                            add(
+                                text[span.body_start : span.body_end],
+                                cast(
+                                    Literal["effect", "trigger", "modifier"],
+                                    kind,
+                                ),
+                                f"scripted_{kind}",
+                                span.key,
+                                path,
+                            )
+                except (OSError, ValueError):
+                    continue
+        return sources
+
     def _script_entries(self) -> list[tuple[str, str, str | None, str | None]]:
         entries: list[tuple[str, str, str | None, str | None]] = []
         for tree in self._focus_trees.values():
@@ -7531,6 +7891,9 @@ class Mod:
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
         known_units = self._known_sub_unit_types()
+        known_equipment = self._known_equipment_ids()
+        known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
+        known_tags.update(self._countries)
         for template in oob.templates:
             for battalion in (*template.battalions, *template.support):
                 if known_units and battalion.unit_type not in known_units:
@@ -7611,6 +7974,154 @@ class Mod:
                         file_path=str(oob.path) if oob.path is not None else None,
                     )
                 )
+        def validate_owned_location(
+            location: int,
+            *,
+            label: str,
+            code_unknown: str,
+            code_owner: str,
+            allow_state_id: bool = False,
+        ) -> None:
+            location_state: State | None = None
+            if allow_state_id:
+                try:
+                    location_state = self.get_state(location)
+                except (KeyError, OSError, ValueError):
+                    location_state = None
+            if location_state is None:
+                location_state = province_to_state.get(location)
+            if location_state is None:
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"OOB '{oob.name}' {label} uses unknown location {location}"
+                        ),
+                        severity="error",
+                        code=code_unknown,
+                        country_tag=country_tag,
+                        file_path=str(oob.path) if oob.path is not None else None,
+                    )
+                )
+            elif location_state.owner != country_tag:
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"OOB '{oob.name}' {label} is at {location}, owned by "
+                            f"{location_state.owner} instead of {country_tag}"
+                        ),
+                        severity="error",
+                        code=code_owner,
+                        country_tag=country_tag,
+                        state_id=location_state.id,
+                        file_path=str(oob.path) if oob.path is not None else None,
+                    )
+                )
+
+        for fleet in oob.fleets:
+            validate_owned_location(
+                fleet.naval_base,
+                label=f"fleet '{fleet.name}' naval base",
+                code_unknown="unknown_oob_naval_location",
+                code_owner="oob_naval_location_not_owned",
+            )
+            for task_force in fleet.task_forces:
+                validate_owned_location(
+                    task_force.location,
+                    label=f"task force '{task_force.name}' location",
+                    code_unknown="unknown_oob_naval_location",
+                    code_owner="oob_naval_location_not_owned",
+                )
+                for ship in task_force.ships:
+                    if known_units and ship.definition not in known_units:
+                        errors.append(
+                            ValidationError(
+                                message=(
+                                    f"OOB '{oob.name}' ship '{ship.name}' uses "
+                                    f"unknown definition '{ship.definition}'"
+                                ),
+                                severity="error",
+                                code="unknown_oob_ship_definition",
+                                country_tag=country_tag,
+                                file_path=(
+                                    str(oob.path) if oob.path is not None else None
+                                ),
+                            )
+                        )
+                    for equipment in ship.equipment:
+                        if (
+                            known_equipment
+                            and equipment.equipment_type not in known_equipment
+                        ):
+                            errors.append(
+                                ValidationError(
+                                    message=(
+                                        f"OOB '{oob.name}' ship '{ship.name}' uses "
+                                        "unknown equipment "
+                                        f"'{equipment.equipment_type}'"
+                                    ),
+                                    severity="error",
+                                    code="unknown_oob_equipment",
+                                    country_tag=country_tag,
+                                    file_path=(
+                                        str(oob.path)
+                                        if oob.path is not None
+                                        else None
+                                    ),
+                                )
+                            )
+                        for owner in (equipment.owner, equipment.creator):
+                            if owner and owner not in known_tags:
+                                errors.append(
+                                    ValidationError(
+                                        message=(
+                                            f"OOB '{oob.name}' ship '{ship.name}' "
+                                            f"uses unknown equipment owner '{owner}'"
+                                        ),
+                                        severity="error",
+                                        code="unknown_oob_equipment_owner",
+                                        country_tag=country_tag,
+                                        file_path=(
+                                            str(oob.path)
+                                            if oob.path is not None
+                                            else None
+                                        ),
+                                    )
+                                )
+        for wing in oob.air_wings:
+            validate_owned_location(
+                wing.location,
+                label=f"air wing '{wing.equipment_type}' location",
+                code_unknown="unknown_oob_air_location",
+                code_owner="oob_air_location_not_owned",
+                allow_state_id=True,
+            )
+            if known_equipment and wing.equipment_type not in known_equipment:
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"OOB '{oob.name}' air wing uses unknown equipment "
+                            f"'{wing.equipment_type}'"
+                        ),
+                        severity="error",
+                        code="unknown_oob_equipment",
+                        country_tag=country_tag,
+                        file_path=str(oob.path) if oob.path is not None else None,
+                    )
+                )
+            for owner in (wing.owner, wing.creator):
+                if owner and owner not in known_tags:
+                    errors.append(
+                        ValidationError(
+                            message=(
+                                f"OOB '{oob.name}' air wing uses unknown equipment "
+                                f"owner '{owner}'"
+                            ),
+                            severity="error",
+                            code="unknown_oob_equipment_owner",
+                            country_tag=country_tag,
+                            file_path=str(oob.path) if oob.path is not None else None,
+                        )
+                    )
         return errors
 
     def _data_roots(self) -> list[Path]:

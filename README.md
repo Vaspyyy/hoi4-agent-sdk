@@ -55,8 +55,8 @@ with mod.transaction():
 
 ## Supported content
 
-- complete-country authoring with source-preserving character rosters, land
-  orders of battle, politics, tags, localisation, package reports, and
+- complete-country authoring with source-preserving character rosters, land,
+  naval, and air orders of battle, politics, tags, localisation, package reports, and
   enforced release-gate completeness
 - states, ownership, cores, resources, buildings, and victory points
 - focus trees, events, on-actions, decisions, ideas, and dynamic modifiers
@@ -164,7 +164,8 @@ For existing mods, use the following loop:
    operation.
 2. Make changes inside `mod.transaction()`.
 3. Inspect `mod.preview_summary()` and `mod.preview()`.
-4. Run `mod.validate()` and resolve errors.
+4. Run `mod.validate(stage="build")` between pipeline steps, then
+   `mod.validate(stage="release")` and resolve errors before release.
 5. Save only after the preview is acceptably small and semantically correct.
 
 `Mod` detects source files changed by another writer after it was loaded and
@@ -179,7 +180,15 @@ Unsafe duplicate IDs in single-definition domains are reported instead of
 silently allowing the last file to win. Intentional repeated on-action hooks and
 cross-file decision-category extensions remain compositional. Existing source
 is kept alongside structured models so new game keys do not disappear when
-older SDK code edits a known field.
+older SDK code edits a known field, including modeled naval or air OOB content.
+
+With a configured HOI4 installation, validation checks effect, trigger, and
+modifier names against the shipped documentation. Unknown tokens are warnings,
+include installed-game usage counts and a close suggestion, and can be
+allowlisted explicitly for intentional extensions. Release-stage validation
+also reports unreachable focuses, unfired triggered events, ungranted ideas,
+asymmetric flag use, and unused localization through
+`mod.analyze_content_liveness()`.
 
 ## Development
 

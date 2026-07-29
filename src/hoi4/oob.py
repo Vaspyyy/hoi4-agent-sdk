@@ -1,9 +1,10 @@
-"""Land order-of-battle models with source-preserving HOI4 serialization."""
+"""Land, naval, and air OOB models with source-preserving serialization."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable, TypeVar
 
 from .patching import (
     AssignmentSpan,
@@ -16,6 +17,8 @@ from .patching import (
 )
 from .script import pdx_string, pdx_value
 from .types import ValidationError
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -51,11 +54,70 @@ class DivisionUnit:
 
 
 @dataclass
+class ShipEquipment:
+    equipment_type: str
+    amount: int = 1
+    owner: str = ""
+    creator: str = ""
+    version_name: str = ""
+    raw_block: str = ""
+    touched_fields: set[str] = field(default_factory=set, repr=False)
+    source_index: int = -1
+
+
+@dataclass
+class Ship:
+    name: str
+    definition: str
+    equipment: list[ShipEquipment] = field(default_factory=list)
+    pride_of_the_fleet: bool = False
+    raw_block: str = ""
+    touched_fields: set[str] = field(default_factory=set, repr=False)
+    source_index: int = -1
+
+
+@dataclass
+class TaskForce:
+    name: str
+    location: int
+    ships: list[Ship] = field(default_factory=list)
+    raw_block: str = ""
+    touched_fields: set[str] = field(default_factory=set, repr=False)
+    source_index: int = -1
+
+
+@dataclass
+class Fleet:
+    name: str
+    naval_base: int
+    task_forces: list[TaskForce] = field(default_factory=list)
+    raw_block: str = ""
+    touched_fields: set[str] = field(default_factory=set, repr=False)
+    source_index: int = -1
+
+
+@dataclass
+class AirWing:
+    location: int
+    equipment_type: str
+    amount: int
+    owner: str = ""
+    creator: str = ""
+    version_name: str = ""
+    raw_block: str = ""
+    touched_fields: set[str] = field(default_factory=set, repr=False)
+    source_index: int = -1
+    source_location_index: int = -1
+
+
+@dataclass
 class OrderOfBattle:
     name: str
     country_tag: str = ""
     templates: list[DivisionTemplate] = field(default_factory=list)
     divisions: list[DivisionUnit] = field(default_factory=list)
+    fleets: list[Fleet] = field(default_factory=list)
+    air_wings: list[AirWing] = field(default_factory=list)
     path: Path | None = None
     raw_text: str = ""
     touched_fields: set[str] = field(default_factory=set, repr=False)
@@ -83,27 +145,31 @@ def load_oob_file(
         template_index += 1
 
     divisions: list[DivisionUnit] = []
+    fleets: list[Fleet] = []
     units = _block_span(text, "units")
     if units is not None and units.body_start is not None and units.body_end is not None:
         units_body = text[units.body_start : units.body_end]
         division_index = 0
+        fleet_index = 0
         for span in top_level_assignments(units_body):
-            if (
-                span.key != "division"
-                or not span.is_block
-                or span.body_start is None
-                or span.body_end is None
-            ):
+            if not span.is_block or span.body_start is None or span.body_end is None:
                 continue
             body = units_body[span.body_start : span.body_end]
-            divisions.append(_parse_division(body, division_index))
-            division_index += 1
+            if span.key == "division":
+                divisions.append(_parse_division(body, division_index))
+                division_index += 1
+            elif span.key == "fleet":
+                fleets.append(_parse_fleet(body, fleet_index))
+                fleet_index += 1
+    air_wings = _parse_air_wings(text)
     inferred_tag = country_tag or _infer_country_tag(path.stem)
     return OrderOfBattle(
         name=name or path.stem,
         country_tag=inferred_tag,
         templates=templates,
         divisions=divisions,
+        fleets=fleets,
+        air_wings=air_wings,
         path=path,
         raw_text=text,
     )
@@ -114,11 +180,18 @@ def serialize_oob(oob: OrderOfBattle) -> str:
     if not text:
         parts = [serialize_division_template(template) for template in oob.templates]
         if oob.divisions:
-            units_body = "\n\n".join(
+            unit_parts = [
                 serialize_division_unit(division, indent=1)
                 for division in oob.divisions
-            )
+            ]
+        else:
+            unit_parts = []
+        unit_parts.extend(serialize_fleet(fleet, indent=1) for fleet in oob.fleets)
+        if unit_parts:
+            units_body = "\n\n".join(unit_parts)
             parts.append(f"units = {{\n{units_body}\n}}")
+        if oob.air_wings:
+            parts.append(_serialize_air_wings(oob.air_wings))
         return "\n\n".join(parts) + ("\n" if parts else "")
     if not oob.touched_fields:
         return text
@@ -126,7 +199,16 @@ def serialize_oob(oob: OrderOfBattle) -> str:
         text = _patch_templates(text, oob.templates)
     if "divisions" in oob.touched_fields:
         text = _patch_divisions(text, oob.divisions)
-    unknown = oob.touched_fields - {"templates", "divisions"}
+    if "fleets" in oob.touched_fields:
+        text = _patch_fleets(text, oob.fleets)
+    if "air_wings" in oob.touched_fields:
+        text = _patch_air_wings(text, oob.air_wings)
+    unknown = oob.touched_fields - {
+        "templates",
+        "divisions",
+        "fleets",
+        "air_wings",
+    }
     if unknown:
         raise ValueError(f"Unknown OOB fields: {sorted(unknown)}")
     return text
@@ -152,6 +234,46 @@ def serialize_division_unit(
     if not division.raw_block:
         body = _patch_division_body("", division, all_fields=True)
     return _wrap_block("division", body, indent)
+
+
+def serialize_ship_equipment(
+    equipment: ShipEquipment,
+    *,
+    indent: int = 0,
+) -> str:
+    body = _patch_ship_equipment_body(
+        equipment.raw_block,
+        equipment,
+        all_fields=not equipment.raw_block,
+    )
+    return _wrap_block(equipment.equipment_type, body, indent)
+
+
+def serialize_ship(ship: Ship, *, indent: int = 0) -> str:
+    body = _patch_ship_body(
+        ship.raw_block,
+        ship,
+        all_fields=not ship.raw_block,
+    )
+    return _wrap_block("ship", body, indent)
+
+
+def serialize_task_force(task_force: TaskForce, *, indent: int = 0) -> str:
+    body = _patch_task_force_body(
+        task_force.raw_block,
+        task_force,
+        all_fields=not task_force.raw_block,
+    )
+    return _wrap_block("task_force", body, indent)
+
+
+def serialize_fleet(fleet: Fleet, *, indent: int = 0) -> str:
+    body = _patch_fleet_body(
+        fleet.raw_block,
+        fleet,
+        all_fields=not fleet.raw_block,
+    )
+    return _wrap_block("fleet", body, indent)
 
 
 def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
@@ -245,6 +367,131 @@ def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
                         "invalid_oob_factor",
                     )
                 )
+    fleet_names: set[str] = set()
+    ship_names: set[str] = set()
+    for fleet in oob.fleets:
+        task_force_names: set[str] = set()
+        if not fleet.name:
+            errors.append(_issue(oob, "Fleet has no name", "oob_fleet_name"))
+        elif fleet.name in fleet_names:
+            errors.append(
+                _issue(
+                    oob,
+                    f"Duplicate fleet name '{fleet.name}'",
+                    "duplicate_oob_fleet",
+                )
+            )
+        fleet_names.add(fleet.name)
+        if fleet.naval_base <= 0:
+            errors.append(
+                _issue(
+                    oob,
+                    f"Fleet '{fleet.name or '<unnamed>'}' has invalid naval base",
+                    "invalid_oob_naval_base",
+                )
+            )
+        for task_force in fleet.task_forces:
+            if not task_force.name:
+                errors.append(
+                    _issue(
+                        oob,
+                        f"Fleet '{fleet.name}' has an unnamed task force",
+                        "oob_task_force_name",
+                    )
+                )
+            elif task_force.name in task_force_names:
+                errors.append(
+                    _issue(
+                        oob,
+                        (
+                            f"Fleet '{fleet.name}' repeats task force "
+                            f"'{task_force.name}'"
+                        ),
+                        "duplicate_oob_task_force",
+                    )
+                )
+            task_force_names.add(task_force.name)
+            if task_force.location <= 0:
+                errors.append(
+                    _issue(
+                        oob,
+                        f"Task force '{task_force.name}' has invalid location",
+                        "invalid_oob_naval_location",
+                    )
+                )
+            for ship in task_force.ships:
+                if not ship.name:
+                    errors.append(_issue(oob, "Ship has no name", "oob_ship_name"))
+                elif ship.name in ship_names:
+                    errors.append(
+                        _issue(
+                            oob,
+                            f"Duplicate ship name '{ship.name}'",
+                            "duplicate_oob_ship",
+                        )
+                    )
+                ship_names.add(ship.name)
+                if not ship.definition:
+                    errors.append(
+                        _issue(
+                            oob,
+                            f"Ship '{ship.name}' has no definition",
+                            "invalid_oob_ship_definition",
+                        )
+                    )
+                if not ship.equipment:
+                    errors.append(
+                        _issue(
+                            oob,
+                            f"Ship '{ship.name}' has no equipment",
+                            "missing_oob_ship_equipment",
+                        )
+                    )
+                equipment_types: set[str] = set()
+                for equipment in ship.equipment:
+                    if not equipment.equipment_type or equipment.amount <= 0:
+                        errors.append(
+                            _issue(
+                                oob,
+                                f"Ship '{ship.name}' has invalid equipment",
+                                "invalid_oob_ship_equipment",
+                            )
+                        )
+                    if equipment.equipment_type in equipment_types:
+                        errors.append(
+                            _issue(
+                                oob,
+                                (
+                                    f"Ship '{ship.name}' repeats equipment type "
+                                    f"'{equipment.equipment_type}'"
+                                ),
+                                "duplicate_oob_ship_equipment",
+                            )
+                        )
+                    equipment_types.add(equipment.equipment_type)
+    air_keys: set[tuple[int, str, str]] = set()
+    for wing in oob.air_wings:
+        if wing.location <= 0:
+            errors.append(
+                _issue(oob, "Air wing has invalid location", "invalid_oob_air_location")
+            )
+        if not wing.equipment_type or wing.amount <= 0:
+            errors.append(
+                _issue(oob, "Air wing has invalid equipment", "invalid_oob_air_equipment")
+            )
+        identity = (wing.location, wing.equipment_type, wing.owner)
+        if identity in air_keys:
+            errors.append(
+                _issue(
+                    oob,
+                    (
+                        "Duplicate air wing equipment "
+                        f"'{wing.equipment_type}' at province {wing.location}"
+                    ),
+                    "duplicate_oob_air_wing",
+                )
+            )
+        air_keys.add(identity)
     return errors
 
 
@@ -275,6 +522,123 @@ def _parse_division(body: str, source_index: int) -> DivisionUnit:
         raw_block=body,
         source_index=source_index,
     )
+
+
+def _parse_fleet(body: str, source_index: int) -> Fleet:
+    task_forces: list[TaskForce] = []
+    for span in top_level_assignments(body):
+        if (
+            span.key == "task_force"
+            and span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+        ):
+            task_forces.append(
+                _parse_task_force(
+                    body[span.body_start : span.body_end],
+                    len(task_forces),
+                )
+            )
+    return Fleet(
+        name=_scalar_value(body, "name"),
+        naval_base=_optional_int(body, "naval_base") or 0,
+        task_forces=task_forces,
+        raw_block=body,
+        source_index=source_index,
+    )
+
+
+def _parse_task_force(body: str, source_index: int) -> TaskForce:
+    ships: list[Ship] = []
+    for span in top_level_assignments(body):
+        if (
+            span.key == "ship"
+            and span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+        ):
+            ships.append(
+                _parse_ship(body[span.body_start : span.body_end], len(ships))
+            )
+    return TaskForce(
+        name=_scalar_value(body, "name"),
+        location=_optional_int(body, "location") or 0,
+        ships=ships,
+        raw_block=body,
+        source_index=source_index,
+    )
+
+
+def _parse_ship(body: str, source_index: int) -> Ship:
+    equipment: list[ShipEquipment] = []
+    equipment_body = _block_value(body, "equipment")
+    for span in top_level_assignments(equipment_body):
+        if not span.is_block or span.body_start is None or span.body_end is None:
+            continue
+        child = equipment_body[span.body_start : span.body_end]
+        equipment.append(
+            ShipEquipment(
+                equipment_type=span.key,
+                amount=_optional_int(child, "amount") or 0,
+                owner=_scalar_value(child, "owner"),
+                creator=_scalar_value(child, "creator"),
+                version_name=_scalar_value(child, "version_name"),
+                raw_block=child,
+                source_index=len(equipment),
+            )
+        )
+    return Ship(
+        name=_scalar_value(body, "name"),
+        definition=_scalar_value(body, "definition"),
+        equipment=equipment,
+        pride_of_the_fleet=_optional_bool(body, "pride_of_the_fleet") or False,
+        raw_block=body,
+        source_index=source_index,
+    )
+
+
+def _parse_air_wings(text: str) -> list[AirWing]:
+    outer = _block_span(text, "air_wings")
+    if outer is None or outer.body_start is None or outer.body_end is None:
+        return []
+    body = text[outer.body_start : outer.body_end]
+    result: list[AirWing] = []
+    location_index = 0
+    for location_span in top_level_assignments(body):
+        if (
+            not location_span.key.isdigit()
+            or not location_span.is_block
+            or location_span.body_start is None
+            or location_span.body_end is None
+        ):
+            continue
+        location = int(location_span.key)
+        location_body = body[location_span.body_start : location_span.body_end]
+        for equipment_span in top_level_assignments(location_body):
+            if (
+                not equipment_span.is_block
+                or equipment_span.body_start is None
+                or equipment_span.body_end is None
+            ):
+                continue
+            equipment_body = location_body[
+                equipment_span.body_start : equipment_span.body_end
+            ]
+            result.append(
+                AirWing(
+                    location=location,
+                    equipment_type=equipment_span.key,
+                    amount=_optional_int(equipment_body, "amount") or 0,
+                    owner=_scalar_value(equipment_body, "owner"),
+                    creator=_scalar_value(equipment_body, "creator"),
+                    version_name=_scalar_value(equipment_body, "version_name"),
+                    raw_block=equipment_body,
+                    source_index=len(result),
+                    source_location_index=location_index,
+                )
+            )
+        location_index += 1
+    return result
 
 
 def _parse_battalions(body: str) -> list[Battalion]:
@@ -397,6 +761,164 @@ def _patch_division_body(
     return body
 
 
+def _patch_ship_equipment_body(
+    body: str,
+    equipment: ShipEquipment,
+    *,
+    all_fields: bool = False,
+) -> str:
+    fields = (
+        {"amount", "owner", "creator", "version_name"}
+        if all_fields
+        else equipment.touched_fields
+    )
+    if "amount" in fields:
+        body = set_scalar(body, "amount", str(equipment.amount))
+    for field_name in ("owner", "creator"):
+        if field_name in fields:
+            value = getattr(equipment, field_name)
+            body = set_scalar(body, field_name, pdx_value(value) if value else None)
+    if "version_name" in fields:
+        body = set_scalar(
+            body,
+            "version_name",
+            pdx_string(equipment.version_name) if equipment.version_name else None,
+        )
+    unknown = fields - {"amount", "owner", "creator", "version_name"}
+    if unknown:
+        raise ValueError(f"Unknown ship equipment fields: {sorted(unknown)}")
+    return body
+
+
+def _patch_ship_body(
+    body: str,
+    ship: Ship,
+    *,
+    all_fields: bool = False,
+) -> str:
+    fields = (
+        {"name", "definition", "equipment", "pride_of_the_fleet"}
+        if all_fields
+        else ship.touched_fields
+    )
+    if "name" in fields:
+        body = set_scalar(body, "name", pdx_string(ship.name))
+    if "definition" in fields:
+        body = set_scalar(body, "definition", pdx_value(ship.definition))
+    if "pride_of_the_fleet" in fields:
+        body = set_scalar(
+            body,
+            "pride_of_the_fleet",
+            "yes" if ship.pride_of_the_fleet else None,
+        )
+    if "equipment" in fields:
+        current = _block_value(body, "equipment")
+        current = _patch_repeated_blocks(
+            current,
+            ship.equipment,
+            key=lambda item: item.equipment_type,
+            render=lambda item: serialize_ship_equipment(item),
+            patch=lambda child, item: _patch_ship_equipment_body(child, item),
+            existing_keys={
+                span.key
+                for span in top_level_assignments(current)
+                if span.is_block
+            },
+        )
+        body = set_block(body, "equipment", current or None)
+    unknown = fields - {"name", "definition", "equipment", "pride_of_the_fleet"}
+    if unknown:
+        raise ValueError(f"Unknown ship fields: {sorted(unknown)}")
+    return body
+
+
+def _patch_task_force_body(
+    body: str,
+    task_force: TaskForce,
+    *,
+    all_fields: bool = False,
+) -> str:
+    fields = (
+        {"name", "location", "ships"} if all_fields else task_force.touched_fields
+    )
+    if "name" in fields:
+        body = set_scalar(body, "name", pdx_string(task_force.name))
+    if "location" in fields:
+        body = set_scalar(body, "location", str(task_force.location))
+    if "ships" in fields:
+        body = _patch_repeated_blocks(
+            body,
+            task_force.ships,
+            key=lambda _item: "ship",
+            render=lambda item: serialize_ship(item),
+            patch=lambda child, item: _patch_ship_body(child, item),
+            existing_keys={"ship"},
+        )
+    unknown = fields - {"name", "location", "ships"}
+    if unknown:
+        raise ValueError(f"Unknown task force fields: {sorted(unknown)}")
+    return body
+
+
+def _patch_fleet_body(
+    body: str,
+    fleet: Fleet,
+    *,
+    all_fields: bool = False,
+) -> str:
+    fields = (
+        {"name", "naval_base", "task_forces"}
+        if all_fields
+        else fleet.touched_fields
+    )
+    if "name" in fields:
+        body = set_scalar(body, "name", pdx_string(fleet.name))
+    if "naval_base" in fields:
+        body = set_scalar(body, "naval_base", str(fleet.naval_base))
+    if "task_forces" in fields:
+        body = _patch_repeated_blocks(
+            body,
+            fleet.task_forces,
+            key=lambda _item: "task_force",
+            render=lambda item: serialize_task_force(item),
+            patch=lambda child, item: _patch_task_force_body(child, item),
+            existing_keys={"task_force"},
+        )
+    unknown = fields - {"name", "naval_base", "task_forces"}
+    if unknown:
+        raise ValueError(f"Unknown fleet fields: {sorted(unknown)}")
+    return body
+
+
+def _patch_air_wing_body(
+    body: str,
+    wing: AirWing,
+    *,
+    all_fields: bool = False,
+) -> str:
+    fields = (
+        {"amount", "owner", "creator", "version_name"}
+        if all_fields
+        else wing.touched_fields
+    )
+    if "amount" in fields:
+        body = set_scalar(body, "amount", str(wing.amount))
+    for field_name in ("owner", "creator"):
+        if field_name in fields:
+            value = getattr(wing, field_name)
+            body = set_scalar(body, field_name, pdx_value(value) if value else None)
+    if "version_name" in fields:
+        body = set_scalar(
+            body,
+            "version_name",
+            pdx_string(wing.version_name) if wing.version_name else None,
+        )
+    unknown = fields - {"amount", "owner", "creator", "version_name"}
+    if unknown:
+        raise ValueError(f"Unknown air wing fields: {sorted(unknown)}")
+    return body
+
+
 def _patch_templates(
     text: str,
     templates: list[DivisionTemplate],
@@ -480,6 +1002,102 @@ def _patch_divisions(
     return replace_assignment_body(text, units, units_body)
 
 
+def _patch_fleets(text: str, fleets: list[Fleet]) -> str:
+    units = _block_span(text, "units")
+    if units is None or units.body_start is None or units.body_end is None:
+        units_body = "\n\n".join(serialize_fleet(fleet) for fleet in fleets)
+        return set_block(text, "units", units_body or None)
+    units_body = text[units.body_start : units.body_end]
+    units_body = _patch_repeated_blocks(
+        units_body,
+        fleets,
+        key=lambda _item: "fleet",
+        render=lambda item: serialize_fleet(item),
+        patch=lambda child, item: _patch_fleet_body(child, item),
+        existing_keys={"fleet"},
+    )
+    return replace_assignment_body(text, units, units_body)
+
+
+def _serialize_air_wings(air_wings: list[AirWing]) -> str:
+    grouped: dict[int, list[AirWing]] = {}
+    for wing in air_wings:
+        grouped.setdefault(wing.location, []).append(wing)
+    locations: list[str] = []
+    for location, wings in grouped.items():
+        children = "\n\n".join(
+            _wrap_block(
+                wing.equipment_type,
+                _patch_air_wing_body(
+                    wing.raw_block,
+                    wing,
+                    all_fields=not wing.raw_block,
+                ),
+                1,
+            )
+            for wing in wings
+        )
+        locations.append(_wrap_block(str(location), children, 0))
+    return _wrap_block("air_wings", "\n\n".join(locations), 0)
+
+
+def _patch_air_wings(text: str, air_wings: list[AirWing]) -> str:
+    span = _block_span(text, "air_wings")
+    rendered = _serialize_air_wings(air_wings)
+    rendered_span = _block_span(rendered, "air_wings")
+    rendered_body = (
+        rendered[rendered_span.body_start : rendered_span.body_end]
+        if rendered_span is not None
+        and rendered_span.body_start is not None
+        and rendered_span.body_end is not None
+        else ""
+    )
+    if span is None:
+        return append_assignment(text, rendered) if air_wings else text
+    return replace_assignment_body(text, span, rendered_body) if air_wings else replace_assignment(text, span, None)
+
+
+def _patch_repeated_blocks(
+    body: str,
+    items: list[_T],
+    *,
+    key: Callable[[_T], str],
+    render: Callable[[_T], str],
+    patch: Callable[[str, _T], str],
+    existing_keys: set[str] | None = None,
+) -> str:
+    item_keys = {key(item) for item in items}
+    source = {
+        getattr(item, "source_index"): item
+        for item in items
+        if getattr(item, "source_index") >= 0
+    }
+    spans = [
+        span
+        for span in top_level_assignments(body)
+        if span.is_block
+        and span.body_start is not None
+        and span.body_end is not None
+        and span.key in (existing_keys if existing_keys is not None else item_keys)
+    ]
+    for source_index, span in reversed(list(enumerate(spans))):
+        item = source.get(source_index)
+        if item is None:
+            body = replace_assignment(body, span, None)
+            continue
+        if span.key != key(item):
+            body = replace_assignment(body, span, render(item))
+            continue
+        assert span.body_start is not None
+        assert span.body_end is not None
+        child = body[span.body_start : span.body_end]
+        body = replace_assignment_body(body, span, patch(child, item))
+    for item in items:
+        if getattr(item, "source_index") < 0:
+            body = append_assignment(body, render(item))
+    return body
+
+
 def _serialize_battalions(battalions: list[Battalion]) -> str:
     return "\n".join(
         f"{battalion.unit_type} = {{ x = {battalion.x} y = {battalion.y} }}"
@@ -529,6 +1147,15 @@ def _optional_float(body: str, key: str) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+def _optional_bool(body: str, key: str) -> bool | None:
+    value = _scalar_value(body, key).lower()
+    if value in {"yes", "true", "1"}:
+        return True
+    if value in {"no", "false", "0"}:
+        return False
+    return None
 
 
 def _unquote(value: str) -> str:

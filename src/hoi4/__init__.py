@@ -39,6 +39,7 @@ from .characters import (
     NavyLeaderRole,
 )
 from .country_package import CountryPackageReport
+from .content_graph import ContentLivenessReport
 from .mod import ExternalModificationError, Mod
 from .config import Config, find_config
 from .dynamic_modifiers import DynamicModifier
@@ -62,7 +63,17 @@ from .game_log import (
 from .ideologies import Ideology, SubIdeology
 from .map_render import MapRenderCancelled, PoliticalMapResult, render_political_map
 from .map_topology import TerritoryComponent
-from .oob import Battalion, DivisionTemplate, DivisionUnit, OrderOfBattle
+from .oob import (
+    AirWing,
+    Battalion,
+    DivisionTemplate,
+    DivisionUnit,
+    Fleet,
+    OrderOfBattle,
+    Ship,
+    ShipEquipment,
+    TaskForce,
+)
 from .parser import ParseError, PdxNode, parse_pdx, serialize_pdx
 from .progress import OperationCancelled, ProgressEvent
 from .project import (
@@ -85,6 +96,13 @@ from .script import (
     validate_script_syntax,
 )
 from .validation import VALIDATION_CODES, VALIDATION_WARNING_CODES
+from .validation_stages import ValidationStage
+from .script_vocabulary import (
+    GameScriptVocabulary,
+    ScriptSource,
+    ScriptTokenInfo,
+    load_game_script_vocabulary,
+)
 from .types import (
     Country,
     Decision,
@@ -113,7 +131,7 @@ except ImportError:
 try:
     __version__ = version("hoi4-agent-sdk")
 except PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
-    __version__ = "0.5.1"
+    __version__ = "0.6.0"
 
 __all__ = [
     "Mod",
@@ -123,6 +141,7 @@ __all__ = [
     "find_config",
     "Country",
     "CountryPackageReport",
+    "ContentLivenessReport",
     "Character",
     "CharacterInstance",
     "CharacterPortrait",
@@ -134,6 +153,11 @@ __all__ = [
     "DivisionTemplate",
     "Battalion",
     "DivisionUnit",
+    "Fleet",
+    "TaskForce",
+    "Ship",
+    "ShipEquipment",
+    "AirWing",
     "Decision",
     "DecisionCategory",
     "Event",
@@ -205,6 +229,11 @@ __all__ = [
     "validate_script_syntax",
     "VALIDATION_CODES",
     "VALIDATION_WARNING_CODES",
+    "ValidationStage",
+    "GameScriptVocabulary",
+    "ScriptSource",
+    "ScriptTokenInfo",
+    "load_game_script_vocabulary",
     "EFFECT_CATEGORIES",
     "TECHNOLOGY_CATEGORIES",
     "MODIFIER_CATEGORIES",

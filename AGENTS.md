@@ -123,7 +123,7 @@ with mod.transaction():
 
    This means `(FOCUS_A OR FOCUS_B) AND FOCUS_C`.
 
-10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Use `validate(validate_icons=True, strict_localization=True)` before final saves when changing focus icons or localization. Known false-positive warnings can be hidden with stable codes from `VALIDATION_WARNING_CODES`, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
+10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Use `validate(stage="build")` between multi-script pipeline steps, the default `stage="package"` for complete-country enforcement, and `validate(stage="release", validate_icons=True, strict_localization=True)` before final saves. Release-stage validation also audits focus/event/idea/flag/localization liveness. Known false-positive warnings can be hidden with stable codes from `VALIDATION_WARNING_CODES`, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
 
 11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `upsert_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
 
@@ -172,13 +172,20 @@ with mod.transaction():
     `common/countries/colors.txt`. Vanilla color overrides require a configured
     HOI4 install so the complete table can be retained.
 
-29. After a real game launch, run `scripts/parse_hoi4_log.py` or
+29. With `hoi4_install` configured, keep static vocabulary warnings enabled.
+    An undocumented effect, trigger, or modifier with zero installed-game uses
+    is evidence of a typo; inspect its suggested high-frequency replacement.
+    Allowlist only intentional extensions with kind-qualified entries such as
+    `effect:my_scripted_effect`.
+
+30. After a real game launch, run `scripts/parse_hoi4_log.py` or
     `Mod.validate_game_log()` against the target mod. Do not treat a static
     release gate as proof that HOI4 accepted every generated token.
 
-30. Never hand-write a character roster or starting land OOB when the public
+31. Never hand-write a character roster or starting OOB when the public
     models can express it. Use `Character` plus explicit role/instance mutation
-    methods, and `create_oob()` with templates, battalions, and divisions.
+    methods, and `create_oob()` with templates, battalions, divisions,
+    fleets/task forces/ships, and air wings.
     Repeated roles or DLC instances require an occurrence selector; do not
     guess. Before reporting any SDK-created country complete, require
     `mod.validate_country_package(tag).complete`.

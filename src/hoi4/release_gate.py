@@ -547,6 +547,10 @@ def _run_probe(
                 for issue in mod.validate(
                     validate_icons=validate_icons,
                     strict_localization=strict_localization,
+                    # Probe mutations intentionally introduce temporary content
+                    # that may be semantically unused. Liveness belongs to the
+                    # immutable baseline, not these rollback-only exercises.
+                    stage="package",
                 )
                 if _validation_signature(issue) not in baseline
             ]
@@ -633,6 +637,7 @@ def run_release_gate(
         mod.validate(
             validate_icons=validate_icons,
             strict_localization=strict_localization,
+            stage="release",
         )
     )
     game_log_report: GameLogReport | None = None

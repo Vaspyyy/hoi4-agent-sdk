@@ -119,14 +119,14 @@ that key from the idea ID and rejects the assignment. Likewise, generated
 characters declare `country_leader`, `advisor`, or commander blocks directly;
 there is no top-level `roles = { ... }` field.
 
-## Do Not Hand-Write Character Rosters or Starting Armies
+## Do Not Hand-Write Character Rosters or Starting Forces
 
 `create_country()` creates the compatibility leader, but it does not invent a
 complete roster or army. Use `create_character()` with `AdvisorRole`,
 `ArmyCommanderRole`, `NavyLeaderRole`, and explicit DLC
 `CharacterInstance` values. Use `create_oob()` with `DivisionTemplate`,
-`Battalion`, and `DivisionUnit`; this also assigns country history when
-`assign=True`.
+`Battalion`, `DivisionUnit`, `Fleet`, `TaskForce`, `Ship`, `ShipEquipment`,
+and `AirWing`; this also assigns country history when `assign=True`.
 
 Repeated character instances or repeated role kinds are intentionally
 ambiguous. Pass `occurrence=` and, for instance roles,
@@ -135,8 +135,8 @@ wrong DLC variant.
 
 Never place a starting land unit from memory. OOB validation checks that its
 province exists, is land, and belongs to the country at scenario start.
-Existing fleet, air, and production blocks are source-preserved when nearby
-land content is edited.
+Naval and air validation checks unit/equipment IDs, ownership, locations, and
+structure. Production and unknown blocks remain source-preserved.
 
 ## A New Tag Is Not a Complete Country
 
@@ -162,6 +162,23 @@ Run `find_disconnected_states()` with the `map` extra for border QA. Tiny
 one-province islands are ignored by the default threshold; use
 `allowed_state_ids` only for deliberate islands or overseas holdings, not to
 hide an accidental enclave.
+
+## Validate at the Right Stage
+
+Use `validate(stage="build")` between pipeline scripts so a half-built country
+does not need ad-hoc error filtering. Use the default `stage="package"` once
+the playable package should be complete, and `stage="release"` for the final
+semantic liveness pass.
+
+With a configured game install, never ignore an undocumented script-token
+warning without investigation. The warning includes installed-game usage and
+a nearest documented token. Kind-qualified allowlists are for intentional
+scripted extensions, not typo suppression.
+
+Inspect `mod.analyze_content_liveness()` before release. A set-only flag may be
+deliberate historical bookkeeping, but an asymmetric flag in an otherwise
+symmetrical ending set is evidence of missing content. Allowlist deliberate
+patterns explicitly instead of disabling the liveness pass.
 
 ## Decision Category Files
 

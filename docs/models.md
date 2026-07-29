@@ -144,16 +144,52 @@ DivisionUnit(division_template: str,
              start_experience_factor: float | None = None,
              start_equipment_factor: float | None = None)
 
+ShipEquipment(equipment_type: str,
+              amount: int = 1,
+              owner: str = "",
+              creator: str = "",
+              version_name: str = "")
+
+Ship(name: str,
+     definition: str,
+     equipment: list[ShipEquipment] = [],
+     pride_of_the_fleet: bool = False)
+
+TaskForce(name: str,
+          location: int,
+          ships: list[Ship] = [])
+
+Fleet(name: str,
+      naval_base: int,
+      task_forces: list[TaskForce] = [])
+
+AirWing(location: int,
+        equipment_type: str,
+        amount: int,
+        owner: str = "",
+        creator: str = "",
+        version_name: str = "")
+
 OrderOfBattle(name: str,
               country_tag: str = "",
               templates: list[DivisionTemplate] = [],
               divisions: list[DivisionUnit] = [],
+              fleets: list[Fleet] = [],
+              air_wings: list[AirWing] = [],
               path: Path | None = None)
 ```
 
-Only land templates and divisions are modeled for authoring. Loaded naval,
-air, production, and unknown blocks remain in `raw_text` and are preserved
-unless their own future API explicitly models them.
+Land templates/divisions, naval fleets/task forces/ships, and air wings are
+modeled for authoring. Production and unknown blocks remain in `raw_text`;
+comments, ordering, and untouched modeled blocks remain source-preserved.
+
+### ContentLivenessReport and GameScriptVocabulary
+
+`ContentLivenessReport` exposes reachable/unreachable focuses, fired/unfired
+events, granted/ungranted ideas, flag reads/writes and asymmetries, used/unused
+localization, and structured warning findings. `GameScriptVocabulary` maps
+effect, trigger, and modifier names to immutable `ScriptTokenInfo` records with
+supported scopes, categories, installed-game usage counts, and usage domains.
 
 ### CountryPackageReport and TerritoryComponent
 

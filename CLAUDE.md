@@ -10,9 +10,12 @@ character-portrait package described there. Use Gemini after checking for
 `GEMINI_API_KEY` or `GOOGLE_API_KEY`; a broad country request authorizes
 generation and import after visual review.
 
-Use the SDK's `Character` role/instance APIs and land `create_oob()` API for
-the roster and, for countries present at scenario start, the starting army; do
-not hand-write those files. Later focus/event releases must have an explicit
+Use the SDK's `Character` role/instance APIs and `create_oob()` land, naval,
+and air models for the roster and, for countries present at scenario start,
+the starting forces; do not hand-write those files. Use
+`validate(stage="build")` during a multi-step build and
+`validate(stage="release")` for final vocabulary and liveness checks. Later
+focus/event releases must have an explicit
 runtime territory/capital setup instead of fake 1936 ownership. The country is
 not complete until `mod.validate_country_package(tag).complete` is true.
 
