@@ -517,10 +517,13 @@ def test_private_empire_roster_and_land_oob_are_read_only(tmp_path: Path) -> Non
         "DSR",
         check_geography=False,
     )
-    assert danubian_soviet.lifecycle == "unresolved"
-    assert {finding.code for finding in danubian_soviet.errors} == {
-        "missing_country_activation"
-    }
+    assert danubian_soviet.complete, danubian_soviet.to_dict()
+    assert danubian_soviet.lifecycle == "runtime"
+    assert danubian_soviet.runtime_state_ids == (43, 72, 75, 152, 976)
+    assert any(
+        "event empire.88 option 0" in source
+        for source in danubian_soviet.activation_sources
+    )
 
     assert _tree_hash(EMPIRE_ROOT) == before
 

@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-30
+
+### Fixed
+
+- Installed-game effect and trigger scopes are now enforced instead of merely
+  exposed as metadata. Validation follows explicit country tags, numeric state
+  scopes, character scopes, and typed iterators, with stable
+  `unsupported_effect_scope` and `unsupported_trigger_scope` warnings.
+- `validate_effect()` now accepts an explicit root `scope=` and defaults to
+  country scope; passing `None` still validates every explicit nested scope.
+- `idea_mutation_collision` now recognizes a runtime
+  `NOT = { has_idea = X }` guard around `add_ideas = X`, while retaining the
+  warning for unguarded, mismatched, removal, and swap mutations.
+- Refreshed the private Empire verification baseline to the current completed
+  build. The integration test now requires `DSR` to validate as a complete
+  runtime country activated by `empire.88`, rather than freezing the obsolete
+  missing-activation state into the SDK suite.
+
 ## [0.6.0] - 2026-07-29
 
 ### Added
@@ -39,12 +57,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Known audit status
 
-- The private Empire corpus has zero HOI4 1.19.2 compatibility findings, all
+- The pinned private Empire corpus snapshot has zero HOI4 1.19.2 compatibility findings, all
   ten populated source-preservation probes pass, its 37 divisions, one fleet,
   and five air wings validate through the modeled OOB, and the corpus remains
-  byte-identical after audit. The pre-existing `DSR` content gap remains
-  intentionally visible: the tag has definitions but neither scenario-start
-  territory nor any runtime activation path.
+  byte-identical after audit. In that historical snapshot, the pre-existing
+  `DSR` content gap remains intentionally visible: the tag has definitions but
+  neither scenario-start territory nor any runtime activation path. This does
+  not describe newer Empire builds.
 
 ## [0.5.1] - 2026-07-29
 

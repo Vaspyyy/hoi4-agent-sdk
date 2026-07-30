@@ -127,6 +127,7 @@ class ScriptSource:
     owner_kind: str = ""
     owner_id: str = ""
     file_path: str | None = None
+    scope: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,7 @@ class _Command:
     name: str
     line: int
     kind: ScriptTokenKind
+    scope: str | None = None
 
 
 def load_game_script_vocabulary(hoi4_install: str | Path) -> GameScriptVocabulary:
@@ -218,7 +220,7 @@ def validate_script_sources(
         commands = (
             _modifier_commands(source.text)
             if source.kind == "modifier"
-            else _script_commands(source.text, source.kind)
+            else _script_commands(source.text, source.kind, scope=source.scope)
         )
         for command in commands:
             known = vocabulary.tokens(command.kind)
@@ -240,6 +242,47 @@ def validate_script_sources(
                 continue
             if command.name in known:
                 info = known[command.name]
+                if _unsupported_scope(command.scope, info.supported_scopes):
+                    supported = ", ".join(info.supported_scopes)
+                    owner = (
+                        f"{source.owner_kind} '{source.owner_id}' "
+                        if source.owner_kind and source.owner_id
+                        else ""
+                    )
+                    findings.append(
+                        ValidationError(
+                            message=(
+                                f"{owner}uses {command.kind} token "
+                                f"'{command.name}' in {command.scope} scope, but the "
+                                f"installed game documents supported scopes: {supported}."
+                            ),
+                            severity="warning",
+                            code=f"unsupported_{command.kind}_scope",
+                            file_path=source.file_path,
+                            line=command.line,
+                            focus_id=(
+                                source.owner_id
+                                if source.owner_kind == "focus"
+                                else None
+                            ),
+                            event_id=(
+                                source.owner_id
+                                if source.owner_kind == "event"
+                                else None
+                            ),
+                            idea_id=(
+                                source.owner_id
+                                if source.owner_kind == "idea"
+                                else None
+                            ),
+                            decision_id=(
+                                source.owner_id
+                                if source.owner_kind == "decision"
+                                else None
+                            ),
+                        )
+                    )
+                    continue
                 if info.usage_count:
                     continue
                 findings.append(
@@ -351,10 +394,22 @@ def _metadata_values(body: str, label: str) -> tuple[str, ...]:
     )
 
 
-def _script_commands(text: str, kind: ScriptTokenKind) -> list[_Command]:
+def _script_commands(
+    text: str,
+    kind: ScriptTokenKind,
+    *,
+    scope: str | None = None,
+) -> list[_Command]:
     commands: list[_Command] = []
+    normalized_scope = scope.upper() if scope else None
 
-    def walk(body: str, base_line: int, semantic_kind: ScriptTokenKind) -> None:
+    def walk(
+        body: str,
+        base_line: int,
+        semantic_kind: ScriptTokenKind,
+        current_scope: str | None,
+        root_scope: str | None,
+    ) -> None:
         try:
             spans = top_level_assignments(body)
         except (ParseError, ValueError):
@@ -377,6 +432,8 @@ def _script_commands(text: str, kind: ScriptTokenKind) -> list[_Command]:
                         body[span.body_start : span.body_end],
                         base_line + body.count("\n", 0, span.body_start),
                         nested_kind,
+                        current_scope,
+                        root_scope,
                     )
                 continue
             if key == "limit" and semantic_kind == "effect":
@@ -385,6 +442,8 @@ def _script_commands(text: str, kind: ScriptTokenKind) -> list[_Command]:
                         body[span.body_start : span.body_end],
                         base_line + body.count("\n", 0, span.body_start),
                         "trigger",
+                        current_scope,
+                        root_scope,
                     )
                 continue
             recursive = (
@@ -401,7 +460,7 @@ def _script_commands(text: str, kind: ScriptTokenKind) -> list[_Command]:
                 "else",
                 "hidden_effect",
             }:
-                commands.append(_Command(key, line, semantic_kind))
+                commands.append(_Command(key, line, semantic_kind, current_scope))
             if (
                 recursive
                 and span.is_block
@@ -412,9 +471,11 @@ def _script_commands(text: str, kind: ScriptTokenKind) -> list[_Command]:
                     body[span.body_start : span.body_end],
                     base_line + body.count("\n", 0, span.body_start),
                     semantic_kind,
+                    _nested_scope(key, current_scope, root_scope),
+                    root_scope,
                 )
 
-    walk(text, 1, kind)
+    walk(text, 1, kind, normalized_scope, normalized_scope)
     return commands
 
 
@@ -427,6 +488,68 @@ def _modifier_commands(text: str) -> list[_Command]:
         ]
     except (ParseError, ValueError):
         return []
+
+
+def _nested_scope(
+    key: str,
+    current_scope: str | None,
+    root_scope: str | None,
+) -> str | None:
+    upper = key.upper()
+    if upper == "THIS":
+        return current_scope
+    if upper == "ROOT":
+        return root_scope
+    if upper.startswith(("PREV", "FROM")):
+        return None
+    if key.isdigit():
+        return "STATE"
+    if re.fullmatch(r"[A-Z0-9]{3}", key):
+        return "COUNTRY"
+    lowered = key.lower()
+    if lowered in {
+        "owner",
+        "controller",
+        "overlord",
+        "faction_leader",
+        "occupied_country",
+        "country",
+    }:
+        return "COUNTRY"
+    if lowered in {"capital_scope", "state"}:
+        return "STATE"
+    if lowered in {"character", "operative", "unit_leader"}:
+        return "CHARACTER"
+    if lowered == "division":
+        return "DIVISION"
+    inferred = (
+        ("strategic_region", "STRATEGIC_REGION"),
+        ("special_project", "SPECIAL_PROJECT"),
+        ("industrial_org", "INDUSTRIAL_ORG"),
+        ("unit_leader", "CHARACTER"),
+        ("army_leader", "CHARACTER"),
+        ("navy_leader", "CHARACTER"),
+        ("character", "CHARACTER"),
+        ("operative", "CHARACTER"),
+        ("country", "COUNTRY"),
+        ("state", "STATE"),
+        ("division", "DIVISION"),
+        ("operation", "OPERATION"),
+    )
+    for fragment, nested_scope in inferred:
+        if fragment in lowered and lowered.startswith(_RECURSIVE_PREFIXES):
+            return nested_scope
+    return current_scope
+
+
+def _unsupported_scope(
+    actual: str | None,
+    supported: tuple[str, ...],
+) -> bool:
+    if actual is None or not supported:
+        return False
+    normalized = {value.upper() for value in supported}
+    return "ANY" not in normalized and actual.upper() not in normalized
 
 
 def _custom_script_tokens(mod_root: Path) -> dict[ScriptTokenKind, set[str]]:

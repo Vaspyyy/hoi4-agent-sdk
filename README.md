@@ -58,6 +58,8 @@ with mod.transaction():
 - complete-country authoring with source-preserving character rosters, land,
   naval, and air orders of battle, politics, tags, localisation, package reports, and
   enforced release-gate completeness
+- installed-game effect/trigger vocabulary validation with usage evidence and
+  documented-scope enforcement
 - states, ownership, cores, resources, buildings, and victory points
 - focus trees, events, on-actions, decisions, ideas, and dynamic modifiers
 - ideology definitions and bookmark scenarios

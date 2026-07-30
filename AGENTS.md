@@ -190,6 +190,19 @@ with mod.transaction():
     guess. Before reporting any SDK-created country complete, require
     `mod.validate_country_package(tag).complete`.
 
+32. Treat `unsupported_effect_scope` and `unsupported_trigger_scope` as real
+    domain warnings. The installed documentation declares where tokens are
+    legal, and validation follows explicit country, state, character, and
+    iterator blocks. `validate_effect()` assumes country scope; pass the
+    fragment's actual `scope=` or `None` when only explicit nested scopes are
+    known.
+
+33. Do not suppress `idea_mutation_collision` merely because a focus and event
+    mention the same spirit. Guard a runtime fallback with
+    `if = { limit = { NOT = { has_idea = X } } add_ideas = X }`; validation
+    recognizes that exact safety invariant while preserving warnings for
+    unguarded, mismatched, removal, and swap mutations.
+
 ## Country Visual Completeness
 
 A broad request to create, release, restore, or make a country independent

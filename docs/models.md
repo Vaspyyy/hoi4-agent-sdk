@@ -190,6 +190,10 @@ events, granted/ungranted ideas, flag reads/writes and asymmetries, used/unused
 localization, and structured warning findings. `GameScriptVocabulary` maps
 effect, trigger, and modifier names to immutable `ScriptTokenInfo` records with
 supported scopes, categories, installed-game usage counts, and usage domains.
+Effect and trigger scopes come from the shipped generated documentation;
+modifier applicability is expressed through `categories`. Semantic validation
+tracks the current scope through explicit tag, state, character, and iterator
+blocks before comparing a token with `supported_scopes`.
 
 ### CountryPackageReport and TerritoryComponent
 

@@ -116,8 +116,14 @@ from .paths import (
     resolve_mod_output_path,
     safe_file_stem,
 )
-from .parser import ParseError, PdxNode, iter_assignment_blocks, parse_pdx
-from .patching import top_level_assignments
+from .parser import (
+    ParseError,
+    PdxNode,
+    iter_assignment_blocks,
+    parse_pdx,
+    strip_comments,
+)
+from .patching import AssignmentSpan, top_level_assignments
 from .politics import LEADER_IDEOLOGIES_BY_PARTY, RULING_PARTIES
 from .progress import CancelCallback, ProgressCallback, check_cancelled, report_progress
 from .states import (
@@ -210,6 +216,142 @@ _GFX_NAME_RE = re.compile(r"\bname\s*=\s*\"?([A-Za-z0-9_.:-]+)\"?")
 _COUNTRY_TAG_LINE_RE = re.compile(
     r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"(?:\s*#.*)?\s*$'
 )
+
+
+def _idea_mutation_ids(
+    script: str,
+    *,
+    ignore_guarded_additions: bool = False,
+) -> set[str]:
+    """Return ideas mutated by script, optionally ignoring safe guarded adds."""
+
+    mutations: set[str] = set()
+
+    def scalar(container: str, span: AssignmentSpan) -> str:
+        return container[span.value_start : span.value_end].strip().strip('"')
+
+    def block(container: str, span: AssignmentSpan) -> str:
+        if span.body_start is None or span.body_end is None:
+            return ""
+        return container[span.body_start : span.body_end]
+
+    def values(container: str, span: AssignmentSpan) -> set[str]:
+        if not span.is_block:
+            value = scalar(container, span)
+            return {value} if value else set()
+        return {
+            value
+            for value in re.findall(
+                r'(?<![A-Za-z0-9_.:-])"?([A-Za-z0-9_.:-]+)"?',
+                strip_comments(block(container, span)),
+            )
+            if value.lower() not in {"yes", "no"}
+        }
+
+    def negative_has_idea_guards(body: str) -> set[str]:
+        guarded: set[str] = set()
+
+        def visit(fragment: str, positive: bool = True) -> None:
+            try:
+                spans = top_level_assignments(fragment)
+            except (ParseError, ValueError):
+                return
+            for span in spans:
+                if span.key == "has_idea" and not positive and not span.is_block:
+                    idea_id = scalar(fragment, span)
+                    if idea_id:
+                        guarded.add(idea_id)
+                    continue
+                if not span.is_block:
+                    continue
+                nested = block(fragment, span)
+                if span.key == "NOT":
+                    visit(nested, not positive)
+                elif span.key == "AND" and positive:
+                    visit(nested, positive)
+                elif span.key == "OR" and not positive:
+                    visit(nested, positive)
+
+        visit(body)
+        return guarded
+
+    def process(
+        container: str,
+        span: AssignmentSpan,
+        guarded_absent: set[str],
+    ) -> None:
+        key = span.key
+        if key in {"add_ideas", "remove_ideas"}:
+            for idea_id in values(container, span):
+                if (
+                    key == "add_ideas"
+                    and ignore_guarded_additions
+                    and idea_id in guarded_absent
+                ):
+                    continue
+                mutations.add(idea_id)
+            return
+        if key == "add_timed_idea" and span.is_block:
+            try:
+                timed_spans = top_level_assignments(block(container, span))
+            except (ParseError, ValueError):
+                timed_spans = []
+            timed_body = block(container, span)
+            for timed_span in timed_spans:
+                if timed_span.key != "idea" or timed_span.is_block:
+                    continue
+                idea_id = scalar(timed_body, timed_span)
+                if not (
+                    ignore_guarded_additions and idea_id in guarded_absent
+                ):
+                    mutations.add(idea_id)
+            return
+        if key == "swap_ideas" and span.is_block:
+            swap_body = block(container, span)
+            try:
+                swap_spans = top_level_assignments(swap_body)
+            except (ParseError, ValueError):
+                swap_spans = []
+            for swap_span in swap_spans:
+                if (
+                    swap_span.key in {"add_idea", "remove_idea"}
+                    and not swap_span.is_block
+                ):
+                    mutations.add(scalar(swap_body, swap_span))
+            return
+        if key in {"if", "else_if"} and span.is_block:
+            walk_if(block(container, span), guarded_absent)
+            return
+        if span.is_block:
+            walk(block(container, span), guarded_absent)
+
+    def walk_if(body: str, inherited_guards: set[str]) -> None:
+        try:
+            spans = top_level_assignments(body)
+        except (ParseError, ValueError):
+            return
+        local_guards = set(inherited_guards)
+        for span in spans:
+            if span.key == "limit" and span.is_block:
+                local_guards.update(negative_has_idea_guards(block(body, span)))
+        for span in spans:
+            if span.key == "limit":
+                continue
+            if span.key == "else" and span.is_block:
+                walk(block(body, span), inherited_guards)
+                continue
+            process(body, span, local_guards)
+
+    def walk(body: str, guarded_absent: set[str]) -> None:
+        try:
+            spans = top_level_assignments(body)
+        except (ParseError, ValueError):
+            return
+        for span in spans:
+            process(body, span, guarded_absent)
+
+    walk(script, set())
+    return {idea_id for idea_id in mutations if idea_id}
 
 
 def _infer_event_namespace(event_id: str) -> str | None:
@@ -4825,6 +4967,7 @@ class Mod:
         suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
         *,
         script_token_allowlist: Sequence[str] = (),
+        scope: str | None = "COUNTRY",
     ) -> list[ValidationError]:
         known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
         known_tags.update(self._countries.keys())
@@ -4869,7 +5012,15 @@ class Mod:
         if self.hoi4_install is not None:
             errors.extend(
                 validate_script_sources(
-                    [ScriptSource(script, "effect", "effect", "effect_probe")],
+                    [
+                        ScriptSource(
+                            script,
+                            "effect",
+                            "effect",
+                            "effect_probe",
+                            scope=scope,
+                        )
+                    ],
                     self.game_script_vocabulary(),
                     mod_root=self.mod_root,
                     allowlist=script_token_allowlist,
@@ -7102,6 +7253,7 @@ class Mod:
             owner_kind: str,
             owner_id: str,
             path: Path | None,
+            scope: str | None = None,
         ) -> None:
             if text.strip():
                 sources.append(
@@ -7111,6 +7263,7 @@ class Mod:
                         owner_kind=owner_kind,
                         owner_id=owner_id,
                         file_path=str(path) if path is not None else None,
+                        scope=scope,
                     )
                 )
 
@@ -7121,15 +7274,62 @@ class Mod:
                     focus.select_effect,
                     focus.complete_tooltip,
                 ):
-                    add(text, "effect", "focus", focus.id, tree.path)
+                    add(
+                        text,
+                        "effect",
+                        "focus",
+                        focus.id,
+                        tree.path,
+                        scope="COUNTRY",
+                    )
                 for text in (focus.available, focus.bypass, focus.allow_branch):
-                    add(text, "trigger", "focus", focus.id, tree.path)
+                    add(
+                        text,
+                        "trigger",
+                        "focus",
+                        focus.id,
+                        tree.path,
+                        scope="COUNTRY",
+                    )
         for event in self._events.values():
-            add(event.trigger, "trigger", "event", event.id, event.path)
-            add(event.immediate, "effect", "event", event.id, event.path)
+            event_scope = {
+                "state_event": "STATE",
+                "unit_leader_event": "CHARACTER",
+                "operative_leader_event": "CHARACTER",
+            }.get(event.event_type, "COUNTRY")
+            add(
+                event.trigger,
+                "trigger",
+                "event",
+                event.id,
+                event.path,
+                scope=event_scope,
+            )
+            add(
+                event.immediate,
+                "effect",
+                "event",
+                event.id,
+                event.path,
+                scope=event_scope,
+            )
             for option in event.options:
-                add(option.trigger, "trigger", "event", event.id, event.path)
-                add(option.effect, "effect", "event", event.id, event.path)
+                add(
+                    option.trigger,
+                    "trigger",
+                    "event",
+                    event.id,
+                    event.path,
+                    scope=event_scope,
+                )
+                add(
+                    option.effect,
+                    "effect",
+                    "event",
+                    event.id,
+                    event.path,
+                    scope=event_scope,
+                )
         for occurrences in self._on_action_occurrences.values():
             for action in occurrences:
                 add(action.effect, "effect", "on_action", action.id, action.path)
@@ -7145,14 +7345,29 @@ class Mod:
                         action.path,
                     )
         for decision in self._decisions.values():
-            add(decision.available, "trigger", "decision", decision.id, decision.path)
-            add(decision.visible, "trigger", "decision", decision.id, decision.path)
+            add(
+                decision.available,
+                "trigger",
+                "decision",
+                decision.id,
+                decision.path,
+                scope="COUNTRY",
+            )
+            add(
+                decision.visible,
+                "trigger",
+                "decision",
+                decision.id,
+                decision.path,
+                scope="COUNTRY",
+            )
             add(
                 decision.complete_effect,
                 "effect",
                 "decision",
                 decision.id,
                 decision.path,
+                scope="COUNTRY",
             )
             add(
                 decision.remove_effect,
@@ -7160,9 +7375,17 @@ class Mod:
                 "decision",
                 decision.id,
                 decision.path,
+                scope="COUNTRY",
             )
         for idea in self._ideas.values():
-            add(idea.allowed, "trigger", "idea", idea.id, idea.path)
+            add(
+                idea.allowed,
+                "trigger",
+                "idea",
+                idea.id,
+                idea.path,
+                scope="COUNTRY",
+            )
             if idea.modifier:
                 add(
                     "\n".join(f"{key} = 0" for key in idea.modifier),
@@ -7195,7 +7418,14 @@ class Mod:
                     modifier.path,
                 )
         for bookmark in self._bookmarks:
-            add(bookmark.effect, "effect", "bookmark", bookmark.name, bookmark.path)
+            add(
+                bookmark.effect,
+                "effect",
+                "bookmark",
+                bookmark.name,
+                bookmark.path,
+                scope="COUNTRY",
+            )
             for country in bookmark.countries:
                 add(
                     country.available,
@@ -7203,6 +7433,7 @@ class Mod:
                     "bookmark",
                     bookmark.name,
                     bookmark.path,
+                    scope="COUNTRY",
                 )
         for character in self._characters.values():
             scopes: list[tuple[list[CharacterRole], str | None]] = [
@@ -7216,6 +7447,7 @@ class Mod:
                     "character",
                     character.id,
                     character.path,
+                    scope="COUNTRY",
                 )
                 for role in roles:
                     for attribute in ("allowed", "visible", "available"):
@@ -7225,6 +7457,7 @@ class Mod:
                             "character",
                             character.id,
                             character.path,
+                            scope="COUNTRY",
                         )
         for kind, relative in (
             ("effect", Path("common/scripted_effects")),
@@ -7604,7 +7837,10 @@ class Mod:
         focus_mutations: dict[str, set[str]] = {}
         runtime_mutations: dict[str, set[str]] = {}
         for script, kind, obj_id, _ in self._script_entries():
-            ideas = set(_IDEA_EFFECT_RE.findall(script))
+            ideas = _idea_mutation_ids(
+                script,
+                ignore_guarded_additions=kind != "focus",
+            )
             if not ideas:
                 continue
             target = focus_mutations if kind == "focus" else runtime_mutations

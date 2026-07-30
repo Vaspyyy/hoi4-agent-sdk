@@ -683,7 +683,13 @@ supported scopes, and modifier categories. `validate_script_vocabulary()` and
 `validate_effect()` warn on undocumented tokens and suggest a close,
 high-frequency installed token. Intentional extensions can be allowlisted as
 `effect:my_token`, `trigger:my_token`, or `modifier:my_token` through
-`script_token_allowlist=`.
+`script_token_allowlist=`. Validation also tracks explicit country, state,
+character, and iterator scopes and reports `unsupported_effect_scope` or
+`unsupported_trigger_scope` when a documented token is used in the wrong
+scope. `validate_effect()` assumes a country-scope fragment; pass
+`scope="STATE"` for a state-root fragment or `scope=None` when the root is
+deliberately unknown. Explicit nested scopes are still checked with
+`scope=None`.
 
 `analyze_content_liveness()` returns `ContentLivenessReport`, covering focus
 reachability, incoming event references, idea grants, flag reads/writes, and
@@ -752,9 +758,11 @@ Useful script warning codes include `country_scope_core_effect`, `history_set_ow
 
 Vocabulary and liveness warning codes are `unknown_effect_token`,
 `unknown_trigger_token`, `unknown_modifier_token`, the corresponding
-`unseen_*_token` codes for documented zero-use tokens, `unreachable_focus`,
-`unfired_event`, `ungranted_idea`, `flag_set_never_read`,
-`flag_read_never_set`, and `unused_localization`.
+`unseen_*_token` codes for documented zero-use tokens,
+`unsupported_effect_scope`, `unsupported_trigger_scope`,
+`unsupported_modifier_scope`, `unreachable_focus`, `unfired_event`,
+`ungranted_idea`, `flag_set_never_read`, `flag_read_never_set`, and
+`unused_localization`.
 
 Structural reference checks use `tag_definition`, `capital_ref`, `character_ref`,
 and `focus_cycle`. Undefined recruited characters are warnings; missing tag

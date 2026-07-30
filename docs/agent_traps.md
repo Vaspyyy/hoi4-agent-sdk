@@ -83,6 +83,22 @@ mod.set_loc("TAG_crisis_desc", "The government is struggling to retain control."
 
 Validation warning: `idea_not_addable` when a loaded non-country idea is used with `add_ideas`.
 
+## Guard Repeated Runtime Idea Grants
+
+A focus and a delayed event may legitimately grant the same idea when the
+runtime path only fills in a missing idea:
+
+```text
+if = {
+    limit = { NOT = { has_idea = TAG_security_service } }
+    add_ideas = TAG_security_service
+}
+```
+
+`idea_mutation_collision` recognizes this guard and does not warn. An
+unguarded grant, a guard for another idea, or an event that removes/swaps the
+same idea still warns because it can overwrite staged focus content.
+
 ## Idea Picture Stems
 
 The `picture` value is not a complete sprite key. HOI4 prepends
@@ -174,6 +190,12 @@ With a configured game install, never ignore an undocumented script-token
 warning without investigation. The warning includes installed-game usage and
 a nearest documented token. Kind-qualified allowlists are for intentional
 scripted extensions, not typo suppression.
+
+The same installed documentation declares legal effect and trigger scopes.
+Treat `unsupported_effect_scope` and `unsupported_trigger_scope` as evidence
+that a legal token is nested under the wrong country, state, character, or
+iterator scope. `validate_effect()` assumes country scope unless a different
+`scope=` is supplied.
 
 Inspect `mod.analyze_content_liveness()` before release. A set-only flag may be
 deliberate historical bookkeeping, but an asymmetric flag in an otherwise

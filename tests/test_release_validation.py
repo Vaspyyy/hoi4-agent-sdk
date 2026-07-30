@@ -14,12 +14,14 @@ def _write_documentation(game_root: Path) -> None:
         (
             "## army_experience\n\n"
             "* Supported Scopes: COUNTRY\n\n"
+            "## add_core_of\n\n"
+            "* Supported Scopes: STATE\n\n"
             "## country_event\n\n## set_country_flag\n\n## zero_effect\n"
         ),
         encoding="utf-8",
     )
     (documentation / "triggers_documentation.md").write_text(
-        "## has_country_flag\n",
+        "## has_country_flag\n\n* Supported Scopes: COUNTRY\n",
         encoding="utf-8",
     )
     (documentation / "modifiers_documentation.md").write_text(
@@ -29,7 +31,13 @@ def _write_documentation(game_root: Path) -> None:
     script = game_root / "common" / "scripted_effects" / "uses.txt"
     script.parent.mkdir(parents=True)
     script.write_text(
-        "sample = {\n" + "army_experience = 1\n" * 7 + "}\n",
+        (
+            "sample = {\n"
+            + "army_experience = 1\n" * 7
+            + "add_core_of = ABC\n"
+            + "has_country_flag = sample_flag\n"
+            + "}\n"
+        ),
         encoding="utf-8",
     )
 
@@ -72,6 +80,47 @@ def test_mod_defined_scripted_effect_is_part_of_vocabulary_extension(
     assert not any(
         item.code == "unknown_effect_token"
         for item in mod.validate_effect("my_custom_effect = yes")
+    )
+
+
+def test_installed_vocabulary_warns_for_explicit_wrong_scopes(
+    tmp_path: Path,
+) -> None:
+    mod_root = tmp_path / "mod"
+    game_root = tmp_path / "game"
+    _write_documentation(game_root)
+    mod = Mod(mod_root, hoi4_install=game_root)
+
+    state_effect = mod.validate_effect(
+        "123 = { army_experience = 25 }",
+        scope=None,
+    )
+    effect_issue = next(
+        item for item in state_effect if item.code == "unsupported_effect_scope"
+    )
+    assert "STATE scope" in effect_issue.message
+    assert "COUNTRY" in effect_issue.message
+
+    nested_trigger = mod.validate_effect(
+        "123 = { if = { limit = { has_country_flag = sample_flag } } }",
+        scope=None,
+    )
+    trigger_issue = next(
+        item for item in nested_trigger if item.code == "unsupported_trigger_scope"
+    )
+    assert "STATE scope" in trigger_issue.message
+    assert "COUNTRY" in trigger_issue.message
+
+    assert not any(
+        item.code.startswith("unsupported_")
+        for item in mod.validate_effect("army_experience = 25")
+    )
+    assert not any(
+        item.code.startswith("unsupported_")
+        for item in mod.validate_effect(
+            "123 = { add_core_of = ABC }",
+            scope=None,
+        )
     )
 
 

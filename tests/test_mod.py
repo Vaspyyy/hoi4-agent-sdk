@@ -1084,6 +1084,62 @@ class TestAgentFacingApis:
         errors = mod.validate()
         assert any(error.code == "idea_mutation_collision" for error in errors)
 
+    def test_idea_mutation_collision_ignores_guarded_runtime_addition(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_idea("SCL_crisis", modifier={"stability_factor": -0.1})
+        mod.create_focus_tree("scl_focus", "SCL")
+        mod.add_focus(
+            "scl_focus",
+            Focus(id="SCL_focus", completion_reward="add_ideas = SCL_crisis"),
+        )
+        mod.create_event(
+            "scl.1",
+            options=[
+                EventOption(
+                    name="scl.1.a",
+                    effect=(
+                        "if = { "
+                        "limit = { NOT = { has_idea = SCL_crisis } } "
+                        "add_ideas = SCL_crisis "
+                        "}"
+                    ),
+                )
+            ],
+        )
+
+        errors = mod.validate()
+
+        assert not any(
+            error.code == "idea_mutation_collision" for error in errors
+        )
+
+    def test_idea_mutation_collision_keeps_mismatched_guard_warning(self, tmp_mod):
+        mod = tmp_mod.mod
+        mod.create_idea("SCL_crisis", modifier={"stability_factor": -0.1})
+        mod.create_focus_tree("scl_focus", "SCL")
+        mod.add_focus(
+            "scl_focus",
+            Focus(id="SCL_focus", completion_reward="add_ideas = SCL_crisis"),
+        )
+        mod.create_event(
+            "scl.1",
+            options=[
+                EventOption(
+                    name="scl.1.a",
+                    effect=(
+                        "if = { "
+                        "limit = { NOT = { has_idea = SCL_other } } "
+                        "add_ideas = SCL_crisis "
+                        "}"
+                    ),
+                )
+            ],
+        )
+
+        errors = mod.validate()
+
+        assert any(error.code == "idea_mutation_collision" for error in errors)
+
     def test_preview_summary_reports_semantic_focus_changes(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         mod.update_focus_tree("german_focus", continuous_focus_position="x = 50 y = 2600")
