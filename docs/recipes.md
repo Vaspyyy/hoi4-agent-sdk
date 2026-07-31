@@ -11,8 +11,8 @@ from pathlib import Path
 
 from hoi4 import (
     AdvisorRole, AirWing, ArmyCommanderRole, Battalion, Character,
-    CharacterPortrait, DivisionTemplate, DivisionUnit, Fleet, Focus, Mod,
-    Ship, ShipEquipment, TaskForce,
+    CharacterPortrait, DivisionTemplate, DivisionUnit, EquipmentVariant,
+    Fleet, Focus, Mod, Ship, ShipEquipment, TaskForce,
     import_flag_to_mod, import_portrait_to_mod, write_portrait_gfx,
 )
 
@@ -73,6 +73,7 @@ for index in (1, 2):
 mod.create_oob(
     "ZAR_1936",
     "ZAR",
+    kind="land",
     templates=[DivisionTemplate(
         "Zar Infantry",
         battalions=[Battalion("infantry", 0, 0)],
@@ -83,6 +84,23 @@ mod.create_oob(
         name="1st Zar Division",
         start_equipment_factor=1.0,
     )],
+    assign=True,
+)
+
+mod.create_equipment_variant("ZAR", EquipmentVariant(
+    name="Independence Class",
+    equipment_type="ship_hull_light_1",
+    modules={
+        "fixed_ship_battery_slot": "ship_light_battery_1",
+        "fixed_ship_engine_slot": "light_ship_engine_1",
+    },
+    required_dlc=("Man the Guns",),
+))
+mod.create_oob(
+    "ZAR_1936_naval_mtg",
+    "ZAR",
+    kind="naval",
+    required_dlc=("Man the Guns",),
     fleets=[Fleet(
         name="Zar Navy",
         naval_base=1234,
@@ -100,9 +118,59 @@ mod.create_oob(
             )],
         )],
     )],
+    assign=True,
+)
+mod.create_oob(
+    "ZAR_1936_naval_legacy",
+    "ZAR",
+    kind="naval",
+    excluded_dlc=("Man the Guns",),
+    fleets=[Fleet(
+        name="Zar Navy",
+        naval_base=1234,
+        task_forces=[TaskForce(
+            name="Zar Squadron",
+            location=1234,
+            ships=[Ship(
+                name="ZNS Independence",
+                definition="destroyer",
+                equipment=[ShipEquipment("destroyer_1", owner="ZAR")],
+            )],
+        )],
+    )],
+    assign=True,
+)
+mod.create_equipment_variant("ZAR", EquipmentVariant(
+    name="Zar Fighter",
+    equipment_type="small_plane_airframe_0",
+    modules={
+        "fixed_main_weapon_slot": "light_mg_2x",
+        "engine_type_slot": "engine_1_1x",
+    },
+    required_dlc=("By Blood Alone",),
+))
+mod.create_oob(
+    "ZAR_1936_air_bba",
+    "ZAR",
+    kind="air",
+    required_dlc=("By Blood Alone",),
     air_wings=[AirWing(
         location=100,  # state ID containing the starting air base
         equipment_type="small_plane_airframe_0",
+        amount=24,
+        owner="ZAR",
+        version_name="Zar Fighter",
+    )],
+    assign=True,
+)
+mod.create_oob(
+    "ZAR_1936_air_legacy",
+    "ZAR",
+    kind="air",
+    excluded_dlc=("By Blood Alone",),
+    air_wings=[AirWing(
+        location=100,
+        equipment_type="fighter_equipment_0",
         amount=24,
         owner="ZAR",
     )],
@@ -129,7 +197,8 @@ mod.save()
 
 Use `create_character(..., recruit=False)` only when an event deliberately
 unlocks the character later. A broad country request is not complete until
-`validate_country_package(tag).complete` is true.
+`validate_country_package(tag).complete` is true. That result is structural;
+review and live-test runtime popularity/variable thresholds separately.
 
 If the tag does not exist at scenario start, do not fabricate starting
 ownership or an OOB. Put the territory/core/release setup in the actual focus,

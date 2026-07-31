@@ -48,6 +48,59 @@ def test_game_log_filters_to_files_owned_by_target_mod(tmp_path: Path) -> None:
     assert issue.file_path == str(idea)
 
 
+def test_game_log_attributes_all_observed_engine_file_shapes(tmp_path: Path) -> None:
+    mod_root = tmp_path / "mod"
+    paths = (
+        "common/ideas/quoted.txt",
+        "history/units/plain.txt",
+        "mod/local.mod",
+    )
+    for relative in paths:
+        target = mod_root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("test\n", encoding="utf-8")
+    log_path = tmp_path / "error.log"
+    log_path.write_text(
+        (
+            '[12:00:00][no_game_date][persistent.cpp:67]: Error in file: '
+            '"common/ideas/quoted.txt" near line: 5\n'
+            '[12:00:01][1936.01.01.12][taskforce.cpp:1153]: file: '
+            "history/units/plain.txt line: 389: Could not find proper "
+            "equipment variant. Skip creating Ship\n"
+            '[12:00:02][no_game_date][dlc.cpp:218]: Invalid version in  file: '
+            "mod/local.mod line: 7\n"
+        ),
+        encoding="utf-8",
+    )
+
+    report = parse_hoi4_error_log(log_path, mod_root)
+
+    assert [entry.relative_path for entry in report.entries] == list(paths)
+    assert [entry.line for entry in report.entries] == [5, 389, 7]
+    assert report.entries[1].error_class == "equipment_variant"
+    assert report.unscoped_entry_count == 0
+
+
+def test_game_log_path_extraction_does_not_whitelist_directories(
+    tmp_path: Path,
+) -> None:
+    mod_root = tmp_path / "mod"
+    owned = mod_root / "future_domain" / "owned.asset"
+    owned.parent.mkdir(parents=True)
+    owned.write_text("test\n", encoding="utf-8")
+    log_path = tmp_path / "error.log"
+    log_path.write_text(
+        "[12:00:00][no_game_date][future.cpp:1]: file: "
+        "future_domain/owned.asset line: 2: broken\n",
+        encoding="utf-8",
+    )
+
+    report = parse_hoi4_error_log(log_path, mod_root)
+
+    assert len(report.entries) == 1
+    assert report.entries[0].relative_path == "future_domain/owned.asset"
+
+
 def test_game_log_supports_offsets_and_time_filtering(tmp_path: Path) -> None:
     mod_root = tmp_path / "mod"
     idea = mod_root / "common/ideas/OWN_ideas.txt"

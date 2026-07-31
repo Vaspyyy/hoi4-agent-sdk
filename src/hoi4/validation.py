@@ -120,6 +120,11 @@ VALIDATION_CODES: dict[str, str] = {
     "missing_land_oob": "A complete country has no unambiguous land order of battle.",
     "empty_land_oob": "An assigned land OOB has no template or no starting division.",
     "missing_oob_reference": "Country history refers to an OOB file that does not exist.",
+    "mixed_oob_kinds": (
+        "One OOB file mixes land, naval, or air content instead of using the "
+        "engine's separate assignment effects."
+    ),
+    "oob_kind_mismatch": "An OOB assignment kind does not match its file content.",
     "oob_template_name": "A division template has no name.",
     "duplicate_oob_template": "An OOB repeats a division-template name.",
     "invalid_oob_battalion": "A division template contains an empty battalion type.",
@@ -154,6 +159,30 @@ VALIDATION_CODES: dict[str, str] = {
     "oob_air_location_not_owned": "An air OOB entry is outside its country's territory.",
     "unknown_oob_equipment": "A naval or air OOB entry uses unknown equipment.",
     "unknown_oob_equipment_owner": "A naval or air equipment entry uses an unknown country tag.",
+    "legacy_naval_oob_without_dlc_fallback": (
+        "Legacy naval equipment is active when Man the Guns may be enabled."
+    ),
+    "mtg_naval_oob_uses_legacy_equipment": (
+        "A Man the Guns naval OOB uses legacy equipment types."
+    ),
+    "ungated_mtg_naval_oob": (
+        "A hull-based naval OOB is not gated behind Man the Guns."
+    ),
+    "missing_mtg_ship_variant_name": (
+        "A hull-based ship has no equipment variant name."
+    ),
+    "missing_mtg_equipment_variant": (
+        "A hull-based ship refers to no compatible country-history variant."
+    ),
+    "ungated_bba_air_oob": (
+        "An airframe-based air OOB is not gated behind By Blood Alone."
+    ),
+    "missing_bba_air_variant_name": (
+        "An airframe-based air wing has no equipment variant name."
+    ),
+    "missing_bba_equipment_variant": (
+        "An airframe-based air wing refers to no compatible country-history variant."
+    ),
     "missing_country_activation": (
         "A generated country has neither scenario-start territory nor a runtime "
         "release/setup path."
@@ -168,6 +197,9 @@ VALIDATION_CODES: dict[str, str] = {
     "capital_not_owned": "A country's capital state is not owned by that country.",
     "capital_not_cored": "A country's capital state is not cored by that country.",
     "disconnected_country_territory": "Owned territory is significantly disconnected from the capital.",
+    "enclosed_foreign_territory": (
+        "A foreign land component is completely enclosed by the target country."
+    ),
     "unreachable_focus": "A focus cannot be reached from any root focus.",
     "unfired_event": "A triggered-only event has no modeled incoming reference.",
     "ungranted_idea": "A country idea is never granted by modeled content.",
@@ -254,6 +286,7 @@ _ERROR_CODES = {
     "missing_land_oob",
     "empty_land_oob",
     "missing_oob_reference",
+    "oob_kind_mismatch",
     "oob_template_name",
     "duplicate_oob_template",
     "invalid_oob_battalion",
@@ -288,6 +321,14 @@ _ERROR_CODES = {
     "oob_air_location_not_owned",
     "unknown_oob_equipment",
     "unknown_oob_equipment_owner",
+    "legacy_naval_oob_without_dlc_fallback",
+    "mtg_naval_oob_uses_legacy_equipment",
+    "ungated_mtg_naval_oob",
+    "missing_mtg_ship_variant_name",
+    "missing_mtg_equipment_variant",
+    "ungated_bba_air_oob",
+    "missing_bba_air_variant_name",
+    "missing_bba_equipment_variant",
     "missing_country_activation",
     "runtime_capital_not_assigned",
     "runtime_capital_not_cored",

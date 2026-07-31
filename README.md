@@ -59,7 +59,8 @@ with mod.transaction():
   naval, and air orders of battle, politics, tags, localisation, package reports, and
   enforced release-gate completeness
 - installed-game effect/trigger vocabulary validation with usage evidence and
-  documented-scope enforcement
+  documented-scope enforcement, including generated custom-ideology drift
+  modifiers
 - states, ownership, cores, resources, buildings, and victory points
 - focus trees, events, on-actions, decisions, ideas, and dynamic modifiers
 - ideology definitions and bookmark scenarios
@@ -67,7 +68,8 @@ with mod.transaction():
 - flag, portrait, and bookmark-picture import/export with optional Pillow support
 - optional Gemini generation of reviewable flag and leader-portrait PNG candidates
 - political-map rendering and procedural map/province generation
-- disconnected-territory detection from the effective HOI4 province map
+- disconnected owned-territory and enclosed foreign-territory detection from
+  the effective HOI4 province map
 - structured validation, duplicate-ID diagnostics, previews, transactions, and
   atomic multi-file saves
 
@@ -148,11 +150,18 @@ If no API key is available, the agent must say that proper custom GFX requires a
 billing-enabled Gemini API key from [Google AI
 Studio](https://aistudio.google.com/), name the supported environment variables,
 and report the package as visually incomplete rather than silently omitting it.
-Use `Character` plus its role models for every roster entry, use
-`create_oob(..., assign=True)` for countries that exist at scenario start, and
+Use `Character` plus its role models for every roster entry. For countries that
+exist at scenario start, author land, naval, and air OOBs as separate files;
+assign them with the engine's `set_oob`, `set_naval_oob`, and `set_air_oob`
+paths through `create_oob(..., kind=..., assign=True)`. Gate Man the Guns hull
+OOBs and their `EquipmentVariant` definitions with `required_dlc=("Man the
+Guns",)` and provide a legacy naval fallback with the DLC excluded. Then
 finish with
 `mod.validate_country_package(tag)`. A country is not ready to report complete
-until `CountryPackageReport.complete` is true. Tags created through
+until `CountryPackageReport.complete` is true and any dynamic release/threshold
+path has also been reasoned through or live-tested. The report's completeness
+claim is structural; it does not solve popularity arithmetic or prove a branch
+can fire in play. Tags created through
 `create_country()` are checked automatically by normal validation and the
 release gate. The report distinguishes starting countries from tags released
 later by focus/event effects, so runtime countries are checked against their
@@ -191,6 +200,7 @@ allowlisted explicitly for intentional extensions. Release-stage validation
 also reports unreachable focuses, unfired triggered events, ungranted ideas,
 asymmetric flag use, and unused localization through
 `mod.analyze_content_liveness()`.
+This is a structural reference graph, not a dynamic game-state solver.
 
 ## Development
 
@@ -217,7 +227,9 @@ python scripts/audit_hoi4_install.py /path/to/mod --hoi4-install /path/to/hoi4 \
 
 `scripts/parse_hoi4_log.py` is also available as a focused post-launch build
 step. It reports only errors whose referenced files exist in the selected mod,
-groups them by class, and can continue from a saved byte offset.
+groups them by class, and can continue from a saved byte offset. Attribution
+accepts both quoted and unquoted `file:` paths in any mod-owned directory, so
+task-force equipment-variant failures are not silently dropped.
 
 ## License
 

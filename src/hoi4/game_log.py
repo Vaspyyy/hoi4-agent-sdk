@@ -15,10 +15,10 @@ _RECORD_RE = re.compile(
     r"\[(?P<game_date>[^\]]+)\]"
     r"\[(?P<source>[^\]]+)\]:\s*(?P<message>.*)$"
 )
-_QUOTED_FILE_RE = re.compile(r'\bin file:\s*"(?P<path>[^"]+)"', re.IGNORECASE)
-_PLAIN_FILE_RE = re.compile(
-    r"\bin (?P<path>(?:common|events|history|interface|localisation)/.+?)"
-    r"(?:\s+line\s*:?\s*\d+|$)",
+_FILE_RE = re.compile(
+    r"\b(?:in\s+)?file\s*:\s*"
+    r'(?:"(?P<quoted_path>[^"\r\n]+)"|(?P<plain_path>.+?))'
+    r"(?=\s+(?:near\s+)?line\s*:?\s*\d+|[\r\n]|$)",
     re.IGNORECASE,
 )
 _LINE_RE = re.compile(r"(?:near\s+)?line\s*:?\s*(\d+)", re.IGNORECASE)
@@ -124,6 +124,7 @@ class GameLogReport:
 def _classify(message: str) -> str:
     lowered = message.casefold()
     patterns = (
+        ("equipment_variant", "could not find proper equipment variant"),
         ("unexpected_token", "unexpected token"),
         ("unknown_trigger", "unknown trigger"),
         ("unknown_effect", "unknown effect"),
@@ -148,10 +149,11 @@ def _entry_timestamp(clock: str, log_mtime: datetime) -> datetime:
 
 
 def _extract_relative_path(message: str) -> str | None:
-    match = _QUOTED_FILE_RE.search(message) or _PLAIN_FILE_RE.search(message)
+    match = _FILE_RE.search(message)
     if match is None:
         return None
-    value = match.group("path").replace("\\", "/").strip()
+    value = (match.group("quoted_path") or match.group("plain_path"))
+    value = value.replace("\\", "/").strip()
     while value.startswith("./"):
         value = value[2:]
     return value

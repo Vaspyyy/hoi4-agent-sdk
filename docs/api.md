@@ -132,16 +132,27 @@ a compatibility façade for the selected head of state.
 |--------|-------------|
 | `list_oobs(include_vanilla=False) -> list[str]` | List known `history/units` stems |
 | `get_oob(name, include_vanilla=True) -> OrderOfBattle` | Load a mod or vanilla OOB |
-| `create_oob(name, country_tag, templates=(), divisions=(), fleets=(), air_wings=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write land, naval, and air starting forces and normally assign `oob = "<name>"` in country history |
-| `update_oob(name, templates=None, divisions=None, fleets=None, air_wings=None, country_tag=None, assign=False) -> bool` | Replace selected modeled collections while preserving neighboring production, comments, and unknown fields |
+| `create_oob(name, country_tag, templates=(), divisions=(), fleets=(), air_wings=(), kind="auto", required_dlc=(), excluded_dlc=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write one land, naval, or air OOB and assign it with the correct country-history effect |
+| `update_oob(name, templates=None, divisions=None, fleets=None, air_wings=None, country_tag=None, kind=None, required_dlc=None, excluded_dlc=None, assign=False) -> bool` | Replace selected modeled collections and assignment metadata while preserving neighboring production, comments, and unknown fields |
 | `delete_oob(name, unassign=True) -> bool` | Delete a mod-owned OOB and optionally clear country references |
+| `assign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=())` | Assign an existing OOB through `set_oob`, `set_naval_oob`, or `set_air_oob`, optionally under DLC conditions |
+| `unassign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=()) -> bool` | Remove one exact assignment without re-rendering surrounding history |
+| `create_equipment_variant(country_tag, variant) -> EquipmentVariant` | Append a country-history equipment variant, including optional DLC conditions |
 
 Validation rejects duplicate template names or battalion positions, unknown
 templates, unit definitions, or equipment, out-of-range factors, invalid
 locations, foreign-owned starting positions, duplicate ships, and malformed
 fleet/task-force/air-wing entries. `Fleet`, `TaskForce`, `Ship`,
 `ShipEquipment`, and `AirWing` model both modern and legacy equipment IDs.
-Unmodeled production blocks and unknown fields remain source-preserved.
+Unmodeled production blocks and unknown fields remain source-preserved. New
+files must not mix land, naval, and air content. Man the Guns hull OOBs require
+`version_name` values that resolve to compatible `EquipmentVariant` records;
+gate those OOBs and variants with `required_dlc=("Man the Guns",)` and provide a
+separate legacy naval OOB with `excluded_dlc=("Man the Guns",)`. Validation
+rejects the ungated legacy shape that makes HOI4 log "Could not find proper
+equipment variant" and skip every ship.
+By Blood Alone airframe OOBs likewise require a DLC gate, `version_name`, and
+compatible variant, plus a separately excluded legacy air fallback.
 
 ### Complete-country and geography methods
 
@@ -149,8 +160,13 @@ Unmodeled production blocks and unknown fields remain source-preserved.
 |--------|-------------|
 | `validate_country_package(tag, minimum_land_provinces=2, allowed_state_ids=(), check_geography=True, lifecycle="auto") -> CountryPackageReport` | Return an enforceable playable-package report. `lifecycle` is `auto`, `starting`, or `runtime`. |
 | `find_disconnected_states(tag, minimum_land_provinces=2, allowed_state_ids=()) -> tuple[TerritoryComponent, ...]` | Return significant owned components disconnected from the capital; requires the `map` extra |
+| `find_enclosed_foreign_states(tag, minimum_land_provinces=1, allowed_state_ids=()) -> tuple[TerritoryComponent, ...]` | Return foreign land components completely enclosed by the target country; requires the `map` extra |
 
-`CountryPackageReport.complete` is true only when it has no error findings.
+`CountryPackageReport.complete` is true only when it has no structural error
+findings. `analysis_scope == "structural"` and
+`proves_dynamic_achievability == False` make the boundary machine-readable:
+the report does not solve popularity/variable arithmetic or prove a runtime
+branch can fire.
 SDK-created tags are package-validated automatically by `validate()` and
 therefore block the release gate when incomplete. In `auto` mode, a tag that
 owns scenario-start states is validated as `starting`. A tag with no starting
@@ -175,9 +191,10 @@ accepted, which supports established custom-start workflows without weakening
 template, province, or ownership validation.
 
 Topology reads the effective `provinces.bmp`, `definition.csv`, state
-overrides, and `adjacencies.csv`, anchors at the capital component, and reports
-significant enclaves as warnings. Use `allowed_state_ids` for deliberate
-islands or overseas holdings; do not suppress accidental land enclaves.
+overrides, and `adjacencies.csv`, anchors at the capital component, reports
+disconnected owned land, and detects foreign landlocked components whose
+entire boundary belongs to the target country. Use `allowed_state_ids` for
+deliberate islands or enclaves; do not suppress accidental missed transfers.
 
 `set_state_owner()` and `batch_set_owner()` patch state history files. In event options, event immediate blocks, decisions, and focus rewards, use the runtime effect helper instead:
 
@@ -695,6 +712,10 @@ deliberately unknown. Explicit nested scopes are still checked with
 reachability, incoming event references, idea grants, flag reads/writes, and
 localization use. `flag_allowlist=` and `localization_allowlist=` accept glob
 patterns for deliberate bookkeeping and reserved/future content.
+It is deliberately structural. `analysis_scope` is `"structural"` and
+`proves_dynamic_achievability` is false because reference reachability cannot
+prove that popularity thresholds, variables, or mutually dependent triggers
+are achievable in an actual campaign.
 
 `preview()` and `save()` compare every target source file with the byte snapshot captured when `Mod` loaded. If a legacy Studio writer or another worker changes one, they raise `ExternalModificationError` instead of overwriting it. Use one `Mod` per operation/thread; on this exception, call `reload()` and deliberately reapply the edit.
 
@@ -718,8 +739,8 @@ except OperationCancelled:
 |--------|--------|
 | **Country** | Tag format `^[A-Z0-9]{3}$`, tag definition target exists, has name, popularities sum to 100, valid ruling party, valid RGB color, capital state exists in mod/vanilla data, recruited characters exist in mod/vanilla data, leader ideology/ruling party mismatch; SDK-created tags additionally require a complete `CountryPackageReport` |
 | **Character** | Defined/recruited identity, localization, visible portraits, GFX declarations and textures, plus two recruited political advisors and two army commanders per complete country |
-| **OOB** | Unique land templates/grid positions, known unit and equipment IDs, valid owned land/naval/air locations, valid factors, fleet/task-force/ship structure, and valid country-history references |
-| **Geography** | Significant capital-disconnected owned components warn unless explicitly allowlisted |
+| **OOB** | Unique land templates/grid positions, separate correctly assigned land/naval/air files, known unit and equipment IDs, valid owned locations, valid factors, fleet/task-force/ship structure, DLC-aware hull variant resolution, and valid country-history references |
+| **Geography** | Significant capital-disconnected owned components and fully enclosed foreign land components warn unless explicitly allowlisted |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
 | **Event** | Has ID, has title, has description, has options, option gameplay effects, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |
@@ -974,8 +995,10 @@ python scripts/parse_hoi4_log.py /path/to/mod \
   --log "$HOME/.local/share/Paradox Interactive/Hearts of Iron IV/logs/error.log"
 ```
 
-The parser filters records to relative files that actually exist in the target
-mod, groups error classes, supports `--since` and byte `--start-offset`, and
+The parser accepts quoted or unquoted `file:` emitters in any directory, then
+filters records to relative files that actually exist in the target mod. It
+groups error classes (including equipment-variant ship failures), supports
+`--since` and byte `--start-offset`, and
 returns a non-zero status for mod-owned errors. Add
 `--error-log PATH --require-fresh-game-log` to `verify_real_mod.py`; the installed-game audit
 accepts `--error-log PATH` and requires it to postdate the corpus unless

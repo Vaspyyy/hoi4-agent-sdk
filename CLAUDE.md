@@ -10,14 +10,18 @@ character-portrait package described there. Use Gemini after checking for
 `GEMINI_API_KEY` or `GOOGLE_API_KEY`; a broad country request authorizes
 generation and import after visual review.
 
-Use the SDK's `Character` role/instance APIs and `create_oob()` land, naval,
-and air models for the roster and, for countries present at scenario start,
-the starting forces; do not hand-write those files. Use
+Use the SDK's `Character` role/instance APIs and separate `create_oob()` land,
+naval, and air files for the roster and, for countries present at scenario
+start, the starting forces; do not hand-write those files. Use DLC-gated
+`EquipmentVariant` definitions for Man the Guns hulls and a separately gated
+legacy naval fallback. Use
 `validate(stage="build")` during a multi-step build and
 `validate(stage="release")` for final vocabulary and liveness checks. Later
 focus/event releases must have an explicit
 runtime territory/capital setup instead of fake 1936 ownership. The country is
-not complete until `mod.validate_country_package(tag).complete` is true.
+not structurally complete until `mod.validate_country_package(tag).complete`
+is true. That property and the liveness graph do not prove dynamic popularity
+or variable thresholds are achievable; review those chains and live-test them.
 
 If neither variable exists, do not silently omit the GFX. Tell the user that
 proper custom flags and character portraits require a billing-enabled Gemini

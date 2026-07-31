@@ -10,6 +10,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable, Literal, Mapping, cast
 
+from .ideologies import load_ideologies
 from .parser import ParseError
 from .patching import top_level_assignments
 from .types import ValidationError
@@ -75,6 +76,7 @@ class ScriptTokenInfo:
     usage_by_domain: Mapping[str, int] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    synthesized: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -84,6 +86,7 @@ class ScriptTokenInfo:
             "categories": list(self.categories),
             "usage_count": self.usage_count,
             "usage_by_domain": dict(self.usage_by_domain),
+            "synthesized": self.synthesized,
         }
 
 
@@ -138,7 +141,11 @@ class _Command:
     scope: str | None = None
 
 
-def load_game_script_vocabulary(hoi4_install: str | Path) -> GameScriptVocabulary:
+def load_game_script_vocabulary(
+    hoi4_install: str | Path,
+    *,
+    ideology_ids: Iterable[str] = (),
+) -> GameScriptVocabulary:
     """Load documentation tokens and count their use in installed scripts."""
 
     root = Path(hoi4_install).resolve()
@@ -156,6 +163,15 @@ def load_game_script_vocabulary(hoi4_install: str | Path) -> GameScriptVocabular
             documentation / "modifiers_documentation.md"
         ),
     }
+    installed_ideologies = {
+        ideology.id for ideology in load_ideologies(root, is_vanilla=True)
+    }
+    generated_modifiers = {
+        f"{ideology_id}_drift"
+        for ideology_id in installed_ideologies | set(ideology_ids)
+    }
+    for name in generated_modifiers:
+        metadata["modifier"].setdefault(name, ((), ("country",)))
     names = {kind: set(entries) for kind, entries in metadata.items()}
     all_names = set().union(*names.values())
     counts: Counter[str] = Counter()
@@ -188,6 +204,7 @@ def load_game_script_vocabulary(hoi4_install: str | Path) -> GameScriptVocabular
                     categories=metadata[kind][name][1],
                     usage_count=counts[name],
                     usage_by_domain=MappingProxyType(dict(domains[name])),
+                    synthesized=(kind == "modifier" and name in generated_modifiers),
                 )
                 for name in sorted(names[kind])
             }
@@ -283,7 +300,7 @@ def validate_script_sources(
                         )
                     )
                     continue
-                if info.usage_count:
+                if info.usage_count or info.synthesized:
                     continue
                 findings.append(
                     ValidationError(

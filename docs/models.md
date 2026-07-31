@@ -170,18 +170,38 @@ AirWing(location: int,
         creator: str = "",
         version_name: str = "")
 
+OOBReference(name: str,
+             kind: Literal["land", "naval", "air", "mixed"],
+             required_dlc: tuple[str, ...] = (),
+             excluded_dlc: tuple[str, ...] = ())
+
+EquipmentVariant(name: str,
+                 equipment_type: str,
+                 name_group: str = "",
+                 parent_version: int = 0,
+                 upgrades: dict[str, int] = {},
+                 modules: dict[str, str] = {},
+                 required_dlc: tuple[str, ...] = (),
+                 excluded_dlc: tuple[str, ...] = ())
+
 OrderOfBattle(name: str,
               country_tag: str = "",
               templates: list[DivisionTemplate] = [],
               divisions: list[DivisionUnit] = [],
               fleets: list[Fleet] = [],
               air_wings: list[AirWing] = [],
+              kind: Literal["land", "naval", "air", "mixed"] = "land",
+              required_dlc: tuple[str, ...] = (),
+              excluded_dlc: tuple[str, ...] = (),
               path: Path | None = None)
 ```
 
 Land templates/divisions, naval fleets/task forces/ships, and air wings are
-modeled for authoring. Production and unknown blocks remain in `raw_text`;
-comments, ordering, and untouched modeled blocks remain source-preserved.
+modeled for authoring in separate, correctly assigned files. `OOBReference`
+records the engine assignment kind and DLC conditions. `EquipmentVariant`
+models country-history `create_equipment_variant` definitions needed by Man
+the Guns hulls. Production and unknown blocks remain in `raw_text`; comments,
+ordering, and untouched modeled blocks remain source-preserved.
 
 ### ContentLivenessReport and GameScriptVocabulary
 
@@ -194,6 +214,9 @@ Effect and trigger scopes come from the shipped generated documentation;
 modifier applicability is expressed through `categories`. Semantic validation
 tracks the current scope through explicit tag, state, character, and iterator
 blocks before comparing a token with `supported_scopes`.
+`ContentLivenessReport.analysis_scope` is `"structural"`, and
+`proves_dynamic_achievability` is false: the graph does not solve popularity or
+variable arithmetic.
 
 ### CountryPackageReport and TerritoryComponent
 
@@ -206,7 +229,9 @@ CountryPackageReport(tag: str,
                      character_count: int = 0,
                      owned_state_count: int = 0,
                      runtime_state_ids: tuple[int, ...] = (),
-                     activation_sources: tuple[str, ...] = ())
+                     activation_sources: tuple[str, ...] = (),
+                     analysis_scope: str = "structural",
+                     proves_dynamic_achievability: bool = False)
 
 TerritoryComponent(state_ids: tuple[int, ...],
                    province_ids: tuple[int, ...],
@@ -218,9 +243,11 @@ TerritoryComponent(state_ids: tuple[int, ...],
 runtime-released countries and unresolved generated tags.
 `runtime_state_ids` and `activation_sources` expose the evidence used for
 automatic classification. `.errors`, `.warnings`, `.complete`, and `.to_dict()`
-are derived views. `TerritoryComponent` values returned by
-`find_disconnected_states()` are significant non-capital components after
-threshold and allowlist filtering.
+are derived views. `.complete` and `.structurally_complete` are intentionally
+structural and do not prove a runtime threshold chain can fire.
+`TerritoryComponent` values returned by `find_disconnected_states()` or
+`find_enclosed_foreign_states()` represent disconnected owned land or enclosed
+foreign land after threshold and allowlist filtering.
 
 ### State
 ```python

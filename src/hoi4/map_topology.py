@@ -59,7 +59,7 @@ def find_country_territory_components(
         definition_path.stat().st_mtime_ns,
         adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
     )
-    land_provinces, graph = _load_province_topology(
+    land_provinces, graph, _coastal_land_provinces = _load_province_topology(
         provinces_path,
         definition_path,
         adjacency_path,
@@ -137,13 +137,108 @@ def find_country_territory_components(
     )
 
 
+def find_enclosed_foreign_components(
+    mod_root: Path,
+    hoi4_install: Path | None,
+    states: Iterable[State],
+    *,
+    country_tag: str,
+    minimum_land_provinces: int = 1,
+    allowed_state_ids: Iterable[int] = (),
+) -> tuple[TerritoryComponent, ...]:
+    """Return foreign land components completely enclosed by ``country_tag``.
+
+    A component touching sea or unmapped land is not considered enclosed.  This
+    avoids reporting coastal countries or incomplete map data as holes while
+    still catching one-state and multi-state land enclaves.
+    """
+
+    if minimum_land_provinces < 1:
+        raise ValueError("minimum_land_provinces must be at least 1")
+    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
+    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
+    adjacency_path = _optional_effective_map_file(
+        mod_root,
+        hoi4_install,
+        "adjacencies.csv",
+    )
+    fingerprints = (
+        provinces_path.stat().st_mtime_ns,
+        definition_path.stat().st_mtime_ns,
+        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
+    )
+    land_provinces, graph, coastal_land_provinces = _load_province_topology(
+        provinces_path,
+        definition_path,
+        adjacency_path,
+        fingerprints,
+    )
+    effective_states = tuple(states)
+    state_by_id = {state.id: state for state in effective_states}
+    province_to_state = {
+        province_id: state.id
+        for state in effective_states
+        for province_id in state.provinces
+        if province_id in land_provinces
+    }
+    foreign_provinces = {
+        province_id
+        for province_id, state_id in province_to_state.items()
+        if state_by_id[state_id].owner
+        and state_by_id[state_id].owner != country_tag
+    }
+    foreign_graph = {
+        province_id: graph.get(province_id, set()) & foreign_provinces
+        for province_id in foreign_provinces
+    }
+    allowed = set(allowed_state_ids)
+    result: list[TerritoryComponent] = []
+    for province_ids in _connected_components(foreign_graph):
+        if len(province_ids) < minimum_land_provinces:
+            continue
+        if province_ids & coastal_land_provinces:
+            continue
+        state_ids = {
+            province_to_state[province_id]
+            for province_id in province_ids
+            if province_id in province_to_state
+        }
+        if not state_ids or state_ids <= allowed:
+            continue
+        boundary = {
+            neighbour
+            for province_id in province_ids
+            for neighbour in graph.get(province_id, ())
+            if neighbour not in province_ids
+        }
+        if not boundary or any(
+            neighbour not in province_to_state
+            or state_by_id[province_to_state[neighbour]].owner != country_tag
+            for neighbour in boundary
+        ):
+            continue
+        result.append(
+            TerritoryComponent(
+                state_ids=tuple(sorted(state_ids)),
+                province_ids=tuple(sorted(province_ids)),
+                land_province_count=len(province_ids),
+            )
+        )
+    return tuple(
+        sorted(
+            result,
+            key=lambda component: (component.state_ids, component.province_ids),
+        )
+    )
+
+
 @lru_cache(maxsize=4)
 def _load_province_topology(
     provinces_path: Path,
     definition_path: Path,
     adjacency_path: Path | None,
     fingerprints: tuple[int, int, int],
-) -> tuple[frozenset[int], dict[int, set[int]]]:
+) -> tuple[frozenset[int], dict[int, set[int]], frozenset[int]]:
     # ``fingerprints`` is intentionally unused in the body: it forms part of
     # the cache key so replacing a map file invalidates the derived graph.
     del fingerprints
@@ -189,13 +284,32 @@ def _load_province_topology(
     graph: dict[int, set[int]] = {
         province_id: set() for province_id in land_provinces
     }
+    coastal_land_provinces: set[int] = set()
     _add_pixel_edges(graph, province_grid[:, :-1], province_grid[:, 1:], land_provinces)
     _add_pixel_edges(graph, province_grid[:-1, :], province_grid[1:, :], land_provinces)
+    _add_coastal_land(
+        coastal_land_provinces,
+        province_grid[:, :-1],
+        province_grid[:, 1:],
+        land_provinces,
+    )
+    _add_coastal_land(
+        coastal_land_provinces,
+        province_grid[:-1, :],
+        province_grid[1:, :],
+        land_provinces,
+    )
     # HOI4's world map wraps east-to-west.
     _add_pixel_edges(graph, province_grid[:, :1], province_grid[:, -1:], land_provinces)
+    _add_coastal_land(
+        coastal_land_provinces,
+        province_grid[:, :1],
+        province_grid[:, -1:],
+        land_provinces,
+    )
     if adjacency_path is not None:
         _add_explicit_adjacencies(graph, adjacency_path, land_provinces)
-    return land_provinces, graph
+    return land_provinces, graph, frozenset(coastal_land_provinces)
 
 
 def _effective_map_file(
@@ -258,6 +372,27 @@ def _add_pixel_edges(
             continue
         graph.setdefault(first, set()).add(second)
         graph.setdefault(second, set()).add(first)
+
+
+def _add_coastal_land(
+    coastal: set[int],
+    left: Any,
+    right: Any,
+    land_provinces: AbstractSet[int],
+) -> None:
+    np = import_module("numpy")
+
+    mask = (left != right) & (left != 0) & (right != 0)
+    if not bool(np.any(mask)):
+        return
+    pairs = np.stack((left[mask], right[mask]), axis=1)
+    for raw_left, raw_right in np.unique(pairs, axis=0):
+        first = int(raw_left)
+        second = int(raw_right)
+        if first in land_provinces and second not in land_provinces:
+            coastal.add(first)
+        if second in land_provinces and first not in land_provinces:
+            coastal.add(second)
 
 
 def _add_explicit_adjacencies(

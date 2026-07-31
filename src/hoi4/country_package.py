@@ -9,6 +9,8 @@ from .types import ValidationError
 
 @dataclass(frozen=True)
 class CountryPackageReport:
+    """Static package completeness; not a proof of dynamic trigger reachability."""
+
     tag: str
     findings: tuple[ValidationError, ...] = ()
     lifecycle: str = "starting"
@@ -18,6 +20,8 @@ class CountryPackageReport:
     owned_state_count: int = 0
     runtime_state_ids: tuple[int, ...] = ()
     activation_sources: tuple[str, ...] = ()
+    analysis_scope: str = "structural"
+    proves_dynamic_achievability: bool = False
 
     @property
     def errors(self) -> tuple[ValidationError, ...]:
@@ -33,12 +37,21 @@ class CountryPackageReport:
 
     @property
     def complete(self) -> bool:
+        """Whether every structural package requirement passes."""
+
         return not self.errors
+
+    @property
+    def structurally_complete(self) -> bool:
+        return self.complete
 
     def to_dict(self) -> dict[str, object]:
         return {
             "tag": self.tag,
             "complete": self.complete,
+            "structurally_complete": self.structurally_complete,
+            "analysis_scope": self.analysis_scope,
+            "proves_dynamic_achievability": self.proves_dynamic_achievability,
             "lifecycle": self.lifecycle,
             "advisor_count": self.advisor_count,
             "commander_count": self.commander_count,

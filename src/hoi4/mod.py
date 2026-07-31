@@ -97,15 +97,27 @@ from .localisation import (
     parse_localization_dir,
     serialize_localization_file,
 )
-from .map_topology import TerritoryComponent, find_country_territory_components
+from .map_topology import (
+    TerritoryComponent,
+    find_country_territory_components,
+    find_enclosed_foreign_components,
+)
 from .on_actions import load_on_actions_file, serialize_on_actions_file
 from .oob import (
     AirWing,
     DivisionTemplate,
     DivisionUnit,
+    EquipmentVariant,
     Fleet,
+    OOBKind,
+    OOBReference,
     OrderOfBattle,
+    find_equipment_variants,
+    find_oob_references,
     load_oob_file,
+    remove_oob_reference,
+    serialize_equipment_variant,
+    serialize_oob_assignment,
     serialize_oob,
     validate_oob,
 )
@@ -123,7 +135,7 @@ from .parser import (
     parse_pdx,
     strip_comments,
 )
-from .patching import AssignmentSpan, top_level_assignments
+from .patching import AssignmentSpan, append_assignment, top_level_assignments
 from .politics import LEADER_IDEOLOGIES_BY_PARTY, RULING_PARTIES
 from .progress import CancelCallback, ProgressCallback, check_cancelled, report_progress
 from .states import (
@@ -474,6 +486,24 @@ def _default_oob_equipment_owners(oob: OrderOfBattle) -> None:
             wing.owner = oob.country_tag
             if wing.raw_block:
                 wing.touched_fields.add("owner")
+
+
+def _oob_content_kind(
+    templates: Sequence[DivisionTemplate],
+    divisions: Sequence[DivisionUnit],
+    fleets: Sequence[Fleet],
+    air_wings: Sequence[AirWing],
+) -> OOBKind | None:
+    kinds: list[OOBKind] = []
+    if templates or divisions:
+        kinds.append("land")
+    if fleets:
+        kinds.append("naval")
+    if air_wings:
+        kinds.append("air")
+    if len(kinds) > 1:
+        return "mixed"
+    return kinds[0] if kinds else None
 
 
 def _join_script_parts(parts: Sequence[str | None]) -> str:
@@ -1026,17 +1056,24 @@ class Mod:
         directory = self.mod_root / "history" / "units"
         if not directory.is_dir():
             return
-        assigned = {
-            country.oob: country.tag
-            for country in self._countries.values()
-            if country.oob
-        }
+        assigned: dict[str, tuple[str, OOBReference]] = {}
+        for country in self._countries.values():
+            for reference in self._country_oob_references(country):
+                assigned.setdefault(reference.name, (country.tag, reference))
         for path in sorted(directory.glob("*.txt")):
             try:
+                assignment = assigned.get(path.stem)
                 oob = load_oob_file(
                     path,
                     name=path.stem,
-                    country_tag=assigned.get(path.stem, ""),
+                    country_tag=assignment[0] if assignment is not None else "",
+                    kind=assignment[1].kind if assignment is not None else None,
+                    required_dlc=(
+                        assignment[1].required_dlc if assignment is not None else ()
+                    ),
+                    excluded_dlc=(
+                        assignment[1].excluded_dlc if assignment is not None else ()
+                    ),
                 )
                 self._oobs[oob.name] = oob
                 self._original_files[path] = path.read_text(
@@ -2123,9 +2160,21 @@ class Mod:
             (
                 country.tag
                 for country in self._countries.values()
-                if country.oob == name
+                if any(
+                    reference.name == name
+                    for reference in self._country_oob_references(country)
+                )
             ),
             "",
+        )
+        reference = next(
+            (
+                reference
+                for country in self._countries.values()
+                for reference in self._country_oob_references(country)
+                if reference.name == name
+            ),
+            None,
         )
         for path in candidates:
             if not path.is_file():
@@ -2134,6 +2183,9 @@ class Mod:
                 path,
                 name=name,
                 country_tag=country_tag,
+                kind=reference.kind if reference is not None else None,
+                required_dlc=(reference.required_dlc if reference is not None else ()),
+                excluded_dlc=(reference.excluded_dlc if reference is not None else ()),
             )
             self._oobs[name] = oob
             if path.resolve(strict=False).is_relative_to(self.mod_root):
@@ -2153,6 +2205,9 @@ class Mod:
         divisions: Sequence[DivisionUnit] = (),
         fleets: Sequence[Fleet] = (),
         air_wings: Sequence[AirWing] = (),
+        kind: Literal["auto", "land", "naval", "air"] = "auto",
+        required_dlc: Sequence[str] = (),
+        excluded_dlc: Sequence[str] = (),
         assign: bool = True,
         overwrite: bool = False,
         path: str | Path | None = None,
@@ -2169,6 +2224,32 @@ class Mod:
             self.mod_root,
             path or Path("history") / "units" / f"{name}.txt",
         )
+        inferred_kind = _oob_content_kind(
+            templates,
+            divisions,
+            fleets,
+            air_wings,
+        )
+        if inferred_kind == "mixed":
+            raise ValueError(
+                "New OOBs cannot mix land, naval, and air content. Split the "
+                "content into separate create_oob() calls."
+            )
+        selected_kind: OOBKind = (
+            inferred_kind or "land"
+            if kind == "auto"
+            else cast(OOBKind, kind)
+        )
+        if inferred_kind is not None and selected_kind != inferred_kind:
+            raise ValueError(
+                f"OOB kind '{selected_kind}' does not match its "
+                f"{inferred_kind} content."
+            )
+        required = tuple(dict.fromkeys(value.strip() for value in required_dlc if value.strip()))
+        excluded = tuple(dict.fromkeys(value.strip() for value in excluded_dlc if value.strip()))
+        overlap = sorted(set(required) & set(excluded))
+        if overlap:
+            raise ValueError(f"DLC cannot be both required and excluded: {overlap}")
         oob = OrderOfBattle(
             name=name,
             country_tag=country_tag,
@@ -2176,6 +2257,9 @@ class Mod:
             divisions=copy.deepcopy(list(divisions)),
             fleets=copy.deepcopy(list(fleets)),
             air_wings=copy.deepcopy(list(air_wings)),
+            kind=selected_kind,
+            required_dlc=required,
+            excluded_dlc=excluded,
             path=target,
             raw_text=existing.raw_text if existing is not None else "",
             touched_fields=(
@@ -2228,7 +2312,17 @@ class Mod:
         self._dirty_oob_files.add(target)
         self._dirty.add("oobs")
         if assign:
-            self._assign_country_oob(country_tag, name)
+            assign_kind = cast(
+                Literal["land", "naval", "air"],
+                selected_kind,
+            )
+            self.assign_country_oob(
+                country_tag,
+                name,
+                kind=assign_kind,
+                required_dlc=required,
+                excluded_dlc=excluded,
+            )
         return oob
 
     def update_oob(
@@ -2240,12 +2334,41 @@ class Mod:
         fleets: Sequence[Fleet] | None = None,
         air_wings: Sequence[AirWing] | None = None,
         country_tag: str | None = None,
+        kind: Literal["land", "naval", "air"] | None = None,
+        required_dlc: Sequence[str] | None = None,
+        excluded_dlc: Sequence[str] | None = None,
         assign: bool = False,
     ) -> bool:
         try:
             oob = self.get_oob(name)
         except (KeyError, ValueError):
             return False
+        existing_content_kind = _oob_content_kind(
+            oob.templates,
+            oob.divisions,
+            oob.fleets,
+            oob.air_wings,
+        )
+        prospective_kind = _oob_content_kind(
+            templates if templates is not None else oob.templates,
+            divisions if divisions is not None else oob.divisions,
+            fleets if fleets is not None else oob.fleets,
+            air_wings if air_wings is not None else oob.air_wings,
+        )
+        selected_kind: OOBKind = kind or oob.kind
+        if prospective_kind == "mixed" and existing_content_kind != "mixed":
+            raise ValueError(
+                "This update would mix land, naval, and air content. Split "
+                "new content into separate OOB files."
+            )
+        if (
+            prospective_kind not in {None, "mixed"}
+            and selected_kind != prospective_kind
+        ):
+            raise ValueError(
+                f"OOB kind '{selected_kind}' does not match its "
+                f"{prospective_kind} content."
+            )
         self._materialize_oob_override(oob)
         if templates is not None:
             template_replacements = copy.deepcopy(list(templates))
@@ -2302,11 +2425,35 @@ class Mod:
             oob.touched_fields.add("air_wings")
         if country_tag is not None:
             oob.country_tag = require_country_tag(country_tag)
+        if kind is not None:
+            oob.kind = kind
+        if required_dlc is not None:
+            oob.required_dlc = tuple(
+                dict.fromkeys(value.strip() for value in required_dlc if value.strip())
+            )
+        if excluded_dlc is not None:
+            oob.excluded_dlc = tuple(
+                dict.fromkeys(value.strip() for value in excluded_dlc if value.strip())
+            )
+        overlap = sorted(set(oob.required_dlc) & set(oob.excluded_dlc))
+        if overlap:
+            raise ValueError(f"DLC cannot be both required and excluded: {overlap}")
         _default_oob_equipment_owners(oob)
         if assign:
             if not oob.country_tag:
                 raise ValueError("Assigning an OOB requires country_tag")
-            self._assign_country_oob(oob.country_tag, oob.name)
+            if oob.kind == "mixed":
+                raise ValueError(
+                    "A mixed land/naval/air OOB cannot be assigned. Split it "
+                    "into separate OOB files."
+                )
+            self.assign_country_oob(
+                oob.country_tag,
+                oob.name,
+                kind=cast(Literal["land", "naval", "air"], oob.kind),
+                required_dlc=oob.required_dlc,
+                excluded_dlc=oob.excluded_dlc,
+            )
         self._dirty_oobs.add(oob.name)
         if oob.path is not None:
             self._dirty_oob_files.add(oob.path)
@@ -2329,17 +2476,183 @@ class Mod:
         self._dirty.add("oobs")
         if unassign:
             for country in self._countries.values():
-                if country.oob == oob.name:
-                    self._assign_country_oob(country.tag, "")
+                for reference in self._country_oob_references(country):
+                    if reference.name == oob.name:
+                        self.unassign_country_oob(
+                            country.tag,
+                            reference.name,
+                            kind=reference.kind,
+                            required_dlc=reference.required_dlc,
+                            excluded_dlc=reference.excluded_dlc,
+                        )
         return True
 
     def _assign_country_oob(self, tag: str, name: str) -> None:
+        if name:
+            self.assign_country_oob(tag, name, kind="land")
+            return
+        country = self.get_country(tag)
+        for reference in self._country_oob_references(country):
+            if reference.kind == "land":
+                self.unassign_country_oob(
+                    tag,
+                    reference.name,
+                    kind="land",
+                    required_dlc=reference.required_dlc,
+                    excluded_dlc=reference.excluded_dlc,
+                )
+
+    def assign_country_oob(
+        self,
+        tag: str,
+        name: str,
+        *,
+        kind: Literal["land", "naval", "air"] = "land",
+        required_dlc: Sequence[str] = (),
+        excluded_dlc: Sequence[str] = (),
+    ) -> None:
+        """Assign an OOB with the engine's land/naval/air history effect."""
+
+        tag = require_country_tag(tag)
+        name = require_script_id(name, label="OOB name")
         country = self.get_country(tag)
         self._materialize_country_override(country)
-        country.oob = name
-        country.touched_fields.add("oob")
+        required = tuple(
+            dict.fromkeys(value.strip() for value in required_dlc if value.strip())
+        )
+        excluded = tuple(
+            dict.fromkeys(value.strip() for value in excluded_dlc if value.strip())
+        )
+        reference = OOBReference(name, kind, required, excluded)
+        existing = self._country_oob_references(country)
+        if reference in existing:
+            return
+        conflict = next(
+            (
+                item
+                for item in existing
+                if item.kind == kind
+                and item.required_dlc == required
+                and item.excluded_dlc == excluded
+            ),
+            None,
+        )
+        if conflict is not None:
+            raise ValueError(
+                f"Country '{tag}' already assigns {kind} OOB '{conflict.name}' "
+                f"for required DLC {required} and excluded DLC {excluded}."
+            )
+        if kind == "land" and not required and not excluded:
+            country.oob = name
+            country.touched_fields.add("oob")
+        else:
+            self._materialize_country_history(country)
+            country.raw_history = append_assignment(
+                country.raw_history,
+                serialize_oob_assignment(reference),
+            )
         self._dirty_countries.add(tag)
         self._dirty.add("countries")
+
+    def unassign_country_oob(
+        self,
+        tag: str,
+        name: str,
+        *,
+        kind: Literal["land", "naval", "air"] = "land",
+        required_dlc: Sequence[str] = (),
+        excluded_dlc: Sequence[str] = (),
+    ) -> bool:
+        """Remove one exact land, naval, or air OOB assignment."""
+
+        tag = require_country_tag(tag)
+        name = require_script_id(name, label="OOB name")
+        country = self.get_country(tag)
+        required = tuple(
+            dict.fromkeys(value.strip() for value in required_dlc if value.strip())
+        )
+        excluded = tuple(
+            dict.fromkeys(value.strip() for value in excluded_dlc if value.strip())
+        )
+        reference = OOBReference(name, kind, required, excluded)
+        if reference not in self._country_oob_references(country):
+            return False
+        self._materialize_country_override(country)
+        updated, removed = remove_oob_reference(country.raw_history, reference)
+        if kind == "land" and not required and not excluded and country.oob == name:
+            country.oob = ""
+            country.touched_fields.add("oob")
+            removed = True
+        if updated != country.raw_history:
+            country.raw_history = updated
+        if removed:
+            self._dirty_countries.add(tag)
+            self._dirty.add("countries")
+        return removed
+
+    def create_equipment_variant(
+        self,
+        country_tag: str,
+        variant: EquipmentVariant,
+    ) -> EquipmentVariant:
+        """Append a validated equipment variant to country history."""
+
+        country_tag = require_country_tag(country_tag)
+        if not variant.name.strip():
+            raise ValueError("Equipment variant name cannot be empty")
+        if not variant.equipment_type.strip():
+            raise ValueError("Equipment variant type cannot be empty")
+        overlap = sorted(set(variant.required_dlc) & set(variant.excluded_dlc))
+        if overlap:
+            raise ValueError(f"DLC cannot be both required and excluded: {overlap}")
+        known_equipment = self._known_equipment_ids()
+        if known_equipment and variant.equipment_type not in known_equipment:
+            raise ValueError(
+                f"Unknown equipment type '{variant.equipment_type}' for variant "
+                f"'{variant.name}'"
+            )
+        country = self.get_country(country_tag)
+        self._materialize_country_override(country)
+        self._materialize_country_history(country)
+        for existing in find_equipment_variants(country.raw_history):
+            if (
+                existing.name == variant.name
+                and existing.equipment_type == variant.equipment_type
+                and existing.required_dlc == variant.required_dlc
+                and existing.excluded_dlc == variant.excluded_dlc
+            ):
+                raise ValueError(
+                    f"Equipment variant '{variant.name}' for "
+                    f"'{variant.equipment_type}' already exists in {country_tag} history"
+                )
+        country.raw_history = append_assignment(
+            country.raw_history,
+            serialize_equipment_variant(variant),
+        )
+        self._dirty_countries.add(country_tag)
+        self._dirty.add("countries")
+        return variant
+
+    @staticmethod
+    def _country_oob_references(country: Country) -> tuple[OOBReference, ...]:
+        references = list(find_oob_references(country.raw_history))
+        if country.oob and not any(
+            reference.kind == "land" and reference.name == country.oob
+            for reference in references
+        ):
+            references.append(OOBReference(country.oob, "land"))
+        return tuple(references)
+
+    def _materialize_country_history(self, country: Country) -> None:
+        if country.raw_history:
+            return
+        files = serialize_country_files(self.mod_root, country)
+        history_path = next(
+            path for path in files if path.parent.name == "countries"
+            and path.parent.parent.name == "history"
+        )
+        country.history_path = history_path
+        country.raw_history = files[history_path]
 
     def _materialize_oob_override(self, oob: OrderOfBattle) -> None:
         source = oob.path
@@ -3705,6 +4018,7 @@ class Mod:
         if existing is not None and existing.path is not None:
             self._dirty_ideology_files.add(existing.path)
         self._ideologies[ideology_id] = ideology
+        self._script_vocabulary_cache = None
         self._dirty_ideologies.add(ideology_id)
         self._dirty_ideology_files.add(target)
         self._dirty.add("ideologies")
@@ -3745,6 +4059,7 @@ class Mod:
         if ideology.path is not None:
             self._dirty_ideology_files.add(ideology.path)
         self._dirty_ideologies.discard(ideology_id)
+        self._script_vocabulary_cache = None
         self._dirty.add("ideologies")
         return True
 
@@ -5367,6 +5682,27 @@ class Mod:
             allowed_state_ids=allowed_state_ids,
         )
 
+    def find_enclosed_foreign_states(
+        self,
+        tag: str,
+        *,
+        minimum_land_provinces: int = 1,
+        allowed_state_ids: Sequence[int] = (),
+    ) -> tuple[TerritoryComponent, ...]:
+        """Find foreign land components entirely enclosed by ``tag``."""
+
+        tag = require_country_tag(tag)
+        if not self._is_known_country_tag(tag):
+            raise KeyError(f"Country '{tag}' is not defined")
+        return find_enclosed_foreign_components(
+            self.mod_root,
+            self.hoi4_install,
+            self._effective_states(),
+            country_tag=tag,
+            minimum_land_provinces=minimum_land_provinces,
+            allowed_state_ids=allowed_state_ids,
+        )
+
     def _country_runtime_activation_evidence(
         self,
         tag: str,
@@ -5512,6 +5848,10 @@ class Mod:
         focus, event, decision, or on-action effects provide activation
         evidence. Otherwise its lifecycle remains unresolved and validation
         fails with a targeted remediation.
+
+        A complete report proves structural authoring completeness only. It
+        does not prove that runtime popularity thresholds or other dynamic
+        trigger arithmetic are achievable in play.
         """
 
         tag = require_country_tag(tag)
@@ -5767,19 +6107,24 @@ class Mod:
         matching_oobs = [
             oob
             for oob in self._oobs.values()
-            if oob.country_tag == tag
+            if oob.country_tag == tag and oob.kind == "land"
+        ]
+        land_references = [
+            reference
+            for reference in self._country_oob_references(country)
+            if reference.kind == "land"
         ]
         package_oob: OrderOfBattle | None = None
         if resolved_lifecycle == "starting":
-            if country.oob:
+            if land_references:
                 try:
-                    package_oob = self.get_oob(country.oob)
+                    package_oob = self.get_oob(land_references[0].name)
                 except KeyError:
                     issue(
                         "missing_oob_reference",
                         (
                             f"Country '{tag}' references missing OOB "
-                            f"'{country.oob}'."
+                            f"'{land_references[0].name}'."
                         ),
                     )
             elif len(matching_oobs) == 1:
@@ -5867,6 +6212,26 @@ class Mod:
                         f"{component.land_province_count} land province(s). "
                         "Fix the border or pass allowed_state_ids for a deliberate "
                         "island/overseas component."
+                    ),
+                    state_id=component.state_ids[0],
+                    severity="warning",
+                )
+            try:
+                enclosed = self.find_enclosed_foreign_states(
+                    tag,
+                    allowed_state_ids=allowed_state_ids,
+                )
+            except (FileNotFoundError, RuntimeError):
+                enclosed = ()
+            for component in enclosed:
+                issue(
+                    "enclosed_foreign_territory",
+                    (
+                        f"Country '{tag}' completely encloses foreign states "
+                        f"{list(component.state_ids)} containing "
+                        f"{component.land_province_count} land province(s). "
+                        "This often means a state was missed during a border "
+                        "transfer; fix it or explicitly allow the state."
                     ),
                     state_id=component.state_ids[0],
                     severity="warning",
@@ -6124,27 +6489,30 @@ class Mod:
         begin_phase("oobs", "Validating land orders of battle")
         validated_oobs: set[str] = set()
         for country in self._countries.values():
-            if not country.oob:
-                continue
-            try:
-                oob = self.get_oob(country.oob)
-            except KeyError:
-                errors.append(
-                    ValidationError(
-                        message=(
-                            f"Country '{country.tag}' references missing OOB "
-                            f"'{country.oob}'"
-                        ),
-                        severity="error",
-                        code="missing_oob_reference",
-                        country_tag=country.tag,
+            for reference in self._country_oob_references(country):
+                try:
+                    oob = self.get_oob(reference.name)
+                except KeyError:
+                    errors.append(
+                        ValidationError(
+                            message=(
+                                f"Country '{country.tag}' references missing "
+                                f"{reference.kind} OOB '{reference.name}'"
+                            ),
+                            severity="error",
+                            code="missing_oob_reference",
+                            country_tag=country.tag,
+                        )
                     )
-                )
-                continue
-            if oob.name not in validated_oobs:
-                errors.extend(validate_oob(oob))
-                validated_oobs.add(oob.name)
-            errors.extend(self._validate_oob_context(oob, country.tag))
+                    continue
+                oob.country_tag = country.tag
+                oob.kind = reference.kind
+                oob.required_dlc = reference.required_dlc
+                oob.excluded_dlc = reference.excluded_dlc
+                if oob.name not in validated_oobs:
+                    errors.extend(validate_oob(oob))
+                    validated_oobs.add(oob.name)
+                errors.extend(self._validate_oob_context(oob, country.tag))
         for name, oob in self._oobs.items():
             if name not in validated_oobs:
                 errors.extend(validate_oob(oob))
@@ -7226,7 +7594,8 @@ class Mod:
             )
         if self._script_vocabulary_cache is None:
             self._script_vocabulary_cache = load_game_script_vocabulary(
-                self.hoi4_install
+                self.hoi4_install,
+                ideology_ids=self._ideologies,
             )
         return self._script_vocabulary_cache
 
@@ -8130,6 +8499,52 @@ class Mod:
         known_equipment = self._known_equipment_ids()
         known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
         known_tags.update(self._countries)
+        variants_by_tag: dict[str, tuple[EquipmentVariant, ...]] = {}
+
+        def variants_for(tag: str) -> tuple[EquipmentVariant, ...]:
+            if tag not in variants_by_tag:
+                try:
+                    variants_by_tag[tag] = find_equipment_variants(
+                        self.get_country(tag).raw_history
+                    )
+                except (KeyError, OSError, ValueError):
+                    variants_by_tag[tag] = ()
+            return variants_by_tag[tag]
+
+        def variant_available(
+            variant: EquipmentVariant,
+        ) -> bool:
+            required = set(oob.required_dlc)
+            excluded = set(oob.excluded_dlc)
+            return bool(
+                not (set(variant.required_dlc) & excluded)
+                and not (set(variant.excluded_dlc) & required)
+                and set(variant.required_dlc) <= required
+                and set(variant.excluded_dlc) <= excluded
+            )
+
+        def has_matching_variant(
+            equipment_type: str,
+            version_name: str,
+            *,
+            owner: str,
+            creator: str,
+        ) -> bool:
+            candidate_tags = tuple(
+                dict.fromkeys(
+                    tag for tag in (creator, owner, country_tag) if tag
+                )
+            )
+            return any(
+                variant.name == version_name
+                and variant.equipment_type == equipment_type
+                and variant_available(variant)
+                for tag in candidate_tags
+                for variant in variants_for(tag)
+            )
+
+        reported_legacy_mtg_mismatch = False
+        reported_ungated_mtg_oob = False
         for template in oob.templates:
             for battalion in (*template.battalions, *template.support):
                 if known_units and battalion.unit_type not in known_units:
@@ -8305,6 +8720,108 @@ class Mod:
                                     ),
                                 )
                             )
+                        is_mtg_hull = equipment.equipment_type.startswith(
+                            "ship_hull_"
+                        )
+                        mtg_required = "Man the Guns" in oob.required_dlc
+                        mtg_excluded = "Man the Guns" in oob.excluded_dlc
+                        if not is_mtg_hull and not mtg_excluded:
+                            code = (
+                                "mtg_naval_oob_uses_legacy_equipment"
+                                if mtg_required
+                                else "legacy_naval_oob_without_dlc_fallback"
+                            )
+                            if not reported_legacy_mtg_mismatch:
+                                errors.append(
+                                    ValidationError(
+                                        message=(
+                                            f"OOB '{oob.name}' uses legacy naval "
+                                            f"equipment '{equipment.equipment_type}' "
+                                            "when Man the Guns may be active. HOI4 "
+                                            "will skip these ships because no proper "
+                                            "equipment variant exists. Assign a "
+                                            "legacy naval OOB with excluded_dlc="
+                                            "('Man the Guns',) and a hull-based OOB "
+                                            "with required_dlc=('Man the Guns',)."
+                                        ),
+                                        severity="error",
+                                        code=code,
+                                        country_tag=country_tag,
+                                        file_path=(
+                                            str(oob.path)
+                                            if oob.path is not None
+                                            else None
+                                        ),
+                                    )
+                                )
+                                reported_legacy_mtg_mismatch = True
+                        if is_mtg_hull and not mtg_required:
+                            if not reported_ungated_mtg_oob:
+                                errors.append(
+                                    ValidationError(
+                                        message=(
+                                            f"OOB '{oob.name}' uses Man the Guns hull "
+                                            "equipment but is not gated with "
+                                            "required_dlc=('Man the Guns',). Add the "
+                                            "gate and a legacy naval fallback."
+                                        ),
+                                        severity="error",
+                                        code="ungated_mtg_naval_oob",
+                                        country_tag=country_tag,
+                                        file_path=(
+                                            str(oob.path)
+                                            if oob.path is not None
+                                            else None
+                                        ),
+                                    )
+                                )
+                                reported_ungated_mtg_oob = True
+                        if is_mtg_hull and not equipment.version_name:
+                            errors.append(
+                                ValidationError(
+                                    message=(
+                                        f"OOB '{oob.name}' ship '{ship.name}' uses "
+                                        f"'{equipment.equipment_type}' without a "
+                                        "version_name matching a country-history "
+                                        "create_equipment_variant definition."
+                                    ),
+                                    severity="error",
+                                    code="missing_mtg_ship_variant_name",
+                                    country_tag=country_tag,
+                                    file_path=(
+                                        str(oob.path)
+                                        if oob.path is not None
+                                        else None
+                                    ),
+                                )
+                            )
+                        elif is_mtg_hull:
+                            if not has_matching_variant(
+                                equipment.equipment_type,
+                                equipment.version_name,
+                                owner=equipment.owner,
+                                creator=equipment.creator,
+                            ):
+                                errors.append(
+                                    ValidationError(
+                                        message=(
+                                            f"OOB '{oob.name}' ship '{ship.name}' "
+                                            f"references {equipment.equipment_type} "
+                                            f"variant '{equipment.version_name}', but "
+                                            "no compatible create_equipment_variant "
+                                            "definition was found in the owner or "
+                                            "creator country history."
+                                        ),
+                                        severity="error",
+                                        code="missing_mtg_equipment_variant",
+                                        country_tag=country_tag,
+                                        file_path=(
+                                            str(oob.path)
+                                            if oob.path is not None
+                                            else None
+                                        ),
+                                    )
+                                )
                         for owner in (equipment.owner, equipment.creator):
                             if owner and owner not in known_tags:
                                 errors.append(
@@ -8340,6 +8857,59 @@ class Mod:
                         ),
                         severity="error",
                         code="unknown_oob_equipment",
+                        country_tag=country_tag,
+                        file_path=str(oob.path) if oob.path is not None else None,
+                    )
+                )
+            is_bba_airframe = "airframe" in wing.equipment_type
+            bba_required = "By Blood Alone" in oob.required_dlc
+            if is_bba_airframe and not bba_required:
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"OOB '{oob.name}' uses By Blood Alone airframe "
+                            f"equipment '{wing.equipment_type}' but is not gated "
+                            "with required_dlc=('By Blood Alone',). Add the gate "
+                            "and a legacy air OOB fallback."
+                        ),
+                        severity="error",
+                        code="ungated_bba_air_oob",
+                        country_tag=country_tag,
+                        file_path=str(oob.path) if oob.path is not None else None,
+                    )
+                )
+            if is_bba_airframe and not wing.version_name:
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"OOB '{oob.name}' air wing uses "
+                            f"'{wing.equipment_type}' without a version_name "
+                            "matching a country-history "
+                            "create_equipment_variant definition."
+                        ),
+                        severity="error",
+                        code="missing_bba_air_variant_name",
+                        country_tag=country_tag,
+                        file_path=str(oob.path) if oob.path is not None else None,
+                    )
+                )
+            elif is_bba_airframe and not has_matching_variant(
+                wing.equipment_type,
+                wing.version_name,
+                owner=wing.owner,
+                creator=wing.creator,
+            ):
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"OOB '{oob.name}' air wing references "
+                            f"{wing.equipment_type} variant "
+                            f"'{wing.version_name}', but no compatible "
+                            "create_equipment_variant definition was found in "
+                            "the owner or creator country history."
+                        ),
+                        severity="error",
+                        code="missing_bba_equipment_variant",
                         country_tag=country_tag,
                         file_path=str(oob.path) if oob.path is not None else None,
                     )

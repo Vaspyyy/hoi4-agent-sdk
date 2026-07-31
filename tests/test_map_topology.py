@@ -19,7 +19,13 @@ COLORS = {
 }
 
 
-def _write_state(root: Path, state_id: int, provinces: tuple[int, ...]) -> None:
+def _write_state(
+    root: Path,
+    state_id: int,
+    provinces: tuple[int, ...],
+    *,
+    owner: str = "ABC",
+) -> None:
     path = root / "history" / "states" / f"{state_id}-Topology.txt"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -28,7 +34,7 @@ def _write_state(root: Path, state_id: int, provinces: tuple[int, ...]) -> None:
             f" id = {state_id}\n"
             f' name = "STATE_{state_id}"\n'
             " state_category = rural\n"
-            " history = { owner = ABC add_core_of = ABC }\n"
+            f" history = {{ owner = {owner} add_core_of = {owner} }}\n"
             f" provinces = {{ {' '.join(str(value) for value in provinces)} }}\n"
             "}\n"
         ),
@@ -134,3 +140,58 @@ def test_normal_validation_reports_disconnected_generated_country_territory(
     assert len(findings) == 1
     assert findings[0].severity == "warning"
     assert findings[0].state_id == 2
+
+
+def _write_enclosure_fixture(root: Path) -> None:
+    map_dir = root / "map"
+    map_dir.mkdir(parents=True)
+    rows = [
+        f"{province};{red};{green};{blue};{'sea' if province == 5 else 'land'};false;plains;1"
+        for province, (red, green, blue) in COLORS.items()
+    ]
+    (map_dir / "definition.csv").write_text(
+        "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+    image = Image.new("RGB", (9, 7), COLORS[5])
+    pixels = image.load()
+    assert pixels is not None
+    for x in range(1, 7):
+        for y in range(1, 6):
+            pixels[x, y] = COLORS[1]
+    pixels[3, 3] = COLORS[2]
+    pixels[7, 3] = COLORS[3]
+    image.save(map_dir / "provinces.bmp")
+    _write_state(root, 1, (1,))
+    _write_state(root, 2, (2,), owner="DEF")
+    _write_state(root, 3, (3,), owner="GHI")
+
+
+def test_find_enclosed_foreign_states_reports_landlocked_hole_only(
+    tmp_path: Path,
+) -> None:
+    _write_enclosure_fixture(tmp_path)
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Topologia", capital=1)
+
+    components = mod.find_enclosed_foreign_states("ABC")
+
+    assert len(components) == 1
+    assert components[0].state_ids == (2,)
+    assert components[0].province_ids == (2,)
+    assert components[0].land_province_count == 1
+
+
+def test_find_enclosed_foreign_states_honors_threshold_and_allowlist(
+    tmp_path: Path,
+) -> None:
+    _write_enclosure_fixture(tmp_path)
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Topologia", capital=1)
+
+    assert mod.find_enclosed_foreign_states(
+        "ABC", minimum_land_provinces=2
+    ) == ()
+    assert mod.find_enclosed_foreign_states(
+        "ABC", allowed_state_ids=(2,)
+    ) == ()

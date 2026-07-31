@@ -68,7 +68,10 @@ from .oob import (
     Battalion,
     DivisionTemplate,
     DivisionUnit,
+    EquipmentVariant,
     Fleet,
+    OOBKind,
+    OOBReference,
     OrderOfBattle,
     Ship,
     ShipEquipment,
@@ -131,7 +134,7 @@ except ImportError:
 try:
     __version__ = version("hoi4-agent-sdk")
 except PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
-    __version__ = "0.6.1"
+    __version__ = "0.6.2"
 
 __all__ = [
     "Mod",
@@ -150,6 +153,9 @@ __all__ = [
     "ArmyCommanderRole",
     "NavyLeaderRole",
     "OrderOfBattle",
+    "OOBKind",
+    "OOBReference",
+    "EquipmentVariant",
     "DivisionTemplate",
     "Battalion",
     "DivisionUnit",

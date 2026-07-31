@@ -3,17 +3,23 @@ from __future__ import annotations
 from pathlib import Path
 import copy
 
+import pytest
+
 from hoi4 import Mod
 from hoi4.oob import (
     AirWing,
     Battalion,
     DivisionTemplate,
     DivisionUnit,
+    EquipmentVariant,
     Fleet,
+    OOBReference,
     OrderOfBattle,
     Ship,
     ShipEquipment,
     TaskForce,
+    find_equipment_variants,
+    find_oob_references,
     load_oob_file,
     serialize_oob,
     validate_oob,
@@ -244,7 +250,9 @@ def test_new_naval_and_air_oob_serializes_and_validates() -> None:
     assert "ship_hull_cruiser_1 = {" in rendered
     assert "air_wings = {" in rendered
     assert "fighter_equipment_0 = {" in rendered
-    assert validate_oob(oob) == []
+    findings = validate_oob(oob)
+    assert [finding.code for finding in findings] == ["mixed_oob_kinds"]
+    assert findings[0].severity == "warning"
 
 
 def test_mod_update_oob_patches_navy_without_clobbering_unknown_content(
@@ -282,8 +290,8 @@ def test_mod_update_oob_patches_navy_without_clobbering_unknown_content(
 
 def test_create_oob_defaults_naval_and_air_equipment_owner(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
-    oob = mod.create_oob(
-        "ABC_1936",
+    naval = mod.create_oob(
+        "ABC_naval",
         "ABC",
         fleets=[
             Fleet(
@@ -300,9 +308,348 @@ def test_create_oob_defaults_naval_and_air_equipment_owner(tmp_path: Path) -> No
                 )],
             )
         ],
+        assign=False,
+    )
+    air = mod.create_oob(
+        "ABC_air",
+        "ABC",
         air_wings=[AirWing(10, "fighter_equipment_0", 12)],
         assign=False,
     )
 
-    assert oob.fleets[0].task_forces[0].ships[0].equipment[0].owner == "ABC"
-    assert oob.air_wings[0].owner == "ABC"
+    assert naval.fleets[0].task_forces[0].ships[0].equipment[0].owner == "ABC"
+    assert air.air_wings[0].owner == "ABC"
+
+
+def test_create_oob_rejects_mixed_or_mismatched_new_content(
+    tmp_path: Path,
+) -> None:
+    mod = Mod(tmp_path)
+    fleet = Fleet("Fleet", 100)
+
+    with pytest.raises(ValueError, match="cannot mix"):
+        mod.create_oob(
+            "ABC_mixed",
+            "ABC",
+            fleets=[fleet],
+            air_wings=[AirWing(10, "fighter_equipment_0", 12)],
+            assign=False,
+        )
+    with pytest.raises(ValueError, match="does not match"):
+        mod.create_oob(
+            "ABC_wrong_kind",
+            "ABC",
+            kind="land",
+            fleets=[fleet],
+            assign=False,
+        )
+
+
+def test_dlc_conditioned_oob_references_and_variants_parse_if_else() -> None:
+    history = '''IF = {
+    limit = { has_dlc = "Man the Guns" }
+    set_naval_oob = "ABC_naval_mtg"
+    create_equipment_variant = {
+        name = "Test Class"
+        type = ship_hull_light_1
+    }
+    ELSE = {
+        set_naval_oob = "ABC_naval_legacy"
+        create_equipment_variant = {
+            name = "Legacy Class"
+            type = destroyer_1
+        }
+    }
+}
+'''
+
+    assert find_oob_references(history) == (
+        OOBReference("ABC_naval_mtg", "naval", ("Man the Guns",), ()),
+        OOBReference("ABC_naval_legacy", "naval", (), ("Man the Guns",)),
+    )
+    variants = find_equipment_variants(history)
+    assert [
+        (item.name, item.required_dlc, item.excluded_dlc)
+        for item in variants
+    ] == [
+        ("Test Class", ("Man the Guns",), ()),
+        ("Legacy Class", (), ("Man the Guns",)),
+    ]
+
+
+def test_mod_authors_separate_dlc_aware_naval_and_air_oobs(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Test Country")
+    variant = EquipmentVariant(
+        name="Test Class",
+        equipment_type="ship_hull_light_1",
+        modules={"fixed_ship_engine_slot": "light_ship_engine_1"},
+        required_dlc=("Man the Guns",),
+    )
+    mod.create_equipment_variant("ABC", variant)
+    mod.create_oob(
+        "ABC_naval_mtg",
+        "ABC",
+        kind="naval",
+        required_dlc=("Man the Guns",),
+        fleets=[
+            Fleet(
+                "Fleet",
+                100,
+                [
+                    TaskForce(
+                        "Force",
+                        100,
+                        [
+                            Ship(
+                                "Ship",
+                                "destroyer",
+                                [
+                                    ShipEquipment(
+                                        "ship_hull_light_1",
+                                        version_name="Test Class",
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+    mod.create_oob(
+        "ABC_naval_legacy",
+        "ABC",
+        kind="naval",
+        excluded_dlc=("Man the Guns",),
+        fleets=[
+            Fleet(
+                "Legacy Fleet",
+                100,
+                [
+                    TaskForce(
+                        "Legacy Force",
+                        100,
+                        [
+                            Ship(
+                                "Legacy Ship",
+                                "destroyer",
+                                [ShipEquipment("destroyer_1")],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+    mod.create_oob(
+        "ABC_air",
+        "ABC",
+        kind="air",
+        required_dlc=("By Blood Alone",),
+        air_wings=[AirWing(1, "small_plane_airframe_0", 12)],
+    )
+    mod.save()
+
+    history_path = next((tmp_path / "history/countries").glob("ABC*.txt"))
+    history = history_path.read_text(encoding="utf-8")
+    references = find_oob_references(history)
+
+    assert OOBReference(
+        "ABC_naval_mtg", "naval", ("Man the Guns",), ()
+    ) in references
+    assert OOBReference(
+        "ABC_naval_legacy", "naval", (), ("Man the Guns",)
+    ) in references
+    assert OOBReference(
+        "ABC_air", "air", ("By Blood Alone",), ()
+    ) in references
+    assert find_equipment_variants(history) == (variant,)
+    assert mod.unassign_country_oob(
+        "ABC",
+        "ABC_air",
+        kind="air",
+        required_dlc=("By Blood Alone",),
+    )
+    assert not mod.unassign_country_oob(
+        "ABC",
+        "ABC_air",
+        kind="air",
+        required_dlc=("By Blood Alone",),
+    )
+
+
+def _write_minimal_naval_context(root: Path) -> None:
+    _write(
+        root / "common/units/equipment/naval.txt",
+        (
+            "ship_hull_light_1 = { }\n"
+            "destroyer_1 = { }\n"
+            "small_plane_airframe_0 = { }\n"
+        ),
+    )
+    _write(
+        root / "common/units/naval.txt",
+        "sub_units = { destroyer = { } }\n",
+    )
+    _write(
+        root / "history/states/1-Test.txt",
+        "state = { id = 1 provinces = { 100 } history = { owner = ABC } }\n",
+    )
+    _write(
+        root / "map/definition.csv",
+        "100;1;2;3;land;false;plains;1\n",
+    )
+
+
+def test_mtg_naval_oob_requires_resolvable_country_variant(tmp_path: Path) -> None:
+    _write_minimal_naval_context(tmp_path)
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Test Country", capital=1)
+    mod.create_equipment_variant(
+        "ABC",
+        EquipmentVariant(
+            "Test Class",
+            "ship_hull_light_1",
+            modules={"fixed_ship_engine_slot": "light_ship_engine_1"},
+            required_dlc=("Man the Guns",),
+        ),
+    )
+    oob = mod.create_oob(
+        "ABC_naval_mtg",
+        "ABC",
+        kind="naval",
+        required_dlc=("Man the Guns",),
+        fleets=[
+            Fleet(
+                "Fleet",
+                100,
+                [
+                    TaskForce(
+                        "Force",
+                        100,
+                        [
+                            Ship(
+                                "Ship",
+                                "destroyer",
+                                [
+                                    ShipEquipment(
+                                        "ship_hull_light_1",
+                                        version_name="Test Class",
+                                    )
+                                ],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    assert mod._validate_oob_context(oob, "ABC") == []
+
+
+def test_naval_validation_catches_engine_skipped_ship_shapes(
+    tmp_path: Path,
+) -> None:
+    _write_minimal_naval_context(tmp_path)
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Test Country", capital=1)
+    legacy = mod.create_oob(
+        "ABC_bad_legacy",
+        "ABC",
+        kind="naval",
+        assign=False,
+        fleets=[
+            Fleet(
+                "Fleet",
+                100,
+                [
+                    TaskForce(
+                        "Force",
+                        100,
+                        [Ship("Ship", "destroyer", [ShipEquipment("destroyer_1")])],
+                    )
+                ],
+            )
+        ],
+    )
+    hull = mod.create_oob(
+        "ABC_bad_mtg",
+        "ABC",
+        kind="naval",
+        required_dlc=("Man the Guns",),
+        assign=False,
+        fleets=[
+            Fleet(
+                "Fleet 2",
+                100,
+                [
+                    TaskForce(
+                        "Force 2",
+                        100,
+                        [
+                            Ship(
+                                "Ship 2",
+                                "destroyer",
+                                [ShipEquipment("ship_hull_light_1")],
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    assert "legacy_naval_oob_without_dlc_fallback" in {
+        issue.code for issue in mod._validate_oob_context(legacy, "ABC")
+    }
+    assert "missing_mtg_ship_variant_name" in {
+        issue.code for issue in mod._validate_oob_context(hull, "ABC")
+    }
+
+
+def test_bba_air_oob_requires_resolvable_country_variant(tmp_path: Path) -> None:
+    _write_minimal_naval_context(tmp_path)
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Test Country", capital=1)
+    mod.create_equipment_variant(
+        "ABC",
+        EquipmentVariant(
+            "Test Fighter",
+            "small_plane_airframe_0",
+            modules={"engine_type_slot": "engine_1_1x"},
+            required_dlc=("By Blood Alone",),
+        ),
+    )
+    valid = mod.create_oob(
+        "ABC_air_bba",
+        "ABC",
+        kind="air",
+        required_dlc=("By Blood Alone",),
+        assign=False,
+        air_wings=[
+            AirWing(
+                1,
+                "small_plane_airframe_0",
+                12,
+                version_name="Test Fighter",
+            )
+        ],
+    )
+    invalid = mod.create_oob(
+        "ABC_air_bad",
+        "ABC",
+        kind="air",
+        assign=False,
+        air_wings=[AirWing(1, "small_plane_airframe_0", 12)],
+    )
+
+    assert mod._validate_oob_context(valid, "ABC") == []
+    invalid_codes = {
+        issue.code for issue in mod._validate_oob_context(invalid, "ABC")
+    }
+    assert {
+        "ungated_bba_air_oob",
+        "missing_bba_air_variant_name",
+    } <= invalid_codes

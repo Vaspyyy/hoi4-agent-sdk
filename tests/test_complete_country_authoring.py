@@ -171,11 +171,15 @@ def test_complete_country_can_be_authored_through_public_apis(
     report = mod.validate_country_package("ABC", check_geography=False)
 
     assert report.complete
+    assert report.structurally_complete
+    assert report.analysis_scope == "structural"
+    assert not report.proves_dynamic_achievability
     assert report.advisor_count == 2
     assert report.commander_count == 2
     assert report.character_count == 5
     assert report.owned_state_count == 1
     assert report.to_dict()["complete"] is True
+    assert report.to_dict()["structurally_complete"] is True
     assert not [
         issue
         for issue in mod.validate()
@@ -496,8 +500,14 @@ def test_private_empire_roster_and_land_oob_are_read_only(tmp_path: Path) -> Non
     for name in mod.list_oobs():
         oob = mod.get_oob(name)
         assert oob.name == name
-        assert validate_oob(oob) == []
-        assert mod._validate_oob_context(oob, oob.country_tag) == []
+        oob_findings = validate_oob(oob)
+        context_findings = mod._validate_oob_context(oob, oob.country_tag)
+        assert {finding.code for finding in oob_findings} == {
+            "mixed_oob_kinds"
+        }
+        assert {finding.code for finding in context_findings} == {
+            "legacy_naval_oob_without_dlc_fallback"
+        }
     assert "missing_land_oob" not in {
         issue.code
         for issue in mod.validate_country_package(

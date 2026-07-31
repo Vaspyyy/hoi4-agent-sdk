@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Callable, Literal, TypeVar
 
 from .patching import (
     AssignmentSpan,
@@ -19,6 +19,45 @@ from .script import pdx_string, pdx_value
 from .types import ValidationError
 
 _T = TypeVar("_T")
+AssignedOOBKind = Literal["land", "naval", "air"]
+OOBKind = Literal["land", "naval", "air", "mixed"]
+_OOB_ASSIGNMENT_KEYS: dict[str, AssignedOOBKind] = {
+    "oob": "land",
+    "set_oob": "land",
+    "set_naval_oob": "naval",
+    "set_air_oob": "air",
+}
+
+
+@dataclass(frozen=True)
+class OOBReference:
+    """One country-history OOB assignment and its DLC conditions."""
+
+    name: str
+    kind: AssignedOOBKind
+    required_dlc: tuple[str, ...] = ()
+    excluded_dlc: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EquipmentVariant:
+    """A country-history ``create_equipment_variant`` definition."""
+
+    name: str
+    equipment_type: str
+    name_group: str = ""
+    parent_version: int = 0
+    allow_without_tech: bool = False
+    obsolete: bool = False
+    mark_older_equipment_obsolete: bool = False
+    role_icon_index: int | str | None = None
+    upgrades: dict[str, int] = field(default_factory=dict)
+    modules: dict[str, str] = field(default_factory=dict)
+    model: str = ""
+    icon: str = ""
+    design_team: str = ""
+    required_dlc: tuple[str, ...] = ()
+    excluded_dlc: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -118,6 +157,9 @@ class OrderOfBattle:
     divisions: list[DivisionUnit] = field(default_factory=list)
     fleets: list[Fleet] = field(default_factory=list)
     air_wings: list[AirWing] = field(default_factory=list)
+    kind: OOBKind = "land"
+    required_dlc: tuple[str, ...] = ()
+    excluded_dlc: tuple[str, ...] = ()
     path: Path | None = None
     raw_text: str = ""
     touched_fields: set[str] = field(default_factory=set, repr=False)
@@ -128,6 +170,9 @@ def load_oob_file(
     *,
     name: str | None = None,
     country_tag: str = "",
+    kind: OOBKind | None = None,
+    required_dlc: tuple[str, ...] = (),
+    excluded_dlc: tuple[str, ...] = (),
 ) -> OrderOfBattle:
     text = path.read_text(encoding="utf-8-sig", errors="ignore")
     templates: list[DivisionTemplate] = []
@@ -170,8 +215,285 @@ def load_oob_file(
         divisions=divisions,
         fleets=fleets,
         air_wings=air_wings,
+        kind=kind or _infer_oob_kind(templates, divisions, fleets, air_wings),
+        required_dlc=required_dlc,
+        excluded_dlc=excluded_dlc,
         path=path,
         raw_text=text,
+    )
+
+
+def find_oob_references(history: str) -> tuple[OOBReference, ...]:
+    """Find land, naval, and air OOB assignments in country history."""
+
+    result: list[OOBReference] = []
+    for body, span, required_dlc, excluded_dlc in _conditioned_assignments(
+        history
+    ):
+        if span.is_block:
+            continue
+        kind = _OOB_ASSIGNMENT_KEYS.get(span.key.lower())
+        if kind is not None:
+            result.append(
+                OOBReference(
+                    name=_unquote(body[span.value_start : span.value_end]),
+                    kind=kind,
+                    required_dlc=required_dlc,
+                    excluded_dlc=excluded_dlc,
+                )
+            )
+    return tuple(result)
+
+
+def find_equipment_variants(history: str) -> tuple[EquipmentVariant, ...]:
+    """Find equipment variants in country history, retaining DLC conditions."""
+
+    result: list[EquipmentVariant] = []
+    for body, span, required_dlc, excluded_dlc in _conditioned_assignments(
+        history
+    ):
+        if (
+            span.key != "create_equipment_variant"
+            or not span.is_block
+            or span.body_start is None
+            or span.body_end is None
+        ):
+            continue
+        child = body[span.body_start : span.body_end]
+        role_icon_index = _optional_int(child, "role_icon_index")
+        result.append(
+            EquipmentVariant(
+                name=_scalar_value(child, "name"),
+                equipment_type=_scalar_value(child, "type"),
+                name_group=_scalar_value(child, "name_group"),
+                parent_version=_optional_int(child, "parent_version") or 0,
+                allow_without_tech=(
+                    _optional_bool(child, "allow_without_tech") or False
+                ),
+                obsolete=_optional_bool(child, "obsolete") or False,
+                mark_older_equipment_obsolete=(
+                    _optional_bool(child, "mark_older_equipment_obsolete")
+                    or False
+                ),
+                role_icon_index=(
+                    role_icon_index
+                    if role_icon_index is not None
+                    else _scalar_value(child, "role_icon_index") or None
+                ),
+                upgrades={
+                    key: int(value)
+                    for key, value in _scalar_mapping(
+                        _block_value(child, "upgrades")
+                    ).items()
+                    if value.lstrip("-").isdigit()
+                },
+                modules=_scalar_mapping(_block_value(child, "modules")),
+                model=_scalar_value(child, "model"),
+                icon=_scalar_value(child, "icon"),
+                design_team=_scalar_value(child, "design_team"),
+                required_dlc=required_dlc,
+                excluded_dlc=excluded_dlc,
+            )
+        )
+    return tuple(result)
+
+
+def serialize_equipment_variant(variant: EquipmentVariant) -> str:
+    """Serialize one variant, including optional DLC gating."""
+
+    if not variant.name.strip():
+        raise ValueError("Equipment variant name cannot be empty")
+    if not variant.equipment_type.strip():
+        raise ValueError("Equipment variant type cannot be empty")
+    lines = [
+        f"name = {pdx_string(variant.name)}",
+        f"type = {pdx_value(variant.equipment_type)}",
+    ]
+    if variant.name_group:
+        lines.append(f"name_group = {pdx_value(variant.name_group)}")
+    if variant.parent_version:
+        lines.append(f"parent_version = {variant.parent_version}")
+    if variant.allow_without_tech:
+        lines.append("allow_without_tech = yes")
+    if variant.obsolete:
+        lines.append("obsolete = yes")
+    if variant.mark_older_equipment_obsolete:
+        lines.append("mark_older_equipment_obsolete = yes")
+    if variant.role_icon_index is not None:
+        lines.append(f"role_icon_index = {pdx_value(variant.role_icon_index)}")
+    if variant.upgrades:
+        body = "\n".join(
+            f"{name} = {level}" for name, level in variant.upgrades.items()
+        )
+        lines.append(_wrap_block("upgrades", body, 0))
+    if variant.modules:
+        body = "\n".join(
+            f"{slot} = {pdx_value(module)}"
+            for slot, module in variant.modules.items()
+        )
+        lines.append(_wrap_block("modules", body, 0))
+    for key, value in (
+        ("model", variant.model),
+        ("icon", variant.icon),
+        ("design_team", variant.design_team),
+    ):
+        if value:
+            lines.append(f"{key} = {pdx_value(value)}")
+    effect = _wrap_block("create_equipment_variant", "\n".join(lines), 0)
+    return conditional_history_effect(
+        effect,
+        required_dlc=variant.required_dlc,
+        excluded_dlc=variant.excluded_dlc,
+    )
+
+
+def serialize_oob_assignment(reference: OOBReference) -> str:
+    """Serialize one country-history OOB assignment."""
+
+    key = {
+        "land": "set_oob",
+        "naval": "set_naval_oob",
+        "air": "set_air_oob",
+    }.get(reference.kind)
+    if key is None:
+        raise ValueError("A mixed OOB cannot be assigned to country history")
+    effect = f"{key} = {pdx_string(reference.name)}"
+    return conditional_history_effect(
+        effect,
+        required_dlc=reference.required_dlc,
+        excluded_dlc=reference.excluded_dlc,
+    )
+
+
+def remove_oob_reference(
+    history: str,
+    reference: OOBReference,
+) -> tuple[str, bool]:
+    """Remove one exact OOB assignment without re-rendering surrounding history."""
+
+    changed = False
+
+    def scalar_matches(
+        fragment: str,
+        span: AssignmentSpan,
+        required_dlc: tuple[str, ...],
+        excluded_dlc: tuple[str, ...],
+    ) -> bool:
+        kind = _OOB_ASSIGNMENT_KEYS.get(span.key.lower())
+        return bool(
+            kind == reference.kind
+            and not span.is_block
+            and _unquote(fragment[span.value_start : span.value_end])
+            == reference.name
+            and required_dlc == reference.required_dlc
+            and excluded_dlc == reference.excluded_dlc
+        )
+
+    def rewrite_if(
+        fragment: str,
+        required_dlc: tuple[str, ...],
+        excluded_dlc: tuple[str, ...],
+    ) -> str:
+        nonlocal changed
+        found_required, found_excluded = _dlc_conditions(
+            _block_value(fragment, "limit")
+        )
+        positive_required = _merge_unique(required_dlc, found_required)
+        positive_excluded = _merge_unique(excluded_dlc, found_excluded)
+        negative_required = _merge_unique(required_dlc, found_excluded)
+        negative_excluded = _merge_unique(excluded_dlc, found_required)
+        result = fragment
+        for span in reversed(top_level_assignments(fragment)):
+            key = span.key.lower()
+            if key == "limit":
+                continue
+            if not span.is_block:
+                if scalar_matches(
+                    fragment,
+                    span,
+                    positive_required,
+                    positive_excluded,
+                ):
+                    result = replace_assignment(result, span, None)
+                    changed = True
+                continue
+            if span.body_start is None or span.body_end is None:
+                continue
+            child = fragment[span.body_start : span.body_end]
+            if key == "else":
+                updated = rewrite(child, negative_required, negative_excluded)
+            elif key == "if":
+                updated = rewrite_if(
+                    child,
+                    positive_required,
+                    positive_excluded,
+                )
+            else:
+                updated = rewrite(
+                    child,
+                    positive_required,
+                    positive_excluded,
+                )
+            if updated != child:
+                result = replace_assignment_body(result, span, updated)
+        return result
+
+    def rewrite(
+        fragment: str,
+        required_dlc: tuple[str, ...],
+        excluded_dlc: tuple[str, ...],
+    ) -> str:
+        nonlocal changed
+        result = fragment
+        for span in reversed(top_level_assignments(fragment)):
+            if not span.is_block:
+                if scalar_matches(
+                    fragment,
+                    span,
+                    required_dlc,
+                    excluded_dlc,
+                ):
+                    result = replace_assignment(result, span, None)
+                    changed = True
+                continue
+            if span.body_start is None or span.body_end is None:
+                continue
+            child = fragment[span.body_start : span.body_end]
+            updated = (
+                rewrite_if(child, required_dlc, excluded_dlc)
+                if span.key.lower() == "if"
+                else rewrite(child, required_dlc, excluded_dlc)
+            )
+            if updated != child:
+                result = replace_assignment_body(result, span, updated)
+        return result
+
+    return rewrite(history, (), ()), changed
+
+
+def conditional_history_effect(
+    effect: str,
+    *,
+    required_dlc: tuple[str, ...] = (),
+    excluded_dlc: tuple[str, ...] = (),
+) -> str:
+    """Wrap a history effect in an explicit DLC condition when requested."""
+
+    required = _merge_unique((), required_dlc)
+    excluded = _merge_unique((), excluded_dlc)
+    if set(required) & set(excluded):
+        overlap = sorted(set(required) & set(excluded))
+        raise ValueError(f"DLC cannot be both required and excluded: {overlap}")
+    if not required and not excluded:
+        return effect
+    conditions = [f"has_dlc = {pdx_string(name)}" for name in required]
+    conditions.extend(
+        f"NOT = {{ has_dlc = {pdx_string(name)} }}" for name in excluded
+    )
+    return _wrap_block(
+        "if",
+        _wrap_block("limit", "\n".join(conditions), 0) + "\n" + effect,
+        0,
     )
 
 
@@ -278,6 +600,36 @@ def serialize_fleet(fleet: Fleet, *, indent: int = 0) -> str:
 
 def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
     errors: list[ValidationError] = []
+    inferred_kind = _infer_oob_kind(
+        oob.templates,
+        oob.divisions,
+        oob.fleets,
+        oob.air_wings,
+    )
+    if oob.kind == "mixed" or inferred_kind == "mixed":
+        errors.append(
+            _issue(
+                oob,
+                (
+                    "mixes land, naval, or air content in one file. Split it "
+                    "into separately assigned land, naval, and air OOBs"
+                ),
+                "mixed_oob_kinds",
+                severity="warning",
+            )
+        )
+    elif inferred_kind != oob.kind and not (
+        inferred_kind == "land" and not any(
+            (oob.templates, oob.divisions, oob.fleets, oob.air_wings)
+        )
+    ):
+        errors.append(
+            _issue(
+                oob,
+                f"is declared as {oob.kind} but contains {inferred_kind} content",
+                "oob_kind_mismatch",
+            )
+        )
     template_names: set[str] = set()
     for template in oob.templates:
         if not template.name:
@@ -1165,6 +1517,132 @@ def _unquote(value: str) -> str:
     return text
 
 
+def _scalar_mapping(body: str) -> dict[str, str]:
+    return {
+        span.key: _unquote(body[span.value_start : span.value_end])
+        for span in top_level_assignments(body)
+        if not span.is_block
+    }
+
+
+def _dlc_conditions(body: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    required: list[str] = []
+    excluded: list[str] = []
+
+    def walk(fragment: str, negated: bool = False) -> None:
+        for span in top_level_assignments(fragment):
+            if not span.is_block:
+                if span.key.lower() == "has_dlc":
+                    value = _unquote(fragment[span.value_start : span.value_end])
+                    (excluded if negated else required).append(value)
+                continue
+            if span.body_start is None or span.body_end is None:
+                continue
+            walk(
+                fragment[span.body_start : span.body_end],
+                negated ^ (span.key.upper() == "NOT"),
+            )
+
+    walk(body)
+    return _merge_unique((), required), _merge_unique((), excluded)
+
+
+def _conditioned_assignments(
+    body: str,
+    required_dlc: tuple[str, ...] = (),
+    excluded_dlc: tuple[str, ...] = (),
+) -> list[tuple[str, AssignmentSpan, tuple[str, ...], tuple[str, ...]]]:
+    """Flatten assignments while retaining simple ``IF``/``ELSE`` DLC gates."""
+
+    result: list[
+        tuple[str, AssignmentSpan, tuple[str, ...], tuple[str, ...]]
+    ] = []
+    for span in top_level_assignments(body):
+        if not span.is_block or span.body_start is None or span.body_end is None:
+            result.append((body, span, required_dlc, excluded_dlc))
+            continue
+        child = body[span.body_start : span.body_end]
+        if span.key.lower() != "if":
+            result.append((body, span, required_dlc, excluded_dlc))
+            result.extend(
+                _conditioned_assignments(child, required_dlc, excluded_dlc)
+            )
+            continue
+
+        found_required, found_excluded = _dlc_conditions(
+            _block_value(child, "limit")
+        )
+        positive_required = _merge_unique(required_dlc, found_required)
+        positive_excluded = _merge_unique(excluded_dlc, found_excluded)
+        negative_required = _merge_unique(required_dlc, found_excluded)
+        negative_excluded = _merge_unique(excluded_dlc, found_required)
+
+        positive = child
+        else_bodies: list[str] = []
+        ignored = [
+            item
+            for item in top_level_assignments(child)
+            if item.key.lower() in {"limit", "else"}
+        ]
+        for item in ignored:
+            if (
+                item.key.lower() == "else"
+                and item.is_block
+                and item.body_start is not None
+                and item.body_end is not None
+            ):
+                else_bodies.append(child[item.body_start : item.body_end])
+        for item in reversed(ignored):
+            positive = replace_assignment(positive, item, None)
+        result.extend(
+            _conditioned_assignments(
+                positive,
+                positive_required,
+                positive_excluded,
+            )
+        )
+        for else_body in else_bodies:
+            result.extend(
+                _conditioned_assignments(
+                    else_body,
+                    negative_required,
+                    negative_excluded,
+                )
+            )
+    return result
+
+
+def _merge_unique(
+    first: tuple[str, ...],
+    second: tuple[str, ...] | list[str],
+) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            (*first, *(value.strip() for value in second if value.strip()))
+        )
+    )
+
+
+def _infer_oob_kind(
+    templates: list[DivisionTemplate],
+    divisions: list[DivisionUnit],
+    fleets: list[Fleet],
+    air_wings: list[AirWing],
+) -> OOBKind:
+    populated: set[AssignedOOBKind] = set()
+    if templates or divisions:
+        populated.add("land")
+    if fleets:
+        populated.add("naval")
+    if air_wings:
+        populated.add("air")
+    if len(populated) > 1:
+        return "mixed"
+    if populated:
+        return next(iter(populated))
+    return "land"
+
+
 def _wrap_block(key: str, body: str, indent: int) -> str:
     prefix = "\t" * indent
     inner_prefix = "\t" * (indent + 1)
@@ -1187,10 +1665,16 @@ def _infer_country_tag(name: str) -> str:
     )
 
 
-def _issue(oob: OrderOfBattle, message: str, code: str) -> ValidationError:
+def _issue(
+    oob: OrderOfBattle,
+    message: str,
+    code: str,
+    *,
+    severity: str = "error",
+) -> ValidationError:
     return ValidationError(
         message=f"OOB '{oob.name}': {message}",
-        severity="error",
+        severity=severity,
         code=code,
         country_tag=oob.country_tag or None,
         file_path=str(oob.path) if oob.path is not None else None,

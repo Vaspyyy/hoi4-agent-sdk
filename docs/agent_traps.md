@@ -142,7 +142,9 @@ complete roster or army. Use `create_character()` with `AdvisorRole`,
 `ArmyCommanderRole`, `NavyLeaderRole`, and explicit DLC
 `CharacterInstance` values. Use `create_oob()` with `DivisionTemplate`,
 `Battalion`, `DivisionUnit`, `Fleet`, `TaskForce`, `Ship`, `ShipEquipment`,
-and `AirWing`; this also assigns country history when `assign=True`.
+and `AirWing`. Keep each land, naval, or air OOB in its own file and pass the
+matching `kind`; `assign=True` then uses `set_oob`, `set_naval_oob`, or
+`set_air_oob`.
 
 Repeated character instances or repeated role kinds are intentionally
 ambiguous. Pass `occurrence=` and, for instance roles,
@@ -154,6 +156,13 @@ province exists, is land, and belongs to the country at scenario start.
 Naval and air validation checks unit/equipment IDs, ownership, locations, and
 structure. Production and unknown blocks remain source-preserved.
 
+Man the Guns does not load legacy ship equipment as a hull design. Create
+`EquipmentVariant` records in country history, put their names in each hull's
+`version_name`, and gate both variants and hull OOB with
+`required_dlc=("Man the Guns",)`. Provide a separate legacy naval OOB with
+`excluded_dlc=("Man the Guns",)`. Otherwise HOI4 logs "Could not find proper
+equipment variant" and silently skips the ships.
+
 ## A New Tag Is Not a Complete Country
 
 Every tag created through the SDK is package-validated during normal
@@ -163,6 +172,11 @@ Every tag created through the SDK is package-validated during normal
 report = mod.validate_country_package(tag)
 assert report.complete, report.to_dict()
 ```
+
+This proves structural completeness only. Check
+`report.proves_dynamic_achievability` before interpreting it: the value is
+false because popularity/variable threshold arithmetic and player-state
+reachability are not solved. Review and live-test important runtime branches.
 
 The report catches missing three-size flags, portrait textures or GFX,
 undersized rosters, bad recruitment, and missing localization. A
@@ -178,6 +192,8 @@ Run `find_disconnected_states()` with the `map` extra for border QA. Tiny
 one-province islands are ignored by the default threshold; use
 `allowed_state_ids` only for deliberate islands or overseas holdings, not to
 hide an accidental enclave.
+Also run `find_enclosed_foreign_states()` to catch foreign states accidentally
+left completely surrounded by the target country.
 
 ## Validate at the Right Stage
 
@@ -201,6 +217,8 @@ Inspect `mod.analyze_content_liveness()` before release. A set-only flag may be
 deliberate historical bookkeeping, but an asymmetric flag in an otherwise
 symmetrical ending set is evidence of missing content. Allowlist deliberate
 patterns explicitly instead of disabling the liveness pass.
+The report is a structural reference graph, not a proof that trigger thresholds
+or variable arithmetic are achievable during play.
 
 ## Decision Category Files
 

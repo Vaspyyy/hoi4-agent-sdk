@@ -6,6 +6,61 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-07-31
+
+### Added
+
+- DLC-aware OOB assignment metadata and public `assign_country_oob()` /
+  `unassign_country_oob()` APIs. Land, naval, and air files now use the
+  engine's `set_oob`, `set_naval_oob`, and `set_air_oob` effects separately.
+- Public `EquipmentVariant` and `OOBReference` models plus
+  `create_equipment_variant()` for source-preserving country-history variant
+  definitions.
+- Man the Guns validation that rejects ungated legacy fleets, missing hull
+  `version_name` values, and hull designs without a compatible
+  `create_equipment_variant`. These diagnostics reproduce the real engine
+  failure that skipped all thirteen Empire ships.
+- By Blood Alone validation for ungated airframes, missing air-wing
+  `version_name` values, and unresolved airframe variants.
+- `find_enclosed_foreign_states()` and the
+  `enclosed_foreign_territory` package warning for land components completely
+  surrounded by the target country.
+- Installed and mod-defined ideology IDs now synthesize valid
+  `<ideology>_drift` modifier vocabulary entries.
+
+### Fixed
+
+- Game-log attribution now accepts every observed quoted and unquoted `file:`
+  emitter without hard-coding content directories. In particular,
+  `taskforce.cpp` equipment-variant failures under `history/units` are no
+  longer discarded as unscoped.
+- Conditional OOB and equipment-variant readers now retain simple `IF`/`ELSE`
+  DLC semantics, including inversion of `has_dlc` for the fallback branch.
+- New country histories write `set_oob` instead of the legacy `oob` spelling,
+  while reading and source-preserving edits remain backward compatible.
+- OOB deletion now removes matching land, naval, and air assignments instead
+  of leaving stale references.
+
+### Changed
+
+- New OOB authoring rejects a mixed land/naval/air assignment and directs
+  callers to separate domain files. Existing mixed files remain readable and
+  produce the `mixed_oob_kinds` migration warning.
+- `CountryPackageReport` and `ContentLivenessReport` now expose
+  `analysis_scope="structural"` and
+  `proves_dynamic_achievability=False`. Their completeness/cleanliness results
+  do not claim to solve popularity arithmetic, variable thresholds, or
+  player-state reachability.
+- Agent guidance now requires DLC-aware naval fallbacks, enclosed-state checks,
+  fresh engine-log review, and live testing of important dynamic branches.
+
+### Migration
+
+- Replace combined starting-force files with separate land, naval, and air
+  OOBs. For Man the Guns, gate the hull OOB and matching `EquipmentVariant`
+  records with `required_dlc=("Man the Guns",)` and provide a legacy naval OOB
+  with `excluded_dlc=("Man the Guns",)`.
+
 ## [0.6.1] - 2026-07-30
 
 ### Fixed

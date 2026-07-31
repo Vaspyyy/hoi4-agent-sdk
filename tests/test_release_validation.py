@@ -40,6 +40,12 @@ def _write_documentation(game_root: Path) -> None:
         ),
         encoding="utf-8",
     )
+    ideologies = game_root / "common" / "ideologies" / "00_ideologies.txt"
+    ideologies.parent.mkdir(parents=True)
+    ideologies.write_text(
+        "ideologies = { communism = { types = { marxism = { } } } }\n",
+        encoding="utf-8",
+    )
 
 
 def test_installed_vocabulary_warns_with_frequency_and_allowlist(
@@ -80,6 +86,35 @@ def test_mod_defined_scripted_effect_is_part_of_vocabulary_extension(
     assert not any(
         item.code == "unknown_effect_token"
         for item in mod.validate_effect("my_custom_effect = yes")
+    )
+
+
+def test_vocabulary_synthesizes_installed_and_mod_ideology_drift_modifiers(
+    tmp_path: Path,
+) -> None:
+    mod_root = tmp_path / "mod"
+    game_root = tmp_path / "game"
+    _write_documentation(game_root)
+    mod = Mod(mod_root, hoi4_install=game_root)
+    mod.create_ideology("legitimism")
+    mod.create_dynamic_modifier(
+        "test_drift",
+        modifier={
+            "communism_drift": 0.1,
+            "legitimism_drift": -0.1,
+        },
+    )
+
+    vocabulary = mod.game_script_vocabulary()
+    findings = mod.validate_script_vocabulary()
+
+    assert vocabulary.modifiers["communism_drift"].synthesized
+    assert vocabulary.modifiers["legitimism_drift"].synthesized
+    assert vocabulary.modifiers["legitimism_drift"].categories == ("country",)
+    assert not any(
+        issue.code in {"unknown_modifier_token", "unseen_modifier_token"}
+        and "drift" in issue.message
+        for issue in findings
     )
 
 
@@ -168,6 +203,9 @@ def test_content_liveness_reports_dead_content_and_asymmetric_flags(
 
     report = mod.analyze_content_liveness()
 
+    assert report.analysis_scope == "structural"
+    assert not report.proves_dynamic_achievability
+    assert report.to_dict()["analysis_scope"] == "structural"
     assert report.unreachable_focuses == ("ABC_a", "ABC_b")
     assert report.unfired_events == ("abc.1",)
     assert report.ungranted_ideas == ("ABC_unused_idea",)

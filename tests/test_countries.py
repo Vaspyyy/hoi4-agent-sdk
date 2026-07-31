@@ -170,7 +170,12 @@ class TestWriteCountry:
 
         write_all_country_files(tmp_path, original)
         loaded = read_country(tmp_path, "HST")
+        history = next((tmp_path / "history/countries").glob("HST*.txt")).read_text(
+            encoding="utf-8"
+        )
 
+        assert 'set_oob = "HST_1936"' in history
+        assert "\noob =" not in history
         assert loaded.elections_allowed is False
         assert loaded.stability == 0.65
         assert loaded.war_support == 0.45

@@ -45,7 +45,12 @@ _BARE_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:-]+")
 
 @dataclass(frozen=True)
 class ContentLivenessReport:
-    """Immutable semantic reachability and use report."""
+    """Immutable structural reachability and use report.
+
+    This graph follows references and prerequisite topology. It does not solve
+    dynamic trigger arithmetic, mutually dependent thresholds, or player-state
+    achievability.
+    """
 
     reachable_focuses: tuple[str, ...]
     unreachable_focuses: tuple[str, ...]
@@ -60,6 +65,8 @@ class ContentLivenessReport:
     used_localization: tuple[str, ...]
     unused_localization: tuple[str, ...]
     findings: tuple[ValidationError, ...]
+    analysis_scope: str = "structural"
+    proves_dynamic_achievability: bool = False
 
     @property
     def clean(self) -> bool:
@@ -68,6 +75,8 @@ class ContentLivenessReport:
     def to_dict(self) -> dict[str, object]:
         return {
             "clean": self.clean,
+            "analysis_scope": self.analysis_scope,
+            "proves_dynamic_achievability": self.proves_dynamic_achievability,
             "reachable_focuses": list(self.reachable_focuses),
             "unreachable_focuses": list(self.unreachable_focuses),
             "fired_events": list(self.fired_events),

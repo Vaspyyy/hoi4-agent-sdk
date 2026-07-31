@@ -25,6 +25,10 @@ def test_country_creation_guidance_requires_complete_gfx_package() -> None:
         "does not exist at scenario start",
         "as `runtime`",
         "CountryPackageReport.complete",
+        "find_enclosed_foreign_states()",
+        "create_equipment_variant()",
+        'required_dlc=("Man the Guns",)',
+        "not proofs of dynamic achievability",
     )
     for requirement in required_contract:
         assert requirement in guidance
@@ -56,6 +60,8 @@ def test_claude_is_directed_to_the_country_visual_contract() -> None:
     assert "billing-enabled Gemini" in guidance
     assert "Character" in guidance
     assert "create_oob()" in guidance
+    assert "EquipmentVariant" in guidance
+    assert "do not prove dynamic popularity" in guidance
     assert "runtime territory/capital setup" in guidance
     assert "validate_country_package(tag).complete" in guidance
 

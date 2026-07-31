@@ -180,7 +180,9 @@ with mod.transaction():
 
 30. After a real game launch, run `scripts/parse_hoi4_log.py` or
     `Mod.validate_game_log()` against the target mod. Do not treat a static
-    release gate as proof that HOI4 accepted every generated token.
+    release gate as proof that HOI4 accepted every generated token. The parser
+    attributes quoted and unquoted `file:` paths in any mod-owned directory,
+    including `taskforce.cpp` equipment-variant failures.
 
 31. Never hand-write a character roster or starting OOB when the public
     models can express it. Use `Character` plus explicit role/instance mutation
@@ -202,6 +204,24 @@ with mod.transaction():
     `if = { limit = { NOT = { has_idea = X } } add_ideas = X }`; validation
     recognizes that exact safety invariant while preserving warnings for
     unguarded, mismatched, removal, and swap mutations.
+
+34. Keep land, naval, and air OOBs in separate files. Pass `kind="land"`,
+    `kind="naval"`, or `kind="air"`; the SDK assigns them through `set_oob`,
+    `set_naval_oob`, or `set_air_oob`. For Man the Guns, define hull variants
+    with `create_equipment_variant()`, require `version_name` on every hull,
+    gate the hull OOB with `required_dlc=("Man the Guns",)`, and provide a
+    legacy naval OOB with `excluded_dlc=("Man the Guns",)`. Never load legacy
+    ship equipment while Man the Guns may be active: the engine skips every
+    unresolved ship.
+
+    Apply the same split for By Blood Alone airframes: gate the airframe OOB
+    and variants with `required_dlc=("By Blood Alone",)` and provide a legacy
+    air OOB with that DLC excluded.
+
+35. Treat `.complete` and `ContentLivenessReport.clean` as structural results,
+    not proofs of dynamic achievability. Review popularity/variable threshold
+    arithmetic and mutually dependent trigger chains, then live-test important
+    runtime releases and endings before calling them playable.
 
 ## Country Visual Completeness
 
@@ -230,9 +250,11 @@ starting land forces through `create_oob(..., assign=True)`. Do not assign a
 starting OOB or starting ownership merely to satisfy validation for a tag that
 does not exist at scenario start; `validate_country_package()` classifies
 evidence-backed focus/event releases as `runtime`. Run
-`find_disconnected_states()` when the `map` extra is available, and allowlist
-only deliberate islands or overseas components. The final readiness check is
-`CountryPackageReport.complete`, not merely a clean preview or successful save.
+`find_disconnected_states()` and `find_enclosed_foreign_states()` when the
+`map` extra is available, and allowlist only deliberate islands or overseas
+components. `CountryPackageReport.complete` is the final structural package
+check, not merely a clean preview or successful save; it does not prove that a
+runtime threshold chain is achievable.
 
 Prefer real people who plausibly held or could have held each position at the
 scenario date. Research the historical fit instead of inventing a famous person

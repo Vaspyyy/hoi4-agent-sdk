@@ -152,7 +152,7 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
                     field_name,
                     _coerce_history_scalar(txt[span.value_start : span.value_end]),
                 )
-        oob_span = assignments.get("oob")
+        oob_span = assignments.get("set_oob") or assignments.get("oob")
         if oob_span is not None and not oob_span.is_block:
             country.oob = _unquote_history_scalar(
                 txt[oob_span.value_start : oob_span.value_end]
@@ -722,7 +722,7 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         if country.war_support is not None
         else ""
     )
-    oob = f"oob = {pdx_string(country.oob)}\n" if country.oob else ""
+    oob = f"set_oob = {pdx_string(country.oob)}\n" if country.oob else ""
     technologies = ""
     if country.technologies:
         technology_lines = "\n".join(
@@ -782,9 +782,10 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
                 None if country.war_support is None else pdx_value(country.war_support),
             )
         if "*" in touched or "oob" in touched:
+            history = set_scalar(history, "oob", None)
             history = set_scalar(
                 history,
-                "oob",
+                "set_oob",
                 pdx_string(country.oob) if country.oob else None,
             )
         if "*" in touched or "recruited_characters" in touched:

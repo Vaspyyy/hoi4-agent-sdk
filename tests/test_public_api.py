@@ -24,6 +24,8 @@ def test_root_api_exposes_project_and_asset_workflows_without_optional_dependenc
         "ArmyCommanderRole",
         "NavyLeaderRole",
         "OrderOfBattle",
+        "OOBReference",
+        "EquipmentVariant",
         "DivisionTemplate",
         "DivisionUnit",
         "Battalion",
