@@ -451,6 +451,101 @@ def test_modular_variant_requires_chassis_technology(tmp_path: Path) -> None:
     assert not mod._validate_equipment_variant_unlocks(country)
 
 
+@pytest.mark.parametrize(
+    ("history", "expected"),
+    [
+        (
+            """if = {
+    limit = { has_dlc = "Man the Guns" }
+    create_equipment_variant = {
+        name = "Out of Order Class"
+        type = ship_hull_light_1
+    }
+}
+if = {
+    limit = { has_dlc = "Man the Guns" }
+    set_technology = { early_ship_hull_light = 1 }
+}
+""",
+            1,
+        ),
+        (
+            """if = {
+    limit = { has_dlc = "Man the Guns" }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = { has_dlc = "Man the Guns" }
+    create_equipment_variant = {
+        name = "Valid Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            0,
+        ),
+        (
+            """if = {
+    limit = { NOT = { has_dlc = "Man the Guns" } }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = { has_dlc = "Man the Guns" }
+    create_equipment_variant = {
+        name = "Wrong Branch Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            1,
+        ),
+        (
+            """if = {
+    limit = { has_dlc = "Man the Guns" }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = { NOT = { has_dlc = "Man the Guns" } }
+    set_technology = { early_ship_hull_light = 1 }
+}
+create_equipment_variant = {
+    name = "Every Path Class"
+    type = ship_hull_light_1
+}
+""",
+            0,
+        ),
+    ],
+)
+def test_modular_variant_validation_respects_source_order_and_dlc_paths(
+    tmp_path: Path,
+    history: str,
+    expected: int,
+) -> None:
+    _write(
+        tmp_path / "common/technologies/test.txt",
+        """technologies = {
+    early_ship_hull_light = {
+        enable_equipments = { ship_hull_light_1 }
+    }
+}
+""",
+    )
+    mod = Mod(tmp_path)
+    country = mod.create_country("ABC", "Test Country")
+    country.raw_history = history
+    country.history_path = tmp_path / "history/countries/ABC - Test Country.txt"
+
+    issues = mod._validate_equipment_variant_unlocks(country)
+
+    assert len(issues) == expected
+    if issues:
+        issue = issues[0]
+        expected_offset = history.index("create_equipment_variant")
+        assert issue.line == history.count("\n", 0, expected_offset) + 1
+        assert issue.column is not None
+
+
 def test_mod_authors_separate_dlc_aware_naval_and_air_oobs(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     mod.create_country("ABC", "Test Country")

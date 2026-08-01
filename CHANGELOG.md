@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-08-01
+
+### Fixed
+
+- Modular chassis validation now follows country-history source order and DLC
+  conditions. A later technology grant or one confined to a mutually exclusive
+  DLC branch can no longer validate an engine-rejected equipment variant.
+- Runtime `recruit_character` validation now scans mod-defined scripted effects,
+  including nested directories, instead of only modeled events, focuses,
+  decisions, and on-actions.
+- Chassis-order and runtime-recruitment diagnostics now include source line and
+  column locations.
+
 ## [0.6.3] - 2026-08-01
 
 ### Added

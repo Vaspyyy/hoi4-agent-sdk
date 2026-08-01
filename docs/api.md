@@ -159,8 +159,10 @@ equipment variant" and skip every ship.
 By Blood Alone airframe OOBs likewise require a DLC gate, `version_name`, and
 compatible variant, plus a separately excluded legacy air fallback.
 Modular hull and airframe variants must have their enabling chassis technology
-in scenario history before `create_equipment_variant`; the engine does not let
-`allow_without_tech=yes` bypass the missing chassis.
+earlier in scenario history and on every DLC path where the variant can run.
+A technology in a mutually exclusive fallback branch does not unlock the
+variant; the engine also does not let `allow_without_tech=yes` bypass the
+missing chassis.
 
 ### Complete-country and geography methods
 

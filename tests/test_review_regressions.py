@@ -36,6 +36,32 @@ def test_runtime_recruit_character_is_a_static_error(tmp_path: Path) -> None:
     assert finding.severity == "error"
 
 
+def test_runtime_recruit_character_in_scripted_effect_has_source_location(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "common/scripted_effects/nested/test.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """# recruit_character = COMMENTED_OUT
+test_bad_runtime_effect = {
+    recruit_character = ABC_late_advisor
+}
+""",
+        encoding="utf-8",
+    )
+
+    issues = Mod(tmp_path, strict_loading=True).validate(stage="build")
+
+    finding = next(
+        issue for issue in issues if issue.code == "runtime_recruit_character"
+    )
+    assert finding.severity == "error"
+    assert finding.file_path == str(path)
+    assert finding.line == 3
+    assert finding.column == 5
+    assert "scripted_effect 'test_bad_runtime_effect'" in finding.message
+
+
 def test_relative_custom_paths_are_rooted_in_mod(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     mod.create_on_action("on_test", effect="add_stability = 0.1", path="common/on_actions/x.txt")

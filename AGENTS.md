@@ -193,8 +193,9 @@ with mod.transaction():
     `mod.validate_country_package(tag).complete`.
 
     Recruit characters only through country history. HOI4 rejects
-    `recruit_character` in events, focuses, decisions, and on-actions; gate a
-    later role unlock with the role's `available`/`visible` trigger instead.
+    `recruit_character` in events, focuses, decisions, on-actions, and
+    scripted effects; gate a later role unlock with the role's
+    `available`/`visible` trigger instead.
     Every advisor needs a civilian `small` portrait sprite, and an air-capable
     new country needs a `set_country_name_pool()` entry for generated names.
 
@@ -224,8 +225,10 @@ with mod.transaction():
     and variants with `required_dlc=("By Blood Alone",)` and provide a legacy
     air OOB with that DLC excluded.
     Grant the hull/airframe's enabling chassis technology before creating its
-    modular variant. `allow_without_tech=yes` does not create the chassis and
-    the engine will reject the variant.
+    modular variant, in the same DLC branch or a broader one that covers it.
+    A later grant or a grant in the mutually exclusive fallback branch does
+    not count. `allow_without_tech=yes` does not create the chassis and the
+    engine will reject the variant.
 
 35. Treat `.complete` and `ContentLivenessReport.clean` as structural results,
     not proofs of dynamic achievability. Review popularity/variable threshold

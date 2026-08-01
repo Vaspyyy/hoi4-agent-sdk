@@ -229,6 +229,21 @@ _GFX_NAME_RE = re.compile(r"\bname\s*=\s*\"?([A-Za-z0-9_.:-]+)\"?")
 _COUNTRY_TAG_LINE_RE = re.compile(
     r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"(?:\s*#.*)?\s*$'
 )
+_DATE_ASSIGNMENT_RE = re.compile(r"\d{1,4}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?")
+
+
+@dataclasses.dataclass(frozen=True)
+class _HistoryTechnologyGrant:
+    technology: str
+    required_dlc: tuple[str, ...]
+    excluded_dlc: tuple[str, ...]
+    offset: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _HistoryVariantOccurrence:
+    variant: EquipmentVariant
+    offset: int
 
 
 def _idea_mutation_ids(
@@ -2686,18 +2701,28 @@ class Mod:
             variant.equipment_type.startswith("ship_hull_")
             or "airframe" in variant.equipment_type
         )
-        granted_technologies = set(country.technologies) | self._history_technology_grants(
-            country.raw_history
+        grants, _ = self._history_equipment_operations(country.raw_history)
+        grants.extend(
+            self._modeled_technology_grants_missing_from_history(country, grants)
         )
         if (
             is_modular_chassis
             and unlocks
-            and not set(unlocks) & granted_technologies
+            and not self._dlc_conditions_are_covered(
+                variant.required_dlc,
+                variant.excluded_dlc,
+                [
+                    (grant.required_dlc, grant.excluded_dlc)
+                    for grant in grants
+                    if grant.technology in unlocks
+                ],
+            )
         ):
             raise ValueError(
                 f"Equipment variant '{variant.name}' uses modular chassis "
-                f"'{variant.equipment_type}' before it is unlocked. Grant one of "
-                f"these technologies in country history first: {', '.join(unlocks)}. "
+                f"'{variant.equipment_type}' before it is unlocked on every matching "
+                "DLC path. Grant one of these technologies in the same or a broader "
+                f"DLC branch first: {', '.join(unlocks)}. "
                 "allow_without_tech does not create the required chassis variant."
             )
         self._materialize_country_override(country)
@@ -8234,7 +8259,7 @@ class Mod:
             directory = self.mod_root / relative
             if not directory.is_dir():
                 continue
-            for path in sorted(directory.glob("*.txt")):
+            for path in sorted(directory.rglob("*.txt")):
                 try:
                     text = path.read_text(
                         encoding="utf-8-sig",
@@ -8338,25 +8363,54 @@ class Mod:
             if any("start_civil_war" in script for script, _, _, _ in script_entries)
             else set()
         )
+        runtime_entries = list(script_entries)
+        if entries is None:
+            runtime_entries.extend(
+                (
+                    source.text,
+                    source.owner_kind,
+                    source.owner_id,
+                    source.file_path,
+                )
+                for source in self._semantic_script_sources()
+                if source.owner_kind == "scripted_effect"
+            )
+        for script, kind, obj_id, file_path in runtime_entries:
+            if not script:
+                continue
+            match = re.search(
+                r"\brecruit_character\s*=",
+                self._mask_script_comments(script),
+            )
+            if match is None:
+                continue
+            line, column = self._script_reference_location(
+                script,
+                match.start(),
+                obj_id=obj_id,
+                file_path=file_path,
+                token="recruit_character",
+            )
+            errors.append(
+                self._script_ref_error(
+                    (
+                        f"{kind} '{obj_id}' uses recruit_character at runtime. "
+                        "HOI4 only executes recruit_character from game/history "
+                        "at scenario start; recruit the character in country "
+                        "history and gate its role availability instead."
+                    ),
+                    "runtime_recruit_character",
+                    kind,
+                    obj_id,
+                    file_path,
+                    severity="error",
+                    line=line,
+                    column=column,
+                )
+            )
         for script, kind, obj_id, file_path in script_entries:
             if not script:
                 continue
-            if re.search(r"\brecruit_character\s*=", strip_comments(script)):
-                errors.append(
-                    self._script_ref_error(
-                        (
-                            f"{kind} '{obj_id}' uses recruit_character at runtime. "
-                            "HOI4 only executes recruit_character from game/history "
-                            "at scenario start; recruit the character in country "
-                            "history and gate its role availability instead."
-                        ),
-                        "runtime_recruit_character",
-                        kind,
-                        obj_id,
-                        file_path,
-                        severity="error",
-                    )
-                )
             for idea_id in sorted(
                 set(_IDEA_EFFECT_RE.findall(script) + _HAS_IDEA_RE.findall(script))
             ):
@@ -8656,6 +8710,8 @@ class Mod:
         idea_id: str | None = None,
         event_id: str | None = None,
         severity: Literal["error", "warning"] = "warning",
+        line: int | None = None,
+        column: int | None = None,
     ) -> ValidationError:
         return ValidationError(
             message=message,
@@ -8665,7 +8721,105 @@ class Mod:
             focus_id=obj_id if kind == "focus" else None,
             event_id=event_id or (obj_id if kind == "event" else None),
             idea_id=idea_id,
+            line=line,
+            column=column,
         )
+
+    @staticmethod
+    def _mask_script_comments(text: str) -> str:
+        """Replace comments with spaces while retaining source offsets."""
+
+        chars = list(text)
+        in_quote = False
+        index = 0
+        while index < len(chars):
+            char = chars[index]
+            if char == "\\" and in_quote:
+                index += 2
+                continue
+            if char == '"':
+                in_quote = not in_quote
+                index += 1
+                continue
+            if char == "#" and not in_quote:
+                while index < len(chars) and chars[index] != "\n":
+                    chars[index] = " "
+                    index += 1
+                continue
+            index += 1
+        return "".join(chars)
+
+    @classmethod
+    def _script_reference_location(
+        cls,
+        script: str,
+        script_offset: int,
+        *,
+        obj_id: str | None,
+        file_path: str | None,
+        token: str,
+    ) -> tuple[int, int]:
+        """Resolve a script finding to its source file when possible."""
+
+        if file_path is None:
+            return cls._line_column(script, script_offset)
+        path = Path(file_path)
+        try:
+            source = path.read_text(encoding="utf-8-sig", errors="ignore")
+        except OSError:
+            return cls._line_column(script, script_offset)
+
+        ranges: list[tuple[int, int]] = []
+
+        def find_object_ranges(fragment: str, base_offset: int) -> None:
+            try:
+                spans = top_level_assignments(fragment)
+            except (ParseError, ValueError):
+                return
+            for span in spans:
+                if (
+                    not span.is_block
+                    or span.body_start is None
+                    or span.body_end is None
+                ):
+                    continue
+                body = fragment[span.body_start : span.body_end]
+                start = base_offset + span.body_start
+                end = base_offset + span.body_end
+                direct_id = next(
+                    (
+                        item
+                        for item in top_level_assignments(body)
+                        if item.key == "id" and not item.is_block
+                    ),
+                    None,
+                )
+                value = (
+                    body[direct_id.value_start : direct_id.value_end]
+                    .strip()
+                    .strip('"')
+                    if direct_id is not None
+                    else ""
+                )
+                if obj_id is not None and (span.key == obj_id or value == obj_id):
+                    ranges.append((start, end))
+                find_object_ranges(body, start)
+
+        if obj_id is not None:
+            find_object_ranges(source, 0)
+        masked = cls._mask_script_comments(source)
+        pattern = re.compile(rf"\b{re.escape(token)}\s*=")
+        for start, end in ranges:
+            match = pattern.search(masked, start, end)
+            if match is not None:
+                return cls._line_column(source, match.start())
+        base = source.find(script)
+        if base >= 0:
+            return cls._line_column(source, base + script_offset)
+        match = pattern.search(masked)
+        if match is not None:
+            return cls._line_column(source, match.start())
+        return cls._line_column(script, script_offset)
 
     @staticmethod
     def _technology_refs(script: str) -> list[str]:
@@ -8907,26 +9061,47 @@ class Mod:
         country: Country,
     ) -> list[ValidationError]:
         unlock_map = self._equipment_unlock_technologies()
-        granted_technologies = set(country.technologies) | self._history_technology_grants(
-            country.raw_history
+        grants, occurrences = self._history_equipment_operations(country.raw_history)
+        grants.extend(
+            self._modeled_technology_grants_missing_from_history(country, grants)
         )
         errors: list[ValidationError] = []
-        for variant in find_equipment_variants(country.raw_history):
+        reported_offsets: set[int] = set()
+        for occurrence in occurrences:
+            variant = occurrence.variant
             if not (
                 variant.equipment_type.startswith("ship_hull_")
                 or "airframe" in variant.equipment_type
             ):
                 continue
             unlocks = unlock_map.get(variant.equipment_type, ())
-            if not unlocks or set(unlocks) & granted_technologies:
+            if not unlocks:
                 continue
+            available_conditions = [
+                (grant.required_dlc, grant.excluded_dlc)
+                for grant in grants
+                if grant.technology in unlocks
+                and (grant.offset < occurrence.offset or grant.offset < 0)
+            ]
+            if self._dlc_conditions_are_covered(
+                variant.required_dlc,
+                variant.excluded_dlc,
+                available_conditions,
+            ):
+                continue
+            if occurrence.offset in reported_offsets:
+                continue
+            reported_offsets.add(occurrence.offset)
+            line, column = self._line_column(country.raw_history, occurrence.offset)
             errors.append(
                 ValidationError(
                     message=(
                         f"Country '{country.tag}' creates modular variant "
                         f"'{variant.name}' ({variant.equipment_type}) before its "
-                        "chassis technology is unlocked. Grant one of: "
-                        f"{', '.join(unlocks)}. allow_without_tech is insufficient."
+                        "chassis technology is unlocked on every matching DLC path. "
+                        "Grant one of these technologies earlier in the same or a "
+                        f"broader DLC branch: {', '.join(unlocks)}. "
+                        "allow_without_tech is insufficient."
                     ),
                     severity="error",
                     code="equipment_variant_chassis_not_unlocked",
@@ -8936,43 +9111,273 @@ class Mod:
                         if country.history_path is not None
                         else None
                     ),
+                    line=line,
+                    column=column,
                 )
             )
         return errors
 
+    @classmethod
+    def _history_equipment_operations(
+        cls,
+        history: str,
+    ) -> tuple[list[_HistoryTechnologyGrant], list[_HistoryVariantOccurrence]]:
+        """Return ordered scenario-start technology and variant operations.
+
+        Simple ``has_dlc``/``NOT = { has_dlc = ... }`` gates are retained so a
+        technology in one mutually exclusive branch cannot unlock a chassis in
+        another. Later dated history is intentionally excluded.
+        """
+
+        grants: list[_HistoryTechnologyGrant] = []
+        variants: list[_HistoryVariantOccurrence] = []
+
+        def merge(left: tuple[str, ...], right: Sequence[str]) -> tuple[str, ...]:
+            return tuple(dict.fromkeys((*left, *right)))
+
+        def dlc_conditions(body: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+            required: list[str] = []
+            excluded: list[str] = []
+
+            def visit(fragment: str, negated: bool = False) -> None:
+                for item in top_level_assignments(fragment):
+                    if not item.is_block:
+                        if item.key.lower() == "has_dlc":
+                            value = fragment[item.value_start : item.value_end]
+                            value = value.strip().strip('"')
+                            (excluded if negated else required).append(value)
+                        continue
+                    if item.body_start is None or item.body_end is None:
+                        continue
+                    visit(
+                        fragment[item.body_start : item.body_end],
+                        negated ^ (item.key.upper() == "NOT"),
+                    )
+
+            visit(body)
+            return merge((), required), merge((), excluded)
+
+        def negative_branches(
+            required: tuple[str, ...],
+            excluded: tuple[str, ...],
+            found_required: tuple[str, ...],
+            found_excluded: tuple[str, ...],
+        ) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
+            branches = [
+                (required, merge(excluded, (dlc,))) for dlc in found_required
+            ]
+            branches.extend(
+                (merge(required, (dlc,)), excluded) for dlc in found_excluded
+            )
+            return branches or [(required, excluded)]
+
+        def process_span(
+            fragment: str,
+            span: AssignmentSpan,
+            base_offset: int,
+            required_dlc: tuple[str, ...],
+            excluded_dlc: tuple[str, ...],
+        ) -> None:
+            if set(required_dlc) & set(excluded_dlc):
+                return
+            if (
+                not span.is_block
+                or span.body_start is None
+                or span.body_end is None
+            ):
+                return
+            if _DATE_ASSIGNMENT_RE.fullmatch(span.key):
+                return
+            child = fragment[span.body_start : span.body_end]
+            child_offset = base_offset + span.body_start
+            if span.key.lower() == "if":
+                children = top_level_assignments(child)
+                limit = next(
+                    (
+                        item
+                        for item in children
+                        if item.key.lower() == "limit"
+                        and item.is_block
+                        and item.body_start is not None
+                        and item.body_end is not None
+                    ),
+                    None,
+                )
+                found_required: tuple[str, ...] = ()
+                found_excluded: tuple[str, ...] = ()
+                if limit is not None:
+                    assert limit.body_start is not None
+                    assert limit.body_end is not None
+                    found_required, found_excluded = dlc_conditions(
+                        child[limit.body_start : limit.body_end]
+                    )
+                positive_required = merge(required_dlc, found_required)
+                positive_excluded = merge(excluded_dlc, found_excluded)
+                for item in children:
+                    key = item.key.lower()
+                    if key == "limit":
+                        continue
+                    if key == "else" and item.is_block:
+                        if item.body_start is None or item.body_end is None:
+                            continue
+                        else_body = child[item.body_start : item.body_end]
+                        else_offset = child_offset + item.body_start
+                        for branch_required, branch_excluded in negative_branches(
+                            required_dlc,
+                            excluded_dlc,
+                            found_required,
+                            found_excluded,
+                        ):
+                            walk(
+                                else_body,
+                                else_offset,
+                                branch_required,
+                                branch_excluded,
+                            )
+                        continue
+                    process_span(
+                        child,
+                        item,
+                        child_offset,
+                        positive_required,
+                        positive_excluded,
+                    )
+                return
+            if span.key == "set_technology":
+                for technology in top_level_assignments(child):
+                    if technology.is_block:
+                        continue
+                    value = child[
+                        technology.value_start : technology.value_end
+                    ].strip().lower()
+                    if value in {"0", "no"}:
+                        continue
+                    grants.append(
+                        _HistoryTechnologyGrant(
+                            technology=technology.key,
+                            required_dlc=required_dlc,
+                            excluded_dlc=excluded_dlc,
+                            offset=child_offset + technology.start,
+                        )
+                    )
+                return
+            if span.key == "create_equipment_variant":
+                parsed = find_equipment_variants(fragment[span.start : span.end])
+                if parsed:
+                    variants.append(
+                        _HistoryVariantOccurrence(
+                            variant=dataclasses.replace(
+                                parsed[0],
+                                required_dlc=required_dlc,
+                                excluded_dlc=excluded_dlc,
+                            ),
+                            offset=base_offset + span.start,
+                        )
+                    )
+                return
+            walk(child, child_offset, required_dlc, excluded_dlc)
+
+        def walk(
+            fragment: str,
+            base_offset: int,
+            required_dlc: tuple[str, ...],
+            excluded_dlc: tuple[str, ...],
+        ) -> None:
+            for span in top_level_assignments(fragment):
+                process_span(
+                    fragment,
+                    span,
+                    base_offset,
+                    required_dlc,
+                    excluded_dlc,
+                )
+
+        walk(history, 0, (), ())
+        grants.sort(key=lambda item: item.offset)
+        variants.sort(key=lambda item: item.offset)
+        return grants, variants
+
     @staticmethod
-    def _history_technology_grants(history: str) -> set[str]:
+    def _modeled_technology_grants_missing_from_history(
+        country: Country,
+        history_grants: Sequence[_HistoryTechnologyGrant],
+    ) -> list[_HistoryTechnologyGrant]:
+        """Represent unsaved model-only technologies as unconditional grants."""
+
+        history_ids = {grant.technology for grant in history_grants}
+        return [
+            _HistoryTechnologyGrant(technology, (), (), -1)
+            for technology, level in country.technologies.items()
+            if level and technology not in history_ids
+        ]
+
+    @staticmethod
+    def _dlc_conditions_are_covered(
+        required_dlc: Sequence[str],
+        excluded_dlc: Sequence[str],
+        grant_conditions: Sequence[tuple[Sequence[str], Sequence[str]]],
+    ) -> bool:
+        """Return whether grants cover every feasible DLC path for an effect."""
+
+        assignment: dict[str, bool] = {}
+        for dlc in required_dlc:
+            assignment[dlc] = True
+        for dlc in excluded_dlc:
+            if assignment.get(dlc) is True:
+                return True  # The variant condition itself is impossible.
+            assignment[dlc] = False
+
+        clauses: list[dict[str, bool]] = []
+        for required, excluded in grant_conditions:
+            clause: dict[str, bool] = {}
+            impossible = False
+            for dlc in required:
+                clause[dlc] = True
+            for dlc in excluded:
+                if clause.get(dlc) is True:
+                    impossible = True
+                    break
+                clause[dlc] = False
+            if not impossible:
+                clauses.append(clause)
+
+        def has_uncovered_path(
+            index: int,
+            current: dict[str, bool],
+        ) -> bool:
+            if index == len(clauses):
+                return True
+            clause = clauses[index]
+            if any(
+                name in current and current[name] is not expected
+                for name, expected in clause.items()
+            ):
+                return has_uncovered_path(index + 1, current)
+            undecided = [name for name in clause if name not in current]
+            if not undecided:
+                return False
+            for name in undecided:
+                branch = dict(current)
+                branch[name] = not clause[name]
+                if has_uncovered_path(index + 1, branch):
+                    return True
+            return False
+
+        return not has_uncovered_path(0, assignment)
+
+    @classmethod
+    def _history_technology_grants(cls, history: str) -> set[str]:
         """Return scenario-start technologies, excluding later dated blocks."""
 
-        grants: set[str] = set()
+        grants, _ = cls._history_equipment_operations(history)
+        return {grant.technology for grant in grants}
 
-        def walk(fragment: str) -> None:
-            for span in top_level_assignments(fragment):
-                if (
-                    not span.is_block
-                    or span.body_start is None
-                    or span.body_end is None
-                ):
-                    continue
-                if re.fullmatch(
-                    r"\d{1,4}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?",
-                    span.key,
-                ):
-                    continue
-                body = fragment[span.body_start : span.body_end]
-                if span.key == "set_technology":
-                    grants.update(
-                        child.key
-                        for child in top_level_assignments(body)
-                        if not child.is_block
-                        and body[child.value_start : child.value_end].strip()
-                        not in {"0", "no"}
-                    )
-                else:
-                    walk(body)
-
-        walk(history)
-        return grants
+    @staticmethod
+    def _line_column(text: str, offset: int) -> tuple[int, int]:
+        offset = max(0, min(offset, len(text)))
+        line = text.count("\n", 0, offset) + 1
+        previous_newline = text.rfind("\n", 0, offset)
+        return line, offset - previous_newline
 
     def _known_equipment_ids(self) -> set[str]:
         cached = self._scan_cache.get("equipment")
