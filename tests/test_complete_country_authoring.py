@@ -91,6 +91,12 @@ def _build_complete_country(root: Path) -> Mod:
     source = _source_image(root / "source.png")
     mod = Mod(root)
     mod.create_country("ABC", "Authorland", capital=1)
+    mod.set_country_name_pool(
+        "ABC",
+        male_names=("Alex", "Boris"),
+        female_names=("Anna",),
+        surnames=("Example", "Writer"),
+    )
     mod.set_state_owner(1, "ABC")
     import_flag_to_mod(root, "ABC", source)
     _add_portrait(root, "ABC", "leader_1", source)
@@ -104,7 +110,11 @@ def _build_complete_country(root: Path) -> Mod:
                 id=advisor_id,
                 name=f"Advisor {index}",
                 portraits=[
-                    CharacterPortrait(channel="civilian", large=advisor_sprite)
+                    CharacterPortrait(
+                        channel="civilian",
+                        large=advisor_sprite,
+                        small=advisor_sprite,
+                    )
                 ],
                 roles=[
                     AdvisorRole(
@@ -180,12 +190,17 @@ def test_complete_country_can_be_authored_through_public_apis(
     assert report.owned_state_count == 1
     assert report.to_dict()["complete"] is True
     assert report.to_dict()["structurally_complete"] is True
+    assert "common/names/00_generated_names.txt" in mod.preview()
     assert not [
         issue
         for issue in mod.validate()
         if issue.country_tag == "ABC" and issue.severity == "error"
     ]
     mod.save()
+    names = (tmp_path / "common/names/00_generated_names.txt").read_text(
+        encoding="utf-8"
+    )
+    assert 'names = { "Alex" "Boris" }' in names
     reloaded = Mod(tmp_path)
     reloaded_report = reloaded.validate_country_package(
         "ABC",
@@ -214,6 +229,19 @@ def test_incomplete_sdk_country_is_enforced_by_normal_validation(
         "insufficient_military_commanders",
         "missing_country_activation",
     } <= codes
+
+
+def test_country_package_requires_advisor_small_portrait(tmp_path: Path) -> None:
+    mod = _build_complete_country(tmp_path)
+    advisor = mod.get_character("ABC_advisor_1")
+    advisor.portraits[0].small = ""
+
+    report = mod.validate_country_package("ABC", check_geography=False)
+
+    assert not report.complete
+    assert "missing_character_small_portrait" in {
+        finding.code for finding in report.findings
+    }
 
 
 def test_complete_country_report_names_each_remediation_failure(

@@ -28,6 +28,10 @@ def test_country_creation_guidance_requires_complete_gfx_package() -> None:
         "find_enclosed_foreign_states()",
         "create_equipment_variant()",
         'required_dlc=("Man the Guns",)',
+        "allow_without_tech=yes",
+        "set_country_name_pool()",
+        "emit runtime `recruit_character`",
+        "mod.import_flag_to_mod()",
         "not proofs of dynamic achievability",
     )
     for requirement in required_contract:

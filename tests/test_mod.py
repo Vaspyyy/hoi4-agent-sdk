@@ -375,6 +375,17 @@ class TestConfig:
         mod = Mod.from_config(tmp_path)
         assert mod.mod_root == mod_dir
 
+    def test_mod_from_config_forwards_strict_loading(self, tmp_path):
+        mod_dir = tmp_path / "my_mod"
+        mod_dir.mkdir()
+        (tmp_path / ".hoi4.json").write_text(
+            json.dumps({"mod_path": str(mod_dir)}), encoding="utf-8"
+        )
+
+        mod = Mod.from_config(tmp_path, strict_loading=True)
+
+        assert mod.strict_loading is True
+
     def test_mod_from_config_not_found(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="No .hoi4.json"):
             Mod.from_config(tmp_path)
@@ -1228,6 +1239,38 @@ class TestModCountries:
         assert country.tag == "WST"
         assert country.name == "Westralia"
         assert "WST" in mod.list_countries()
+
+    def test_history_only_vanilla_override_loads_with_game_context(
+        self, tmp_path
+    ):
+        mod_root = tmp_path / "mod"
+        hoi4_root = tmp_path / "hoi4"
+        tags = hoi4_root / "common" / "country_tags"
+        definition = hoi4_root / "common" / "countries" / "Example.txt"
+        vanilla_history = hoi4_root / "history" / "countries" / "ABC - Example.txt"
+        mod_history = mod_root / "history" / "countries" / "ABC - Example.txt"
+        localization = hoi4_root / "localisation" / "english" / "countries_l_english.yml"
+        for path in (definition, vanilla_history, mod_history, localization):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        tags.mkdir(parents=True, exist_ok=True)
+        tags.joinpath("00_tags.txt").write_text(
+            'ABC = "countries/Example.txt"\n', encoding="utf-8"
+        )
+        definition.write_text("color = { 1 2 3 }\n", encoding="utf-8")
+        vanilla_history.write_text("capital = 1\n", encoding="utf-8")
+        mod_history.write_text("capital = 2\n", encoding="utf-8")
+        localization.write_text(
+            '\ufeffl_english:\n ABC:0 "Example"\n', encoding="utf-8"
+        )
+
+        mod = Mod(mod_root, hoi4_install=hoi4_root, strict_loading=True)
+        country = mod.get_country("ABC")
+
+        assert "ABC" in mod.list_countries()
+        assert country.capital == 2
+        assert country.color == (1, 2, 3)
+        assert country.name == "Example"
+        assert country.history_path == mod_history.resolve()
 
     def test_overwrite_country_keeps_custom_definition_target_and_loc_source(
         self, tmp_path

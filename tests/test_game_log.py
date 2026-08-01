@@ -81,6 +81,41 @@ def test_game_log_attributes_all_observed_engine_file_shapes(tmp_path: Path) -> 
     assert report.unscoped_entry_count == 0
 
 
+def test_game_log_attributes_runtime_and_equipment_messages(tmp_path: Path) -> None:
+    mod_root = tmp_path / "mod"
+    event = mod_root / "events/owned.txt"
+    history = mod_root / "history/countries/ABC - Test_Country.txt"
+    event.parent.mkdir(parents=True)
+    history.parent.mkdir(parents=True)
+    event.write_text("country_event = { }\n", encoding="utf-8")
+    history.write_text("capital = 1\n", encoding="utf-8")
+    log_path = tmp_path / "error.log"
+    log_path.write_text(
+        "[12:00:00][no_game_date][effectimplementation.cpp:5524]: "
+        "events/owned.txt:24: recruit_character should only happen in "
+        "game/history files in order to be executed only at game start\n"
+        "[12:00:01][1936.01.01.12][equipment_effects.cpp:814]: "
+        "'history/countries/ABC - Test_Country.txt:7: create_equipment_variant': "
+        "'Test Class' - Modular type 'ship_hull_light_1' appears to not have "
+        "been unlocked for ABC as no chassis variant exists.\n"
+        "[12:00:02][1936.01.01.12][character_manager.cpp:261]: Failed to "
+        "generate a name for a character of origins Test Country and for "
+        "country Test Country\n",
+        encoding="utf-8",
+    )
+
+    report = parse_hoi4_error_log(log_path, mod_root)
+
+    assert len(report.entries) == 3
+    assert report.groups == {
+        "character_name_generation": 1,
+        "equipment_variant_unlock": 1,
+        "runtime_recruit_character": 1,
+    }
+    assert [entry.line for entry in report.entries] == [24, 7, None]
+    assert report.unscoped_entry_count == 0
+
+
 def test_game_log_path_extraction_does_not_whitelist_directories(
     tmp_path: Path,
 ) -> None:

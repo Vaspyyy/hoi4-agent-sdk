@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from hoi4 import Mod
 from hoi4 import assets
 from hoi4.assets import (
     DDSExportUnsupportedError,
@@ -222,6 +223,52 @@ class TestPortraits:
 
         assert target.read_bytes() == original
         assert {path for path in root.rglob("*") if path.is_file()} == {target}
+
+
+class TestTransactionalAssets:
+    def test_mod_stages_flag_until_save(self, tmp_path: Path) -> None:
+        source = _make_image(tmp_path / "flag.png")
+        root = tmp_path / "mod"
+        mod = Mod(root)
+
+        result = mod.import_flag_to_mod("TST", source)
+
+        assert not any(path.exists() for path in result[0].paths)
+        preview = mod.preview()
+        assert "Binary asset create: gfx/flags/TST.tga" in preview
+        assert "asset gfx/flags/TST.tga: stage" in mod.preview_summary()
+        mod.create_country("TST", "Test Country")
+        assert "missing_country_flag" not in {
+            finding.code
+            for finding in mod.validate_country_package(
+                "TST", check_geography=False
+            ).findings
+        }
+        saved = mod.save(require_changes=True)
+        assert set(result[0].paths) <= set(saved.written_files)
+        assert all(path.is_file() for path in result[0].paths)
+
+    def test_transaction_discards_staged_portrait_and_gfx(
+        self, tmp_path: Path
+    ) -> None:
+        source = _make_image(tmp_path / "portrait.png")
+        root = tmp_path / "mod"
+        mod = Mod(root)
+
+        with mod.transaction():
+            portrait = mod.import_portrait_to_mod(
+                "TST", "leader", source, output_format="tga"
+            )
+            gfx = mod.write_portrait_gfx(
+                "TST", "leader", portrait_path=portrait
+            )
+            assert "leader.tga" in mod.preview()
+            assert not portrait.exists()
+            assert not gfx.exists()
+
+        assert mod.preview() == ""
+        assert not any(root.rglob("*.tga"))
+        assert not any(root.rglob("*.gfx"))
 
     def test_wrong_dds_compression_does_not_destroy_existing_portrait(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

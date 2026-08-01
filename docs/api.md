@@ -16,8 +16,8 @@ The SDK uses `.hoi4.json` config files to store paths. Create one in your projec
 Then use `Mod.from_config()` — it searches from the current directory upward:
 
 ```python
-mod = Mod.from_config()            # searches from cwd
-mod = Mod.from_config("/project")  # searches from /project
+mod = Mod.from_config()                         # searches from cwd
+mod = Mod.from_config("/project", strict_loading=True)
 ```
 
 You can also create a config programmatically:
@@ -109,7 +109,7 @@ ordering, and untouched variants.
 |--------|-------------|
 | `list_characters(tag=None, include_vanilla=True) -> list[str]` | List character IDs, optionally limited to one country |
 | `get_character(character_id, include_vanilla=True) -> Character` | Load a mod or vanilla character |
-| `create_character(tag, character, recruit=True, overwrite=False, path=None) -> Character` | Define a character, create localization, and normally add `recruit_character` to country history. Pass `recruit=False` for event-unlocked characters. |
+| `create_character(tag, character, recruit=True, overwrite=False, path=None) -> Character` | Define a character, create localization, and normally add `recruit_character` to country history. `recruit=False` is for source-managed recruitment, never a runtime event effect. |
 | `update_character(character_id, **kwargs) -> bool` | Patch top-level `name`, `portraits`, or `country_tag` |
 | `delete_character(character_id, remove_recruitment=True) -> bool` | Delete a mod character and its generated localization/recruitment |
 | `add_character_instance(character_id, instance)` | Append a DLC/source variant |
@@ -125,6 +125,11 @@ HOI4 slot. `ArmyCommanderRole(kind="corps_commander")` and
 `ArmyCommanderRole(kind="field_marshal")` cover generals and field marshals;
 `NavyLeaderRole` covers admirals. The older `Leader` fields on `Country` remain
 a compatibility façade for the selected head of state.
+HOI4 accepts `recruit_character` only from scenario history. To unlock a role
+later, recruit the character at startup and express the unlock in the role's
+`available`/`visible` trigger; validation rejects runtime recruitment effects.
+Advisor roles require a `portraits.civilian.small` sprite in addition to any
+large portrait used elsewhere.
 
 ### Land, naval, and air OOB methods
 
@@ -135,8 +140,8 @@ a compatibility façade for the selected head of state.
 | `create_oob(name, country_tag, templates=(), divisions=(), fleets=(), air_wings=(), kind="auto", required_dlc=(), excluded_dlc=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write one land, naval, or air OOB and assign it with the correct country-history effect |
 | `update_oob(name, templates=None, divisions=None, fleets=None, air_wings=None, country_tag=None, kind=None, required_dlc=None, excluded_dlc=None, assign=False) -> bool` | Replace selected modeled collections and assignment metadata while preserving neighboring production, comments, and unknown fields |
 | `delete_oob(name, unassign=True) -> bool` | Delete a mod-owned OOB and optionally clear country references |
-| `assign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=())` | Assign an existing OOB through `set_oob`, `set_naval_oob`, or `set_air_oob`, optionally under DLC conditions |
-| `unassign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=()) -> bool` | Remove one exact assignment without re-rendering surrounding history |
+| `assign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="")` | Assign an existing OOB through `set_oob`, `set_naval_oob`, or `set_air_oob`, optionally under DLC conditions or a dated history block |
+| `unassign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="") -> bool` | Remove one exact dated/conditioned assignment without re-rendering surrounding history |
 | `create_equipment_variant(country_tag, variant) -> EquipmentVariant` | Append a country-history equipment variant, including optional DLC conditions |
 
 Validation rejects duplicate template names or battalion positions, unknown
@@ -153,12 +158,16 @@ rejects the ungated legacy shape that makes HOI4 log "Could not find proper
 equipment variant" and skip every ship.
 By Blood Alone airframe OOBs likewise require a DLC gate, `version_name`, and
 compatible variant, plus a separately excluded legacy air fallback.
+Modular hull and airframe variants must have their enabling chassis technology
+in scenario history before `create_equipment_variant`; the engine does not let
+`allow_without_tech=yes` bypass the missing chassis.
 
 ### Complete-country and geography methods
 
 | Method | Description |
 |--------|-------------|
 | `validate_country_package(tag, minimum_land_provinces=2, allowed_state_ids=(), check_geography=True, lifecycle="auto") -> CountryPackageReport` | Return an enforceable playable-package report. `lifecycle` is `auto`, `starting`, or `runtime`. |
+| `set_country_name_pool(tag, male_names=..., surnames=..., female_names=(), callsigns=())` | Author the `common/names` pool used for dynamically generated aces/characters |
 | `find_disconnected_states(tag, minimum_land_provinces=2, allowed_state_ids=()) -> tuple[TerritoryComponent, ...]` | Return significant owned components disconnected from the capital; requires the `map` extra |
 | `find_enclosed_foreign_states(tag, minimum_land_provinces=1, allowed_state_ids=()) -> tuple[TerritoryComponent, ...]` | Return foreign land components completely enclosed by the target country; requires the `map` extra |
 
@@ -182,8 +191,9 @@ Starting countries additionally require a non-empty valid land OOB, owned
 territory, and an owned/cored capital. Runtime-created countries instead
 require evidence that their activation path releases or grants territory; a
 direct transfer path is checked for the declared capital and its runtime core.
-Event-unlocked characters use `create_character(..., recruit=False)` so their
-absence from starting history is intentional.
+Air-capable packages also require a country name pool so the engine can name
+generated aces. Runtime role unlocks must not use `recruit_character`; recruit
+the character from country history and gate role availability instead.
 
 Normal authoring should assign the OOB with `create_oob(..., assign=True)`. A
 single tag-owned OOB loaded explicitly by scenario/on-action script is also
@@ -1047,13 +1057,12 @@ and political rendering and procedural generation require the `map` extra:
 
 ```python
 from hoi4 import MapRenderCancelled, export_flag_from_mod, export_portrait_from_mod
-from hoi4 import import_bookmark_picture_to_mod, import_flag_to_mod
-from hoi4 import import_portrait_to_mod, render_political_map, write_portrait_gfx
+from hoi4 import import_bookmark_picture_to_mod, render_political_map
 
-import_flag_to_mod(mod_root, "ABC", "flag.png")
+mod.import_flag_to_mod("ABC", "flag.png")
 export_flag_from_mod(mod_root, "ABC", "flag-preview.png")
-import_portrait_to_mod(mod_root, "ABC", "leader", "portrait.png")
-write_portrait_gfx(mod_root, "ABC", "leader")
+portrait = mod.import_portrait_to_mod("ABC", "leader", "portrait.png")
+mod.write_portrait_gfx("ABC", "leader", portrait_path=portrait)
 export_portrait_from_mod(mod_root, "ABC", "leader", "portrait-preview.png")
 picture = import_bookmark_picture_to_mod(mod_root, "MY_START", "start.png")
 result = render_political_map(
@@ -1067,6 +1076,10 @@ result = render_political_map(
 
 Bookmark picture import commits its texture and matching `.gfx` declaration as
 one rollback-capable batch, so a failure cannot leave only half of the pair.
+The `Mod` image methods stage files until `save()` and expose them in
+`preview()`/`transaction()`. The root-level import functions remain immediate
+standalone converters for workflows that intentionally do not use a `Mod`
+transaction.
 
 `render_political_map()` raises the root-exported `MapRenderCancelled` exception
 when its `cancelled` callback returns true, so UI integrations can stop work
@@ -1177,8 +1190,8 @@ aspect-ratio variance is center-cropped to the exact requested ratio; materially
 wrong ratios are rejected. A missing dependency or key, provider refusal or rate
 limit, malformed response, invalid raster, or existing destination raises before
 any candidate or mod file is changed. The output is still only a candidate:
-inspect it before calling `import_flag_to_mod()` or `import_portrait_to_mod()`
-and `write_portrait_gfx()`.
+inspect it before calling `mod.import_flag_to_mod()` or
+`mod.import_portrait_to_mod()` and `mod.write_portrait_gfx()`.
 
 Gemini Developer API image generation is paid; a 512px Flash image is currently
 approximately $0.045, and generated images contain SynthID. Gemini 3.6 Flash is

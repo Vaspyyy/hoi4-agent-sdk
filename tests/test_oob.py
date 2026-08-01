@@ -21,6 +21,8 @@ from hoi4.oob import (
     find_equipment_variants,
     find_oob_references,
     load_oob_file,
+    remove_oob_reference,
+    serialize_equipment_variant,
     serialize_oob,
     validate_oob,
 )
@@ -375,6 +377,78 @@ def test_dlc_conditioned_oob_references_and_variants_parse_if_else() -> None:
         ("Test Class", ("Man the Guns",), ()),
         ("Legacy Class", (), ("Man the Guns",)),
     ]
+
+
+def test_dated_oob_references_preserve_their_date() -> None:
+    history = '''set_oob = "ABC_1936"
+1939.1.1 = {
+    set_oob = "ABC_1939"
+}
+'''
+
+    references = find_oob_references(history)
+
+    assert references == (
+        OOBReference("ABC_1936", "land"),
+        OOBReference("ABC_1939", "land", date="1939.1.1"),
+    )
+    updated, removed = remove_oob_reference(
+        history,
+        OOBReference("ABC_1936", "land"),
+    )
+    assert removed
+    assert 'set_oob = "ABC_1939"' in updated
+    assert 'set_oob = "ABC_1936"' not in updated
+
+
+def test_assign_country_oob_allows_same_conditions_on_different_date(
+    tmp_path: Path,
+) -> None:
+    mod = Mod(tmp_path)
+    country = mod.create_country("ABC", "Test Country")
+    country.raw_history += '\n1939.1.1 = { set_oob = "ABC_1939" }\n'
+
+    mod.assign_country_oob("ABC", "ABC_1936")
+
+    assert {reference.name for reference in mod._country_oob_references(country)} == {
+        "ABC_1936",
+        "ABC_1939",
+    }
+
+
+def test_modular_variant_requires_chassis_technology(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "common/technologies/test.txt",
+        """technologies = {
+    early_ship_hull_light = {
+        enable_equipments = { ship_hull_light_1 }
+    }
+}
+""",
+    )
+    _write(
+        tmp_path / "common/units/equipment/test.txt",
+        "ship_hull_light_1 = { }\n",
+    )
+    variant = EquipmentVariant(
+        "Test Class",
+        "ship_hull_light_1",
+        allow_without_tech=True,
+    )
+    mod = Mod(tmp_path)
+    country = mod.create_country("ABC", "Test Country")
+
+    with pytest.raises(ValueError, match="allow_without_tech"):
+        mod.create_equipment_variant("ABC", variant)
+
+    country.raw_history += "\n" + serialize_equipment_variant(variant) + "\n"
+    issues = mod.validate(stage="build")
+    assert "equipment_variant_chassis_not_unlocked" in {
+        issue.code for issue in issues
+    }
+
+    country.technologies["early_ship_hull_light"] = 1
+    assert not mod._validate_equipment_variant_unlocks(country)
 
 
 def test_mod_authors_separate_dlc_aware_naval_and_air_oobs(tmp_path: Path) -> None:

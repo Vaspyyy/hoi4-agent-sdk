@@ -192,6 +192,12 @@ with mod.transaction():
     guess. Before reporting any SDK-created country complete, require
     `mod.validate_country_package(tag).complete`.
 
+    Recruit characters only through country history. HOI4 rejects
+    `recruit_character` in events, focuses, decisions, and on-actions; gate a
+    later role unlock with the role's `available`/`visible` trigger instead.
+    Every advisor needs a civilian `small` portrait sprite, and an air-capable
+    new country needs a `set_country_name_pool()` entry for generated names.
+
 32. Treat `unsupported_effect_scope` and `unsupported_trigger_scope` as real
     domain warnings. The installed documentation declares where tokens are
     legal, and validation follows explicit country, state, character, and
@@ -217,6 +223,9 @@ with mod.transaction():
     Apply the same split for By Blood Alone airframes: gate the airframe OOB
     and variants with `required_dlc=("By Blood Alone",)` and provide a legacy
     air OOB with that DLC excluded.
+    Grant the hull/airframe's enabling chassis technology before creating its
+    modular variant. `allow_without_tech=yes` does not create the chassis and
+    the engine will reject the variant.
 
 35. Treat `.complete` and `ContentLivenessReport.clean` as structural results,
     not proofs of dynamic achievability. Review popularity/variable threshold
@@ -244,9 +253,10 @@ generic portrait. The default package includes:
 - matching character definitions, roles, recruitment/history entries,
   localization, portrait DDS files, and sprite declarations.
 
-Build the roster through `create_character()` and the role models; pass
-`recruit=False` only for a character intentionally unlocked by an event. Build
-starting land forces through `create_oob(..., assign=True)`. Do not assign a
+Build the roster through `create_character()` and the role models. Recruit the
+character in country history and gate event-driven role availability; never
+emit runtime `recruit_character`. Build starting land forces through
+`create_oob(..., assign=True)`. Do not assign a
 starting OOB or starting ownership merely to satisfy validation for a tag that
 does not exist at scenario start; `validate_country_package()` classifies
 evidence-backed focus/event releases as `runtime`. Run
@@ -303,8 +313,10 @@ For an AI-generated flag or portrait:
    candidate, retain the generated PNGs in `assets/candidates/`, and leave the
    mod unchanged.
 5. Keep the first passing PNG in `assets/candidates/` before importing it.
-   Import that durable source with `import_flag_to_mod()`. Import a passing
-   portrait with `import_portrait_to_mod()` and then `write_portrait_gfx()`.
+   Import that durable source with `mod.import_flag_to_mod()`. Import a passing
+   portrait with `mod.import_portrait_to_mod()` and then
+   `mod.write_portrait_gfx()` so the files participate in preview,
+   transactions, and atomic save.
 6. When the user's original request explicitly authorized asset creation,
    import immediately after review. A broad country-creation request covered by
    the visual-completeness policy is such authorization. Otherwise show the

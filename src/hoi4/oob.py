@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Literal, TypeVar
@@ -31,12 +32,13 @@ _OOB_ASSIGNMENT_KEYS: dict[str, AssignedOOBKind] = {
 
 @dataclass(frozen=True)
 class OOBReference:
-    """One country-history OOB assignment and its DLC conditions."""
+    """One country-history OOB assignment and its date/DLC conditions."""
 
     name: str
     kind: AssignedOOBKind
     required_dlc: tuple[str, ...] = ()
     excluded_dlc: tuple[str, ...] = ()
+    date: str = ""
 
 
 @dataclass(frozen=True)
@@ -227,7 +229,7 @@ def find_oob_references(history: str) -> tuple[OOBReference, ...]:
     """Find land, naval, and air OOB assignments in country history."""
 
     result: list[OOBReference] = []
-    for body, span, required_dlc, excluded_dlc in _conditioned_assignments(
+    for body, span, required_dlc, excluded_dlc, date in _conditioned_assignments(
         history
     ):
         if span.is_block:
@@ -240,6 +242,7 @@ def find_oob_references(history: str) -> tuple[OOBReference, ...]:
                     kind=kind,
                     required_dlc=required_dlc,
                     excluded_dlc=excluded_dlc,
+                    date=date,
                 )
             )
     return tuple(result)
@@ -249,7 +252,7 @@ def find_equipment_variants(history: str) -> tuple[EquipmentVariant, ...]:
     """Find equipment variants in country history, retaining DLC conditions."""
 
     result: list[EquipmentVariant] = []
-    for body, span, required_dlc, excluded_dlc in _conditioned_assignments(
+    for body, span, required_dlc, excluded_dlc, _date in _conditioned_assignments(
         history
     ):
         if (
@@ -358,11 +361,12 @@ def serialize_oob_assignment(reference: OOBReference) -> str:
     if key is None:
         raise ValueError("A mixed OOB cannot be assigned to country history")
     effect = f"{key} = {pdx_string(reference.name)}"
-    return conditional_history_effect(
+    effect = conditional_history_effect(
         effect,
         required_dlc=reference.required_dlc,
         excluded_dlc=reference.excluded_dlc,
     )
+    return _wrap_block(reference.date, effect, 0) if reference.date else effect
 
 
 def remove_oob_reference(
@@ -378,6 +382,7 @@ def remove_oob_reference(
         span: AssignmentSpan,
         required_dlc: tuple[str, ...],
         excluded_dlc: tuple[str, ...],
+        date: str,
     ) -> bool:
         kind = _OOB_ASSIGNMENT_KEYS.get(span.key.lower())
         return bool(
@@ -387,12 +392,14 @@ def remove_oob_reference(
             == reference.name
             and required_dlc == reference.required_dlc
             and excluded_dlc == reference.excluded_dlc
+            and date == reference.date
         )
 
     def rewrite_if(
         fragment: str,
         required_dlc: tuple[str, ...],
         excluded_dlc: tuple[str, ...],
+        date: str,
     ) -> str:
         nonlocal changed
         found_required, found_excluded = _dlc_conditions(
@@ -413,6 +420,7 @@ def remove_oob_reference(
                     span,
                     positive_required,
                     positive_excluded,
+                    date,
                 ):
                     result = replace_assignment(result, span, None)
                     changed = True
@@ -421,18 +429,20 @@ def remove_oob_reference(
                 continue
             child = fragment[span.body_start : span.body_end]
             if key == "else":
-                updated = rewrite(child, negative_required, negative_excluded)
+                updated = rewrite(child, negative_required, negative_excluded, date)
             elif key == "if":
                 updated = rewrite_if(
                     child,
                     positive_required,
                     positive_excluded,
+                    date,
                 )
             else:
                 updated = rewrite(
                     child,
                     positive_required,
                     positive_excluded,
+                    span.key if _DATE_KEY_RE.fullmatch(span.key) else date,
                 )
             if updated != child:
                 result = replace_assignment_body(result, span, updated)
@@ -442,6 +452,7 @@ def remove_oob_reference(
         fragment: str,
         required_dlc: tuple[str, ...],
         excluded_dlc: tuple[str, ...],
+        date: str,
     ) -> str:
         nonlocal changed
         result = fragment
@@ -452,6 +463,7 @@ def remove_oob_reference(
                     span,
                     required_dlc,
                     excluded_dlc,
+                    date,
                 ):
                     result = replace_assignment(result, span, None)
                     changed = True
@@ -460,15 +472,20 @@ def remove_oob_reference(
                 continue
             child = fragment[span.body_start : span.body_end]
             updated = (
-                rewrite_if(child, required_dlc, excluded_dlc)
+                rewrite_if(child, required_dlc, excluded_dlc, date)
                 if span.key.lower() == "if"
-                else rewrite(child, required_dlc, excluded_dlc)
+                else rewrite(
+                    child,
+                    required_dlc,
+                    excluded_dlc,
+                    span.key if _DATE_KEY_RE.fullmatch(span.key) else date,
+                )
             )
             if updated != child:
                 result = replace_assignment_body(result, span, updated)
         return result
 
-    return rewrite(history, (), ()), changed
+    return rewrite(history, (), (), ""), changed
 
 
 def conditional_history_effect(
@@ -1551,21 +1568,29 @@ def _conditioned_assignments(
     body: str,
     required_dlc: tuple[str, ...] = (),
     excluded_dlc: tuple[str, ...] = (),
-) -> list[tuple[str, AssignmentSpan, tuple[str, ...], tuple[str, ...]]]:
+    date: str = "",
+) -> list[
+    tuple[str, AssignmentSpan, tuple[str, ...], tuple[str, ...], str]
+]:
     """Flatten assignments while retaining simple ``IF``/``ELSE`` DLC gates."""
 
     result: list[
-        tuple[str, AssignmentSpan, tuple[str, ...], tuple[str, ...]]
+        tuple[str, AssignmentSpan, tuple[str, ...], tuple[str, ...], str]
     ] = []
     for span in top_level_assignments(body):
         if not span.is_block or span.body_start is None or span.body_end is None:
-            result.append((body, span, required_dlc, excluded_dlc))
+            result.append((body, span, required_dlc, excluded_dlc, date))
             continue
         child = body[span.body_start : span.body_end]
         if span.key.lower() != "if":
-            result.append((body, span, required_dlc, excluded_dlc))
+            result.append((body, span, required_dlc, excluded_dlc, date))
             result.extend(
-                _conditioned_assignments(child, required_dlc, excluded_dlc)
+                _conditioned_assignments(
+                    child,
+                    required_dlc,
+                    excluded_dlc,
+                    span.key if _DATE_KEY_RE.fullmatch(span.key) else date,
+                )
             )
             continue
 
@@ -1599,6 +1624,7 @@ def _conditioned_assignments(
                 positive,
                 positive_required,
                 positive_excluded,
+                date,
             )
         )
         for else_body in else_bodies:
@@ -1607,9 +1633,13 @@ def _conditioned_assignments(
                     else_body,
                     negative_required,
                     negative_excluded,
+                    date,
                 )
             )
     return result
+
+
+_DATE_KEY_RE = re.compile(r"\d{1,4}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?")
 
 
 def _merge_unique(

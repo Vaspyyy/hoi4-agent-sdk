@@ -89,6 +89,39 @@ def test_mod_defined_scripted_effect_is_part_of_vocabulary_extension(
     )
 
 
+def test_installed_scripted_tokens_and_trigger_limit_are_not_false_positives(
+    tmp_path: Path,
+) -> None:
+    mod_root = tmp_path / "mod"
+    game_root = tmp_path / "game"
+    _write_documentation(game_root)
+    scripted = game_root / "common" / "scripted_triggers" / "custom.txt"
+    scripted.parent.mkdir(parents=True)
+    scripted.write_text(
+        "installed_custom_trigger = { always = yes }\n",
+        encoding="utf-8",
+    )
+    mod = Mod(mod_root, hoi4_install=game_root)
+
+    findings = mod.validate_effect(
+        """
+        if = {
+            limit = { installed_custom_trigger = yes }
+            army_experience = 1
+        }
+        """
+    )
+
+    assert mod.game_script_vocabulary().triggers[
+        "installed_custom_trigger"
+    ].synthesized
+    assert not any(
+        issue.code == "unknown_trigger_token"
+        and ("installed_custom_trigger" in issue.message or "'limit'" in issue.message)
+        for issue in findings
+    )
+
+
 def test_vocabulary_synthesizes_installed_and_mod_ideology_drift_modifiers(
     tmp_path: Path,
 ) -> None:
@@ -222,3 +255,39 @@ def test_content_liveness_reports_dead_content_and_asymmetric_flags(
     } <= {item.code for item in report.findings}
     release_codes = {item.code for item in mod.validate(stage="release")}
     assert "unfired_event" in release_codes
+
+
+def test_content_liveness_accepts_cross_vanilla_flag_dependencies(
+    tmp_path: Path,
+) -> None:
+    mod_root = tmp_path / "mod"
+    game_root = tmp_path / "game"
+    vanilla_event = game_root / "events" / "external.txt"
+    vanilla_event.parent.mkdir(parents=True)
+    vanilla_event.write_text(
+        (
+            "country_event = {\n"
+            "\tid = external.1\n"
+            "\ttrigger = { has_country_flag = MOD_written }\n"
+            "\timmediate = { set_global_flag = VANILLA_written }\n"
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+    mod = Mod(mod_root, hoi4_install=game_root)
+    mod.create_focus_tree("ABC_tree", "ABC")
+    mod.add_focus(
+        "ABC_tree",
+        Focus(
+            id="ABC_cross_content",
+            available="has_global_flag = VANILLA_written",
+            completion_reward="set_country_flag = MOD_written",
+        ),
+    )
+
+    report = mod.analyze_content_liveness()
+
+    assert "VANILLA_written" in report.flags_read
+    assert "MOD_written" in report.flags_written
+    assert report.flags_read_only == ()
+    assert report.flags_set_only == ()

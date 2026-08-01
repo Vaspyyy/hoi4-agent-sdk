@@ -40,6 +40,7 @@ from .bookmarks import (
     require_bookmark_country_key,
     serialize_bookmarks_file,
 )
+from .assets import FlagAssetSet
 from .config import find_config
 from .content_validation import (
     validate_bookmark,
@@ -135,7 +136,7 @@ from .parser import (
     parse_pdx,
     strip_comments,
 )
-from .patching import AssignmentSpan, append_assignment, top_level_assignments
+from .patching import AssignmentSpan, append_assignment, set_block, top_level_assignments
 from .politics import LEADER_IDEOLOGIES_BY_PARTY, RULING_PARTIES
 from .progress import CancelCallback, ProgressCallback, check_cancelled, report_progress
 from .states import (
@@ -438,22 +439,25 @@ def _inherit_fleet_sources(
         if fleet_index >= len(existing):
             continue
         source_fleet = existing[fleet_index]
-        fleet.source_index = source_fleet.source_index
-        fleet.raw_block = source_fleet.raw_block
+        if fleet.source_index < 0 and not fleet.raw_block:
+            fleet.source_index = source_fleet.source_index
+            fleet.raw_block = source_fleet.raw_block
         fleet.touched_fields.update({"name", "naval_base", "task_forces"})
         for force_index, task_force in enumerate(fleet.task_forces):
             if force_index >= len(source_fleet.task_forces):
                 continue
             source_force = source_fleet.task_forces[force_index]
-            task_force.source_index = source_force.source_index
-            task_force.raw_block = source_force.raw_block
+            if task_force.source_index < 0 and not task_force.raw_block:
+                task_force.source_index = source_force.source_index
+                task_force.raw_block = source_force.raw_block
             task_force.touched_fields.update({"name", "location", "ships"})
             for ship_index, ship in enumerate(task_force.ships):
                 if ship_index >= len(source_force.ships):
                     continue
                 source_ship = source_force.ships[ship_index]
-                ship.source_index = source_ship.source_index
-                ship.raw_block = source_ship.raw_block
+                if ship.source_index < 0 and not ship.raw_block:
+                    ship.source_index = source_ship.source_index
+                    ship.raw_block = source_ship.raw_block
                 ship.touched_fields.update(
                     {"name", "definition", "equipment", "pride_of_the_fleet"}
                 )
@@ -461,8 +465,9 @@ def _inherit_fleet_sources(
                     if equipment_index >= len(source_ship.equipment):
                         continue
                     source_equipment = source_ship.equipment[equipment_index]
-                    equipment.source_index = source_equipment.source_index
-                    equipment.raw_block = source_equipment.raw_block
+                    if equipment.source_index < 0 and not equipment.raw_block:
+                        equipment.source_index = source_equipment.source_index
+                        equipment.raw_block = source_equipment.raw_block
                     equipment.touched_fields.update(
                         {"amount", "owner", "creator", "version_name"}
                     )
@@ -831,12 +836,16 @@ class Mod:
         self._dirty_loc_files: set[Path] = set()
         self._original_files: dict[Path, str] = {}
         self._source_baseline: dict[Path, bytes] = {}
+        self._pending_asset_writes: dict[Path, bytes] = {}
+        self._pending_asset_baselines: dict[Path, bytes | None] = {}
+        self._country_name_pool_updates: dict[str, str] = {}
         self._dirty: set[str] = set()
         self._vanilla_tags: set[str] = (
             load_vanilla_tags(self.hoi4_install) if self.hoi4_install else set()
         )
         self._scan_cache: dict[str, set[str]] = {}
         self._script_vocabulary_cache: GameScriptVocabulary | None = None
+        self._equipment_unlock_cache: dict[str, tuple[str, ...]] | None = None
         self._sprite_texture_cache: dict[str, str] | None = None
         self._state_index_cache: dict[bool, list[dict]] = {}
         self._vanilla_state_loc_entries: dict[str, str] | None = None
@@ -851,7 +860,12 @@ class Mod:
         self._capture_source_baseline()
 
     @classmethod
-    def from_config(cls, start: str | Path | None = None) -> Mod:
+    def from_config(
+        cls,
+        start: str | Path | None = None,
+        *,
+        strict_loading: bool = False,
+    ) -> Mod:
         """Create a Mod instance from a .hoi4.json config file.
 
         Searches for .hoi4.json starting from `start` (defaults to cwd)
@@ -863,7 +877,11 @@ class Mod:
                 "No .hoi4.json found (or mod_path not set). "
                 'Create one with: {"mod_path": "/path/to/mod", "hoi4_install": "/path/to/hoi4"}'
             )
-        return cls(cfg.mod_path, hoi4_install=cfg.hoi4_install)
+        return cls(
+            cfg.mod_path,
+            hoi4_install=cfg.hoi4_install,
+            strict_loading=strict_loading,
+        )
 
     def _load(self) -> None:
         self._load_countries()
@@ -976,7 +994,12 @@ class Mod:
     def _load_countries(self) -> None:
         from .countries import _build_loc_cache
 
-        loc_cache = _build_loc_cache(self.mod_root)
+        loc_cache: dict[str, dict[str, str]] = {}
+        for base in (self.hoi4_install, self.mod_root):
+            if base is None:
+                continue
+            for tag, entries in _build_loc_cache(base).items():
+                loc_cache.setdefault(tag, {}).update(entries)
         mod_mapping = self._load_mod_country_tag_mapping()
         self._country_tag_mappings[self.mod_root] = mod_mapping
         generated_tags = (
@@ -994,11 +1017,29 @@ class Mod:
                 ).splitlines()
                 if (match := _COUNTRY_TAG_LINE_RE.match(line)) is not None
             )
-        for tag in sorted(mod_mapping):
+        override_tags = set(mod_mapping)
+        history_dir = self.mod_root / "history" / "countries"
+        if history_dir.is_dir():
+            override_tags.update(
+                match.group(1)
+                for path in history_dir.glob("*.txt")
+                if (match := re.match(r"([A-Z0-9]{3})(?:\s+-|\b)", path.name))
+                and match.group(1) in self._vanilla_tags
+            )
+        vanilla_mapping = (
+            self._country_tag_mappings.get(self.hoi4_install, {})
+            if self.hoi4_install is not None
+            else {}
+        )
+        for tag, relative in vanilla_mapping.items():
+            if (self.mod_root / "common" / relative).is_file():
+                override_tags.add(tag)
+        for tag in sorted(override_tags):
             try:
                 self._countries[tag] = read_country(
                     self.mod_root,
                     tag,
+                    self.hoi4_install,
                     _loc_cache=loc_cache,
                     _tag_mappings=self._country_tag_mappings,
                 )
@@ -2373,7 +2414,11 @@ class Mod:
         if templates is not None:
             template_replacements = copy.deepcopy(list(templates))
             for index, template in enumerate(template_replacements):
-                if index < len(oob.templates):
+                if (
+                    index < len(oob.templates)
+                    and template.source_index < 0
+                    and not template.raw_block
+                ):
                     template.source_index = oob.templates[index].source_index
                     template.raw_block = oob.templates[index].raw_block
                     template.touched_fields.update(
@@ -2390,7 +2435,11 @@ class Mod:
         if divisions is not None:
             division_replacements = copy.deepcopy(list(divisions))
             for index, division in enumerate(division_replacements):
-                if index < len(oob.divisions):
+                if (
+                    index < len(oob.divisions)
+                    and division.source_index < 0
+                    and not division.raw_block
+                ):
                     division.source_index = oob.divisions[index].source_index
                     division.raw_block = oob.divisions[index].raw_block
                     division.touched_fields.update(
@@ -2413,7 +2462,11 @@ class Mod:
         if air_wings is not None:
             wing_replacements = copy.deepcopy(list(air_wings))
             for index, wing in enumerate(wing_replacements):
-                if index < len(oob.air_wings):
+                if (
+                    index < len(oob.air_wings)
+                    and wing.source_index < 0
+                    and not wing.raw_block
+                ):
                     source = oob.air_wings[index]
                     wing.source_index = source.source_index
                     wing.source_location_index = source.source_location_index
@@ -2484,6 +2537,7 @@ class Mod:
                             kind=reference.kind,
                             required_dlc=reference.required_dlc,
                             excluded_dlc=reference.excluded_dlc,
+                            date=reference.date,
                         )
         return True
 
@@ -2510,6 +2564,7 @@ class Mod:
         kind: Literal["land", "naval", "air"] = "land",
         required_dlc: Sequence[str] = (),
         excluded_dlc: Sequence[str] = (),
+        date: str = "",
     ) -> None:
         """Assign an OOB with the engine's land/naval/air history effect."""
 
@@ -2523,7 +2578,9 @@ class Mod:
         excluded = tuple(
             dict.fromkeys(value.strip() for value in excluded_dlc if value.strip())
         )
-        reference = OOBReference(name, kind, required, excluded)
+        if date and re.fullmatch(r"\d{1,4}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?", date) is None:
+            raise ValueError(f"Invalid OOB assignment date: {date!r}")
+        reference = OOBReference(name, kind, required, excluded, date)
         existing = self._country_oob_references(country)
         if reference in existing:
             return
@@ -2534,15 +2591,17 @@ class Mod:
                 if item.kind == kind
                 and item.required_dlc == required
                 and item.excluded_dlc == excluded
+                and item.date == date
             ),
             None,
         )
         if conflict is not None:
             raise ValueError(
                 f"Country '{tag}' already assigns {kind} OOB '{conflict.name}' "
-                f"for required DLC {required} and excluded DLC {excluded}."
+                f"for date {date or '<scenario start>'}, required DLC {required}, "
+                f"and excluded DLC {excluded}."
             )
-        if kind == "land" and not required and not excluded:
+        if kind == "land" and not required and not excluded and not date:
             country.oob = name
             country.touched_fields.add("oob")
         else:
@@ -2562,6 +2621,7 @@ class Mod:
         kind: Literal["land", "naval", "air"] = "land",
         required_dlc: Sequence[str] = (),
         excluded_dlc: Sequence[str] = (),
+        date: str = "",
     ) -> bool:
         """Remove one exact land, naval, or air OOB assignment."""
 
@@ -2574,12 +2634,18 @@ class Mod:
         excluded = tuple(
             dict.fromkeys(value.strip() for value in excluded_dlc if value.strip())
         )
-        reference = OOBReference(name, kind, required, excluded)
+        reference = OOBReference(name, kind, required, excluded, date)
         if reference not in self._country_oob_references(country):
             return False
         self._materialize_country_override(country)
         updated, removed = remove_oob_reference(country.raw_history, reference)
-        if kind == "land" and not required and not excluded and country.oob == name:
+        if (
+            kind == "land"
+            and not required
+            and not excluded
+            and not date
+            and country.oob == name
+        ):
             country.oob = ""
             country.touched_fields.add("oob")
             removed = True
@@ -2612,6 +2678,28 @@ class Mod:
                 f"'{variant.name}'"
             )
         country = self.get_country(country_tag)
+        unlocks = self._equipment_unlock_technologies().get(
+            variant.equipment_type,
+            (),
+        )
+        is_modular_chassis = (
+            variant.equipment_type.startswith("ship_hull_")
+            or "airframe" in variant.equipment_type
+        )
+        granted_technologies = set(country.technologies) | self._history_technology_grants(
+            country.raw_history
+        )
+        if (
+            is_modular_chassis
+            and unlocks
+            and not set(unlocks) & granted_technologies
+        ):
+            raise ValueError(
+                f"Equipment variant '{variant.name}' uses modular chassis "
+                f"'{variant.equipment_type}' before it is unlocked. Grant one of "
+                f"these technologies in country history first: {', '.join(unlocks)}. "
+                "allow_without_tech does not create the required chassis variant."
+            )
         self._materialize_country_override(country)
         self._materialize_country_history(country)
         for existing in find_equipment_variants(country.raw_history):
@@ -2632,6 +2720,42 @@ class Mod:
         self._dirty_countries.add(country_tag)
         self._dirty.add("countries")
         return variant
+
+    def set_country_name_pool(
+        self,
+        tag: str,
+        *,
+        male_names: Sequence[str],
+        surnames: Sequence[str],
+        female_names: Sequence[str] = (),
+        callsigns: Sequence[str] = (),
+    ) -> None:
+        """Define random character and ace names for one country tag."""
+
+        tag = require_country_tag(tag)
+
+        def values(items: Sequence[str], *, required: bool, label: str) -> str:
+            normalized = tuple(
+                dict.fromkeys(item.strip() for item in items if item.strip())
+            )
+            if required and not normalized:
+                raise ValueError(
+                    f"Country name pool requires at least one {label}"
+                )
+            return " ".join(pdx_string(item) for item in normalized)
+
+        male = values(male_names, required=True, label="male name")
+        family = values(surnames, required=True, label="surname")
+        female = values(female_names, required=False, label="female name")
+        call = values(callsigns, required=False, label="callsign")
+        sections = [f"male = {{\n\tnames = {{ {male} }}\n}}"]
+        if female:
+            sections.append(f"female = {{\n\tnames = {{ {female} }}\n}}")
+        sections.append(f"surnames = {{ {family} }}")
+        if call:
+            sections.append(f"callsigns = {{ {call} }}")
+        self._country_name_pool_updates[tag] = "\n".join(sections)
+        self._dirty.add("country_names")
 
     @staticmethod
     def _country_oob_references(country: Country) -> tuple[OOBReference, ...]:
@@ -5897,7 +6021,7 @@ class Mod:
         missing_flags = [
             path.relative_to(self.mod_root).as_posix()
             for path in flag_paths
-            if not path.is_file()
+            if not path.is_file() and path not in self._pending_asset_writes
         ]
         if missing_flags:
             issue(
@@ -5906,6 +6030,25 @@ class Mod:
                     f"Country '{tag}' is missing required flag size(s): "
                     f"{', '.join(missing_flags)}. Import a source image with "
                     "import_flag_to_mod()."
+                ),
+            )
+
+        requires_generated_names = False
+        for reference in self._country_oob_references(country):
+            try:
+                if self.get_oob(reference.name).air_wings:
+                    requires_generated_names = True
+                    break
+            except (KeyError, ValueError):
+                continue
+        if requires_generated_names and tag not in self._known_country_name_pool_tags():
+            issue(
+                "missing_country_name_pool",
+                (
+                    f"Country '{tag}' has no common/names entry. HOI4 will fail "
+                    "to generate names for aces and other dynamic characters. "
+                    "Call set_country_name_pool() with culturally appropriate "
+                    "given names and surnames."
                 ),
             )
 
@@ -6006,6 +6149,20 @@ class Mod:
                 for sprite in (portrait.large, portrait.small)
                 if sprite
             }
+            roles = self._all_character_roles(character)
+            if any(isinstance(role, AdvisorRole) for role in roles) and not any(
+                portrait.channel == "civilian" and portrait.small
+                for portrait in portraits
+            ):
+                issue(
+                    "missing_character_small_portrait",
+                    (
+                        f"Advisor character '{character.id}' has no civilian small "
+                        "portrait. Advisor cards require portraits.civilian.small "
+                        "and a resolvable interface/*.gfx sprite."
+                    ),
+                    file_path=str(character.path) if character.path else None,
+                )
             if not sprite_names:
                 issue(
                     "missing_character_portrait",
@@ -6484,11 +6641,12 @@ class Mod:
         begin_phase("countries", "Validating countries")
         errors.extend(self._validate_country_colors_shadow())
         known_parties = set(self._vanilla_ideologies) | set(self._ideologies)
-        for country in self._countries.values():
+        for country in list(self._countries.values()):
             errors.extend(validate_country(country, known_parties=known_parties))
+            errors.extend(self._validate_equipment_variant_unlocks(country))
         begin_phase("oobs", "Validating land orders of battle")
         validated_oobs: set[str] = set()
-        for country in self._countries.values():
+        for country in list(self._countries.values()):
             for reference in self._country_oob_references(country):
                 try:
                     oob = self.get_oob(reference.name)
@@ -6819,6 +6977,189 @@ class Mod:
         )
         return list(report.validation_errors)
 
+    # ── Transactional image assets ─────────────────────────────
+
+    def _stage_asset_files(
+        self,
+        files: dict[Path, bytes],
+        *,
+        overwrite: bool,
+    ) -> None:
+        """Queue binary assets for preview/save with transaction rollback."""
+
+        normalized: dict[Path, bytes] = {}
+        for raw_path, content in files.items():
+            path = resolve_mod_output_path(self.mod_root, raw_path)
+            if path.is_dir() and not path.is_symlink():
+                raise IsADirectoryError(f"Asset target is a directory: {path}")
+            if not overwrite and (
+                path.exists() or path in self._pending_asset_writes
+            ):
+                raise FileExistsError(f"Refusing to overwrite asset: {path}")
+            normalized[path] = content
+        for path, content in normalized.items():
+            self._pending_asset_baselines.setdefault(
+                path,
+                path.read_bytes() if path.is_file() else None,
+            )
+            self._pending_asset_writes[path] = content
+        if normalized:
+            self._dirty.add("assets")
+
+    def import_flag_to_mod(
+        self,
+        tag: str,
+        src_image: str | Path,
+        vanilla_override: bool = False,
+        *,
+        ideologies: Sequence[str | None] | None = None,
+        resize_mode: Literal["stretch", "cover", "contain"] = "stretch",
+        overwrite: bool = True,
+    ) -> tuple[FlagAssetSet, ...]:
+        """Stage all three HOI4 flag sizes for transactional save."""
+
+        from .assets import import_flag_to_mod
+
+        with tempfile.TemporaryDirectory(prefix="hoi4-sdk-flag-") as temporary:
+            temporary_root = Path(temporary)
+            generated = import_flag_to_mod(
+                temporary_root,
+                tag,
+                src_image,
+                vanilla_override,
+                ideologies=ideologies,
+                resize_mode=resize_mode,
+                overwrite=True,
+            )
+            staged: dict[Path, bytes] = {}
+            results: list[FlagAssetSet] = []
+            for asset_set in generated:
+                targets: dict[str, Path] = {}
+                for size_name in ("large", "medium", "small"):
+                    source = getattr(asset_set, size_name)
+                    target = resolve_mod_output_path(
+                        self.mod_root,
+                        source.relative_to(temporary_root),
+                    )
+                    staged[target] = source.read_bytes()
+                    targets[size_name] = target
+                results.append(
+                    FlagAssetSet(
+                        tag=asset_set.tag,
+                        ideology=asset_set.ideology,
+                        large=targets["large"],
+                        medium=targets["medium"],
+                        small=targets["small"],
+                    )
+                )
+        self._stage_asset_files(staged, overwrite=overwrite)
+        return tuple(results)
+
+    def import_portrait_to_mod(
+        self,
+        tag: str,
+        name_slug: str,
+        src_image: str | Path,
+        *,
+        output_format: Literal["dds", "tga"] = "dds",
+        size: tuple[int, int] = (156, 210),
+        resize_mode: Literal["stretch", "cover", "contain"] = "cover",
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = True,
+    ) -> Path:
+        """Stage one converted portrait for transactional save."""
+
+        from .assets import import_portrait_to_mod
+
+        with tempfile.TemporaryDirectory(prefix="hoi4-sdk-portrait-") as temporary:
+            temporary_root = Path(temporary)
+            generated = import_portrait_to_mod(
+                temporary_root,
+                tag,
+                name_slug,
+                src_image,
+                output_format=output_format,
+                size=size,
+                resize_mode=resize_mode,
+                dds_compression=dds_compression,
+                overwrite=True,
+            )
+            target = resolve_mod_output_path(
+                self.mod_root,
+                generated.relative_to(temporary_root),
+            )
+            content = generated.read_bytes()
+        self._stage_asset_files({target: content}, overwrite=overwrite)
+        return target
+
+    def write_portrait_gfx(
+        self,
+        tag: str,
+        portrait_slug: str,
+        *,
+        portrait_path: str | Path | None = None,
+        sprite_name: str | None = None,
+        overwrite: bool = True,
+    ) -> Path:
+        """Stage a portrait sprite declaration for transactional save."""
+
+        from .assets import _require_asset_stem
+
+        normalized_tag = require_country_tag(tag)
+        normalized_slug = _require_asset_stem(
+            portrait_slug,
+            label="portrait slug",
+        )
+        if portrait_path is None:
+            selected = next(
+                (
+                    path
+                    for extension in ("dds", "tga", "png")
+                    if (
+                        path := resolve_mod_output_path(
+                            self.mod_root,
+                            f"gfx/leaders/{normalized_tag}/{normalized_slug}.{extension}",
+                        )
+                    ).is_file()
+                    or path in self._pending_asset_writes
+                ),
+                None,
+            )
+            if selected is None:
+                raise FileNotFoundError(
+                    f"No portrait found for {normalized_tag}/{normalized_slug}"
+                )
+        else:
+            selected = Path(portrait_path)
+            if not selected.is_absolute():
+                selected = self.mod_root / selected
+            selected = selected.resolve(strict=False)
+            if not selected.is_relative_to(self.mod_root):
+                raise ValueError("Portrait texture path escapes the mod root")
+            if not selected.is_file() and selected not in self._pending_asset_writes:
+                raise FileNotFoundError(
+                    f"Portrait texture does not exist: {selected}"
+                )
+        resolved_sprite = require_script_id(
+            sprite_name or f"GFX_portrait_{normalized_tag}_{normalized_slug}",
+            label="portrait sprite name",
+        )
+        texture = selected.relative_to(self.mod_root).as_posix()
+        output = resolve_mod_output_path(
+            self.mod_root,
+            f"interface/{normalized_tag}_{normalized_slug}_portrait.gfx",
+        )
+        content = (
+            "spriteTypes = {\n"
+            "\tspriteType = {\n"
+            f"\t\tname = {pdx_string(resolved_sprite)}\n"
+            f"\t\ttexturefile = {pdx_string(texture)}\n"
+            "\t}\n"
+            "}\n"
+        ).encode("utf-8")
+        self._stage_asset_files({output: content}, overwrite=overwrite)
+        return output
+
     # ── Preview & Save ───────────────────────────────────────────
 
     def preview_summary(self) -> str:
@@ -6839,6 +7180,13 @@ class Mod:
             diff = unified_diff(original, current, rel)
             if diff:
                 diffs.append(diff)
+        for path, content in sorted(self._pending_asset_writes.items()):
+            baseline = self._pending_asset_baselines[path]
+            if baseline == content:
+                continue
+            action = "create" if baseline is None else "replace"
+            rel = path.relative_to(self.mod_root).as_posix()
+            diffs.append(f"Binary asset {action}: {rel} ({len(content)} bytes)")
         return "\n".join(diffs)
 
     def save(self, require_changes: bool = False) -> SaveResult:
@@ -6858,13 +7206,18 @@ class Mod:
             if (content is None and path.exists())
             or (content is not None and self._read_current_text(path) != content)
         }
-        if not changed:
+        changed_assets = {
+            path: content
+            for path, content in self._pending_asset_writes.items()
+            if self._pending_asset_baselines[path] != content
+        }
+        if not changed and not changed_assets:
             message = "No files written after processing dirty sections"
             if require_changes:
                 raise RuntimeError(message)
             return SaveResult(dirty_sections=dirty_sections, no_changes=True, message=message)
-        self._commit_rendered_files(changed)
-        written_files = sorted(changed)
+        self._commit_rendered_files(changed, changed_assets)
+        written_files = sorted((*changed, *changed_assets))
         self.discard()
         result = SaveResult(
             written_files=written_files,
@@ -6876,6 +7229,12 @@ class Mod:
 
     def _render_dirty_files(self) -> dict[Path, str | None]:
         rendered: dict[Path, str | None] = {}
+        if "country_names" in self._dirty:
+            path = self.mod_root / "common" / "names" / "00_generated_names.txt"
+            text = self._read_current_text(path)
+            for tag, body in sorted(self._country_name_pool_updates.items()):
+                text = set_block(text, tag, body)
+            rendered[path] = text or None
         if "countries" in self._dirty:
             tag_path = self.mod_root / "common" / "country_tags" / "00_generated_tags.txt"
             tag_text = self._read_current_text(tag_path)
@@ -7177,6 +7536,10 @@ class Mod:
                 continue
             if not path.is_file() or path.read_bytes() != baseline:
                 conflicts.append(path)
+        for path, baseline in self._pending_asset_baselines.items():
+            current = path.read_bytes() if path.is_file() else None
+            if current != baseline:
+                conflicts.append(path)
         if conflicts:
             displayed = ", ".join(
                 str(path.relative_to(self.mod_root)) for path in sorted(conflicts)
@@ -7186,8 +7549,20 @@ class Mod:
                 f"{displayed}. Call reload() and reapply the intended edit."
             )
 
-    def _commit_rendered_files(self, rendered: dict[Path, str | None]) -> None:
-        backups = {path: path.read_bytes() if path.exists() else None for path in rendered}
+    def _commit_rendered_files(
+        self,
+        rendered: dict[Path, str | None],
+        assets: dict[Path, bytes] | None = None,
+    ) -> None:
+        assets = assets or {}
+        overlap = set(rendered) & set(assets)
+        if overlap:
+            raise RuntimeError(
+                "A file cannot be staged as both text and binary: "
+                + ", ".join(str(path) for path in sorted(overlap))
+            )
+        targets = set(rendered) | set(assets)
+        backups = {path: path.read_bytes() if path.exists() else None for path in targets}
         prepared: dict[Path, Path] = {}
         try:
             for path, content in rendered.items():
@@ -7197,13 +7572,22 @@ class Mod:
                 with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
                     handle.write(content.encode("utf-8-sig" if path.suffix == ".yml" else "utf-8"))
                     prepared[path] = Path(handle.name)
-            for path, content in rendered.items():
-                if content is None:
+            for path, binary_content in assets.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
+                    handle.write(binary_content)
+                    prepared[path] = Path(handle.name)
+            for path, text_content in rendered.items():
+                if text_content is None:
                     path.unlink(missing_ok=True)
                 else:
                     temporary = prepared[path]
                     os.replace(temporary, path)
                     del prepared[path]
+            for path in assets:
+                temporary = prepared[path]
+                os.replace(temporary, path)
+                del prepared[path]
         except Exception:
             for temporary in prepared.values():
                 temporary.unlink(missing_ok=True)
@@ -7289,9 +7673,13 @@ class Mod:
         self._loc_sources.clear()
         self._dirty_loc_keys.clear()
         self._dirty_loc_files.clear()
+        self._pending_asset_writes.clear()
+        self._pending_asset_baselines.clear()
+        self._country_name_pool_updates.clear()
         self._original_files.clear()
         self._dirty.clear()
         self._scan_cache.clear()
+        self._equipment_unlock_cache = None
         self._sprite_texture_cache = None
         self._state_index_cache.clear()
         self._vanilla_state_loc_entries = None
@@ -7365,6 +7753,9 @@ class Mod:
             "_dirty_loc_keys",
             "_dirty_loc_files",
             "_original_files",
+            "_pending_asset_writes",
+            "_pending_asset_baselines",
+            "_country_name_pool_updates",
             "_dirty",
             "_sprite_texture_cache",
             "_country_context_cache",
@@ -7378,6 +7769,14 @@ class Mod:
 
     def _semantic_preview_lines(self) -> list[str]:
         lines: list[str] = []
+        if "assets" in self._dirty:
+            for path in sorted(self._pending_asset_writes):
+                lines.append(
+                    f"asset {path.relative_to(self.mod_root).as_posix()}: stage"
+                )
+        if "country_names" in self._dirty:
+            for tag in sorted(self._country_name_pool_updates):
+                lines.append(f"country name pool {tag}: create/update")
         if "countries" in self._dirty:
             for tag in sorted(self._dirty_countries):
                 country = self._countries.get(tag)
@@ -7942,6 +8341,22 @@ class Mod:
         for script, kind, obj_id, file_path in script_entries:
             if not script:
                 continue
+            if re.search(r"\brecruit_character\s*=", strip_comments(script)):
+                errors.append(
+                    self._script_ref_error(
+                        (
+                            f"{kind} '{obj_id}' uses recruit_character at runtime. "
+                            "HOI4 only executes recruit_character from game/history "
+                            "at scenario start; recruit the character in country "
+                            "history and gate its role availability instead."
+                        ),
+                        "runtime_recruit_character",
+                        kind,
+                        obj_id,
+                        file_path,
+                        severity="error",
+                    )
+                )
             for idea_id in sorted(
                 set(_IDEA_EFFECT_RE.findall(script) + _HAS_IDEA_RE.findall(script))
             ):
@@ -8240,10 +8655,11 @@ class Mod:
         *,
         idea_id: str | None = None,
         event_id: str | None = None,
+        severity: Literal["error", "warning"] = "warning",
     ) -> ValidationError:
         return ValidationError(
             message=message,
-            severity="warning",
+            severity=severity,
             code=code,
             file_path=file_path,
             focus_id=obj_id if kind == "focus" else None,
@@ -8335,6 +8751,27 @@ class Mod:
         return icons
 
     def _known_sprite_textures(self) -> dict[str, str]:
+        def scan_text(text: str, textures: dict[str, str]) -> None:
+            for body, _, _ in iter_assignment_blocks(text, "spriteType"):
+                assignments = {
+                    span.key: span
+                    for span in top_level_assignments(body)
+                    if not span.is_block
+                }
+                name_span = assignments.get("name")
+                texture_span = assignments.get("texturefile")
+                if name_span is None or texture_span is None:
+                    continue
+                name = body[name_span.value_start : name_span.value_end].strip().strip('"')
+                texture = (
+                    body[texture_span.value_start : texture_span.value_end]
+                    .strip()
+                    .strip('"')
+                    .replace("\\", "/")
+                )
+                if name and texture:
+                    textures[name] = texture
+
         def scan(base: Path, textures: dict[str, str]) -> None:
             interface_dir = base / "interface"
             if not interface_dir.is_dir():
@@ -8342,24 +8779,7 @@ class Mod:
             for path in interface_dir.rglob("*.gfx"):
                 try:
                     text = path.read_text(encoding="utf-8", errors="ignore")
-                    for body, _, _ in iter_assignment_blocks(text, "spriteType"):
-                        assignments = {
-                            span.key: span
-                            for span in top_level_assignments(body)
-                            if not span.is_block
-                        }
-                        name_span = assignments.get("name")
-                        texture_span = assignments.get("texturefile")
-                        if name_span is None or texture_span is None:
-                            continue
-                        name = body[
-                            name_span.value_start : name_span.value_end
-                        ].strip().strip('"')
-                        texture = body[
-                            texture_span.value_start : texture_span.value_end
-                        ].strip().strip('"').replace("\\", "/")
-                        if name and texture:
-                            textures[name] = texture
+                    scan_text(text, textures)
                 except (OSError, ValueError):
                     continue
 
@@ -8369,9 +8789,10 @@ class Mod:
                 scan(self.hoi4_install, vanilla)
             self._sprite_texture_cache = vanilla
         textures = dict(self._sprite_texture_cache)
-        # Asset helpers write outside Mod's transactional state. Re-scan the
-        # small mod interface tree so a second report sees newly imported GFX.
         scan(self.mod_root, textures)
+        for path, content in self._pending_asset_writes.items():
+            if path.suffix.lower() == ".gfx":
+                scan_text(content.decode("utf-8", errors="ignore"), textures)
         return dict(textures)
 
     def _texture_exists(self, relative_path: str) -> bool:
@@ -8380,7 +8801,7 @@ class Mod:
             (root / normalized).is_file()
             for root in (self.mod_root, self.hoi4_install)
             if root is not None
-        )
+        ) or (self.mod_root / normalized) in self._pending_asset_writes
 
     def _known_technology_ids(self) -> set[str]:
         cached = self._scan_cache.get("technologies")
@@ -8413,6 +8834,146 @@ class Mod:
         self._scan_cache["technologies"] = ids
         return ids
 
+    def _equipment_unlock_technologies(self) -> dict[str, tuple[str, ...]]:
+        if self._equipment_unlock_cache is not None:
+            return dict(self._equipment_unlock_cache)
+        unlocks: dict[str, list[str]] = {}
+        for base in self._data_roots():
+            directory = base / "common" / "technologies"
+            if not directory.is_dir():
+                continue
+            for path in sorted(directory.glob("*.txt")):
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    wrappers = [
+                        span
+                        for span in top_level_assignments(text)
+                        if span.key == "technologies"
+                        and span.is_block
+                        and span.body_start is not None
+                        and span.body_end is not None
+                    ]
+                    for wrapper in wrappers:
+                        assert wrapper.body_start is not None
+                        assert wrapper.body_end is not None
+                        body = text[wrapper.body_start : wrapper.body_end]
+                        for technology in top_level_assignments(body):
+                            if (
+                                not technology.is_block
+                                or technology.body_start is None
+                                or technology.body_end is None
+                            ):
+                                continue
+                            tech_body = body[
+                                technology.body_start : technology.body_end
+                            ]
+                            equipment_span = next(
+                                (
+                                    span
+                                    for span in top_level_assignments(tech_body)
+                                    if span.key == "enable_equipments"
+                                    and span.is_block
+                                    and span.body_start is not None
+                                    and span.body_end is not None
+                                ),
+                                None,
+                            )
+                            if equipment_span is None:
+                                continue
+                            assert equipment_span.body_start is not None
+                            assert equipment_span.body_end is not None
+                            equipment_body = strip_comments(
+                                tech_body[
+                                    equipment_span.body_start : equipment_span.body_end
+                                ]
+                            )
+                            for equipment in re.findall(
+                                r"\b[A-Za-z][A-Za-z0-9_.:-]*\b",
+                                equipment_body,
+                            ):
+                                unlocks.setdefault(equipment, []).append(
+                                    technology.key
+                                )
+                except (OSError, ValueError):
+                    continue
+        self._equipment_unlock_cache = {
+            equipment: tuple(dict.fromkeys(technologies))
+            for equipment, technologies in unlocks.items()
+        }
+        return dict(self._equipment_unlock_cache)
+
+    def _validate_equipment_variant_unlocks(
+        self,
+        country: Country,
+    ) -> list[ValidationError]:
+        unlock_map = self._equipment_unlock_technologies()
+        granted_technologies = set(country.technologies) | self._history_technology_grants(
+            country.raw_history
+        )
+        errors: list[ValidationError] = []
+        for variant in find_equipment_variants(country.raw_history):
+            if not (
+                variant.equipment_type.startswith("ship_hull_")
+                or "airframe" in variant.equipment_type
+            ):
+                continue
+            unlocks = unlock_map.get(variant.equipment_type, ())
+            if not unlocks or set(unlocks) & granted_technologies:
+                continue
+            errors.append(
+                ValidationError(
+                    message=(
+                        f"Country '{country.tag}' creates modular variant "
+                        f"'{variant.name}' ({variant.equipment_type}) before its "
+                        "chassis technology is unlocked. Grant one of: "
+                        f"{', '.join(unlocks)}. allow_without_tech is insufficient."
+                    ),
+                    severity="error",
+                    code="equipment_variant_chassis_not_unlocked",
+                    country_tag=country.tag,
+                    file_path=(
+                        str(country.history_path)
+                        if country.history_path is not None
+                        else None
+                    ),
+                )
+            )
+        return errors
+
+    @staticmethod
+    def _history_technology_grants(history: str) -> set[str]:
+        """Return scenario-start technologies, excluding later dated blocks."""
+
+        grants: set[str] = set()
+
+        def walk(fragment: str) -> None:
+            for span in top_level_assignments(fragment):
+                if (
+                    not span.is_block
+                    or span.body_start is None
+                    or span.body_end is None
+                ):
+                    continue
+                if re.fullmatch(
+                    r"\d{1,4}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?",
+                    span.key,
+                ):
+                    continue
+                body = fragment[span.body_start : span.body_end]
+                if span.key == "set_technology":
+                    grants.update(
+                        child.key
+                        for child in top_level_assignments(body)
+                        if not child.is_block
+                        and body[child.value_start : child.value_end].strip()
+                        not in {"0", "no"}
+                    )
+                else:
+                    walk(body)
+
+        walk(history)
+        return grants
+
     def _known_equipment_ids(self) -> set[str]:
         cached = self._scan_cache.get("equipment")
         if cached is not None:
@@ -8430,6 +8991,29 @@ class Mod:
                 ids.update(_SCRIPT_BLOCK_ID_RE.findall(text))
         self._scan_cache["equipment"] = ids
         return ids
+
+    def _known_country_name_pool_tags(self) -> set[str]:
+        cached = self._scan_cache.get("country_name_pools")
+        if cached is not None:
+            return set(cached) | set(self._country_name_pool_updates)
+        tags: set[str] = set()
+        for base in self._data_roots():
+            directory = base / "common" / "names"
+            if not directory.is_dir():
+                continue
+            for path in sorted(directory.glob("*.txt")):
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    tags.update(
+                        span.key
+                        for span in top_level_assignments(text)
+                        if span.is_block
+                        and re.fullmatch(r"[A-Z0-9]{3}", span.key)
+                    )
+                except (OSError, ValueError):
+                    continue
+        self._scan_cache["country_name_pools"] = tags
+        return set(tags) | set(self._country_name_pool_updates)
 
     def _known_sub_unit_types(self) -> set[str]:
         cached = self._scan_cache.get("sub_units")

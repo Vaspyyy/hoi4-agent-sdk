@@ -172,14 +172,15 @@ def analyze_content_liveness(
         else:
             written.add(flag)
     allowed_flags = tuple(flag_allowlist)
+    external_written, external_read = _installed_flag_usage(mod)
     set_only = {
         flag
-        for flag in written - read
+        for flag in written - read - external_read
         if not _matches(flag, allowed_flags)
     }
     read_only = {
         flag
-        for flag in read - written
+        for flag in read - written - external_written
         if not _matches(flag, allowed_flags)
     }
 
@@ -302,6 +303,35 @@ def _all_script_text(mod: Mod) -> str:
     for bookmark in mod._bookmarks:
         flattened.append(bookmark.effect)
     return "\n".join(flattened)
+
+
+def _installed_flag_usage(mod: Mod) -> tuple[set[str], set[str]]:
+    """Return flags written/read by vanilla for cross-content liveness."""
+
+    if mod.hoi4_install is None:
+        return set(), set()
+    written_key = "vanilla_flags_written"
+    read_key = "vanilla_flags_read"
+    cached_written = mod._scan_cache.get(written_key)
+    cached_read = mod._scan_cache.get(read_key)
+    if cached_written is not None and cached_read is not None:
+        return set(cached_written), set(cached_read)
+    written: set[str] = set()
+    read: set[str] = set()
+    for top_level in ("common", "events", "history"):
+        directory = mod.hoi4_install / top_level
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("*.txt"):
+            try:
+                text = path.read_text(encoding="utf-8-sig", errors="ignore")
+            except OSError:
+                continue
+            for operation, flag in _FLAG_RE.findall(text):
+                (read if operation.startswith("has_") else written).add(flag)
+    mod._scan_cache[written_key] = written
+    mod._scan_cache[read_key] = read
+    return set(written), set(read)
 
 
 def _known_localization_uses(mod: Mod) -> set[str]:

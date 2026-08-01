@@ -13,7 +13,6 @@ from hoi4 import (
     AdvisorRole, AirWing, ArmyCommanderRole, Battalion, Character,
     CharacterPortrait, DivisionTemplate, DivisionUnit, EquipmentVariant,
     Fleet, Focus, Mod, Ship, ShipEquipment, TaskForce,
-    import_flag_to_mod, import_portrait_to_mod, write_portrait_gfx,
 )
 
 root = Path("/path/to/my_mod")
@@ -22,17 +21,28 @@ mod = Mod(root, hoi4_install="/path/to/Hearts of Iron IV")
 
 mod.create_country("ZAR", "Zarland", adjective="Zarlandian",
                    color=(200, 50, 50), capital=100,
-                   leader_name="General Zar", leader_ideology="despotism")
+                   leader_name="General Zar", leader_ideology="despotism",
+                   technologies={
+                       "early_ship_hull_light": 1,
+                       "iw_small_airframe": 1,
+                   })
+mod.set_country_name_pool(
+    "ZAR",
+    male_names=("Aleks", "Boris"),
+    female_names=("Ana", "Mira"),
+    surnames=("Zoric", "Petrov"),
+)
 mod.set_state_owner(100, "ZAR")  # owner + core
 
-import_flag_to_mod(root, "ZAR", candidate_dir / "ZAR_flag.png")
+mod.import_flag_to_mod("ZAR", candidate_dir / "ZAR_flag.png")
 
-def add_portrait(slug: str) -> str:
-    texture = import_portrait_to_mod(
-        root, "ZAR", slug,
+def add_portrait(slug: str, *, size: tuple[int, int] = (156, 210)) -> str:
+    texture = mod.import_portrait_to_mod(
+        "ZAR", slug,
         candidate_dir / f"ZAR_{slug}.png",
+        size=size,
     )
-    write_portrait_gfx(root, "ZAR", slug, portrait_path=texture)
+    mod.write_portrait_gfx("ZAR", slug, portrait_path=texture)
     return f"GFX_portrait_ZAR_{slug}"
 
 add_portrait("leader_1")  # create_country() already references this sprite
@@ -43,7 +53,10 @@ for index in (1, 2):
             id=f"ZAR_advisor_{index}",
             name=f"Advisor {index}",
             portraits=[CharacterPortrait(
-                large=add_portrait(f"advisor_{index}")
+                large=add_portrait(f"advisor_{index}"),
+                small=add_portrait(
+                    f"advisor_{index}_small", size=(65, 67)
+                ),
             )],
             roles=[AdvisorRole(
                 slot="political_advisor",
@@ -195,8 +208,9 @@ assert not any(e.severity == "error" for e in errors), errors
 mod.save()
 ```
 
-Use `create_character(..., recruit=False)` only when an event deliberately
-unlocks the character later. A broad country request is not complete until
+Runtime events cannot execute `recruit_character`. Recruit the character in
+country history and put the later unlock condition on its role availability.
+A broad country request is not complete until
 `validate_country_package(tag).complete` is true. That result is structural;
 review and live-test runtime popularity/variable thresholds separately.
 

@@ -24,6 +24,18 @@ def test_output_paths_and_script_identifiers_reject_injection(tmp_path: Path) ->
     assert not (tmp_path.parent / "outside.txt").exists()
 
 
+def test_runtime_recruit_character_is_a_static_error(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_event("test.1", immediate="recruit_character = ABC_late_advisor")
+
+    issues = mod.validate(stage="build")
+
+    finding = next(
+        issue for issue in issues if issue.code == "runtime_recruit_character"
+    )
+    assert finding.severity == "error"
+
+
 def test_relative_custom_paths_are_rooted_in_mod(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     mod.create_on_action("on_test", effect="add_stability = 0.1", path="common/on_actions/x.txt")

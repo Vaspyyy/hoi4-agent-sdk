@@ -6,6 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-08-01
+
+### Added
+
+- Transactional `Mod.import_flag_to_mod()`, `Mod.import_portrait_to_mod()`, and
+  `Mod.write_portrait_gfx()` methods. Binary assets now participate in
+  `preview()`, `transaction()`, atomic `save()`, and external-change guards.
+- `set_country_name_pool()` for typed `common/names` authoring and package
+  validation for air-capable countries that would otherwise fail dynamic
+  character-name generation in game.
+- Date-aware OOB references and repeatable `date=` assignment/removal support.
+
+### Fixed
+
+- `Mod.from_config(..., strict_loading=True)` now forwards strict loading.
+- Mod-owned overrides of vanilla country history/definitions load before
+  validation, eliminating context-priming workarounds and a dictionary-size
+  mutation crash during lazy country validation.
+- Filtered OOB updates retain source coordinates instead of moving comments or
+  raw blocks onto unrelated surviving units.
+- Complete-country validation requires the small civilian portrait used by
+  advisor cards, not merely any large portrait.
+- Runtime `recruit_character` is rejected statically; HOI4 only executes that
+  effect from scenario history.
+- Modular equipment variants now require their chassis technology before
+  creation. `allow_without_tech=yes` no longer incorrectly bypasses this gate.
+- Game-log attribution recognizes bare `path:line:` effect messages, quoted
+  equipment-effect locations, and country-name-only character generation
+  failures.
+- Installed scripted effects/triggers participate in vocabulary validation,
+  and conditional `limit` blocks are no longer misreported as trigger names.
+- Content liveness recognizes flags supplied or consumed by installed vanilla
+  content, eliminating false cross-content read/write warnings.
+
 ## [0.6.2] - 2026-07-31
 
 ### Added

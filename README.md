@@ -98,11 +98,14 @@ secure discovery continues to reject other external absolute paths.
 Flag and portrait helpers import Pillow only when used:
 
 ```python
-from hoi4 import import_flag_to_mod, import_portrait_to_mod, write_portrait_gfx
+from hoi4 import Mod
 
-import_flag_to_mod(root, "ABC", "flag.png")
-import_portrait_to_mod(root, "ABC", "alice", "alice.png")
-write_portrait_gfx(root, "ABC", "alice")
+mod = Mod(root)
+flag = mod.import_flag_to_mod("ABC", "flag.png")
+portrait = mod.import_portrait_to_mod("ABC", "alice", "alice.png")
+mod.write_portrait_gfx("ABC", "alice", portrait_path=portrait)
+print(mod.preview())
+mod.save()
 ```
 
 Gemini generation is an optional, billable candidate step. It does not modify a
@@ -111,7 +114,7 @@ mod; review the PNG before passing it to the existing import helpers:
 ```python
 from pathlib import Path
 
-from hoi4 import GeminiImageGenerator, import_flag_to_mod
+from hoi4 import GeminiImageGenerator
 
 project_root = Path.cwd()  # directory containing .hoi4.json
 candidate_path = project_root / "assets" / "candidates" / "ABC-flag-01.png"
@@ -122,7 +125,7 @@ with GeminiImageGenerator() as generator:
     )
 
 # Inspect candidate.path at full size and at 10x7 before importing.
-import_flag_to_mod(root, "ABC", candidate.path)
+mod.import_flag_to_mod("ABC", candidate.path)
 ```
 
 Gemini candidates are billed, non-reproducible build inputs. Keep every

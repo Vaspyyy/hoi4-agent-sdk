@@ -22,6 +22,10 @@ _FILE_RE = re.compile(
     re.IGNORECASE,
 )
 _LINE_RE = re.compile(r"(?:near\s+)?line\s*:?\s*(\d+)", re.IGNORECASE)
+_PATH_LINE_RE = re.compile(
+    r"['\"]?(?P<path>[A-Za-z0-9_. -]+(?:/[A-Za-z0-9_. -]+)+)"
+    r":(?P<line>\d+):",
+)
 
 
 @dataclass(frozen=True)
@@ -76,13 +80,14 @@ class GameLogReport:
                 )
             )
         for entry in self.entries:
-            assert entry.relative_path is not None
+            relative_path = entry.relative_path
+            assert relative_path is not None
             issues.append(
                 ValidationError(
                     message=f"HOI4 [{entry.error_class}] {entry.message}",
                     severity="error",
                     code="game_log_error",
-                    file_path=str(self.mod_root / entry.relative_path),
+                    file_path=str(self.mod_root / relative_path),
                     line=entry.line,
                 )
             )
@@ -124,6 +129,17 @@ class GameLogReport:
 def _classify(message: str) -> str:
     lowered = message.casefold()
     patterns = (
+        (
+            "runtime_recruit_character",
+            "recruit_character should only happen in game/history files",
+        ),
+        (
+            "equipment_variant_unlock",
+            "appears to not have been unlocked",
+        ),
+        ("equipment_variant_category", "equipment category differs"),
+        ("equipment_variant_unbuildable", "unbuildable plane variant"),
+        ("character_name_generation", "failed to generate a name for a character"),
         ("equipment_variant", "could not find proper equipment variant"),
         ("unexpected_token", "unexpected token"),
         ("unknown_trigger", "unknown trigger"),
@@ -151,8 +167,9 @@ def _entry_timestamp(clock: str, log_mtime: datetime) -> datetime:
 def _extract_relative_path(message: str) -> str | None:
     match = _FILE_RE.search(message)
     if match is None:
-        return None
-    value = (match.group("quoted_path") or match.group("plain_path"))
+        path_match = _PATH_LINE_RE.search(message)
+        return path_match.group("path") if path_match is not None else None
+    value = match.group("quoted_path") or match.group("plain_path")
     value = value.replace("\\", "/").strip()
     while value.startswith("./"):
         value = value[2:]
@@ -173,13 +190,20 @@ def _parse_records(text: str, log_mtime: datetime) -> list[GameLogEntry]:
         message = "\n".join([first_message, *current]).strip()
         relative_path = _extract_relative_path(message)
         line_match = _LINE_RE.search(message)
+        path_line_match = _PATH_LINE_RE.search(message)
         records.append(
             GameLogEntry(
                 timestamp=timestamp,
                 source=source,
                 message=message,
                 relative_path=relative_path,
-                line=int(line_match.group(1)) if line_match else None,
+                line=(
+                    int(line_match.group(1))
+                    if line_match
+                    else int(path_line_match.group("line"))
+                    if path_line_match
+                    else None
+                ),
                 error_class=_classify(message),
                 raw=message,
             )
@@ -231,6 +255,18 @@ def parse_hoi4_error_log(
         normalized_fresh_after = normalized_fresh_after.astimezone()
 
     records = _parse_records(raw[start_offset:].decode("utf-8", errors="replace"), log_mtime)
+    history_names: list[tuple[str, str]] = []
+    history_dir = root / "history" / "countries"
+    if history_dir.is_dir():
+        for country_path in history_dir.glob("*.txt"):
+            match = re.match(r"[A-Z0-9]{3}\s+-\s+(.+)\.txt$", country_path.name)
+            if match is not None:
+                history_names.append(
+                    (
+                        match.group(1).replace("_", " ").casefold(),
+                        country_path.relative_to(root).as_posix(),
+                    )
+                )
     entries: list[GameLogEntry] = []
     ignored = 0
     unscoped = 0
@@ -243,10 +279,31 @@ def parse_hoi4_error_log(
             ignored += 1
             continue
         if entry.relative_path is None:
-            ignored += 1
-            unscoped += 1
-            continue
-        target = (root / entry.relative_path).resolve(strict=False)
+            inferred = next(
+                (
+                    relative
+                    for country_name, relative in history_names
+                    if country_name in entry.message.casefold()
+                    and entry.error_class == "character_name_generation"
+                ),
+                None,
+            )
+            if inferred is None:
+                ignored += 1
+                unscoped += 1
+                continue
+            entry = GameLogEntry(
+                timestamp=entry.timestamp,
+                source=entry.source,
+                message=entry.message,
+                relative_path=inferred,
+                line=entry.line,
+                error_class=entry.error_class,
+                raw=entry.raw,
+            )
+        relative_path = entry.relative_path
+        assert relative_path is not None
+        target = (root / relative_path).resolve(strict=False)
         try:
             target.relative_to(root)
         except ValueError:

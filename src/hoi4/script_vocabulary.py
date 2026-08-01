@@ -170,8 +170,21 @@ def load_game_script_vocabulary(
         f"{ideology_id}_drift"
         for ideology_id in installed_ideologies | set(ideology_ids)
     }
+    synthesized: dict[ScriptTokenKind, set[str]] = {
+        "effect": set(),
+        "trigger": set(),
+        "modifier": set(generated_modifiers),
+    }
     for name in generated_modifiers:
         metadata["modifier"].setdefault(name, ((), ("country",)))
+    for kind, relative in (
+        ("effect", Path("common/scripted_effects")),
+        ("trigger", Path("common/scripted_triggers")),
+    ):
+        typed_kind = cast(ScriptTokenKind, kind)
+        for name in _scripted_tokens(root / relative):
+            metadata[typed_kind].setdefault(name, ((), ()))
+            synthesized[typed_kind].add(name)
     names = {kind: set(entries) for kind, entries in metadata.items()}
     all_names = set().union(*names.values())
     counts: Counter[str] = Counter()
@@ -204,7 +217,7 @@ def load_game_script_vocabulary(
                     categories=metadata[kind][name][1],
                     usage_count=counts[name],
                     usage_by_domain=MappingProxyType(dict(domains[name])),
-                    synthesized=(kind == "modifier" and name in generated_modifiers),
+                    synthesized=name in synthesized[kind],
                 )
                 for name in sorted(names[kind])
             }
@@ -453,7 +466,7 @@ def _script_commands(
                         root_scope,
                     )
                 continue
-            if key == "limit" and semantic_kind == "effect":
+            if key == "limit":
                 if span.is_block and span.body_start is not None and span.body_end is not None:
                     walk(
                         body[span.body_start : span.body_end],
@@ -594,6 +607,26 @@ def _custom_script_tokens(mod_root: Path) -> dict[ScriptTokenKind, set[str]]:
                 )
             except (OSError, ParseError, ValueError):
                 continue
+    return result
+
+
+def _scripted_tokens(directory: Path) -> set[str]:
+    """Return installed top-level scripted effect or trigger definitions."""
+
+    result: set[str] = set()
+    if not directory.is_dir():
+        return result
+    for path in directory.glob("*.txt"):
+        try:
+            result.update(
+                span.key
+                for span in top_level_assignments(
+                    path.read_text(encoding="utf-8-sig", errors="ignore")
+                )
+                if span.is_block
+            )
+        except (OSError, ParseError, ValueError):
+            continue
     return result
 
 
