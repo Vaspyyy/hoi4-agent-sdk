@@ -162,7 +162,9 @@ Modular hull and airframe variants must have their enabling chassis technology
 earlier in scenario history and on every DLC path where the variant can run.
 A technology in a mutually exclusive fallback branch does not unlock the
 variant; the engine also does not let `allow_without_tech=yes` bypass the
-missing chassis.
+missing chassis. The validator preserves nested `AND`, `OR`, and `NOT` DLC
+predicates, and `update_country(..., technologies=...)` materializes its pending
+technology block before a subsequent `create_equipment_variant()` call.
 
 ### Complete-country and geography methods
 
@@ -987,6 +989,9 @@ representative mod:
 ```bash
 python scripts/verify_real_mod.py /path/to/mod --hoi4-install /path/to/hoi4
 ```
+
+When `/path/to/mod/.hoi4.json` records the installed-game path, the positional
+mod root is sufficient; an explicit `--hoi4-install` still takes precedence.
 
 The gate fingerprints the full mod tree, loads and validates it, then performs
 up to eleven one-field dry-run probes inside rollback-only transactions. Every

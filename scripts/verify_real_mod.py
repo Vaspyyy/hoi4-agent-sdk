@@ -51,17 +51,34 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    mod_root = args.mod_root
-    hoi4_install = args.hoi4_install
+def _resolve_paths(
+    mod_root: Path | None,
+    hoi4_install: Path | None,
+    config_start: Path,
+) -> tuple[Path, Path | None]:
     if mod_root is None:
-        config = find_config(args.config_start)
+        config = find_config(config_start)
         if config is None or config.mod_path is None:
             _parser().error("no mod_root supplied and no usable .hoi4.json was found")
         mod_root = config.mod_path
         if hoi4_install is None:
             hoi4_install = config.hoi4_install
+        return mod_root, hoi4_install
+
+    if hoi4_install is None:
+        config = find_config(mod_root) or find_config(config_start)
+        if config is not None:
+            hoi4_install = config.hoi4_install
+    return mod_root, hoi4_install
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    mod_root, hoi4_install = _resolve_paths(
+        args.mod_root,
+        args.hoi4_install,
+        args.config_start,
+    )
 
     report = run_release_gate(
         mod_root,

@@ -62,6 +62,23 @@ test_bad_runtime_effect = {
     assert "scripted_effect 'test_bad_runtime_effect'" in finding.message
 
 
+def test_runtime_recruit_character_ignores_quoted_string_content(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "common/scripted_effects/test.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        'test_debug_effect = { log = "debug recruit_character = ABC_someone" }\n',
+        encoding="utf-8",
+    )
+
+    issues = Mod(tmp_path, strict_loading=True).validate(stage="build")
+
+    assert not any(
+        issue.code == "runtime_recruit_character" for issue in issues
+    )
+
+
 def test_relative_custom_paths_are_rooted_in_mod(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     mod.create_on_action("on_test", effect="add_stability = 0.1", path="common/on_actions/x.txt")

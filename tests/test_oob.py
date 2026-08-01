@@ -515,6 +515,71 @@ create_equipment_variant = {
 """,
             0,
         ),
+        (
+            """if = {
+    limit = { has_dlc = "Man the Guns" }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = {
+        OR = {
+            has_dlc = "Man the Guns"
+            has_dlc = "By Blood Alone"
+        }
+    }
+    create_equipment_variant = {
+        name = "Partially Unlocked OR Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            1,
+        ),
+        (
+            """if = {
+    limit = {
+        OR = {
+            has_dlc = "Man the Guns"
+            has_dlc = "By Blood Alone"
+        }
+    }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = { has_dlc = "By Blood Alone" }
+    create_equipment_variant = {
+        name = "Covered BBA Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            0,
+        ),
+        (
+            """if = {
+    limit = {
+        NOT = {
+            OR = {
+                has_dlc = "Man the Guns"
+                has_dlc = "By Blood Alone"
+            }
+        }
+    }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = {
+        NOT = { has_dlc = "Man the Guns" }
+        NOT = { has_dlc = "By Blood Alone" }
+    }
+    create_equipment_variant = {
+        name = "Covered Legacy Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            0,
+        ),
     ],
 )
 def test_modular_variant_validation_respects_source_order_and_dlc_paths(
@@ -544,6 +609,53 @@ def test_modular_variant_validation_respects_source_order_and_dlc_paths(
         expected_offset = history.index("create_equipment_variant")
         assert issue.line == history.count("\n", 0, expected_offset) + 1
         assert issue.column is not None
+
+
+def test_pending_country_technologies_serialize_before_new_variant(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "common/countries/ABC.txt", "color = { 1 2 3 }\n")
+    _write(
+        tmp_path / "common/country_tags/00_tags.txt",
+        'ABC = "countries/ABC.txt"\n',
+    )
+    history_path = tmp_path / "history/countries/ABC - Test.txt"
+    _write(history_path, "capital = 1\n")
+    _write(
+        tmp_path / "common/technologies/test.txt",
+        """technologies = {
+    early_ship_hull_light = {
+        enable_equipments = { ship_hull_light_1 }
+    }
+}
+""",
+    )
+    _write(
+        tmp_path / "common/units/equipment/test.txt",
+        "ship_hull_light_1 = { }\n",
+    )
+    mod = Mod(tmp_path, strict_loading=True)
+    mod.update_country("ABC", technologies={"early_ship_hull_light": 1})
+    mod.create_equipment_variant(
+        "ABC",
+        EquipmentVariant("Queued Model Class", "ship_hull_light_1"),
+    )
+
+    assert not mod._validate_equipment_variant_unlocks(mod.get_country("ABC"))
+    preview = mod.preview()
+    assert preview.index("set_technology") < preview.index(
+        "create_equipment_variant"
+    )
+    mod.save(require_changes=True)
+
+    history = history_path.read_text(encoding="utf-8")
+    assert history.index("set_technology") < history.index(
+        "create_equipment_variant"
+    )
+    reloaded = Mod(tmp_path, strict_loading=True)
+    assert not reloaded._validate_equipment_variant_unlocks(
+        reloaded.get_country("ABC")
+    )
 
 
 def test_mod_authors_separate_dlc_aware_naval_and_air_oobs(tmp_path: Path) -> None:

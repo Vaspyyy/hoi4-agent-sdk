@@ -150,6 +150,7 @@ from .script import (
     effect_block,
     normalize_block_body,
     pdx_string,
+    pdx_value,
     scope_block,
     validate_script_syntax,
 )
@@ -244,6 +245,10 @@ class _HistoryTechnologyGrant:
 class _HistoryVariantOccurrence:
     variant: EquipmentVariant
     offset: int
+
+
+_DLCCondition = tuple[tuple[str, ...], tuple[str, ...]]
+_DLCFormula = tuple[_DLCCondition, ...]
 
 
 def _idea_mutation_ids(
@@ -2727,6 +2732,7 @@ class Mod:
             )
         self._materialize_country_override(country)
         self._materialize_country_history(country)
+        self._synchronize_pending_country_technologies(country)
         for existing in find_equipment_variants(country.raw_history):
             if (
                 existing.name == variant.name
@@ -2802,6 +2808,22 @@ class Mod:
         )
         country.history_path = history_path
         country.raw_history = files[history_path]
+
+    @staticmethod
+    def _synchronize_pending_country_technologies(country: Country) -> None:
+        """Place pending model technologies before subsequently appended effects."""
+
+        if not ({"*", "technologies"} & country.touched_fields):
+            return
+        body = "\n".join(
+            f"{technology} = {pdx_value(level)}"
+            for technology, level in country.technologies.items()
+        )
+        country.raw_history = set_block(
+            country.raw_history,
+            "set_technology",
+            body or None,
+        )
 
     def _materialize_oob_override(self, oob: OrderOfBattle) -> None:
         source = oob.path
@@ -8727,7 +8749,7 @@ class Mod:
 
     @staticmethod
     def _mask_script_comments(text: str) -> str:
-        """Replace comments with spaces while retaining source offsets."""
+        """Replace comments and quoted values while retaining source offsets."""
 
         chars = list(text)
         in_quote = False
@@ -8735,10 +8757,19 @@ class Mod:
         while index < len(chars):
             char = chars[index]
             if char == "\\" and in_quote:
+                chars[index] = " "
+                if index + 1 < len(chars) and chars[index + 1] != "\n":
+                    chars[index + 1] = " "
                 index += 2
                 continue
             if char == '"':
+                chars[index] = " "
                 in_quote = not in_quote
+                index += 1
+                continue
+            if in_quote:
+                if char != "\n":
+                    chars[index] = " "
                 index += 1
                 continue
             if char == "#" and not in_quote:
@@ -9124,61 +9155,152 @@ class Mod:
     ) -> tuple[list[_HistoryTechnologyGrant], list[_HistoryVariantOccurrence]]:
         """Return ordered scenario-start technology and variant operations.
 
-        Simple ``has_dlc``/``NOT = { has_dlc = ... }`` gates are retained so a
-        technology in one mutually exclusive branch cannot unlock a chassis in
-        another. Later dated history is intentionally excluded.
+        Boolean ``AND``/``OR``/``NOT`` DLC gates are retained so a technology
+        must cover every satisfiable path where a variant can run. Later dated
+        history is intentionally excluded.
         """
 
         grants: list[_HistoryTechnologyGrant] = []
         variants: list[_HistoryVariantOccurrence] = []
 
-        def merge(left: tuple[str, ...], right: Sequence[str]) -> tuple[str, ...]:
-            return tuple(dict.fromkeys((*left, *right)))
+        true_formula: _DLCFormula = (((), ()),)
+        false_formula: _DLCFormula = ()
 
-        def dlc_conditions(body: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-            required: list[str] = []
-            excluded: list[str] = []
+        def normalize(conditions: Sequence[_DLCCondition]) -> _DLCFormula:
+            result: list[_DLCCondition] = []
+            seen: set[_DLCCondition] = set()
+            for required, excluded in conditions:
+                normalized = (
+                    tuple(dict.fromkeys(required)),
+                    tuple(dict.fromkeys(excluded)),
+                )
+                if set(normalized[0]) & set(normalized[1]) or normalized in seen:
+                    continue
+                seen.add(normalized)
+                result.append(normalized)
+            return tuple(result)
 
-            def visit(fragment: str, negated: bool = False) -> None:
-                for item in top_level_assignments(fragment):
-                    if not item.is_block:
-                        if item.key.lower() == "has_dlc":
-                            value = fragment[item.value_start : item.value_end]
-                            value = value.strip().strip('"')
-                            (excluded if negated else required).append(value)
-                        continue
+        def formula_or(left: _DLCFormula, right: _DLCFormula) -> _DLCFormula:
+            return normalize((*left, *right))
+
+        def formula_and(left: _DLCFormula, right: _DLCFormula) -> _DLCFormula:
+            combined: list[_DLCCondition] = []
+            for left_required, left_excluded in left:
+                for right_required, right_excluded in right:
+                    combined.append(
+                        (
+                            (*left_required, *right_required),
+                            (*left_excluded, *right_excluded),
+                        )
+                    )
+            return normalize(combined)
+
+        def formula_not(formula: _DLCFormula) -> _DLCFormula:
+            result = true_formula
+            for required, excluded in formula:
+                negated_clause: _DLCFormula = normalize(
+                    [
+                        *(((), (dlc,)) for dlc in required),
+                        *(((dlc,), ()) for dlc in excluded),
+                    ]
+                )
+                result = formula_and(result, negated_clause)
+            return result
+
+        def dlc_formula(
+            fragment: str,
+            *,
+            operator: Literal["AND", "OR"] = "AND",
+        ) -> _DLCFormula | None:
+            terms: list[_DLCFormula] = []
+            for item in top_level_assignments(fragment):
+                term: _DLCFormula | None = None
+                if not item.is_block:
+                    if item.key.lower() == "has_dlc":
+                        value = fragment[item.value_start : item.value_end]
+                        term = (((value.strip().strip('"'),), ()),)
+                elif item.body_start is not None and item.body_end is not None:
+                    child = fragment[item.body_start : item.body_end]
+                    key = item.key.upper()
+                    if key in {"AND", "OR"}:
+                        term = dlc_formula(child, operator=cast(Literal["AND", "OR"], key))
+                    elif key == "NOT":
+                        nested = dlc_formula(child)
+                        term = formula_not(nested) if nested is not None else None
+                if term is not None:
+                    terms.append(term)
+            if not terms:
+                return None
+            result = true_formula if operator == "AND" else false_formula
+            for term in terms:
+                result = (
+                    formula_and(result, term)
+                    if operator == "AND"
+                    else formula_or(result, term)
+                )
+            return result
+
+        def process_conditional(
+            child: str,
+            child_offset: int,
+            incoming: _DLCFormula,
+        ) -> _DLCFormula:
+            children = top_level_assignments(child)
+            limit = next(
+                (
+                    item
+                    for item in children
+                    if item.key.lower() == "limit"
+                    and item.is_block
+                    and item.body_start is not None
+                    and item.body_end is not None
+                ),
+                None,
+            )
+            predicate: _DLCFormula | None = None
+            if limit is not None:
+                assert limit.body_start is not None
+                assert limit.body_end is not None
+                predicate = dlc_formula(child[limit.body_start : limit.body_end])
+            if predicate is None:
+                positive = incoming
+                remaining = incoming
+            else:
+                positive = formula_and(incoming, predicate)
+                remaining = formula_and(incoming, formula_not(predicate))
+            for item in children:
+                key = item.key.lower()
+                if key == "limit":
+                    continue
+                if key == "else_if" and item.is_block:
                     if item.body_start is None or item.body_end is None:
                         continue
-                    visit(
-                        fragment[item.body_start : item.body_end],
-                        negated ^ (item.key.upper() == "NOT"),
+                    remaining = process_conditional(
+                        child[item.body_start : item.body_end],
+                        child_offset + item.body_start,
+                        remaining,
                     )
-
-            visit(body)
-            return merge((), required), merge((), excluded)
-
-        def negative_branches(
-            required: tuple[str, ...],
-            excluded: tuple[str, ...],
-            found_required: tuple[str, ...],
-            found_excluded: tuple[str, ...],
-        ) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
-            branches = [
-                (required, merge(excluded, (dlc,))) for dlc in found_required
-            ]
-            branches.extend(
-                (merge(required, (dlc,)), excluded) for dlc in found_excluded
-            )
-            return branches or [(required, excluded)]
+                    continue
+                if key == "else" and item.is_block:
+                    if item.body_start is None or item.body_end is None:
+                        continue
+                    walk(
+                        child[item.body_start : item.body_end],
+                        child_offset + item.body_start,
+                        remaining,
+                    )
+                    remaining = false_formula
+                    continue
+                process_span(child, item, child_offset, positive)
+            return remaining
 
         def process_span(
             fragment: str,
             span: AssignmentSpan,
             base_offset: int,
-            required_dlc: tuple[str, ...],
-            excluded_dlc: tuple[str, ...],
+            conditions: _DLCFormula,
         ) -> None:
-            if set(required_dlc) & set(excluded_dlc):
+            if not conditions:
                 return
             if (
                 not span.is_block
@@ -9191,57 +9313,7 @@ class Mod:
             child = fragment[span.body_start : span.body_end]
             child_offset = base_offset + span.body_start
             if span.key.lower() == "if":
-                children = top_level_assignments(child)
-                limit = next(
-                    (
-                        item
-                        for item in children
-                        if item.key.lower() == "limit"
-                        and item.is_block
-                        and item.body_start is not None
-                        and item.body_end is not None
-                    ),
-                    None,
-                )
-                found_required: tuple[str, ...] = ()
-                found_excluded: tuple[str, ...] = ()
-                if limit is not None:
-                    assert limit.body_start is not None
-                    assert limit.body_end is not None
-                    found_required, found_excluded = dlc_conditions(
-                        child[limit.body_start : limit.body_end]
-                    )
-                positive_required = merge(required_dlc, found_required)
-                positive_excluded = merge(excluded_dlc, found_excluded)
-                for item in children:
-                    key = item.key.lower()
-                    if key == "limit":
-                        continue
-                    if key == "else" and item.is_block:
-                        if item.body_start is None or item.body_end is None:
-                            continue
-                        else_body = child[item.body_start : item.body_end]
-                        else_offset = child_offset + item.body_start
-                        for branch_required, branch_excluded in negative_branches(
-                            required_dlc,
-                            excluded_dlc,
-                            found_required,
-                            found_excluded,
-                        ):
-                            walk(
-                                else_body,
-                                else_offset,
-                                branch_required,
-                                branch_excluded,
-                            )
-                        continue
-                    process_span(
-                        child,
-                        item,
-                        child_offset,
-                        positive_required,
-                        positive_excluded,
-                    )
+                process_conditional(child, child_offset, conditions)
                 return
             if span.key == "set_technology":
                 for technology in top_level_assignments(child):
@@ -9252,47 +9324,47 @@ class Mod:
                     ].strip().lower()
                     if value in {"0", "no"}:
                         continue
-                    grants.append(
-                        _HistoryTechnologyGrant(
-                            technology=technology.key,
-                            required_dlc=required_dlc,
-                            excluded_dlc=excluded_dlc,
-                            offset=child_offset + technology.start,
+                    for required_dlc, excluded_dlc in conditions:
+                        grants.append(
+                            _HistoryTechnologyGrant(
+                                technology=technology.key,
+                                required_dlc=required_dlc,
+                                excluded_dlc=excluded_dlc,
+                                offset=child_offset + technology.start,
+                            )
                         )
-                    )
                 return
             if span.key == "create_equipment_variant":
                 parsed = find_equipment_variants(fragment[span.start : span.end])
                 if parsed:
-                    variants.append(
-                        _HistoryVariantOccurrence(
-                            variant=dataclasses.replace(
-                                parsed[0],
-                                required_dlc=required_dlc,
-                                excluded_dlc=excluded_dlc,
-                            ),
-                            offset=base_offset + span.start,
+                    for required_dlc, excluded_dlc in conditions:
+                        variants.append(
+                            _HistoryVariantOccurrence(
+                                variant=dataclasses.replace(
+                                    parsed[0],
+                                    required_dlc=required_dlc,
+                                    excluded_dlc=excluded_dlc,
+                                ),
+                                offset=base_offset + span.start,
+                            )
                         )
-                    )
                 return
-            walk(child, child_offset, required_dlc, excluded_dlc)
+            walk(child, child_offset, conditions)
 
         def walk(
             fragment: str,
             base_offset: int,
-            required_dlc: tuple[str, ...],
-            excluded_dlc: tuple[str, ...],
+            conditions: _DLCFormula,
         ) -> None:
             for span in top_level_assignments(fragment):
                 process_span(
                     fragment,
                     span,
                     base_offset,
-                    required_dlc,
-                    excluded_dlc,
+                    conditions,
                 )
 
-        walk(history, 0, (), ())
+        walk(history, 0, true_formula)
         grants.sort(key=lambda item: item.offset)
         variants.sort(key=lambda item: item.offset)
         return grants, variants

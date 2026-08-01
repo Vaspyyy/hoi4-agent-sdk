@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-08-01
+
+### Fixed
+
+- `update_country(..., technologies=...)` now materializes pending technology
+  grants before a subsequently created equipment variant, so pre-save and
+  reloaded validation agree with serialized source order.
+- Chassis-path validation now preserves Boolean `AND`, `OR`, and `NOT` DLC
+  predicates instead of treating `OR` alternatives as simultaneous
+  requirements.
+- Runtime `recruit_character` detection ignores quoted string content while
+  retaining accurate source offsets for genuine script effects.
+- `verify_real_mod.py MOD_ROOT` now discovers the HOI4 installation from a
+  `.hoi4.json` colocated with the explicit mod root unless an explicit
+  `--hoi4-install` overrides it.
+
 ## [0.6.4] - 2026-08-01
 
 ### Fixed

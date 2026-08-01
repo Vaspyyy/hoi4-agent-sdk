@@ -227,7 +227,8 @@ with mod.transaction():
     Grant the hull/airframe's enabling chassis technology before creating its
     modular variant, in the same DLC branch or a broader one that covers it.
     A later grant or a grant in the mutually exclusive fallback branch does
-    not count. `allow_without_tech=yes` does not create the chassis and the
+    not count. Nested `AND`, `OR`, and `NOT` DLC gates retain their Boolean
+    meaning. `allow_without_tech=yes` does not create the chassis and the
     engine will reject the variant.
 
 35. Treat `.complete` and `ContentLivenessReport.clean` as structural results,
