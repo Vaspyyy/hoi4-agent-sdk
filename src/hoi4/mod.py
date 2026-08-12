@@ -136,7 +136,13 @@ from .parser import (
     parse_pdx,
     strip_comments,
 )
-from .patching import AssignmentSpan, append_assignment, set_block, top_level_assignments
+from .patching import (
+    AssignmentSpan,
+    append_assignment,
+    move_assignment_before,
+    set_block,
+    top_level_assignments,
+)
 from .politics import LEADER_IDEOLOGIES_BY_PARTY, RULING_PARTIES
 from .progress import CancelCallback, ProgressCallback, check_cancelled, report_progress
 from .states import (
@@ -232,23 +238,23 @@ _COUNTRY_TAG_LINE_RE = re.compile(
 )
 _DATE_ASSIGNMENT_RE = re.compile(r"\d{1,4}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?")
 
+_ConditionAtom = tuple[Literal["dlc", "opaque"], str]
+_ScriptCondition = tuple[tuple[_ConditionAtom, ...], tuple[_ConditionAtom, ...]]
+_ScriptFormula = tuple[_ScriptCondition, ...]
+
 
 @dataclasses.dataclass(frozen=True)
 class _HistoryTechnologyGrant:
     technology: str
-    required_dlc: tuple[str, ...]
-    excluded_dlc: tuple[str, ...]
+    condition: _ScriptCondition
     offset: int
 
 
 @dataclasses.dataclass(frozen=True)
 class _HistoryVariantOccurrence:
     variant: EquipmentVariant
+    condition: _ScriptCondition
     offset: int
-
-
-_DLCCondition = tuple[tuple[str, ...], tuple[str, ...]]
-_DLCFormula = tuple[_DLCCondition, ...]
 
 
 def _idea_mutation_ids(
@@ -875,6 +881,7 @@ class Mod:
             for base in (self.mod_root, self.hoi4_install)
             if base is not None
         }
+        self._country_color_sources: dict[Path, str | None] = {}
 
         self._load()
         self._capture_source_baseline()
@@ -1014,6 +1021,22 @@ class Mod:
     def _load_countries(self) -> None:
         from .countries import _build_loc_cache
 
+        self._country_color_sources.clear()
+        for base in (self.hoi4_install, self.mod_root):
+            if base is None:
+                continue
+            colors_path = base / "common" / "countries" / "colors.txt"
+            if not colors_path.is_file():
+                continue
+            try:
+                source = colors_path.read_text(encoding="utf-8", errors="ignore")
+                country_color_tags(source)
+            except Exception as error:
+                self._country_color_sources[colors_path] = None
+                self._record_load_error("country_colors", colors_path, error)
+            else:
+                self._country_color_sources[colors_path] = source
+
         loc_cache: dict[str, dict[str, str]] = {}
         for base in (self.hoi4_install, self.mod_root):
             if base is None:
@@ -1062,6 +1085,7 @@ class Mod:
                     self.hoi4_install,
                     _loc_cache=loc_cache,
                     _tag_mappings=self._country_tag_mappings,
+                    _color_sources=self._country_color_sources,
                 )
             except Exception as error:
                 self._record_load_error("country", self.mod_root, error)
@@ -1479,7 +1503,13 @@ class Mod:
             label = country.name or tag
             conflicts.append(f"mod: {tag} ({label})")
         if tag in self._vanilla_tags:
-            country = read_country(self.mod_root, tag, self.hoi4_install)
+            country = read_country(
+                self.mod_root,
+                tag,
+                self.hoi4_install,
+                _tag_mappings=self._country_tag_mappings,
+                _color_sources=self._country_color_sources,
+            )
             label = country.name or tag
             conflicts.append(f"vanilla: {tag} ({label})")
         return conflicts
@@ -1536,6 +1566,7 @@ class Mod:
             tag,
             self.hoi4_install,
             _tag_mappings=self._country_tag_mappings,
+            _color_sources=self._country_color_sources,
         )
         self._countries[tag] = country
         for path in country_file_paths(self.mod_root, country):
@@ -1716,6 +1747,9 @@ class Mod:
             _set_fields(country.leader, leader_kwargs)
         country.touched_fields.update(other_kwargs)
         country.touched_fields.update(f"leader_{key}" for key in leader_kwargs)
+        if "technologies" in other_kwargs:
+            self._materialize_country_history(country)
+            self._synchronize_pending_country_technologies(country)
         if {"name", "adjective", "popularities", "ruling_party"} & set(
             other_kwargs
         ) or leader_kwargs:
@@ -2713,11 +2747,13 @@ class Mod:
         if (
             is_modular_chassis
             and unlocks
-            and not self._dlc_conditions_are_covered(
-                variant.required_dlc,
-                variant.excluded_dlc,
+            and not self._script_conditions_are_covered(
+                self._dlc_script_condition(
+                    variant.required_dlc,
+                    variant.excluded_dlc,
+                ),
                 [
-                    (grant.required_dlc, grant.excluded_dlc)
+                    grant.condition
                     for grant in grants
                     if grant.technology in unlocks
                 ],
@@ -2811,7 +2847,7 @@ class Mod:
 
     @staticmethod
     def _synchronize_pending_country_technologies(country: Country) -> None:
-        """Place pending model technologies before subsequently appended effects."""
+        """Place pending model technologies before every equipment variant."""
 
         if not ({"*", "technologies"} & country.touched_fields):
             return
@@ -2819,10 +2855,60 @@ class Mod:
             f"{technology} = {pdx_value(level)}"
             for technology, level in country.technologies.items()
         )
-        country.raw_history = set_block(
+        history = set_block(
             country.raw_history,
             "set_technology",
             body or None,
+        )
+        if not body:
+            country.raw_history = history
+            return
+
+        spans = top_level_assignments(history)
+        technology_span = next(
+            (span for span in spans if span.key == "set_technology"),
+            None,
+        )
+        if technology_span is None:
+            country.raw_history = history
+            return
+
+        def contains_variant(fragment: str) -> bool:
+            for span in top_level_assignments(fragment):
+                if span.key == "create_equipment_variant":
+                    return True
+                if (
+                    span.is_block
+                    and span.body_start is not None
+                    and span.body_end is not None
+                    and contains_variant(fragment[span.body_start : span.body_end])
+                ):
+                    return True
+            return False
+
+        variant_container = next(
+            (
+                span
+                for span in spans
+                if span is not technology_span
+                and span.is_block
+                and span.body_start is not None
+                and span.body_end is not None
+                and contains_variant(history[span.start : span.end])
+            ),
+            None,
+        )
+        if (
+            variant_container is None
+            or technology_span.start < variant_container.start
+        ):
+            country.raw_history = history
+            return
+
+        country.raw_history = move_assignment_before(
+            history,
+            technology_span,
+            variant_container,
         )
 
     def _materialize_oob_override(self, oob: OrderOfBattle) -> None:
@@ -6492,12 +6578,47 @@ class Mod:
         vanilla_colors = self.hoi4_install / "common" / "countries" / "colors.txt"
         if not mod_colors.is_file() or not vanilla_colors.is_file():
             return []
-        mod_tags = country_color_tags(
-            mod_colors.read_text(encoding="utf-8", errors="ignore")
-        )
-        vanilla_tags = country_color_tags(
-            vanilla_colors.read_text(encoding="utf-8", errors="ignore")
-        )
+        failed_color_paths = {
+            diagnostic.path.resolve(strict=False)
+            for diagnostic in self._load_diagnostics
+            if diagnostic.section == "country_colors"
+        }
+        if (
+            mod_colors.resolve(strict=False) in failed_color_paths
+            or vanilla_colors.resolve(strict=False) in failed_color_paths
+        ):
+            return []
+
+        def parse_tags(path: Path) -> tuple[set[str] | None, ValidationError | None]:
+            try:
+                return (
+                    country_color_tags(
+                        path.read_text(encoding="utf-8", errors="ignore")
+                    ),
+                    None,
+                )
+            except Exception as error:
+                return (
+                    None,
+                    ValidationError(
+                        message=(
+                            f"Failed to validate country colors file {path}: "
+                            f"{type(error).__name__}: {error}"
+                        ),
+                        severity="error",
+                        code="country_colors_parse",
+                        file_path=str(path),
+                    ),
+                )
+
+        mod_tags, error = parse_tags(mod_colors)
+        if error is not None:
+            return [error]
+        vanilla_tags, error = parse_tags(vanilla_colors)
+        if error is not None:
+            return [error]
+        assert mod_tags is not None
+        assert vanilla_tags is not None
         missing = sorted(vanilla_tags - mod_tags)
         if not missing:
             return []
@@ -7731,6 +7852,7 @@ class Mod:
         self._state_index_cache.clear()
         self._vanilla_state_loc_entries = None
         self._country_context_cache.clear()
+        self._country_color_sources.clear()
         self._country_tag_mappings = {
             base: _parse_tag_file_mapping(base / "common" / "country_tags")
             for base in (self.mod_root, self.hoi4_install)
@@ -7806,6 +7928,7 @@ class Mod:
             "_dirty",
             "_sprite_texture_cache",
             "_country_context_cache",
+            "_country_color_sources",
             "_country_tag_mappings",
         ]
         return copy.deepcopy({key: getattr(self, key) for key in keys})
@@ -8400,36 +8523,38 @@ class Mod:
         for script, kind, obj_id, file_path in runtime_entries:
             if not script:
                 continue
-            match = re.search(
-                r"\brecruit_character\s*=",
-                self._mask_script_comments(script),
-            )
-            if match is None:
-                continue
-            line, column = self._script_reference_location(
-                script,
-                match.start(),
-                obj_id=obj_id,
-                file_path=file_path,
-                token="recruit_character",
-            )
-            errors.append(
-                self._script_ref_error(
-                    (
-                        f"{kind} '{obj_id}' uses recruit_character at runtime. "
-                        "HOI4 only executes recruit_character from game/history "
-                        "at scenario start; recruit the character in country "
-                        "history and gate its role availability instead."
-                    ),
-                    "runtime_recruit_character",
-                    kind,
-                    obj_id,
-                    file_path,
-                    severity="error",
-                    line=line,
-                    column=column,
+            matches = list(
+                re.finditer(
+                    r"\brecruit_character\s*=",
+                    self._mask_script_comments(script),
                 )
             )
+            for occurrence, match in enumerate(matches):
+                line, column = self._script_reference_location(
+                    script,
+                    match.start(),
+                    obj_id=obj_id,
+                    file_path=file_path,
+                    token="recruit_character",
+                    occurrence=occurrence,
+                )
+                errors.append(
+                    self._script_ref_error(
+                        (
+                            f"{kind} '{obj_id}' uses recruit_character at runtime. "
+                            "HOI4 only executes recruit_character from game/history "
+                            "at scenario start; recruit the character in country "
+                            "history and gate its role availability instead."
+                        ),
+                        "runtime_recruit_character",
+                        kind,
+                        obj_id,
+                        file_path,
+                        severity="error",
+                        line=line,
+                        column=column,
+                    )
+                )
         for script, kind, obj_id, file_path in script_entries:
             if not script:
                 continue
@@ -8789,6 +8914,7 @@ class Mod:
         obj_id: str | None,
         file_path: str | None,
         token: str,
+        occurrence: int = 0,
     ) -> tuple[int, int]:
         """Resolve a script finding to its source file when possible."""
 
@@ -8841,15 +8967,25 @@ class Mod:
         masked = cls._mask_script_comments(source)
         pattern = re.compile(rf"\b{re.escape(token)}\s*=")
         for start, end in ranges:
-            match = pattern.search(masked, start, end)
-            if match is not None:
-                return cls._line_column(source, match.start())
+            base = source.find(script, start, end)
+            if base >= 0:
+                return cls._line_column(source, base + script_offset)
+        remaining = occurrence
+        for start, end in ranges:
+            matches = list(pattern.finditer(masked, start, end))
+            if remaining < len(matches):
+                return cls._line_column(source, matches[remaining].start())
+            remaining -= len(matches)
+        if ranges:
+            # The modeled object has diverged from its on-disk source. Do not
+            # borrow an identically named token from another source object.
+            return cls._line_column(script, script_offset)
         base = source.find(script)
         if base >= 0:
             return cls._line_column(source, base + script_offset)
-        match = pattern.search(masked)
-        if match is not None:
-            return cls._line_column(source, match.start())
+        matches = list(pattern.finditer(masked))
+        if occurrence < len(matches):
+            return cls._line_column(source, matches[occurrence].start())
         return cls._line_column(script, script_offset)
 
     @staticmethod
@@ -9108,15 +9244,14 @@ class Mod:
             unlocks = unlock_map.get(variant.equipment_type, ())
             if not unlocks:
                 continue
-            available_conditions = [
-                (grant.required_dlc, grant.excluded_dlc)
+            available_conditions: list[_ScriptCondition] = [
+                grant.condition
                 for grant in grants
                 if grant.technology in unlocks
                 and (grant.offset < occurrence.offset or grant.offset < 0)
             ]
-            if self._dlc_conditions_are_covered(
-                variant.required_dlc,
-                variant.excluded_dlc,
+            if self._script_conditions_are_covered(
+                occurrence.condition,
                 available_conditions,
             ):
                 continue
@@ -9155,20 +9290,22 @@ class Mod:
     ) -> tuple[list[_HistoryTechnologyGrant], list[_HistoryVariantOccurrence]]:
         """Return ordered scenario-start technology and variant operations.
 
-        Boolean ``AND``/``OR``/``NOT`` DLC gates are retained so a technology
-        must cover every satisfiable path where a variant can run. Later dated
-        history is intentionally excluded.
+        Boolean ``AND``/``OR``/``NOT`` gates are retained so a technology must
+        cover every satisfiable path where a variant can run. Each non-DLC
+        predicate occurrence is a symbolic atom shared by its conditional body
+        and remaining ``else_if``/``else`` chain. Later dated history is
+        intentionally excluded.
         """
 
         grants: list[_HistoryTechnologyGrant] = []
         variants: list[_HistoryVariantOccurrence] = []
 
-        true_formula: _DLCFormula = (((), ()),)
-        false_formula: _DLCFormula = ()
+        true_formula: _ScriptFormula = (((), ()),)
+        false_formula: _ScriptFormula = ()
 
-        def normalize(conditions: Sequence[_DLCCondition]) -> _DLCFormula:
-            result: list[_DLCCondition] = []
-            seen: set[_DLCCondition] = set()
+        def normalize(conditions: Sequence[_ScriptCondition]) -> _ScriptFormula:
+            result: list[_ScriptCondition] = []
+            seen: set[_ScriptCondition] = set()
             for required, excluded in conditions:
                 normalized = (
                     tuple(dict.fromkeys(required)),
@@ -9180,11 +9317,17 @@ class Mod:
                 result.append(normalized)
             return tuple(result)
 
-        def formula_or(left: _DLCFormula, right: _DLCFormula) -> _DLCFormula:
+        def formula_or(
+            left: _ScriptFormula,
+            right: _ScriptFormula,
+        ) -> _ScriptFormula:
             return normalize((*left, *right))
 
-        def formula_and(left: _DLCFormula, right: _DLCFormula) -> _DLCFormula:
-            combined: list[_DLCCondition] = []
+        def formula_and(
+            left: _ScriptFormula,
+            right: _ScriptFormula,
+        ) -> _ScriptFormula:
+            combined: list[_ScriptCondition] = []
             for left_required, left_excluded in left:
                 for right_required, right_excluded in right:
                     combined.append(
@@ -9195,56 +9338,73 @@ class Mod:
                     )
             return normalize(combined)
 
-        def formula_not(formula: _DLCFormula) -> _DLCFormula:
+        def formula_not(formula: _ScriptFormula) -> _ScriptFormula:
             result = true_formula
             for required, excluded in formula:
-                negated_clause: _DLCFormula = normalize(
+                negated_clause: _ScriptFormula = normalize(
                     [
-                        *(((), (dlc,)) for dlc in required),
-                        *(((dlc,), ()) for dlc in excluded),
+                        *(((), (atom,)) for atom in required),
+                        *(((atom,), ()) for atom in excluded),
                     ]
                 )
                 result = formula_and(result, negated_clause)
             return result
 
-        def dlc_formula(
+        def script_formula(
             fragment: str,
+            fragment_offset: int,
             *,
             operator: Literal["AND", "OR"] = "AND",
-        ) -> _DLCFormula | None:
-            terms: list[_DLCFormula] = []
+        ) -> _ScriptFormula:
+            terms: list[_ScriptFormula] = []
             for item in top_level_assignments(fragment):
-                term: _DLCFormula | None = None
+                term: _ScriptFormula
                 if not item.is_block:
                     if item.key.lower() == "has_dlc":
                         value = fragment[item.value_start : item.value_end]
-                        term = (((value.strip().strip('"'),), ()),)
+                        term = (
+                            ((("dlc", value.strip().strip('"')),), ()),
+                        )
+                    else:
+                        term = (
+                            ((("opaque", str(fragment_offset + item.start)),), ()),
+                        )
                 elif item.body_start is not None and item.body_end is not None:
                     child = fragment[item.body_start : item.body_end]
                     key = item.key.upper()
                     if key in {"AND", "OR"}:
-                        term = dlc_formula(child, operator=cast(Literal["AND", "OR"], key))
+                        term = script_formula(
+                            child,
+                            fragment_offset + item.body_start,
+                            operator=cast(Literal["AND", "OR"], key),
+                        )
                     elif key == "NOT":
-                        nested = dlc_formula(child)
-                        term = formula_not(nested) if nested is not None else None
-                if term is not None:
-                    terms.append(term)
-            if not terms:
-                return None
+                        term = formula_not(
+                            script_formula(
+                                child,
+                                fragment_offset + item.body_start,
+                            )
+                        )
+                    else:
+                        term = (
+                            ((("opaque", str(fragment_offset + item.start)),), ()),
+                        )
+                else:
+                    term = (
+                        ((("opaque", str(fragment_offset + item.start)),), ()),
+                    )
+                terms.append(term)
             result = true_formula if operator == "AND" else false_formula
+            combine = formula_and if operator == "AND" else formula_or
             for term in terms:
-                result = (
-                    formula_and(result, term)
-                    if operator == "AND"
-                    else formula_or(result, term)
-                )
+                result = combine(result, term)
             return result
 
         def process_conditional(
             child: str,
             child_offset: int,
-            incoming: _DLCFormula,
-        ) -> _DLCFormula:
+            incoming: _ScriptFormula,
+        ) -> _ScriptFormula:
             children = top_level_assignments(child)
             limit = next(
                 (
@@ -9257,17 +9417,20 @@ class Mod:
                 ),
                 None,
             )
-            predicate: _DLCFormula | None = None
+            predicate: _ScriptFormula
             if limit is not None:
                 assert limit.body_start is not None
                 assert limit.body_end is not None
-                predicate = dlc_formula(child[limit.body_start : limit.body_end])
-            if predicate is None:
-                positive = incoming
-                remaining = incoming
+                predicate = script_formula(
+                    child[limit.body_start : limit.body_end],
+                    child_offset + limit.body_start,
+                )
             else:
-                positive = formula_and(incoming, predicate)
-                remaining = formula_and(incoming, formula_not(predicate))
+                predicate = (
+                    ((("opaque", f"missing-limit:{child_offset}"),), ()),
+                )
+            positive = formula_and(incoming, predicate)
+            remaining = formula_and(incoming, formula_not(predicate))
             for item in children:
                 key = item.key.lower()
                 if key == "limit":
@@ -9298,7 +9461,7 @@ class Mod:
             fragment: str,
             span: AssignmentSpan,
             base_offset: int,
-            conditions: _DLCFormula,
+            conditions: _ScriptFormula,
         ) -> None:
             if not conditions:
                 return
@@ -9324,12 +9487,11 @@ class Mod:
                     ].strip().lower()
                     if value in {"0", "no"}:
                         continue
-                    for required_dlc, excluded_dlc in conditions:
+                    for condition in conditions:
                         grants.append(
                             _HistoryTechnologyGrant(
                                 technology=technology.key,
-                                required_dlc=required_dlc,
-                                excluded_dlc=excluded_dlc,
+                                condition=condition,
                                 offset=child_offset + technology.start,
                             )
                         )
@@ -9337,7 +9499,17 @@ class Mod:
             if span.key == "create_equipment_variant":
                 parsed = find_equipment_variants(fragment[span.start : span.end])
                 if parsed:
-                    for required_dlc, excluded_dlc in conditions:
+                    for condition in conditions:
+                        required_dlc = tuple(
+                            value
+                            for kind, value in condition[0]
+                            if kind == "dlc"
+                        )
+                        excluded_dlc = tuple(
+                            value
+                            for kind, value in condition[1]
+                            if kind == "dlc"
+                        )
                         variants.append(
                             _HistoryVariantOccurrence(
                                 variant=dataclasses.replace(
@@ -9345,6 +9517,7 @@ class Mod:
                                     required_dlc=required_dlc,
                                     excluded_dlc=excluded_dlc,
                                 ),
+                                condition=condition,
                                 offset=base_offset + span.start,
                             )
                         )
@@ -9354,7 +9527,7 @@ class Mod:
         def walk(
             fragment: str,
             base_offset: int,
-            conditions: _DLCFormula,
+            conditions: _ScriptFormula,
         ) -> None:
             for span in top_level_assignments(fragment):
                 process_span(
@@ -9378,44 +9551,53 @@ class Mod:
 
         history_ids = {grant.technology for grant in history_grants}
         return [
-            _HistoryTechnologyGrant(technology, (), (), -1)
+            _HistoryTechnologyGrant(technology, ((), ()), -1)
             for technology, level in country.technologies.items()
             if level and technology not in history_ids
         ]
 
     @staticmethod
-    def _dlc_conditions_are_covered(
+    def _dlc_script_condition(
         required_dlc: Sequence[str],
         excluded_dlc: Sequence[str],
-        grant_conditions: Sequence[tuple[Sequence[str], Sequence[str]]],
+    ) -> _ScriptCondition:
+        return (
+            tuple(("dlc", value) for value in required_dlc),
+            tuple(("dlc", value) for value in excluded_dlc),
+        )
+
+    @staticmethod
+    def _script_conditions_are_covered(
+        effect_condition: _ScriptCondition,
+        grant_conditions: Sequence[_ScriptCondition],
     ) -> bool:
-        """Return whether grants cover every feasible DLC path for an effect."""
+        """Return whether grants cover every feasible script-condition path."""
 
-        assignment: dict[str, bool] = {}
-        for dlc in required_dlc:
-            assignment[dlc] = True
-        for dlc in excluded_dlc:
-            if assignment.get(dlc) is True:
+        assignment: dict[_ConditionAtom, bool] = {}
+        for atom in effect_condition[0]:
+            assignment[atom] = True
+        for atom in effect_condition[1]:
+            if assignment.get(atom) is True:
                 return True  # The variant condition itself is impossible.
-            assignment[dlc] = False
+            assignment[atom] = False
 
-        clauses: list[dict[str, bool]] = []
+        clauses: list[dict[_ConditionAtom, bool]] = []
         for required, excluded in grant_conditions:
-            clause: dict[str, bool] = {}
+            clause: dict[_ConditionAtom, bool] = {}
             impossible = False
-            for dlc in required:
-                clause[dlc] = True
-            for dlc in excluded:
-                if clause.get(dlc) is True:
+            for atom in required:
+                clause[atom] = True
+            for atom in excluded:
+                if clause.get(atom) is True:
                     impossible = True
                     break
-                clause[dlc] = False
+                clause[atom] = False
             if not impossible:
                 clauses.append(clause)
 
         def has_uncovered_path(
             index: int,
-            current: dict[str, bool],
+            current: dict[_ConditionAtom, bool],
         ) -> bool:
             if index == len(clauses):
                 return True

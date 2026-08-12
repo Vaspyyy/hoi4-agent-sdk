@@ -537,6 +537,129 @@ if = {
         ),
         (
             """if = {
+    limit = { has_country_flag = permit_variant }
+    set_technology = { early_ship_hull_light = 1 }
+    create_equipment_variant = {
+        name = "Same Guard Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            0,
+        ),
+        (
+            """if = {
+    limit = { has_country_flag = choose_branch }
+    set_technology = { early_ship_hull_light = 1 }
+    else = {
+        set_technology = { early_ship_hull_light = 1 }
+    }
+}
+create_equipment_variant = {
+    name = "Exhaustively Unlocked Class"
+    type = ship_hull_light_1
+}
+""",
+            0,
+        ),
+        (
+            """if = {
+    limit = { has_country_flag = mutable_guard }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = { has_country_flag = mutable_guard }
+    create_equipment_variant = {
+        name = "Separately Guarded Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            1,
+        ),
+        (
+            """if = {
+    limit = {
+        OR = {
+            has_dlc = "Man the Guns"
+            has_country_flag = permit_technology
+        }
+    }
+    set_technology = { early_ship_hull_light = 1 }
+}
+create_equipment_variant = {
+    name = "Unconditionally Exposed Class"
+    type = ship_hull_light_1
+}
+""",
+            1,
+        ),
+        (
+            """if = {
+    limit = { has_dlc = "Man the Guns" }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = {
+        AND = {
+            has_dlc = "Man the Guns"
+            has_country_flag = permit_variant
+        }
+    }
+    create_equipment_variant = {
+        name = "Narrow Mixed Predicate Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            0,
+        ),
+        (
+            """if = {
+    limit = { NOT = { has_dlc = "Man the Guns" } }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = {
+        NOT = {
+            OR = {
+                has_dlc = "Man the Guns"
+                has_country_flag = deny_variant
+            }
+        }
+    }
+    create_equipment_variant = {
+        name = "Legacy Mixed OR Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            0,
+        ),
+        (
+            """if = {
+    limit = { NOT = { has_dlc = "Man the Guns" } }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = {
+        NOT = {
+            AND = {
+                has_dlc = "Man the Guns"
+                has_country_flag = deny_variant
+            }
+        }
+    }
+    create_equipment_variant = {
+        name = "Broad Mixed Negation Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            1,
+        ),
+        (
+            """if = {
     limit = {
         OR = {
             has_dlc = "Man the Guns"
@@ -554,6 +677,26 @@ if = {
 }
 """,
             0,
+        ),
+        (
+            """if = {
+    limit = { has_dlc = "Man the Guns" }
+    set_technology = { early_ship_hull_light = 1 }
+}
+if = {
+    limit = {
+        OR = {
+            has_dlc = "Man the Guns"
+            has_country_flag = permit_variant
+        }
+    }
+    create_equipment_variant = {
+        name = "Mixed Predicate Class"
+        type = ship_hull_light_1
+    }
+}
+""",
+            1,
         ),
         (
             """if = {
@@ -652,6 +795,62 @@ def test_pending_country_technologies_serialize_before_new_variant(
     assert history.index("set_technology") < history.index(
         "create_equipment_variant"
     )
+    reloaded = Mod(tmp_path, strict_loading=True)
+    assert not reloaded._validate_equipment_variant_unlocks(
+        reloaded.get_country("ABC")
+    )
+
+
+def test_pending_country_technologies_move_before_existing_variant(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "common/countries/ABC.txt", "color = { 1 2 3 }\n")
+    _write(
+        tmp_path / "common/country_tags/00_tags.txt",
+        'ABC = "countries/ABC.txt"\n',
+    )
+    history_path = tmp_path / "history/countries/ABC - Test.txt"
+    _write(
+        history_path,
+        """capital = 1
+create_equipment_variant = {
+    name = "Existing Class"
+    type = ship_hull_light_1
+}
+set_technology = { other_technology = 1 } # technology block marker
+""",
+    )
+    _write(
+        tmp_path / "common/technologies/test.txt",
+        """technologies = {
+    early_ship_hull_light = {
+        enable_equipments = { ship_hull_light_1 }
+    }
+}
+""",
+    )
+    _write(
+        tmp_path / "common/units/equipment/test.txt",
+        "ship_hull_light_1 = { }\n",
+    )
+    mod = Mod(tmp_path, strict_loading=True)
+
+    assert mod._validate_equipment_variant_unlocks(mod.get_country("ABC"))
+    mod.update_country("ABC", technologies={"early_ship_hull_light": 1})
+
+    country = mod.get_country("ABC")
+    assert not mod._validate_equipment_variant_unlocks(country)
+    preview = mod.preview()
+    assert preview.index("set_technology") < preview.index(
+        "create_equipment_variant"
+    )
+    mod.save(require_changes=True)
+
+    history = history_path.read_text(encoding="utf-8")
+    assert history.index("set_technology") < history.index(
+        "create_equipment_variant"
+    )
+    assert "} # technology block marker" in history
     reloaded = Mod(tmp_path, strict_loading=True)
     assert not reloaded._validate_equipment_variant_unlocks(
         reloaded.get_country("ABC")

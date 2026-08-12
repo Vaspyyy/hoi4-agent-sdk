@@ -228,8 +228,12 @@ with mod.transaction():
     modular variant, in the same DLC branch or a broader one that covers it.
     A later grant or a grant in the mutually exclusive fallback branch does
     not count. Nested `AND`, `OR`, and `NOT` DLC gates retain their Boolean
-    meaning. `allow_without_tech=yes` does not create the chassis and the
-    engine will reject the variant.
+    meaning. Mixed non-DLC predicates remain correlated within their own
+    `if`/`else` chain but are not assumed identical across separate condition
+    checks. `update_country(..., technologies=...)` places the grant before
+    both existing and subsequently created variants.
+    `allow_without_tech=yes` does not create the chassis and the engine will
+    reject the variant.
 
 35. Treat `.complete` and `ContentLivenessReport.clean` as structural results,
     not proofs of dynamic achievability. Review popularity/variable threshold

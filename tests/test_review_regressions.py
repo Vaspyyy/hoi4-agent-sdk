@@ -62,6 +62,34 @@ test_bad_runtime_effect = {
     assert "scripted_effect 'test_bad_runtime_effect'" in finding.message
 
 
+def test_runtime_recruit_character_reports_every_scripted_effect_occurrence(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "common/scripted_effects/nested/test.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """# recruit_character = COMMENTED_OUT
+test_bad_runtime_effect = {
+    log = "debug recruit_character = QUOTED_OUT"
+    recruit_character = ABC_first
+    if = {
+        limit = { always = yes }
+        # recruit_character = ALSO_COMMENTED_OUT
+        recruit_character = ABC_second
+    }
+}
+""",
+        encoding="utf-8",
+    )
+
+    issues = Mod(tmp_path, strict_loading=True).validate(stage="build")
+
+    findings = [
+        issue for issue in issues if issue.code == "runtime_recruit_character"
+    ]
+    assert [(issue.line, issue.column) for issue in findings] == [(4, 5), (8, 9)]
+
+
 def test_runtime_recruit_character_ignores_quoted_string_content(
     tmp_path: Path,
 ) -> None:
@@ -77,6 +105,35 @@ def test_runtime_recruit_character_ignores_quoted_string_content(
     assert not any(
         issue.code == "runtime_recruit_character" for issue in issues
     )
+
+
+def test_runtime_recruit_character_reports_every_occurrence(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events/test_events.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """add_namespace = test
+country_event = {
+    id = test.1
+    immediate = {
+        recruit_character = ABC_first
+        if = {
+            limit = { always = yes }
+            recruit_character = ABC_second
+        }
+    }
+}
+""",
+        encoding="utf-8",
+    )
+
+    issues = Mod(tmp_path, strict_loading=True).validate(stage="build")
+
+    findings = [
+        issue for issue in issues if issue.code == "runtime_recruit_character"
+    ]
+    assert [(issue.line, issue.column) for issue in findings] == [(5, 9), (8, 13)]
 
 
 def test_relative_custom_paths_are_rooted_in_mod(tmp_path: Path) -> None:

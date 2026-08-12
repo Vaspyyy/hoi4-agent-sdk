@@ -9,7 +9,7 @@ from hoi4.focus import load_focus_trees, serialize_focus_file
 from hoi4.ideas import read_ideas_file, serialize_ideas_file
 from hoi4.localisation import parse_localization_file, serialize_localization_file
 from hoi4.on_actions import load_on_actions_file, serialize_on_actions_file
-from hoi4.patching import top_level_assignments
+from hoi4.patching import move_assignment_before, top_level_assignments
 
 
 FOCUS_FILE = """# FB-shaped shared focus file
@@ -122,6 +122,23 @@ def _changed_content_lines(before: str, after: str) -> list[str]:
         for line in difflib.unified_diff(before.splitlines(), after.splitlines(), lineterm="")
         if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
     ]
+
+
+def test_move_assignment_from_shared_line_preserves_neighboring_lines() -> None:
+    source = """create_equipment_variant = { name = "X" type = y }
+foo = yes set_technology = { tech = 1 } # shared-line note
+bar = no
+"""
+    spans = top_level_assignments(source)
+    technology = next(span for span in spans if span.key == "set_technology")
+    variant = next(
+        span for span in spans if span.key == "create_equipment_variant"
+    )
+
+    rendered = move_assignment_before(source, technology, variant)
+
+    assert rendered.startswith("set_technology = { tech = 1 }\n")
+    assert "foo = yes  # shared-line note\nbar = no\n" in rendered
 
 
 def _write(path: Path, text: str) -> Path:

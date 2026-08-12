@@ -198,6 +198,44 @@ def append_assignment(text: str, replacement: str) -> str:
     return content + separator + rendered + trailing
 
 
+def move_assignment_before(
+    text: str,
+    span: AssignmentSpan,
+    target: AssignmentSpan,
+) -> str:
+    """Move a later assignment before another, retaining its source spelling."""
+
+    if span.start <= target.start:
+        return text
+
+    source_line_start = text.rfind("\n", 0, span.start) + 1
+    source_start = (
+        source_line_start
+        if not text[source_line_start : span.start].strip()
+        else span.start
+    )
+    source_line_end = text.find("\n", span.end)
+    logical_line_end = len(text) if source_line_end < 0 else source_line_end
+    suffix = text[span.end : logical_line_end]
+    owns_line = source_start == source_line_start
+    if owns_line and (
+        not suffix.strip() or suffix.lstrip().startswith("#")
+    ):
+        source_end = len(text) if source_line_end < 0 else source_line_end + 1
+    else:
+        source_end = span.end
+
+    rendered = text[source_start:source_end]
+    if not rendered.endswith(("\n", "\r")):
+        rendered = rendered.rstrip(" \t") + _line_ending(text)
+    remaining = text[:source_start] + text[source_end:]
+
+    target_line_start = remaining.rfind("\n", 0, target.start) + 1
+    target_prefix = remaining[target_line_start : target.start]
+    insert_at = target_line_start if not target_prefix.strip() else target.start
+    return remaining[:insert_at] + rendered + remaining[insert_at:]
+
+
 def _remove_assignments(text: str, spans: list[AssignmentSpan]) -> str:
     result = text
     for span in reversed(spans):

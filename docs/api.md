@@ -163,8 +163,11 @@ earlier in scenario history and on every DLC path where the variant can run.
 A technology in a mutually exclusive fallback branch does not unlock the
 variant; the engine also does not let `allow_without_tech=yes` bypass the
 missing chassis. The validator preserves nested `AND`, `OR`, and `NOT` DLC
-predicates, and `update_country(..., technologies=...)` materializes its pending
-technology block before a subsequent `create_equipment_variant()` call.
+predicates. Mixed non-DLC predicates remain correlated within their own
+`if`/`else` chain but distinct across separate condition evaluations, where
+runtime state may have changed. `update_country(..., technologies=...)`
+materializes its technology block before both existing and subsequently created
+equipment variants.
 
 ### Complete-country and geography methods
 

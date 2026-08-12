@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from hoi4 import Mod, TECHNOLOGY_CATEGORIES
+from hoi4 import (
+    Mod,
+    TECHNOLOGY_CATEGORIES,
+    VALIDATION_CODES,
+    VALIDATION_WARNING_CODES,
+)
 from hoi4.effects_catalog import TECHNOLOGY_CATEGORIES as CATALOG_CATEGORIES
 from hoi4.modifiers_catalog import MODIFIER_CATEGORIES
 from hoi4.patching import top_level_assignments
@@ -120,6 +125,132 @@ def test_truncated_country_colors_file_is_reported(tmp_path: Path) -> None:
     codes = {issue.code for issue in Mod(mod_root, hoi4_install=game_root).validate()}
 
     assert "country_colors_shadow_vanilla" in codes
+
+
+@pytest.mark.parametrize("stage", ["build", "package", "release"])
+def test_malformed_country_colors_file_is_a_structured_issue(
+    tmp_path: Path,
+    stage: str,
+) -> None:
+    game_root = tmp_path / "game"
+    mod_root = tmp_path / "mod"
+    _write_vanilla_countries(game_root)
+    colors = mod_root / "common/countries/colors.txt"
+    colors.parent.mkdir(parents=True)
+    colors.write_text(
+        "GER = { color = rgb { 9 8 7 } color_ui = rgb { 9 8 7 }\n",
+        encoding="utf-8",
+    )
+
+    mod = Mod(mod_root, hoi4_install=game_root)
+
+    assert any(
+        diagnostic.section == "country_colors" and diagnostic.path == colors
+        for diagnostic in mod.load_diagnostics
+    )
+    assert mod.get_country("GER").color == (1, 2, 3)
+    issues = mod.validate(stage=stage)
+    assert any(
+        issue.code == "load_failure" and issue.file_path == str(colors)
+        for issue in issues
+    )
+
+
+def test_malformed_country_colors_file_fails_strict_loading(tmp_path: Path) -> None:
+    colors = tmp_path / "common/countries/colors.txt"
+    colors.parent.mkdir(parents=True)
+    colors.write_text("GER = { color = rgb { 9 8 7 }\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Failed to load country_colors file"):
+        Mod(tmp_path, strict_loading=True)
+
+
+def test_malformed_vanilla_country_colors_is_an_exact_load_failure(tmp_path: Path) -> None:
+    game_root = tmp_path / "game"
+    mod_root = tmp_path / "mod"
+    _write_vanilla_countries(game_root)
+    colors = game_root / "common/countries/colors.txt"
+    colors.write_text("GER = { color = rgb { 1 2 3 }\n", encoding="utf-8")
+
+    mod = Mod(mod_root, hoi4_install=game_root)
+
+    assert any(
+        diagnostic.section == "country_colors" and diagnostic.path == colors
+        for diagnostic in mod.load_diagnostics
+    )
+    assert mod.get_country("GER").color == (1, 2, 3)
+    assert any(
+        issue.code == "load_failure" and issue.file_path == str(colors)
+        for issue in mod.validate(stage="build")
+    )
+    with pytest.raises(RuntimeError, match="Failed to load country_colors file"):
+        Mod(mod_root, hoi4_install=game_root, strict_loading=True)
+
+
+def test_reload_rebuilds_country_color_sources_and_diagnostics(tmp_path: Path) -> None:
+    game_root = tmp_path / "game"
+    mod_root = tmp_path / "mod"
+    _write_vanilla_countries(game_root)
+    colors = mod_root / "common/countries/colors.txt"
+    colors.parent.mkdir(parents=True)
+    colors.write_text("GER = { color = rgb { 9 8 7 }\n", encoding="utf-8")
+    mod = Mod(mod_root, hoi4_install=game_root)
+    assert any(diagnostic.section == "country_colors" for diagnostic in mod.load_diagnostics)
+
+    colors.write_text(
+        "GER = { color = rgb { 9 8 7 } color_ui = rgb { 9 8 7 } }\n"
+        "FRA = { color = rgb { 4 5 6 } color_ui = rgb { 4 5 6 } }\n",
+        encoding="utf-8",
+    )
+    mod.reload()
+
+    assert not any(diagnostic.section == "country_colors" for diagnostic in mod.load_diagnostics)
+    assert mod.get_country("GER").color == (9, 8, 7)
+    assert not any(
+        issue.code == "load_failure" and issue.file_path == str(colors)
+        for issue in mod.validate(stage="build")
+    )
+
+
+def test_country_colors_corrupted_after_load_has_registered_error(tmp_path: Path) -> None:
+    game_root = tmp_path / "game"
+    mod_root = tmp_path / "mod"
+    _write_vanilla_countries(game_root)
+    colors = mod_root / "common/countries/colors.txt"
+    colors.parent.mkdir(parents=True)
+    colors.write_text(
+        "GER = { color = rgb { 9 8 7 } color_ui = rgb { 9 8 7 } }\n",
+        encoding="utf-8",
+    )
+    mod = Mod(mod_root, hoi4_install=game_root)
+
+    colors.write_text("GER = { color = rgb { 9 8 7 }\n", encoding="utf-8")
+    issues = mod.validate(stage="build")
+
+    assert "country_colors_parse" in VALIDATION_CODES
+    assert "country_colors_parse" not in VALIDATION_WARNING_CODES
+    assert any(
+        issue.code == "country_colors_parse" and issue.file_path == str(colors)
+        for issue in issues
+    )
+
+
+def test_transaction_restores_country_color_source_cache(tmp_path: Path) -> None:
+    game_root = tmp_path / "game"
+    mod_root = tmp_path / "mod"
+    _write_vanilla_countries(game_root)
+    colors = mod_root / "common/countries/colors.txt"
+    colors.parent.mkdir(parents=True)
+    colors.write_text("GER = { color = rgb { 9 8 7 }\n", encoding="utf-8")
+    mod = Mod(mod_root, hoi4_install=game_root)
+
+    assert mod._country_color_sources[colors] is None
+    with mod.transaction():
+        mod._country_color_sources[colors] = (
+            "GER = { color = rgb { 9 8 7 } color_ui = rgb { 9 8 7 } }\n"
+        )
+
+    assert mod._country_color_sources[colors] is None
 
 
 def test_numeric_and_date_keys_are_top_level_assignments() -> None:

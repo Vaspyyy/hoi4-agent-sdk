@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `update_country(..., technologies=...)` now moves the scenario-start
+  technology block ahead of equipment variants that already exist in country
+  history, keeping pre-save, previewed, serialized, and reloaded validation in
+  agreement.
+- Chassis-path validation now tracks mixed DLC and non-DLC predicates through
+  nested `AND`, `OR`, `NOT`, and exhaustive `if`/`else` branches. Each
+  conditional occurrence remains distinct, so an unknown runtime condition
+  cannot hide an uncovered path or invalidate a correctly guarded variant.
+- Runtime `recruit_character` validation now reports every occurrence in an
+  event or scripted effect, with separate source locations and without counting
+  quoted or commented decoys.
+- Structurally malformed mod or vanilla `common/countries/colors.txt` files now
+  produce exact-path load diagnostics. Non-strict loading continues with
+  unaffected country data instead of reparsing and crashing; strict loading
+  still fails immediately.
+
 ## [0.6.5] - 2026-08-01
 
 ### Fixed

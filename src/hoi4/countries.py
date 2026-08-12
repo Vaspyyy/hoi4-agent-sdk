@@ -51,11 +51,18 @@ def read_country(
     hoi4_install: Optional[Path] = None,
     _loc_cache: Optional[dict[str, dict[str, str]]] = None,
     _tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+    _color_sources: Optional[dict[Path, str | None]] = None,
 ) -> Country:
     country = Country(tag=tag)
 
     _read_definition(country, mod_root, hoi4_install, _tag_mappings)
-    _read_color(country, mod_root, hoi4_install, _tag_mappings)
+    _read_color(
+        country,
+        mod_root,
+        hoi4_install,
+        _tag_mappings,
+        _color_sources,
+    )
     _read_history(country, mod_root, hoi4_install)
     _read_character(country, mod_root, hoi4_install)
 
@@ -92,6 +99,7 @@ def _read_color(
     mod_root: Path,
     hoi4_install: Optional[Path],
     tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+    color_sources: Optional[dict[Path, str | None]] = None,
 ) -> None:
     """Resolve country colour using the same vanilla-then-mod precedence as HOI4."""
 
@@ -107,7 +115,12 @@ def _read_color(
         colors_path = base / "common" / "countries" / "colors.txt"
         if not colors_path.is_file():
             continue
-        text = colors_path.read_text(encoding="utf-8", errors="ignore")
+        if color_sources is not None and colors_path in color_sources:
+            text = color_sources[colors_path]
+            if text is None:
+                continue
+        else:
+            text = colors_path.read_text(encoding="utf-8", errors="ignore")
         span = next((item for item in top_level_assignments(text) if item.key == country.tag), None)
         if span is None or not span.is_block or span.body_start is None or span.body_end is None:
             continue

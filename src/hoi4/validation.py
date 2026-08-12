@@ -78,6 +78,9 @@ VALIDATION_CODES: dict[str, str] = {
     "country_colors_shadow_vanilla": (
         "A mod colors.txt shadows vanilla country color entries that it does not repeat."
     ),
+    "country_colors_parse": (
+        "A country colors table changed after loading and could not be parsed during validation."
+    ),
     "bad_idea_tooltip_pattern": "Effect removes several ideas and adds one idea; swap_ideas usually produces cleaner tooltips.",
     "idea_mutation_collision": "Focuses and delayed/runtime events mutate the same idea IDs.",
     "visual_overlap": "Focus tree layout contains visual overlap risk.",
@@ -273,6 +276,7 @@ _ERROR_CODES = {
     "invalid_set_politics_field",
     "game_log_error",
     "stale_game_log",
+    "country_colors_parse",
     "missing_country_flag",
     "missing_country_leader",
     "missing_character_portrait",
