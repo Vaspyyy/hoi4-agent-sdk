@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Country-package validation now accepts HOI4's effective `default` name pool
+  as a fallback for countries with air wings, while still rejecting packages
+  that have neither a country-specific nor default pool.
 - `update_country(..., technologies=...)` now moves the scenario-start
   technology block ahead of equipment variants that already exist in country
   history, keeping pre-save, previewed, serialized, and reloaded validation in

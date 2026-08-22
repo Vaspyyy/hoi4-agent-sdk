@@ -8,6 +8,7 @@ import pytest
 
 from hoi4 import (
     AdvisorRole,
+    AirWing,
     ArmyCommanderRole,
     Battalion,
     Character,
@@ -229,6 +230,74 @@ def test_incomplete_sdk_country_is_enforced_by_normal_validation(
         "insufficient_military_commanders",
         "missing_country_activation",
     } <= codes
+
+
+@pytest.mark.parametrize("pool_root", ["mod", "install"])
+def test_default_name_pool_satisfies_air_country_package(
+    tmp_path: Path,
+    pool_root: str,
+) -> None:
+    mod_root = tmp_path / "mod"
+    install_root = tmp_path / "install"
+    names_root = mod_root if pool_root == "mod" else install_root
+    names = names_root / "common" / "names" / "00_names.txt"
+    names.parent.mkdir(parents=True, exist_ok=True)
+    names.write_text(
+        'default = { male = { names = { "Alex" } } surnames = { "Smith" } }\n',
+        encoding="utf-8",
+    )
+    mod = Mod(mod_root, hoi4_install=install_root)
+    mod.create_country("ABC", "Authorland", capital=1)
+    mod.create_oob(
+        "ABC_1936_air",
+        "ABC",
+        kind="air",
+        air_wings=[AirWing(1, "fighter_equipment_0", 12, owner="ABC")],
+    )
+
+    codes = {
+        issue.code
+        for issue in mod.validate_country_package(
+            "ABC",
+            check_geography=False,
+        ).findings
+    }
+
+    assert "missing_country_name_pool" not in codes
+
+
+def test_air_country_package_requires_tag_or_default_name_pool(
+    tmp_path: Path,
+) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Authorland", capital=1)
+    mod.create_oob(
+        "ABC_1936_air",
+        "ABC",
+        kind="air",
+        air_wings=[AirWing(1, "fighter_equipment_0", 12, owner="ABC")],
+    )
+
+    codes = {
+        issue.code
+        for issue in mod.validate_country_package(
+            "ABC",
+            check_geography=False,
+        ).findings
+    }
+
+    assert "missing_country_name_pool" in codes
+
+
+def test_country_package_skips_name_pool_scan_without_air_wings(
+    tmp_path: Path,
+) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Authorland", capital=1)
+
+    mod.validate_country_package("ABC", check_geography=False)
+
+    assert "country_name_pools" not in mod._scan_cache
 
 
 def test_country_package_requires_advisor_small_portrait(tmp_path: Path) -> None:
