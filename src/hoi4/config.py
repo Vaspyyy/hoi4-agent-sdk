@@ -32,23 +32,30 @@ class Config:
         self,
         mod_path: str | Path | None = None,
         hoi4_install: str | Path | None = None,
+        base_mod_paths: list[str | Path] | tuple[str | Path, ...] = (),
     ):
         self.mod_path = Path(mod_path) if mod_path else None
         self.hoi4_install = Path(hoi4_install) if hoi4_install else None
+        if isinstance(base_mod_paths, (str, bytes)):
+            raise ValueError("base_mod_paths must be an ordered list of paths")
+        self.base_mod_paths = tuple(Path(path) for path in base_mod_paths)
 
     @classmethod
     def from_dict(cls, data: dict) -> Config:
         return cls(
             mod_path=data.get("mod_path"),
             hoi4_install=data.get("hoi4_install"),
+            base_mod_paths=data.get("base_mod_paths", ()),
         )
 
     def to_dict(self) -> dict:
-        d: dict[str, str] = {}
+        d: dict = {}
         if self.mod_path:
             d["mod_path"] = str(self.mod_path)
         if self.hoi4_install:
             d["hoi4_install"] = str(self.hoi4_install)
+        if self.base_mod_paths:
+            d["base_mod_paths"] = [str(path) for path in self.base_mod_paths]
         return d
 
     def save(self, path: str | Path) -> None:
@@ -59,7 +66,8 @@ class Config:
 def find_config(start: str | Path | None = None) -> Optional[Config]:
     """Search for .hoi4.json starting from `start` dir, walking up to root.
 
-    If start is None, uses the current working directory.
+    If start is None, uses the current working directory. Relative mod and
+    game paths are resolved against the directory containing the config file.
     Returns Config if found, None otherwise.
     """
     current = Path(start or ".").resolve()
@@ -69,7 +77,16 @@ def find_config(start: str | Path | None = None) -> Optional[Config]:
         if candidate.is_file():
             try:
                 data = json.loads(candidate.read_text(encoding="utf-8"))
-                return Config.from_dict(data)
+                config = Config.from_dict(data)
+                if config.mod_path is not None and not config.mod_path.is_absolute():
+                    config.mod_path = (candidate.parent / config.mod_path).resolve()
+                if config.hoi4_install is not None and not config.hoi4_install.is_absolute():
+                    config.hoi4_install = (candidate.parent / config.hoi4_install).resolve()
+                config.base_mod_paths = tuple(
+                    path if path.is_absolute() else (candidate.parent / path).resolve()
+                    for path in config.base_mod_paths
+                )
+                return config
             except (json.JSONDecodeError, ValueError):
                 return None
 
