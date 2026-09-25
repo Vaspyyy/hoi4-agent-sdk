@@ -187,6 +187,7 @@ class Event:
     path: Optional[Path] = None
     raw_block: str = ""
     touched: bool = False
+    touched_fields: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -226,6 +227,7 @@ class State:
     raw_text: str = ""
     source_path: Optional[Path] = None
 
+    impassable: bool = False
 
 @dataclass
 class Decision:

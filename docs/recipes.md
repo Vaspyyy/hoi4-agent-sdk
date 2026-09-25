@@ -4,7 +4,53 @@ Copyable workflows for common modding tasks. Read only the recipe relevant to th
 
 ## Common Recipes
 
+### Source a Flag Without Paid Generation
+
+Search first and inspect the returned source page for the intended country,
+date, design, creator, and reuse terms. This example selects a known file to
+demonstrate the API; choose a historically appropriate file for the actual mod.
+
+```python
+from hoi4 import CommonsImageClient, Mod
+
+mod = Mod.from_config()
+client = CommonsImageClient()
+for image in client.search("Flag of France", limit=5):
+    print(image.title, image.source_url, image.license_name, image.artist)
+
+selected = client.get_image("File:Flag of France.svg")
+download = client.download(selected, mod.mod_root / "assets" / "sources")
+print(download.path, download.metadata_path)
+
+# Inspect the source and a 10x7 flag preview before importing.
+mod.import_flag_to_mod("FRA", download.path)
+issues = mod.validate(stage="build")
+for issue in issues:
+    print(f"[{issue.severity}] {issue.message}")
+if any(issue.severity == "error" for issue in issues):
+    raise RuntimeError("Validation failed")
+print(mod.preview_summary())
+print(mod.preview())
+result = mod.save(require_changes=True)
+print(result)
+print(result.written_files)
+```
+
+For a portrait, search for the person's full name with a date or role, check
+their identity, and download the selected `File:` title the same way. Inspect
+the face/crop at 156x210 (and 65x67 for an advisor's small portrait), then use
+`mod.import_portrait_to_mod(tag, slug, download.path)` and
+`mod.write_portrait_gfx(tag, slug, portrait_path=texture)` with the returned
+texture. Import a separate small portrait when its character role needs one.
+Retain the JSON source record and publish credits/license notices as required
+by the source's terms. Neither workflow needs a Gemini key. Downloaded source
+files survive `Mod` dry runs; only the imported game assets are transactional.
+
 ### Create a Complete New Country with Focus Tree
+
+Prepare the referenced local flag and portrait files first. They can be
+reviewed internet/local sources or explicitly requested generated artwork;
+the `assets/candidates/` paths below are illustrative prepared inputs.
 
 ```python
 from pathlib import Path

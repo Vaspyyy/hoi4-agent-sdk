@@ -236,12 +236,14 @@ def validate_script_sources(
     vocabulary: GameScriptVocabulary,
     *,
     mod_root: str | Path | None = None,
+    custom_tokens: Mapping[ScriptTokenKind, set[str]] | None = None,
     allowlist: Iterable[str] = (),
 ) -> list[ValidationError]:
     """Warn about script tokens absent from installed-game documentation."""
 
     allowed = tuple(dict.fromkeys(allowlist))
-    custom = _custom_script_tokens(Path(mod_root)) if mod_root is not None else {}
+    custom = (custom_tokens if custom_tokens is not None else
+              _custom_script_tokens(Path(mod_root)) if mod_root is not None else {})
     findings: list[ValidationError] = []
     seen: set[tuple[ScriptTokenKind, str, str, int]] = set()
     for source in sources:
@@ -526,6 +528,8 @@ def _nested_scope(
     root_scope: str | None,
 ) -> str | None:
     upper = key.upper()
+    if upper in {"AND", "OR", "NOT", "NAND", "NOR"}:
+        return current_scope
     if upper == "THIS":
         return current_scope
     if upper == "ROOT":
