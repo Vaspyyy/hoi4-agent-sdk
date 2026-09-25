@@ -39,6 +39,12 @@ from .characters import (
     NavyLeaderRole,
 )
 from .country_package import CountryPackageReport
+from .commons_images import (
+    CommonsImage,
+    CommonsImageClient,
+    CommonsImageError,
+    DownloadedCommonsImage,
+)
 from .content_graph import ContentLivenessReport
 from .mod import ExternalModificationError, Mod
 from .config import Config, find_config
@@ -180,6 +186,10 @@ __all__ = [
     "Bookmark",
     "BookmarkCountry",
     "DynamicModifier",
+    "CommonsImage",
+    "CommonsImageClient",
+    "CommonsImageError",
+    "DownloadedCommonsImage",
     "DEFAULT_GEMINI_IMAGE_MODEL",
     "DEFAULT_GEMINI_IMAGE_SIZE",
     "GeminiAuthenticationError",

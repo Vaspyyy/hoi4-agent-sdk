@@ -92,6 +92,7 @@ class ModDescriptorFiles:
     descriptor: Path
     supported_version: str
     replace_paths: tuple[str, ...]
+    dependencies: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -275,6 +276,7 @@ def write_mod_descriptors(
     hoi4_install: str | Path | None = None,
     tags: Iterable[str] | None = None,
     replace_paths: Iterable[str | Path] = (),
+    dependencies: Iterable[str] = (),
     auto_detect_replace_paths: bool = False,
     launcher_filename: str | None = None,
     picture: str | None = "thumbnail.png",
@@ -303,6 +305,9 @@ def write_mod_descriptors(
         if supported_version is None
         else _validate_supported_version(supported_version)
     )
+    if isinstance(dependencies, (str, bytes)):
+        raise ValueError("dependencies must be a sequence of mod names")
+    selected_dependencies = _normalize_scalars(dependencies, "dependency")
     selected_tags = scan_mod_tags(root) if tags is None else _normalize_scalars(tags, "tag")
 
     normalized_replace_paths = [
@@ -321,6 +326,10 @@ def write_mod_descriptors(
         raise ValueError("Launcher descriptor and in-project descriptor resolve to one file")
 
     common_lines = [f"name={pdx_string(display_name)}"]
+    if selected_dependencies:
+        common_lines.append("dependencies={")
+        common_lines.extend(f"\t{pdx_string(name)}" for name in selected_dependencies)
+        common_lines.append("}")
     if picture is not None:
         common_lines.append(
             f"picture={pdx_string(_validate_descriptor_scalar(picture, label='picture'))}"
@@ -360,6 +369,7 @@ def write_mod_descriptors(
         descriptor=descriptor_path,
         supported_version=selected_version,
         replace_paths=selected_replace_paths,
+        dependencies=selected_dependencies,
     )
 
 
@@ -372,6 +382,7 @@ def generate_mod_descriptor(
     hoi4_install: str | Path | None = None,
     *,
     supported_version: str | None = None,
+    dependencies: Iterable[str] = (),
 ) -> Path:
     """Studio-compatible wrapper returning the launcher descriptor path.
 
@@ -389,6 +400,7 @@ def generate_mod_descriptor(
         hoi4_install=hoi4_install,
         supported_version=supported_version,
         user_dir=mod_name,
+        dependencies=dependencies,
     )
     return result.launcher
 

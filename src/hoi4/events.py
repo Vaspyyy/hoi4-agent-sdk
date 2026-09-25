@@ -39,7 +39,6 @@ VALID_EVENT_TYPES = frozenset(
 )
 EVENT_ID_RE = re.compile(r"\bid\s*=\s*(\S+)")
 TITLE_RE = re.compile(r"\btitle\s*=\s*(\S+)")
-DESC_RE = re.compile(r"\bdesc\s*=\s*(\S+)")
 PICTURE_RE = re.compile(r"\bpicture\s*=\s*(\S+)")
 TRIGGERED_ONLY_RE = re.compile(r"\bis_triggered_only\s*=\s*(yes|no)")
 
@@ -105,9 +104,7 @@ def _parse_event_block(chunk: str, event_type: str, path: Path) -> Optional[Even
     if title_m:
         event.title = title_m.group(1)
 
-    desc_m = DESC_RE.search(clean_chunk)
-    if desc_m:
-        event.description = desc_m.group(1)
+    event.description = _scalar_description(chunk)
 
     pic_m = PICTURE_RE.search(clean_chunk)
     if pic_m:
@@ -139,10 +136,17 @@ def _parse_event_block(chunk: str, event_type: str, path: Path) -> Optional[Even
 
 
 def _extract_block(chunk: str, block_name: str) -> str:
-    match = find_assignment_block(chunk, block_name)
-    if not match:
+    for span in assignment_spans(chunk, block_name):
+        if span.is_block and span.body_start is not None and span.body_end is not None:
+            return dedent_block_body(chunk[span.body_start : span.body_end])
+    return ""
+
+
+def _scalar_description(body: str) -> str:
+    spans = assignment_spans(body, "desc")
+    if not spans or spans[0].is_block:
         return ""
-    return dedent_block_body(match[0])
+    return body[spans[0].value_start : spans[0].value_end].strip()
 
 
 def _extract_options(chunk: str) -> list[EventOption]:
@@ -329,7 +333,15 @@ def _patch_event_body(event: Event, body: str) -> str:
     if event.touched:
         body = set_scalar(body, "id", event.id)
         body = set_scalar(body, "title", event.title or None)
-        body = set_scalar(body, "desc", event.description or None)
+        if (
+            "description" in event.touched_fields
+            or event.description != _scalar_description(body)
+        ):
+            # An explicit replacement supersedes every conditional alternative.
+            # Otherwise keep all description blocks and their source intact.
+            for span in reversed(assignment_spans(body, "desc")[1:]):
+                body = replace_assignment(body, span, None)
+            body = set_scalar(body, "desc", event.description or None)
         if any(span.key == "picture" for span in top_level_assignments(body)) or (
             event.picture and event.picture != "GFX_report_event_generic"
         ):

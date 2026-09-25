@@ -247,7 +247,7 @@ implicitly includes a complete player-facing country package even when the user
 does not separately ask for graphics. Do not stop at a tag, state transfer, and
 generic portrait. The default package includes:
 
-- one original flag, imported at all three HOI4 sizes;
+- one appropriate flag, imported at all three HOI4 sizes;
 - one head-of-state portrait;
 - portraits for every newly created visible character, with a coherent roster
   containing at least two political advisors and two military commanders;
@@ -277,23 +277,54 @@ runtime threshold chain is achievable.
 Prefer real people who plausibly held or could have held each position at the
 scenario date. Research the historical fit instead of inventing a famous person
 at random. If a fictional person is necessary, make that clear. Without a
-requested art direction, use the built-in HOI4-compatible flag and historical
-portrait styles.
+requested art direction, prefer suitable historical flags and portraits from
+existing assets or Wikimedia Commons. A photograph is usable source material,
+but import conversion does not turn it into a painted HOI4 portrait.
+Do not silently omit the graphics or call an incomplete package complete.
 
-Before promising this package, check only whether `GEMINI_API_KEY` or
-`GOOGLE_API_KEY` is present; never print its value. If neither is available,
-tell the user that proper custom flags and character portraits require a
-billing-enabled Gemini API key from <https://aistudio.google.com/>, explain
-which environment variable to set, and continue any safe non-visual work that
-can be completed. Do not silently omit the graphics or describe the country as
-complete. A broad country-creation request counts as authorization to generate
-and import the package once a key is available. Before billable calls, state the
-planned asset count and remember that each asset may require up to three
-candidates.
+## Web-first Image Sourcing
+
+Prefer suitable existing or user-supplied assets, then search Wikimedia Commons
+with `CommonsImageClient` before considering paid generation. Broad country
+creation authorizes sourcing, downloading, and importing suitable images after
+review; no additional approval is needed for that workflow. A missing Gemini
+key does not block local or web-sourced graphics.
+
+1. Use `CommonsImageClient.search(query, limit=5, thumbnail_width=1024)` and
+   `get_image("File:...")` to inspect candidates. Search and metadata lookup use
+   the standard library and require no API key. Check the depicted person's
+   identity, date, role, or flag variant against the scenario, plus the source
+   page and license. Search ranking alone does not establish historical fit.
+2. Download the selected `CommonsImage` with
+   `client.download(image, project_root / "assets" / "sources")`. Downloads
+   require the `assets` extra and use a raster thumbnail for SVG sources.
+   Preserve downloads in durable `assets/sources/`. Keep
+   the returned `path`, `metadata_path`, and `sha256` together: the JSON records
+   provenance, license, artist, and credit. Retain required attribution with the
+   distributed mod. Metadata supports review; it is not automatic legal
+   certification.
+3. Inspect the full downloaded image and an exact-size preview: 10x7 for flags,
+   156x210 for portraits. Check crop, historical identity, and readability.
+4. Import the reviewed durable source with `mod.import_flag_to_mod()` or
+   `mod.import_portrait_to_mod()` plus `mod.write_portrait_gfx()`. Validate,
+   inspect `preview_summary()` and `preview()`, then save with the same `Mod`
+   instance and inspect the `SaveResult` as required above.
+
+See `docs/api.md` and `docs/recipes.md` for the Wikimedia Commons API and examples.
+If no suitable source is found, report the specific missing asset and continue
+other work. Use Gemini only when generation is explicitly desired or necessary
+and paid generation is authorized. A failed search or an available key does
+not authorize billable fallback.
 
 ## Gemini Image Candidate Workflow
 
-Gemini image generation is optional and billable. Install `.[gemini]`, keep the
+Gemini image generation is optional and billable. When generation is requested,
+check only whether `GEMINI_API_KEY` or `GOOGLE_API_KEY` is present; never print
+its value. If missing, explain that this generation route requires a
+billing-enabled Gemini API key from <https://aistudio.google.com/> and which
+environment variable to set; continue available local/web sourcing and other
+work. Before authorized billable calls, state the planned asset count and that
+each asset may require up to three candidates. Install `.[gemini]`, keep the
 credential only in `GEMINI_API_KEY` or `GOOGLE_API_KEY`, and never write it to
 `.hoi4.json`, scripts, logs, prompts, or mod files.
 
@@ -325,10 +356,10 @@ For an AI-generated flag or portrait:
    portrait with `mod.import_portrait_to_mod()` and then
    `mod.write_portrait_gfx()` so the files participate in preview,
    transactions, and atomic save.
-6. When the user's original request explicitly authorized asset creation,
-   import immediately after review. A broad country-creation request covered by
-   the visual-completeness policy is such authorization. Otherwise show the
-   candidate and wait for approval before touching the mod.
+6. When paid generation and asset import are authorized, import immediately
+   after review. A broad country-creation request authorizes import, but does
+   not by itself authorize paid generation. Otherwise show the candidate and
+   wait for approval before touching the mod.
 
 If no style is requested, keep the generator's built-in HOI4 flag/portrait
 presets. A supplied style replaces only the aesthetic; preserve the no-text,

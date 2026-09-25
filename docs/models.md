@@ -266,6 +266,9 @@ State(id: int, name: str = "", owner: str = "",
       path: Path | None = None)
 ```
 
+`State.impassable` is an optional boolean (default `False`); set it by keyword
+to mark a state impassable without changing existing positional arguments.
+
 ### Decision
 ```python
 Decision(id: str, category: str = "",

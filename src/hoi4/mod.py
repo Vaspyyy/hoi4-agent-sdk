@@ -27,7 +27,7 @@ import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from difflib import SequenceMatcher
-from typing import Any, Literal, Optional, Sequence, TypedDict, cast
+from typing import Any, Iterator, Literal, Optional, Sequence, TypedDict, TypeVar, cast
 
 from .bookmarks import (
     DEFAULT_BOOKMARK_EFFECT,
@@ -42,6 +42,7 @@ from .bookmarks import (
 )
 from .assets import FlagAssetSet
 from .config import find_config
+from .layers import ContentLayers, relative_content_path
 from .content_validation import (
     validate_bookmark,
     validate_dynamic_modifier,
@@ -139,6 +140,7 @@ from .parser import (
 from .patching import (
     AssignmentSpan,
     append_assignment,
+    block_bodies_equivalent,
     move_assignment_before,
     set_block,
     top_level_assignments,
@@ -163,6 +165,7 @@ from .script import (
 from .script_vocabulary import (
     GameScriptVocabulary,
     ScriptSource,
+    ScriptTokenKind,
     load_game_script_vocabulary,
     validate_script_sources,
 )
@@ -794,6 +797,8 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
     return errors
 
 
+_InheritedModel = TypeVar("_InheritedModel", FocusTree, Event, Idea)
+
 class Mod:
     def __init__(
         self,
@@ -801,9 +806,15 @@ class Mod:
         hoi4_install: str | Path | None = None,
         *,
         strict_loading: bool = False,
+        base_mod_paths: Sequence[str | Path] = (),
     ):
         self.mod_root = Path(mod_root).resolve()
         self.hoi4_install = Path(hoi4_install).resolve() if hoi4_install else None
+        if isinstance(base_mod_paths, (str, bytes)):
+            raise ValueError("base_mod_paths must be an ordered sequence of paths")
+        self.base_mod_paths = tuple(Path(path).resolve() for path in base_mod_paths)
+        self._content_layers: ContentLayers | None = None
+        self._refresh_content_layers()
         self.strict_loading = strict_loading
         self._load_diagnostics: list[LoadDiagnostic] = []
 
@@ -865,26 +876,122 @@ class Mod:
         self._pending_asset_writes: dict[Path, bytes] = {}
         self._pending_asset_baselines: dict[Path, bytes | None] = {}
         self._country_name_pool_updates: dict[str, str] = {}
+        self._script_file_updates: dict[Path, str] = {}
         self._dirty: set[str] = set()
         self._vanilla_tags: set[str] = (
-            load_vanilla_tags(self.hoi4_install) if self.hoi4_install else set()
+            load_vanilla_tags(self._base_content_root) if self._base_content_root else set()
         )
         self._scan_cache: dict[str, set[str]] = {}
         self._script_vocabulary_cache: GameScriptVocabulary | None = None
         self._equipment_unlock_cache: dict[str, tuple[str, ...]] | None = None
         self._sprite_texture_cache: dict[str, str] | None = None
+        self._sprite_text_parse_cache: dict[str, dict[str, str]] = {}
+        self._runtime_activation_parse_cache: dict[str, PdxNode | None] = {}
+        self._script_trigger_index_cache: dict[str, dict[str, PdxNode]] = {}
         self._state_index_cache: dict[bool, list[dict]] = {}
+        self._inherited_state_source_paths: dict[int, Path] | None = None
+        self._writable_state_directory_stamp: int | None = None
         self._vanilla_state_loc_entries: dict[str, str] | None = None
         self._country_context_cache: dict[str, dict] = {}
         self._country_tag_mappings: dict[Path, dict[str, str]] = {
             base: _parse_tag_file_mapping(base / "common" / "country_tags")
-            for base in (self.mod_root, self.hoi4_install)
+            for base in (self.mod_root, self._base_content_root)
             if base is not None
         }
         self._country_color_sources: dict[Path, str | None] = {}
 
         self._load()
         self._capture_source_baseline()
+
+    def _refresh_content_layers(self) -> None:
+        previous = self._content_layers
+        self._content_layers = (
+            ContentLayers(self.hoi4_install, self.base_mod_paths, self.mod_root)
+            if self.base_mod_paths else None
+        )
+        self._base_content_root = (
+            self._content_layers.root if self._content_layers else self.hoi4_install
+        )
+        if previous is not None:
+            previous.close()
+
+    def content_source(self, relative_path: str | Path) -> Path | None:
+        """Original winning file in game/base/output layers; never a snapshot path."""
+        relative = relative_content_path(relative_path)
+        if self._content_layers is not None:
+            return self._content_layers.source(relative)
+        for root in (self.mod_root, self.hoi4_install):
+            if root is not None and (root / relative).is_file():
+                return root / relative
+        return None
+
+    def content_files(self, directory: str | Path) -> dict[str, Path]:
+        """Map effective relative filenames to original winning source paths."""
+        relative = relative_content_path(directory)
+        if self._content_layers is not None:
+            files = {str(path): source for path, source in self._content_layers.sources.items()
+                     if path.is_relative_to(relative)}
+        else:
+            files = {}
+            if self.hoi4_install is not None:
+                for path in (self.hoi4_install / relative).rglob("*"):
+                    if path.is_file():
+                        files[str(path.relative_to(self.hoi4_install))] = path
+        for path in (self.mod_root / relative).rglob("*"):
+            if path.is_file():
+                files[str(path.relative_to(self.mod_root))] = path
+        return dict(sorted(files.items()))
+
+    def load_inherited_content(self, relative_path: str | Path) -> None:
+        """Load one effective inherited script file for facade editing.
+
+        Focus, event, idea and on-action files are opt-in, like vanilla country
+        reads. All siblings in the file are retained. Reading alone writes
+        nothing; edits serialize a complete override into this mod on save.
+        """
+        relative = relative_content_path(relative_path)
+        source = self.content_source(relative)
+        if source is None:
+            raise FileNotFoundError(relative)
+        if source.is_relative_to(self.mod_root):
+            return
+        target = resolve_mod_output_path(self.mod_root, relative)
+        if target in self._original_files:
+            return
+        original = source.read_bytes().decode("utf-8")
+
+        def install(models: Sequence[_InheritedModel], destination: dict[str, _InheritedModel]) -> None:
+            seen: set[str] = set()
+            for model in models:
+                if model.id in destination or model.id in seen:
+                    raise ValueError(f"Inherited ID {model.id!r} conflicts with another definition")
+                seen.add(model.id)
+            for model in models:
+                model.path = target
+                destination[model.id] = model
+
+        directory = relative.parent.as_posix()
+        if directory == "common/national_focus":
+            install(load_focus_trees(source), self._focus_trees)
+        elif directory == "events":
+            namespace, events = load_events_file(source)
+            install(events, self._events)
+            for event in events:
+                self._event_namespaces[event.id] = namespace
+            self._event_file_namespaces[target] = namespace
+        elif directory in ("common/ideas", "common/national_ideas"):
+            ideas, container = read_ideas_file(source)
+            install(ideas, self._ideas)
+            self._idea_file_containers[target] = container
+        elif directory == "common/on_actions":
+            actions = load_on_actions_file(source)
+            for action in actions:
+                action.path = target
+                self._on_action_occurrences.setdefault(action.id, []).append(action)
+                self._on_actions.setdefault(action.id, action)
+        else:
+            raise ValueError("Inherited loading supports focus, event, idea and on-action files")
+        self._original_files[target] = original
 
     @classmethod
     def from_config(
@@ -907,6 +1014,7 @@ class Mod:
         return cls(
             cfg.mod_path,
             hoi4_install=cfg.hoi4_install,
+            base_mod_paths=cfg.base_mod_paths,
             strict_loading=strict_loading,
         )
 
@@ -1022,7 +1130,7 @@ class Mod:
         from .countries import _build_loc_cache
 
         self._country_color_sources.clear()
-        for base in (self.hoi4_install, self.mod_root):
+        for base in (self._base_content_root, self.mod_root):
             if base is None:
                 continue
             colors_path = base / "common" / "countries" / "colors.txt"
@@ -1038,7 +1146,7 @@ class Mod:
                 self._country_color_sources[colors_path] = source
 
         loc_cache: dict[str, dict[str, str]] = {}
-        for base in (self.hoi4_install, self.mod_root):
+        for base in (self._base_content_root, self.mod_root):
             if base is None:
                 continue
             for tag, entries in _build_loc_cache(base).items():
@@ -1070,8 +1178,8 @@ class Mod:
                 and match.group(1) in self._vanilla_tags
             )
         vanilla_mapping = (
-            self._country_tag_mappings.get(self.hoi4_install, {})
-            if self.hoi4_install is not None
+            self._country_tag_mappings.get(self._base_content_root, {})
+            if self._base_content_root is not None
             else {}
         )
         for tag, relative in vanilla_mapping.items():
@@ -1082,7 +1190,7 @@ class Mod:
                 self._countries[tag] = read_country(
                     self.mod_root,
                     tag,
-                    self.hoi4_install,
+                    self._base_content_root,
                     _loc_cache=loc_cache,
                     _tag_mappings=self._country_tag_mappings,
                     _color_sources=self._country_color_sources,
@@ -1098,6 +1206,7 @@ class Mod:
 
     def _load_states(self) -> None:
         states_dir = self.mod_root / "history" / "states"
+        self._writable_state_directory_stamp = states_dir.stat().st_mtime_ns if states_dir.is_dir() else None
         if not states_dir.exists():
             return
         for entry in build_state_index(states_dir):
@@ -1207,10 +1316,22 @@ class Mod:
                 continue
 
     def _load_localization(self) -> None:
+        if self._content_layers is not None:
+            assert self._base_content_root is not None
+            inherited = self._base_content_root / "localisation" / "english"
+            entries, sources = parse_localization_dir(inherited)
+            self._loc_entries.update(entries)
+            for key, source in sources.items():
+                target = self.mod_root / source.relative_to(self._base_content_root)
+                self._loc_sources[key] = target
+                if target not in self._original_files:
+                    self._original_files[target] = source.read_text(encoding="utf-8-sig", errors="ignore")
         loc_dir = self.mod_root / "localisation" / "english"
         if not loc_dir.exists():
             return
-        self._loc_entries, self._loc_sources = parse_localization_dir(loc_dir)
+        entries, sources = parse_localization_dir(loc_dir)
+        self._loc_entries.update(entries)
+        self._loc_sources.update(sources)
         # Keep every localization source, including header/comment-only files.
         # Otherwise adding the first modeled key to such a file would serialize
         # from an empty baseline and silently discard its existing content.
@@ -1386,8 +1507,8 @@ class Mod:
         self._match_idea_files_to_countries()
 
     def _load_ideologies(self) -> None:
-        if self.hoi4_install is not None:
-            directory = self.hoi4_install / "common" / "ideologies"
+        if self._base_content_root is not None:
+            directory = self._base_content_root / "common" / "ideologies"
             if directory.is_dir():
                 for path in sorted(directory.glob("*.txt")):
                     try:
@@ -1506,7 +1627,7 @@ class Mod:
             country = read_country(
                 self.mod_root,
                 tag,
-                self.hoi4_install,
+                self._base_content_root,
                 _tag_mappings=self._country_tag_mappings,
                 _color_sources=self._country_color_sources,
             )
@@ -1564,7 +1685,7 @@ class Mod:
         country = read_country(
             self.mod_root,
             tag,
-            self.hoi4_install,
+            self._base_content_root,
             _tag_mappings=self._country_tag_mappings,
             _color_sources=self._country_color_sources,
         )
@@ -1639,10 +1760,10 @@ class Mod:
             resolved = path.resolve(strict=False)
             if resolved.is_relative_to(self.mod_root):
                 return resolved
-            if self.hoi4_install is not None and resolved.is_relative_to(self.hoi4_install):
+            if self._base_content_root is not None and resolved.is_relative_to(self._base_content_root):
                 return resolve_mod_output_path(
                     self.mod_root,
-                    resolved.relative_to(self.hoi4_install),
+                    resolved.relative_to(self._base_content_root),
                 )
             return None
 
@@ -1800,7 +1921,7 @@ class Mod:
         include_vanilla: bool = True,
     ) -> list[str]:
         normalized = require_country_tag(tag) if tag is not None else None
-        if include_vanilla and self.hoi4_install is not None:
+        if include_vanilla and self._base_content_root is not None:
             self._load_vanilla_characters(normalized)
         return sorted(
             character_id
@@ -1818,7 +1939,7 @@ class Mod:
         character = self._characters.get(character_id)
         if character is not None:
             return character
-        if include_vanilla and self.hoi4_install is not None:
+        if include_vanilla and self._base_content_root is not None:
             prefix = character_id.split("_", 1)[0]
             tag = (
                 prefix
@@ -2179,11 +2300,11 @@ class Mod:
             return
         if source.resolve(strict=False).is_relative_to(self.mod_root):
             return
-        if self.hoi4_install is None:
+        if self._base_content_root is None:
             raise ValueError(
                 f"Cannot retarget character '{character.id}' without a HOI4 install"
             )
-        relative = source.resolve(strict=False).relative_to(self.hoi4_install)
+        relative = source.resolve(strict=False).relative_to(self._base_content_root)
         target = resolve_mod_output_path(self.mod_root, relative)
         source_text = source.read_text(encoding="utf-8", errors="ignore")
         for item in load_characters_file(source, country_tag=character.country_tag):
@@ -2198,9 +2319,9 @@ class Mod:
         self._dirty_character_files.add(target)
 
     def _load_vanilla_characters(self, tag: str | None) -> None:
-        if self.hoi4_install is None:
+        if self._base_content_root is None:
             return
-        directory = self.hoi4_install / "common" / "characters"
+        directory = self._base_content_root / "common" / "characters"
         if not directory.is_dir():
             return
         if tag is None:
@@ -2227,8 +2348,8 @@ class Mod:
     # ── Land orders of battle ───────────────────────────────────
 
     def list_oobs(self, *, include_vanilla: bool = False) -> list[str]:
-        if include_vanilla and self.hoi4_install is not None:
-            directory = self.hoi4_install / "history" / "units"
+        if include_vanilla and self._base_content_root is not None:
+            directory = self._base_content_root / "history" / "units"
             if directory.is_dir():
                 return sorted(
                     set(self._oobs)
@@ -2247,9 +2368,9 @@ class Mod:
         if cached is not None:
             return cached
         candidates = [self.mod_root / "history" / "units" / f"{name}.txt"]
-        if include_vanilla and self.hoi4_install is not None:
+        if include_vanilla and self._base_content_root is not None:
             candidates.append(
-                self.hoi4_install / "history" / "units" / f"{name}.txt"
+                self._base_content_root / "history" / "units" / f"{name}.txt"
             )
         country_tag = next(
             (
@@ -2920,11 +3041,11 @@ class Mod:
             return
         if source.resolve(strict=False).is_relative_to(self.mod_root):
             return
-        if self.hoi4_install is None:
+        if self._base_content_root is None:
             raise ValueError(f"Cannot retarget OOB '{oob.name}' without a HOI4 install")
         target = resolve_mod_output_path(
             self.mod_root,
-            source.resolve(strict=False).relative_to(self.hoi4_install),
+            source.resolve(strict=False).relative_to(self._base_content_root),
         )
         self._original_files.setdefault(
             target,
@@ -2983,9 +3104,9 @@ class Mod:
             if source is None or source.resolve(strict=False).is_relative_to(self.mod_root):
                 continue
             relative = fallback
-            if self.hoi4_install is not None:
+            if self._base_content_root is not None:
                 try:
-                    relative = source.resolve(strict=False).relative_to(self.hoi4_install)
+                    relative = source.resolve(strict=False).relative_to(self._base_content_root)
                 except ValueError:
                     pass
             target = resolve_mod_output_path(self.mod_root, relative)
@@ -3004,7 +3125,7 @@ class Mod:
             return [dict(entry) for entry in cached]
         state_localization = self._state_localization_entries()
         entries: list[dict] = []
-        for source, base in [("mod", self.mod_root), ("vanilla", self.hoi4_install)]:
+        for source, base in [("mod", self.mod_root), ("vanilla", self._base_content_root)]:
             if base is None:
                 continue
             if source == "vanilla" and not include_vanilla:
@@ -3013,6 +3134,15 @@ class Mod:
             for entry in build_state_index(states_dir):
                 item = dict(entry)
                 item["source"] = source
+                if self._content_layers is not None:
+                    relative = Path(item["path"]).relative_to(base)
+                    original = self.content_source(relative)
+                    item["source_path"] = str(original) if original else item["path"]
+                    item["source_layer"] = (
+                        "mod" if original and original.is_relative_to(self.mod_root)
+                        else "base_mod" if original and any(original.is_relative_to(root) for root in self.base_mod_paths)
+                        else "vanilla"
+                    )
                 loc_key = str(item.get("name", ""))
                 localized_name = state_localization.get(loc_key)
                 item["localized"] = localized_name is not None
@@ -3086,9 +3216,9 @@ class Mod:
     def _state_localization_entries(self) -> dict[str, str]:
         if self._vanilla_state_loc_entries is None:
             vanilla_entries: dict[str, str] = {}
-            if self.hoi4_install is not None:
+            if self._base_content_root is not None:
                 loaded, _ = parse_localization_dir(
-                    self.hoi4_install / "localisation" / "english"
+                    self._base_content_root / "localisation" / "english"
                 )
                 vanilla_entries = {
                     key: value for key, value in loaded.items() if key.startswith("STATE_")
@@ -3112,14 +3242,29 @@ class Mod:
         """
         if state_id in self._states:
             return self._states[state_id]
+        # Scan inherited content once, never once per missing filename prefix.
+        # Writable directory additions retain existing live-discovery behavior;
+        # directory timestamps avoid scanning unchanged files for every state.
         states_dir = self.mod_root / "history" / "states"
+        stamp = states_dir.stat().st_mtime_ns if states_dir.is_dir() else None
+        if stamp != self._writable_state_directory_stamp:
+            paths = {entry["id"]: Path(entry["path"]) for entry in build_state_index(states_dir)}
+            self._state_source_paths = {
+                sid: path for sid, path in self._state_source_paths.items()
+                if not path.is_relative_to(states_dir)
+            }
+            self._state_source_paths.update(paths)
+            self._writable_state_directory_stamp = stamp
         f = self._state_source_paths.get(state_id)
         if f is not None and not f.exists():
             f = None
-        if f is None:
-            f = find_state_file(states_dir, state_id)
-        if not f and self.hoi4_install:
-            f = find_state_file(self.hoi4_install / "history" / "states", state_id)
+        if f is None and self._base_content_root:
+            if self._inherited_state_source_paths is None:
+                inherited_paths: dict[int, Path] = {}
+                for entry in build_state_index(self._base_content_root / "history" / "states"):
+                    inherited_paths.setdefault(entry["id"], Path(entry["path"]))
+                self._inherited_state_source_paths = inherited_paths
+            f = self._inherited_state_source_paths.get(state_id)
         if f:
             state = read_state(f)
             self._states[state_id] = state
@@ -3144,9 +3289,9 @@ class Mod:
             return False
         else:
             relative = Path("history") / "states" / source.name
-            if self.hoi4_install is not None:
+            if self._base_content_root is not None:
                 try:
-                    relative = source.resolve(strict=False).relative_to(self.hoi4_install)
+                    relative = source.resolve(strict=False).relative_to(self._base_content_root)
                 except ValueError:
                     pass
         target = resolve_mod_output_path(self.mod_root, relative)
@@ -3318,6 +3463,7 @@ class Mod:
         if "options" in kwargs and isinstance(kwargs["options"], list):
             kwargs["options"] = [_normalize_event_option(option) for option in kwargs["options"]]
         _set_fields(event, kwargs, allow_path=True)
+        event.touched_fields.update(kwargs)
         event.touched = True
         self._dirty_event_files.add(old_path)
         self._dirty_event_files.add(
@@ -3368,7 +3514,6 @@ class Mod:
         event = self._events.get(event_id)
         if event is None:
             return False
-        event.raw_block = ""
         event.options.append(_normalize_event_option(option))
         event.options[-1].touched = True
         event.touched = True
@@ -5541,7 +5686,7 @@ class Mod:
         script_token_allowlist: Sequence[str] = (),
         scope: str | None = "COUNTRY",
     ) -> list[ValidationError]:
-        known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
+        known_tags = set(load_all_tags(self._base_content_root, self.mod_root))
         known_tags.update(self._countries.keys())
         known_ideas = (
             self._known_idea_ids()
@@ -5595,6 +5740,7 @@ class Mod:
                     ],
                     self.game_script_vocabulary(),
                     mod_root=self.mod_root,
+                    custom_tokens=self._effective_custom_script_tokens(),
                     allowlist=script_token_allowlist,
                 )
             )
@@ -5720,13 +5866,25 @@ class Mod:
         return normalize_localization_key(key)
 
     def set_loc(self, key: str, value: str, file_path: str | Path | None = None) -> None:
+        """Set an English entry; custom destinations must be English YML files."""
+        target = None
+        if file_path is not None:
+            target = resolve_mod_output_path(self.mod_root, file_path)
+            if (
+                not target.is_relative_to(self.mod_root / "localisation" / "english")
+                or target.suffix != ".yml"
+            ):
+                raise ValueError(
+                    "set_loc() supports only .yml files under localisation/english; "
+                    "other localization destinations are not loaded and cannot be safely edited"
+                )
         key = self._normalize_loc_key(key)
         old_source = self._loc_sources.get(key)
         self._loc_entries[key] = value
         if key.startswith("STATE_"):
             self._state_index_cache.clear()
-        if file_path is not None:
-            self._loc_sources[key] = resolve_mod_output_path(self.mod_root, file_path)
+        if target is not None:
+            self._loc_sources[key] = target
         elif key not in self._loc_sources:
             self._loc_sources[key] = self.default_loc_file
         self._dirty.add("localization")
@@ -5775,7 +5933,7 @@ class Mod:
             "focus_trees": [],
         }
 
-        for base in [self.hoi4_install, self.mod_root]:
+        for base in [self._base_content_root, self.mod_root]:
             if base is None:
                 continue
             states_dir = base / "history" / "states"
@@ -5931,7 +6089,7 @@ class Mod:
         country = self.get_country(tag)
         return find_country_territory_components(
             self.mod_root,
-            self.hoi4_install,
+            self._base_content_root,
             self._effective_states(),
             country_tag=tag,
             capital_state_id=country.capital,
@@ -5953,7 +6111,7 @@ class Mod:
             raise KeyError(f"Country '{tag}' is not defined")
         return find_enclosed_foreign_components(
             self.mod_root,
-            self.hoi4_install,
+            self._base_content_root,
             self._effective_states(),
             country_tag=tag,
             minimum_land_provinces=minimum_land_provinces,
@@ -5967,11 +6125,14 @@ class Mod:
         """Return runtime state transfers, cores, activators, and source labels."""
 
         scripts: list[tuple[str, str]] = []
+        display_paths: dict[Path, str] = {}
 
         def add_script(label: str, body: str, path: Path | None) -> None:
             if not body.strip():
                 return
-            source = f"{self._display_path(path)}:{label}" if path else label
+            if path is not None and path not in display_paths:
+                display_paths[path] = self._display_path(path)
+            source = f"{display_paths[path]}:{label}" if path else label
             scripts.append((source, body))
 
         for tree in self._focus_trees.values():
@@ -6072,12 +6233,17 @@ class Mod:
                 len(cored_states),
                 len(activators),
             )
-            try:
-                root = parse_pdx(body)
-            except ParseError:
-                # General script validation owns syntax diagnostics. Lifecycle
-                # inference must never conceal or duplicate those findings.
+            if body not in self._runtime_activation_parse_cache:
+                try:
+                    self._runtime_activation_parse_cache[body] = parse_pdx(body)
+                except ParseError:
+                    # General script validation owns syntax diagnostics.
+                    self._runtime_activation_parse_cache[body] = None
+            root = self._runtime_activation_parse_cache[body]
+            if root is None:
                 continue
+            # The walker only reads nodes. Exact body keys remain valid even
+            # when effects change or an authoring transaction rolls back.
             walk(root)
             after = (
                 len(transferred_states),
@@ -6574,10 +6740,10 @@ class Mod:
         )
 
     def _validate_country_colors_shadow(self) -> list[ValidationError]:
-        if self.hoi4_install is None:
+        if self._base_content_root is None:
             return []
         mod_colors = self.mod_root / "common" / "countries" / "colors.txt"
-        vanilla_colors = self.hoi4_install / "common" / "countries" / "colors.txt"
+        vanilla_colors = self._base_content_root / "common" / "countries" / "colors.txt"
         if not mod_colors.is_file() or not vanilla_colors.is_file():
             return []
         failed_color_paths = {
@@ -6774,7 +6940,7 @@ class Mod:
         errors.extend(_validate_source_tree(self.mod_root))
 
         begin_phase("catalogs", "Resolving referenced game and mod catalogs")
-        known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
+        known_tags = set(load_all_tags(self._base_content_root, self.mod_root))
         known_tags.update(self._countries.keys())
         script_entries = self._script_entries()
         scripts = "\n".join(entry[0] for entry in script_entries)
@@ -6955,6 +7121,18 @@ class Mod:
         for bookmark in self._bookmarks:
             errors.extend(validate_bookmark(bookmark))
 
+        law_category_cache: dict[tuple[str, str], bool] = {}
+
+        def is_declared_law(idea: Idea) -> bool:
+            key = (idea.category, idea.category_raw_block)
+            if key not in law_category_cache:
+                law_category_cache[key] = any(
+                    span.key == "law" and not span.is_block
+                    and idea.category_raw_block[span.value_start:span.value_end].strip().strip('"') == "yes"
+                    for span in top_level_assignments(idea.category_raw_block)
+                )
+            return law_category_cache[key]
+
         for country in self._countries.values():
             for idea_id in country.ideas:
                 assigned_idea = self._ideas.get(idea_id)
@@ -6968,12 +7146,13 @@ class Mod:
                             idea_id=idea_id,
                         )
                     )
-                elif assigned_idea is not None and assigned_idea.category != "country":
+                elif (assigned_idea is not None and assigned_idea.category != "country"
+                      and not is_declared_law(assigned_idea)):
                     errors.append(
                         ValidationError(
                             message=(
                                 f"Country '{country.tag}' assigns idea '{idea_id}', but that idea is in category "
-                                f"'{assigned_idea.category or '<none>'}', not 'country'."
+                                f"'{assigned_idea.category or '<none>'}', not 'country' or a declared law category."
                             ),
                             severity="warning",
                             code="assigned_idea_not_country_category",
@@ -7078,6 +7257,7 @@ class Mod:
                     self._semantic_script_sources(),
                     self.game_script_vocabulary(),
                     mod_root=self.mod_root,
+                    custom_tokens=self._effective_custom_script_tokens(),
                     allowlist=script_token_allowlist,
                 )
             )
@@ -7146,6 +7326,203 @@ class Mod:
             fresh_after=fresh_after,
         )
         return list(report.validation_errors)
+
+    def rebuild_country_color_table(self) -> Path:
+        """Queue a complete table for a conversion replacing all country tags.
+
+        Special engine registries can retain an inherited colors.txt even when
+        ordinary country definitions are replaced. Rebuild from every effective
+        country, never a partial caller-supplied subset. Call after country edits.
+        """
+        from .layers import replace_paths
+        if Path("common/country_tags") not in replace_paths(self.mod_root):
+            raise ValueError("Full color-table rebuilding requires explicit country-tag replacement")
+        countries = {tag: self.get_country(tag) for tag in self.list_countries()}
+        if not countries:
+            raise ValueError("Cannot replace country colors with an empty registry")
+        target = resolve_mod_output_path(self.mod_root, "common/countries/colors.txt")
+        self._script_file_updates[target] = serialize_country_colors_file(
+            "", {tag: country.color for tag, country in countries.items()})
+        self._dirty.add("script_files")
+        return target
+
+    def import_script_file(
+        self, source_path: str | Path, relative_path: str | Path, *,
+        overwrite: bool = False,
+    ) -> Path:
+        """Stage an unchanged, syntax-checked support script in this mod.
+
+        Supports idea/law, scripted trigger/effect, AI strategy/naval goals, and
+        source-derived technology, equipment and doctrine-folder files. Modeled
+        country/state/event domains must use their facade authoring APIs. Imports
+        participate in preview, transactions and atomic save, and never modify
+        the source. Imported ideas are immediately available to validation and
+        subsequent ``update_idea`` calls on this same instance.
+        """
+        from .parser import parse_pdx
+
+        relative = relative_content_path(relative_path)
+        supported = {
+            Path("common/ideas"), Path("common/national_ideas"),
+            Path("common/scripted_triggers"), Path("common/scripted_effects"),
+            Path("common/ai_strategy"), Path("common/ai_strategy_plans"),
+            Path("common/ai_navy/goals"), Path("common/doctrines/folders"),
+            Path("common/technologies"), Path("common/units/equipment"),
+            Path("common/special_projects/projects"),
+            Path("common/ai_templates"), Path("common/ai_equipment"),
+            Path("common/unit_medals"), Path("common/collections"),
+            Path("common/resistance_compliance_modifiers"), Path("common/raids"), Path("common/raids/categories"),
+            Path("common/operations"), Path("common/operation_phases"),
+            Path("common/intelligence_agencies"), Path("common/intelligence_agency_upgrades"),
+            Path("common/military_industrial_organization/organizations"),
+        }
+        support_trees = (Path("common/factions"), Path("common/peace_conference"))
+        permitted = relative.parent in supported or any(relative.parent.is_relative_to(root) for root in support_trees)
+        if relative.suffix != ".txt" or not permitted:
+            raise ValueError("Import requires a supported common support-script *.txt path")
+        source = Path(source_path).expanduser().resolve(strict=True)
+        if not source.is_file() or source.suffix != ".txt":
+            raise ValueError("Source must be a .txt file")
+        # Decode bytes directly to retain BOMs and line endings in the import.
+        text = source.read_bytes().decode("utf-8")
+        parsed = parse_pdx(text.lstrip("\ufeff"))
+        target = resolve_mod_output_path(self.mod_root, relative)
+        if (target.exists() or target in self._script_file_updates) and not overwrite:
+            raise FileExistsError(f"Script target already exists: {relative}")
+        ideas: list[Idea] = []
+        container = ""
+        idea_domain = relative.parent in {Path("common/ideas"), Path("common/national_ideas")}
+        if idea_domain:
+            ideas, container = read_ideas_file(source)
+            ids = [idea.id for idea in ideas]
+            if len(ids) != len(set(ids)):
+                raise ValueError("Imported idea file contains duplicate IDs")
+            for idea in ideas:
+                existing = self._ideas.get(idea.id)
+                if existing is not None and existing.path != target:
+                    raise ValueError(f"Imported idea {idea.id!r} conflicts with an already loaded definition")
+            for directory in ("common/ideas", "common/national_ideas"):
+                for other_relative, other_source in self.content_files(directory).items():
+                    if Path(other_relative) == relative or other_source.suffix != ".txt":
+                        continue
+                    overlap = set(ids) & scan_idea_ids_file(other_source)
+                    if overlap:
+                        raise ValueError(f"Imported idea IDs conflict with {other_relative}: {sorted(overlap)}")
+        elif relative.parent in {Path("common/scripted_triggers"), Path("common/scripted_effects")}:
+            ids = [node.key for node in parsed.children if node.key is not None]
+            if len(ids) != len(set(ids)):
+                raise ValueError("Imported script contains duplicate IDs")
+            candidates = {
+                resolve_mod_output_path(self.mod_root, rel): path.read_text(encoding="utf-8-sig")
+                for rel, path in self.content_files(relative.parent).items()
+                if path.suffix == ".txt"
+            }
+            candidates.update({path: body for path, body in self._script_file_updates.items()
+                               if path.parent == target.parent})
+            for other_target, body in candidates.items():
+                if other_target != target:
+                    other_ids = {node.key for node in parse_pdx(body).children}
+                    if set(ids) & other_ids:
+                        raise ValueError(f"Imported script IDs conflict with {other_target.name}")
+        # Mutation starts only after every parse/path/collision check succeeds.
+        if idea_domain:
+            replaced = {key for key, idea in self._ideas.items() if idea.path == target}
+            for key in replaced:
+                self._ideas.pop(key)
+            self._dirty_ideas.difference_update(replaced)
+            self._dirty_idea_files.discard(target)
+            for idea in ideas:
+                idea.path = target
+                self._ideas[idea.id] = idea
+            self._idea_file_containers[target] = container
+            self._original_files[target] = text
+        self._script_file_updates[target] = text
+        self._scan_cache.clear()
+        self._equipment_unlock_cache = None
+        self._dirty.add("script_files")
+        return target
+
+    def create_scripted_trigger(
+        self, trigger_id: str, body: str, *, path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue a named scripted trigger, preserving sibling definitions.
+
+        ``body`` contains no outer braces. Syntax is checked immediately;
+        installed-game domain/scope correctness remains the caller's responsibility.
+        Like other mutations, this participates in preview, transactions and save.
+        """
+        from .parser import parse_pdx
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", trigger_id):
+            raise ValueError("Invalid scripted trigger identifier")
+        relative = relative_content_path(path or "common/scripted_triggers/00_generated_triggers.txt")
+        if relative.parent != Path("common/scripted_triggers") or relative.suffix != ".txt":
+            raise ValueError("Scripted triggers must use a common/scripted_triggers/*.txt path")
+        parsed_request = parse_pdx(f"{trigger_id} = {{\n{body}\n}}")
+        definitions = [node for node in parsed_request.children if not node.is_comment]
+        if len(definitions) != 1 or definitions[0].key != trigger_id or not definitions[0].is_block():
+            raise ValueError("Scripted trigger body must not escape its enclosing block")
+        requested = definitions[0]
+
+        def remember(text: str, index: dict[str, PdxNode]) -> None:
+            # Keep only a few recent immutable text versions when appending
+            # hundreds of definitions; avoid retaining quadratic history.
+            if text not in self._script_trigger_index_cache and len(self._script_trigger_index_cache) >= 8:
+                self._script_trigger_index_cache.pop(next(iter(self._script_trigger_index_cache)))
+            self._script_trigger_index_cache[text] = index
+
+        def index_for(text: str) -> dict[str, PdxNode]:
+            if text not in self._script_trigger_index_cache:
+                index: dict[str, PdxNode] = {}
+                for node in parse_pdx(text).children:
+                    if node.key is not None:
+                        index.setdefault(node.key, node)
+                remember(text, index)
+            return self._script_trigger_index_cache[text]
+
+        def structure(node: PdxNode) -> tuple:
+            return (node.key, node.value, node.operator, node.block, node.quoted,
+                    tuple(structure(child) for child in node.children if not child.is_comment))
+        target = resolve_mod_output_path(self.mod_root, relative)
+        source = self.content_source(relative)
+        text = self._script_file_updates.get(target)
+        if text is None:
+            text = source.read_bytes().decode("utf-8-sig") if source else ""
+        current_index = index_for(text)
+        existing = current_index.get(trigger_id)
+        if existing is not None and not overwrite:
+            raise ValueError(f"Scripted trigger {trigger_id!r} already exists")
+        for other_relative, other_source in self.content_files("common/scripted_triggers").items():
+            if Path(other_relative) == relative:
+                continue
+            other_target = resolve_mod_output_path(self.mod_root, other_relative)
+            other_text = self._script_file_updates.get(other_target)
+            if other_text is None:
+                other_text = other_source.read_text(encoding="utf-8-sig")
+            if trigger_id in index_for(other_text):
+                raise ValueError(f"Scripted trigger {trigger_id!r} already exists in {other_relative}")
+        for other_target, other_text in self._script_file_updates.items():
+            if (other_target.parent == target.parent and other_target != target
+                    and trigger_id in index_for(other_text)):
+                raise ValueError(f"Scripted trigger {trigger_id!r} already queued in another file")
+        # Collision checks still run for an otherwise unchanged request.
+        if existing is not None and structure(existing) == structure(requested):
+            return target
+        if existing is None:
+            fragment = set_block("", trigger_id, body)
+            newline = "\r\n" if "\r\n" in text else "\n"
+            fragment = fragment.replace("\n", newline)
+            updated = text + (newline if text and not text.endswith("\n") else "") + fragment + newline
+        else:
+            updated = set_block(text, trigger_id, body)
+        if updated == text:
+            return target
+        updated_index = dict(current_index)
+        updated_index[trigger_id] = requested
+        remember(updated, updated_index)
+        self._script_file_updates[target] = updated
+        self._dirty.add("scripted_triggers")
+        return target
 
     # ── Transactional image assets ─────────────────────────────
 
@@ -7334,6 +7711,7 @@ class Mod:
 
     def preview_summary(self) -> str:
         lines = self._semantic_preview_lines()
+        lines.extend(f"support script: {p.relative_to(self.mod_root)}" for p in self._script_file_updates)
         if not lines:
             return "No semantic changes detected"
         return "Changed:\n" + "\n".join(f"- {line}" for line in lines)
@@ -7398,11 +7776,19 @@ class Mod:
         return result
 
     def _render_dirty_files(self) -> dict[Path, str | None]:
-        rendered: dict[Path, str | None] = {}
+        rendered: dict[Path, str | None] = dict(self._script_file_updates)
         if "country_names" in self._dirty:
             path = self.mod_root / "common" / "names" / "00_generated_names.txt"
             text = self._read_current_text(path)
+            # Compare original bodies in one scan. Rebuilding a large roster
+            # should not rescan the entire names file once per unchanged tag.
+            original_bodies: dict[str, str] = {}
+            for span in top_level_assignments(text):
+                if span.is_block and span.body_start is not None and span.body_end is not None:
+                    original_bodies.setdefault(span.key, text[span.body_start:span.body_end])
             for tag, body in sorted(self._country_name_pool_updates.items()):
+                if tag in original_bodies and block_bodies_equivalent(original_bodies[tag], body.strip()):
+                    continue
                 text = set_block(text, tag, body)
             rendered[path] = text or None
         if "countries" in self._dirty:
@@ -7468,10 +7854,10 @@ class Mod:
                 and (tag in self._vanilla_tags or tag in existing_color_tags)
             }
             deleted_color_tags = set(self._deleted_countries) & existing_color_tags
-            colors_base = colors_original
-            if (color_updates or deleted_color_tags) and self.hoi4_install is not None:
+            colors_base = self._script_file_updates.get(colors_path, colors_original)
+            if (color_updates or deleted_color_tags) and self._base_content_root is not None and colors_path not in self._script_file_updates:
                 vanilla_colors_path = (
-                    self.hoi4_install / "common" / "countries" / "colors.txt"
+                    self._base_content_root / "common" / "countries" / "colors.txt"
                 )
                 if vanilla_colors_path.is_file():
                     colors_base = seed_country_colors_file(
@@ -7789,6 +8175,8 @@ class Mod:
             raise
 
     def discard(self) -> None:
+        self._refresh_content_layers()
+        self._vanilla_tags = load_vanilla_tags(self._base_content_root) if self._base_content_root else set()
         self._load_diagnostics.clear()
         self._countries.clear()
         self._characters.clear()
@@ -7796,6 +8184,7 @@ class Mod:
         self._states.clear()
         self._state_ids.clear()
         self._state_source_paths.clear()
+        self._inherited_state_source_paths = None
         self._events.clear()
         self._event_namespaces.clear()
         self._on_actions.clear()
@@ -7846,18 +8235,22 @@ class Mod:
         self._pending_asset_writes.clear()
         self._pending_asset_baselines.clear()
         self._country_name_pool_updates.clear()
+        self._script_file_updates.clear()
         self._original_files.clear()
         self._dirty.clear()
         self._scan_cache.clear()
         self._equipment_unlock_cache = None
         self._sprite_texture_cache = None
+        self._sprite_text_parse_cache.clear()
+        self._runtime_activation_parse_cache.clear()
+        self._script_trigger_index_cache.clear()
         self._state_index_cache.clear()
         self._vanilla_state_loc_entries = None
         self._country_context_cache.clear()
         self._country_color_sources.clear()
         self._country_tag_mappings = {
             base: _parse_tag_file_mapping(base / "common" / "country_tags")
-            for base in (self.mod_root, self.hoi4_install)
+            for base in (self.mod_root, self._base_content_root)
             if base is not None
         }
         self._load()
@@ -7886,6 +8279,8 @@ class Mod:
             "_states",
             "_state_ids",
             "_state_source_paths",
+            "_inherited_state_source_paths",
+            "_writable_state_directory_stamp",
             "_dirty_states",
             "_state_history_patches",
             "_events",
@@ -7927,6 +8322,7 @@ class Mod:
             "_pending_asset_writes",
             "_pending_asset_baselines",
             "_country_name_pool_updates",
+            "_script_file_updates",
             "_dirty",
             "_sprite_texture_cache",
             "_country_context_cache",
@@ -7938,6 +8334,10 @@ class Mod:
     def _restore(self, snapshot: dict[str, object]) -> None:
         for key, value in snapshot.items():
             setattr(self, key, value)
+        # Derived catalogs may reflect imports or localization rolled back above.
+        self._state_index_cache.clear()
+        self._scan_cache.clear()
+        self._equipment_unlock_cache = None
 
     def _semantic_preview_lines(self) -> list[str]:
         lines: list[str] = []
@@ -8150,6 +8550,10 @@ class Mod:
         return unique
 
     def _display_path(self, path: Path) -> str:
+        if self._content_layers is not None and path.is_relative_to(self._content_layers.root):
+            source = self.content_source(path.relative_to(self._content_layers.root))
+            if source is not None:
+                return str(source)
         return (
             str(path.relative_to(self.mod_root))
             if path.is_relative_to(self.mod_root)
@@ -8170,6 +8574,37 @@ class Mod:
             )
         return self._script_vocabulary_cache
 
+    def _effective_script_texts(self, relative: str) -> Iterator[tuple[Path, str]]:
+        """Read effective support scripts, overlaying unsaved imports by filename."""
+        files: dict[Path, Path] = {}
+        for root in reversed(self._data_roots()):
+            for source in sorted((root / relative).rglob("*.txt")):
+                files[self.mod_root / source.relative_to(root)] = source
+        for target in self._script_file_updates:
+            if target.is_relative_to(self.mod_root / relative):
+                files.setdefault(target, target)
+        for target, source in files.items():
+            try:
+                text = self._script_file_updates.get(target)
+                if text is None:
+                    text = source.read_bytes().decode("utf-8-sig")
+                yield target, text
+            except (OSError, ValueError):
+                continue
+
+    def _effective_custom_script_tokens(self) -> dict[ScriptTokenKind, set[str]]:
+        result: dict[ScriptTokenKind, set[str]] = {"effect": set(), "trigger": set()}
+        for kind, relative in (("effect", "common/scripted_effects"),
+                               ("trigger", "common/scripted_triggers")):
+            typed_kind = cast(ScriptTokenKind, kind)
+            for _, text in self._effective_script_texts(relative):
+                try:
+                    result[typed_kind].update(span.key for span in top_level_assignments(text)
+                                              if span.is_block)
+                except ValueError:
+                    continue
+        return result
+
     def validate_script_vocabulary(
         self,
         *,
@@ -8181,6 +8616,7 @@ class Mod:
             self._semantic_script_sources(),
             self.game_script_vocabulary(),
             mod_root=self.mod_root,
+            custom_tokens=self._effective_custom_script_tokens(),
             allowlist=allowlist,
         )
 
@@ -8404,14 +8840,13 @@ class Mod:
             ("trigger", Path("common/scripted_triggers")),
         ):
             directory = self.mod_root / relative
-            if not directory.is_dir():
-                continue
-            for path in sorted(directory.rglob("*.txt")):
+            paths = set(directory.rglob("*.txt"))
+            paths.update(path for path in self._script_file_updates if path.is_relative_to(directory))
+            for path in sorted(paths):
                 try:
-                    text = path.read_text(
-                        encoding="utf-8-sig",
-                        errors="ignore",
-                    )
+                    pending_text = self._script_file_updates.get(path)
+                    text = (pending_text if pending_text is not None else
+                            path.read_text(encoding="utf-8-sig", errors="ignore"))
                     for span in top_level_assignments(text):
                         if (
                             span.is_block
@@ -8728,7 +9163,7 @@ class Mod:
     def _read_state_readonly(self, state_id: int) -> State | None:
         if state_id in self._states:
             return self._states[state_id]
-        for base in (self.mod_root, self.hoi4_install):
+        for base in (self.mod_root, self._base_content_root):
             if base is None:
                 continue
             path = find_state_file(base / "history" / "states", state_id)
@@ -9019,6 +9454,8 @@ class Mod:
                 if not ideas_dir.exists():
                     continue
                 for path in ideas_dir.glob("*.txt"):
+                    if self.mod_root / path.relative_to(base) in self._script_file_updates:
+                        continue
                     try:
                         scanned.update(scan_idea_ids_file(path))
                     except (OSError, ValueError):
@@ -9051,7 +9488,7 @@ class Mod:
         cached = self._scan_cache.get("characters")
         if cached is not None:
             return set(cached)
-        character_ids = collect_character_ids(self.mod_root, self.hoi4_install)
+        character_ids = collect_character_ids(self.mod_root, self._base_content_root)
         self._scan_cache["characters"] = character_ids
         return set(character_ids)
 
@@ -9075,6 +9512,11 @@ class Mod:
 
     def _known_sprite_textures(self) -> dict[str, str]:
         def scan_text(text: str, textures: dict[str, str]) -> None:
+            cached = self._sprite_text_parse_cache.get(text)
+            if cached is not None:
+                textures.update(cached)
+                return
+            parsed: dict[str, str] = {}
             for body, _, _ in iter_assignment_blocks(text, "spriteType"):
                 assignments = {
                     span.key: span
@@ -9093,7 +9535,9 @@ class Mod:
                     .replace("\\", "/")
                 )
                 if name and texture:
-                    textures[name] = texture
+                    parsed[name] = texture
+            self._sprite_text_parse_cache[text] = parsed
+            textures.update(parsed)
 
         def scan(base: Path, textures: dict[str, str]) -> None:
             interface_dir = base / "interface"
@@ -9108,8 +9552,8 @@ class Mod:
 
         if self._sprite_texture_cache is None:
             vanilla: dict[str, str] = {}
-            if self.hoi4_install is not None:
-                scan(self.hoi4_install, vanilla)
+            if self._base_content_root is not None:
+                scan(self._base_content_root, vanilla)
             self._sprite_texture_cache = vanilla
         textures = dict(self._sprite_texture_cache)
         scan(self.mod_root, textures)
@@ -9122,7 +9566,7 @@ class Mod:
         normalized = relative_path.replace("\\", "/").lstrip("/")
         return any(
             (root / normalized).is_file()
-            for root in (self.mod_root, self.hoi4_install)
+            for root in (self.mod_root, self._base_content_root)
             if root is not None
         ) or (self.mod_root / normalized) in self._pending_asset_writes
 
@@ -9140,20 +9584,12 @@ class Mod:
             "start_year",
             "categories",
         }
-        for base in self._data_roots():
-            tech_dir = base / "common" / "technologies"
-            if not tech_dir.exists():
-                continue
-            for path in tech_dir.glob("*.txt"):
-                try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
-                    continue
-                ids.update(
-                    candidate
-                    for candidate in _SCRIPT_BLOCK_ID_RE.findall(text)
-                    if candidate not in ignored
-                )
+        for _, text in self._effective_script_texts("common/technologies"):
+            ids.update(
+                candidate
+                for candidate in _SCRIPT_BLOCK_ID_RE.findall(text)
+                if candidate not in ignored
+            )
         self._scan_cache["technologies"] = ids
         return ids
 
@@ -9161,64 +9597,59 @@ class Mod:
         if self._equipment_unlock_cache is not None:
             return dict(self._equipment_unlock_cache)
         unlocks: dict[str, list[str]] = {}
-        for base in self._data_roots():
-            directory = base / "common" / "technologies"
-            if not directory.is_dir():
-                continue
-            for path in sorted(directory.glob("*.txt")):
-                try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                    wrappers = [
-                        span
-                        for span in top_level_assignments(text)
-                        if span.key == "technologies"
-                        and span.is_block
-                        and span.body_start is not None
-                        and span.body_end is not None
-                    ]
-                    for wrapper in wrappers:
-                        assert wrapper.body_start is not None
-                        assert wrapper.body_end is not None
-                        body = text[wrapper.body_start : wrapper.body_end]
-                        for technology in top_level_assignments(body):
-                            if (
-                                not technology.is_block
-                                or technology.body_start is None
-                                or technology.body_end is None
-                            ):
-                                continue
-                            tech_body = body[
-                                technology.body_start : technology.body_end
+        for _, text in self._effective_script_texts("common/technologies"):
+            try:
+                wrappers = [
+                    span
+                    for span in top_level_assignments(text)
+                    if span.key == "technologies"
+                    and span.is_block
+                    and span.body_start is not None
+                    and span.body_end is not None
+                ]
+                for wrapper in wrappers:
+                    assert wrapper.body_start is not None
+                    assert wrapper.body_end is not None
+                    body = text[wrapper.body_start : wrapper.body_end]
+                    for technology in top_level_assignments(body):
+                        if (
+                            not technology.is_block
+                            or technology.body_start is None
+                            or technology.body_end is None
+                        ):
+                            continue
+                        tech_body = body[
+                            technology.body_start : technology.body_end
+                        ]
+                        equipment_span = next(
+                            (
+                                span
+                                for span in top_level_assignments(tech_body)
+                                if span.key == "enable_equipments"
+                                and span.is_block
+                                and span.body_start is not None
+                                and span.body_end is not None
+                            ),
+                            None,
+                        )
+                        if equipment_span is None:
+                            continue
+                        assert equipment_span.body_start is not None
+                        assert equipment_span.body_end is not None
+                        equipment_body = strip_comments(
+                            tech_body[
+                                equipment_span.body_start : equipment_span.body_end
                             ]
-                            equipment_span = next(
-                                (
-                                    span
-                                    for span in top_level_assignments(tech_body)
-                                    if span.key == "enable_equipments"
-                                    and span.is_block
-                                    and span.body_start is not None
-                                    and span.body_end is not None
-                                ),
-                                None,
+                        )
+                        for equipment in re.findall(
+                            r"\b[A-Za-z][A-Za-z0-9_.:-]*\b",
+                            equipment_body,
+                        ):
+                            unlocks.setdefault(equipment, []).append(
+                                technology.key
                             )
-                            if equipment_span is None:
-                                continue
-                            assert equipment_span.body_start is not None
-                            assert equipment_span.body_end is not None
-                            equipment_body = strip_comments(
-                                tech_body[
-                                    equipment_span.body_start : equipment_span.body_end
-                                ]
-                            )
-                            for equipment in re.findall(
-                                r"\b[A-Za-z][A-Za-z0-9_.:-]*\b",
-                                equipment_body,
-                            ):
-                                unlocks.setdefault(equipment, []).append(
-                                    technology.key
-                                )
-                except (OSError, ValueError):
-                    continue
+            except (OSError, ValueError):
+                continue
         self._equipment_unlock_cache = {
             equipment: tuple(dict.fromkeys(technologies))
             for equipment, technologies in unlocks.items()
@@ -9640,16 +10071,8 @@ class Mod:
         if cached is not None:
             return set(cached)
         ids: set[str] = set()
-        for base in self._data_roots():
-            equipment_dir = base / "common" / "units" / "equipment"
-            if not equipment_dir.exists():
-                continue
-            for path in equipment_dir.glob("*.txt"):
-                try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
-                    continue
-                ids.update(_SCRIPT_BLOCK_ID_RE.findall(text))
+        for _, text in self._effective_script_texts("common/units/equipment"):
+            ids.update(_SCRIPT_BLOCK_ID_RE.findall(text))
         self._scan_cache["equipment"] = ids
         return ids
 
@@ -9713,7 +10136,7 @@ class Mod:
                     cached_result[int(id_text)] = province_type
             return cached_result
         path: Path | None = None
-        for root in (self.mod_root, self.hoi4_install):
+        for root in (self.mod_root, self._base_content_root):
             if root is None:
                 continue
             candidate = root / "map" / "definition.csv"
@@ -9745,7 +10168,7 @@ class Mod:
         errors: list[ValidationError] = []
         known_units = self._known_sub_unit_types()
         known_equipment = self._known_equipment_ids()
-        known_tags = set(load_all_tags(self.hoi4_install, self.mod_root))
+        known_tags = set(load_all_tags(self._base_content_root, self.mod_root))
         known_tags.update(self._countries)
         variants_by_tag: dict[str, tuple[EquipmentVariant, ...]] = {}
 
@@ -10180,8 +10603,8 @@ class Mod:
 
     def _data_roots(self) -> list[Path]:
         roots = [self.mod_root]
-        if self.hoi4_install is not None:
-            roots.append(self.hoi4_install)
+        if self._base_content_root is not None:
+            roots.append(self._base_content_root)
         return roots
 
     def _sync_country_loc(self, country: Country) -> None:

@@ -19,7 +19,8 @@ def test_country_creation_guidance_requires_complete_gfx_package() -> None:
         "implicitly includes a complete player-facing country package",
         "at least two political advisors and two military commanders",
         "https://aistudio.google.com/",
-        "billing-enabled Gemini API key",
+        "CommonsImageClient",
+        "assets/sources/",
         "Do not silently omit the graphics",
         "create_oob(..., assign=True)",
         "does not exist at scenario start",
@@ -59,7 +60,7 @@ def test_claude_is_directed_to_the_country_visual_contract() -> None:
     guidance = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
 
     assert "Country Visual Completeness" in guidance
-    assert "implicitly includes the complete original flag" in guidance
+    assert "implicitly includes the complete flag" in guidance
     assert "https://aistudio.google.com/" in guidance
     assert "billing-enabled Gemini" in guidance
     assert "Character" in guidance

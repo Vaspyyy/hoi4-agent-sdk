@@ -660,6 +660,8 @@ def _script_warnings(
 
     if known_tags is not None:
         for tag in re.findall(r"(?m)^\s*([A-Z][A-Z0-9]{2})\s*=\s*\{", script):
+            if tag in {"AND", "NOT", "NOR"}:
+                continue
             if tag not in known_tags and not re.fullmatch(r"D[0-9]{2}", tag):
                 errors.append(
                     ValidationError(

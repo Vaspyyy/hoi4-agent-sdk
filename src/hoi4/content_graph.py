@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterable
 
+from .localisation import parse_localization_dir
 from .types import ValidationError
 
 if TYPE_CHECKING:
@@ -41,6 +42,24 @@ _FLAG_RE = re.compile(
     re.DOTALL,
 )
 _BARE_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:-]+")
+
+
+def _localization_keys_in_script(keys: Iterable[str], script: str) -> set[str]:
+    """Match localization references with the historical ASCII token boundary.
+
+    Most keys consist entirely of the script token alphabet; those can share
+    one lexical pass instead of rescanning the complete mod once per key.
+    Punctuation/Unicode keys retain the exact original boundary-regex behavior.
+    """
+    tokens = set(_BARE_TOKEN_RE.findall(script))
+    used: set[str] = set()
+    for key in keys:
+        if _BARE_TOKEN_RE.fullmatch(key):
+            if key in tokens:
+                used.add(key)
+        elif re.search(rf"(?<![A-Za-z0-9_.:-]){re.escape(key)}(?![A-Za-z0-9_.:-])", script):
+            used.add(key)
+    return used
 
 
 @dataclass(frozen=True)
@@ -184,17 +203,14 @@ def analyze_content_liveness(
         if not _matches(flag, allowed_flags)
     }
 
-    localization_keys = {
-        key.split(":", 1)[0] for key in mod._loc_entries
-    }
+    localization_keys = {key.split(":", 1)[0] for key in mod._loc_entries}
+    authored_localization = _authored_localization_keys(mod)
     used_localization = _known_localization_uses(mod)
-    for key in localization_keys:
-        if re.search(rf"(?<![A-Za-z0-9_.:-]){re.escape(key)}(?![A-Za-z0-9_.:-])", scripts):
-            used_localization.add(key)
+    used_localization.update(_localization_keys_in_script(localization_keys, scripts))
     allowed_localization = tuple(localization_allowlist)
     unused_localization = {
         key
-        for key in localization_keys - used_localization
+        for key in authored_localization - used_localization
         if not _matches(key, allowed_localization)
     }
 
@@ -332,6 +348,21 @@ def _installed_flag_usage(mod: Mod) -> tuple[set[str], set[str]]:
     mod._scan_cache[written_key] = written
     mod._scan_cache[read_key] = read
     return set(written), set(read)
+
+
+def _authored_localization_keys(mod: Mod) -> set[str]:
+    """Keep inherited lookup vocabulary outside the authored-content audit.
+
+    Layered localization sources are retargeted to prospective top-mod paths,
+    so ``_loc_sources`` alone cannot distinguish fallback data from authored
+    entries. Read the actual top-mod files and include pending key mutations.
+    Intersect with live entries so deletions are not reported as unused.
+    """
+    if mod._content_layers is None:
+        return {key.split(":", 1)[0] for key in mod._loc_entries}
+    entries, _ = parse_localization_dir(mod.mod_root / "localisation" / "english")
+    authored = set(entries) | mod._dirty_loc_keys
+    return {key.split(":", 1)[0] for key in authored if key in mod._loc_entries}
 
 
 def _known_localization_uses(mod: Mod) -> set[str]:
