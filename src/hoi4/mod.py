@@ -6340,16 +6340,18 @@ class Mod:
                     break
             except (KeyError, ValueError):
                 continue
-        if requires_generated_names and tag not in self._known_country_name_pool_tags():
-            issue(
-                "missing_country_name_pool",
-                (
-                    f"Country '{tag}' has no common/names entry. HOI4 will fail "
-                    "to generate names for aces and other dynamic characters. "
-                    "Call set_country_name_pool() with culturally appropriate "
-                    "given names and surnames."
-                ),
-            )
+        if requires_generated_names:
+            name_pool_tags = self._known_country_name_pool_tags()
+            if tag not in name_pool_tags and "default" not in name_pool_tags:
+                issue(
+                    "missing_country_name_pool",
+                    (
+                        f"Country '{tag}' has no common/names entry. HOI4 will fail "
+                        "to generate names for aces and other dynamic characters. "
+                        "Call set_country_name_pool() with culturally appropriate "
+                        "given names and surnames."
+                    ),
+                )
 
         undefined = sorted(recruited - set(roster))
         for character_id in undefined:
@@ -10079,21 +10081,16 @@ class Mod:
         if cached is not None:
             return set(cached) | set(self._country_name_pool_updates)
         tags: set[str] = set()
-        for base in self._data_roots():
-            directory = base / "common" / "names"
-            if not directory.is_dir():
+        for _, text in self._effective_script_texts("common/names"):
+            try:
+                tags.update(
+                    span.key
+                    for span in top_level_assignments(text)
+                    if span.is_block
+                    and (span.key == "default" or re.fullmatch(r"[A-Z0-9]{3}", span.key))
+                )
+            except ValueError:
                 continue
-            for path in sorted(directory.glob("*.txt")):
-                try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                    tags.update(
-                        span.key
-                        for span in top_level_assignments(text)
-                        if span.is_block
-                        and re.fullmatch(r"[A-Z0-9]{3}", span.key)
-                    )
-                except (OSError, ValueError):
-                    continue
         self._scan_cache["country_name_pools"] = tags
         return set(tags) | set(self._country_name_pool_updates)
 

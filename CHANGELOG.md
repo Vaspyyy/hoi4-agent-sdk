@@ -26,6 +26,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Country-package validation now accepts HOI4's effective `default` name pool
+  as a fallback for countries with air wings, while still rejecting packages
+  that have neither a country-specific nor default pool.
 - Pending support scripts now participate in effect validation, custom-token
   resolution, and technology/equipment catalogs before saving. Replacements
   hide obsolete definitions and transaction rollback clears derived catalogs.
