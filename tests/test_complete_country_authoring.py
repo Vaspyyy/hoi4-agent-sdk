@@ -641,3 +641,49 @@ def _tree_hash(root: Path) -> str:
         digest.update(path.relative_to(root).as_posix().encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()
+
+
+@pytest.mark.parametrize("layered", [False, True])
+def test_shadowed_default_name_pool_does_not_satisfy_package(tmp_path, layered):
+    install = tmp_path / "install"
+    mod_root = tmp_path / "mod"
+    for root, text in (
+        (install, 'default = { male = { names = { "Alex" } } surnames = { "Smith" } }'),
+        (mod_root, 'XYZ = { male = { names = { "Alex" } } surnames = { "Smith" } }'),
+    ):
+        path = root / "common/names/00_names.txt"
+        path.parent.mkdir(parents=True)
+        path.write_text(text, encoding="utf-8")
+    base = tmp_path / "base"
+    base.mkdir()
+    mod = Mod(mod_root, hoi4_install=install, base_mod_paths=[base] if layered else [])
+    mod.create_country("ABC", "Authorland", capital=1)
+    mod.create_oob(
+        "ABC_air", "ABC", kind="air",
+        air_wings=[AirWing(1, "fighter_equipment_0", 12, owner="ABC")],
+    )
+    assert "missing_country_name_pool" in {
+        finding.code for finding in mod.validate_country_package("ABC", check_geography=False).findings
+    }
+
+
+def test_base_mod_default_name_pool_is_respected_unless_replaced(tmp_path):
+    base = tmp_path / "base"
+    names = base / "common/names/defaults.txt"
+    names.parent.mkdir(parents=True)
+    names.write_text('default = { male = { names = { "Alex" } } surnames = { "Smith" } }')
+    mod = Mod(tmp_path / "mod", base_mod_paths=[base])
+    mod.create_country("ABC", "Authorland", capital=1)
+    mod.create_oob(
+        "ABC_air", "ABC", kind="air",
+        air_wings=[AirWing(1, "fighter_equipment_0", 12, owner="ABC")],
+    )
+    mod.save(require_changes=True)
+    assert "missing_country_name_pool" not in {
+        finding.code for finding in mod.validate_country_package("ABC", check_geography=False).findings
+    }
+    (mod.mod_root / "descriptor.mod").write_text('replace_path="common/names"')
+    mod.reload()
+    assert "missing_country_name_pool" in {
+        finding.code for finding in mod.validate_country_package("ABC", check_geography=False).findings
+    }

@@ -10081,24 +10081,16 @@ class Mod:
         if cached is not None:
             return set(cached) | set(self._country_name_pool_updates)
         tags: set[str] = set()
-        for base in self._data_roots():
-            directory = base / "common" / "names"
-            if not directory.is_dir():
+        for _, text in self._effective_script_texts("common/names"):
+            try:
+                tags.update(
+                    span.key
+                    for span in top_level_assignments(text)
+                    if span.is_block
+                    and (span.key == "default" or re.fullmatch(r"[A-Z0-9]{3}", span.key))
+                )
+            except ValueError:
                 continue
-            for path in sorted(directory.glob("*.txt")):
-                try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                    tags.update(
-                        span.key
-                        for span in top_level_assignments(text)
-                        if span.is_block
-                        and (
-                            span.key == "default"
-                            or re.fullmatch(r"[A-Z0-9]{3}", span.key)
-                        )
-                    )
-                except (OSError, ValueError):
-                    continue
         self._scan_cache["country_name_pools"] = tags
         return set(tags) | set(self._country_name_pool_updates)
 
