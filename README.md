@@ -48,9 +48,13 @@ with mod.transaction():
     print(mod.preview_summary())
     print(mod.preview())
     issues = mod.validate()
+    for issue in issues:
+        print(f"[{issue.severity}] {issue.message}")
+    if any(issue.severity == "error" for issue in issues):
+        raise RuntimeError("Validation failed")
 
-# Nothing was written. Use transaction(save=True), or call mod.save(), after
-# reviewing the preview and validation result.
+# This dry run discards its changes on exit. After reviewing the output,
+# rerun the block with mod.transaction(save=True) to apply and save the edits.
 ```
 
 ## Supported content
@@ -66,6 +70,7 @@ with mod.transaction():
 - ideology definitions and bookmark scenarios
 - project scaffolding, launcher descriptors, and safe mod discovery
 - flag, portrait, and bookmark-picture import/export with optional Pillow support
+- key-free Wikimedia Commons image search and downloads with source/license metadata
 - optional Gemini generation of reviewable flag and leader-portrait PNG candidates
 - political-map rendering and procedural map/province generation
 - disconnected owned-territory and enclosed foreign-territory detection from
@@ -108,8 +113,37 @@ print(mod.preview())
 mod.save()
 ```
 
-Gemini generation is an optional, billable candidate step. It does not modify a
-mod; review the PNG before passing it to the existing import helpers:
+Prefer suitable existing images, then Wikimedia Commons for historical flags
+and portraits. Search needs no API key or extra dependency; downloads and image
+imports need the `assets` extra:
+
+```python
+from pathlib import Path
+from hoi4 import CommonsImageClient
+
+client = CommonsImageClient()
+images = client.search("Flag of France", limit=5, thumbnail_width=1024)
+for image in images:
+    print(image.title, image.source_url, image.license_name)
+
+# Select after reviewing the source page, historical fit, and license.
+image = client.get_image("File:Flag of France.svg")
+source = client.download(image, Path.cwd() / "assets" / "sources")
+print(source.path, source.metadata_path, source.sha256)
+# Inspect full size and a 10x7 preview before import_flag_to_mod().
+```
+
+SVGs use Commons raster thumbnails. Keep the JSON provenance beside the source,
+retain attribution required by its license, and review metadata rather than
+treating it as automatic legal certification. Portraits also need a 156x210
+preview; importing a photo does not create a painted portrait. Import reviewed
+sources with the helpers above, then validate, preview, and inspect the save
+result. See [Wikimedia Commons images](docs/api.md#wikimedia-commons-images).
+
+Gemini generation is an optional, billable candidate step for explicitly desired
+or necessary generation with paid calls authorized. Failed web searches or an
+available key do not authorize paid fallback. It does not modify a mod; review
+the PNG before passing it to the existing import helpers:
 
 ```python
 from pathlib import Path
@@ -148,11 +182,13 @@ package, not merely script files. That package includes the three flag sizes, a
 leader portrait, portraits for all new visible characters, at least two
 political advisors and two military commanders, historically appropriate
 additional officers, and the corresponding DDS/GFX, roles, and localization.
-A broad country request authorizes generation and import after visual review.
-If no API key is available, the agent must say that proper custom GFX requires a
-billing-enabled Gemini API key from [Google AI
-Studio](https://aistudio.google.com/), name the supported environment variables,
-and report the package as visually incomplete rather than silently omitting it.
+A broad country request authorizes sourcing, downloading, and importing suitable
+local or web assets after visual and source/license review. Gemini credentials
+are not required for those routes. Paid generation requires separate
+authorization; when that route is requested, a billing-enabled Gemini API key
+from [Google AI Studio](https://aistudio.google.com/) must be available in
+`GEMINI_API_KEY` or `GOOGLE_API_KEY`. Report any missing assets explicitly while
+continuing available work.
 Use `Character` plus its role models for every roster entry. For countries that
 exist at scenario start, author land, naval, and air OOBs as separate files;
 assign them with the engine's `set_oob`, `set_naval_oob`, and `set_air_oob`
@@ -176,11 +212,14 @@ For existing mods, use the following loop:
 
 1. Load with `strict_loading=True` when skipped or malformed files must stop the
    operation.
-2. Make changes inside `mod.transaction()`.
+2. Make changes inside `mod.transaction()` for a dry run.
 3. Inspect `mod.preview_summary()` and `mod.preview()`.
 4. Run `mod.validate(stage="build")` between pipeline steps, then
    `mod.validate(stage="release")` and resolve errors before release.
-5. Save only after the preview is acceptably small and semantically correct.
+5. After accepting the preview, reapply the edits inside
+   `mod.transaction(save=True)` and raise on validation errors before exiting
+   the block. A completed dry run has discarded its edits, so calling `save()`
+   afterward cannot write them.
 
 `Mod` detects source files changed by another writer after it was loaded and
 raises `ExternalModificationError` before preview/save. Use one instance per

@@ -6,7 +6,39 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Ordered directory-backed base mods, descriptor dependencies, effective-file
+  provenance, and opt-in inherited focus/event/idea/on-action editing.
+- Transactional support-script imports, source-preserving scripted-trigger
+  authoring, explicit conversion color-table rebuilding, and impassable states.
+
+- `CommonsImageClient` searches Wikimedia Commons and downloads raster sources
+  with creator/license metadata, retrieval time, checksums, and verified local
+  cache reuse. SVG flags use Commons raster thumbnails. Sources feed the
+  existing transactional flag/portrait import APIs without a Gemini key.
+
+### Changed
+
+- Agent country-creation guidance now prefers suitable existing assets and
+  Commons sources. Paid Gemini generation is an explicitly authorized option;
+  missing credentials no longer prevent local or web-sourced graphics.
+
 ### Fixed
+
+- Pending support scripts now participate in effect validation, custom-token
+  resolution, and technology/equipment catalogs before saving. Replacements
+  hide obsolete definitions and transaction rollback clears derived catalogs.
+- Inherited-file loading rejects duplicate IDs before mutating the facade;
+  scripted-trigger bodies cannot escape their enclosing definition.
+- Event edits preserve conditional descriptions and unmodeled fields; victory
+  points serialize as separate province/value pairs.
+- Localization destination checks reject unsupported paths before mutation;
+  transaction rollback restores state-name lookup results. Inherited localization
+  is excluded from authored-content liveness warnings.
+- Logical trigger blocks preserve their enclosing scope. Repeated state,
+  sprite, runtime-activation, name-pool and trigger lookups avoid redundant scans.
+- CI uses patched pip 26.2.1 instead of the vulnerable 26.1.2 pin.
 
 - `update_country(..., technologies=...)` now moves the scenario-start
   technology block ahead of equipment variants that already exist in country

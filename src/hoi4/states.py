@@ -89,6 +89,9 @@ def read_state(state_file: Path, text: str | None = None) -> State:
     if dz_node and dz_node.value:
         state_obj.is_demilitarized_zone = dz_node.value == "yes"
 
+    impassable_node = state_block.find("impassable")
+    state_obj.impassable = bool(impassable_node and impassable_node.value == "yes")
+
     mp_node = state_block.find("manpower")
     if mp_node and mp_node.value:
         state_obj.manpower = mp_node.value
@@ -141,7 +144,7 @@ def read_state(state_file: Path, text: str | None = None) -> State:
         vp_parts: list[str] = []
         for vp in history.find_all("victory_points"):
             if vp.is_block():
-                vals = [c.value for c in vp.children if c.value]
+                vals = [c.value for c in vp.children if c.value and not c.is_comment]
                 vp_parts.extend(vals)
             elif vp.value:
                 vp_parts.append(vp.value)
@@ -265,6 +268,44 @@ def _set_direct_block(
     return _append_direct_assignment(text, rendered, indent)
 
 
+
+def _victory_point_pairs(value: str) -> list[tuple[str, str]]:
+    values = value.split()
+    if len(values) % 2:
+        raise ValueError("Victory points require province/value pairs")
+    return list(zip(values[::2], values[1::2]))
+
+
+def _victory_point_block_values(text: str, span: AssignmentSpan) -> list[str]:
+    if not span.is_block:
+        return []
+    return [node.value for node in parse_pdx(_assignment_body(text, span)).children
+            if node.value is not None and not node.is_comment]
+
+
+def _has_non_pair_victory_points(text: str) -> bool:
+    return any(len(_victory_point_block_values(text, span)) != 2
+               for span in top_level_assignments(text) if span.key == "victory_points")
+
+
+def _set_victory_point_pairs(text: str, value: str) -> str:
+    pairs = _victory_point_pairs(value)
+    spans = [span for span in top_level_assignments(text) if span.key == "victory_points"]
+    result = text
+    for index in range(len(spans) - 1, -1, -1):
+        span = spans[index]
+        if index >= len(pairs):
+            result = replace_assignment(result, span, None)
+        elif _victory_point_block_values(text, span) != list(pairs[index]):
+            province, points = pairs[index]
+            result = replace_assignment(result, span, f"victory_points = {{ {province} {points} }}")
+    if len(pairs) > len(spans):
+        indent = _infer_assignment_indent(result, fallback="\t\t")
+        for province, points in pairs[len(spans):]:
+            result = _append_direct_assignment(result, f"victory_points = {{ {province} {points} }}", indent)
+    return result
+
+
 def _set_repeated_scalars(
     text: str,
     key: str,
@@ -332,6 +373,8 @@ def _patch_existing_state(state: State) -> str:
             "is_demilitarized_zone",
             "yes" if state.is_demilitarized_zone else None,
         )
+    if state.impassable != original.impassable:
+        state_body = _set_direct_scalar(state_body, "impassable", "yes" if state.impassable else None)
     if state.resources != original.resources:
         state_body = _set_direct_block(
             state_body,
@@ -345,11 +388,13 @@ def _patch_existing_state(state: State) -> str:
             " ".join(str(province) for province in state.provinces),
         )
 
-    if state.history.strip() != original.history.strip():
+    history_replaced = state.history.strip() != original.history.strip()
+    if history_replaced:
         state_body = _set_direct_block(state_body, "history", state.history or None)
 
     history_span = _find_direct_assignment(state_body, "history", block=True)
-    history_changed = any(
+    repair_victory_points = _has_non_pair_victory_points(_assignment_body(state_body, history_span))
+    history_changed = history_replaced or repair_victory_points or any(
         (
             state.owner != original.owner,
             state.cores != original.cores,
@@ -362,27 +407,22 @@ def _patch_existing_state(state: State) -> str:
         history_span = _find_direct_assignment(state_body, "history", block=True)
     if history_span is not None:
         history_body = _assignment_body(state_body, history_span)
-        if state.owner != original.owner:
+        if history_replaced or state.owner != original.owner:
             history_body = _set_direct_scalar(
                 history_body,
                 "owner",
                 state.owner or None,
                 fallback_indent="\t\t",
             )
-        if state.cores != original.cores:
+        if history_replaced or state.cores != original.cores:
             history_body = _set_repeated_scalars(
                 history_body,
                 "add_core_of",
                 state.cores,
             )
-        if state.victory_points != original.victory_points:
-            history_body = _set_direct_block(
-                history_body,
-                "victory_points",
-                state.victory_points or None,
-                fallback_indent="\t\t",
-            )
-        if state.buildings.strip() != original.buildings.strip():
+        if history_replaced or repair_victory_points or state.victory_points != original.victory_points:
+            history_body = _set_victory_point_pairs(history_body, state.victory_points)
+        if history_replaced or state.buildings.strip() != original.buildings.strip():
             history_body = _set_direct_block(
                 history_body,
                 "buildings",
@@ -454,6 +494,9 @@ def serialize_state(state: State) -> str:
         )
     )
 
+    if state.impassable:
+        state_block.children.append(PdxNode(key="impassable", value="yes"))
+
     if state.is_demilitarized_zone:
         state_block.children.append(PdxNode(key="is_demilitarized_zone", value="yes"))
 
@@ -487,10 +530,10 @@ def serialize_state(state: State) -> str:
             history.children.append(PdxNode(key="add_core_of", value=core))
     if state.victory_points:
         history.remove("victory_points")
-        vp_block = PdxNode(key="victory_points")
-        for part in state.victory_points.split():
-            vp_block.children.append(PdxNode(key=None, value=part))
-        history.children.append(vp_block)
+        for province, points in _victory_point_pairs(state.victory_points):
+            vp_block = PdxNode(key="victory_points", block=True)
+            vp_block.children.extend([PdxNode(value=province), PdxNode(value=points)])
+            history.children.append(vp_block)
     if state.buildings:
         _replace_block(history, "buildings", state.buildings)
     state_block.children.append(history)
