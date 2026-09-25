@@ -48,7 +48,9 @@ def test_downloaded_assets_import_transactionally(tmp_path: Path, monkeypatch, k
         if kind == "flag":
             flags = mod.import_flag_to_mod("TST", source.path)[0]
             return [(flags.large, (82, 52)), (flags.medium, (41, 26)), (flags.small, (10, 7))]
-        portrait = mod.import_portrait_to_mod("TST", "leader", source.path)
+        # This integration covers Commons provenance and transactional imports.
+        # TGA works on the minimum Pillow; DDS capability has its own asset tests.
+        portrait = mod.import_portrait_to_mod("TST", "leader", source.path, output_format="tga")
         mod.write_portrait_gfx("TST", "leader", portrait_path=portrait)
         return [(portrait, (156, 210))]
 
