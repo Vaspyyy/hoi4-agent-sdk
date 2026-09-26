@@ -4527,6 +4527,12 @@ class Mod:
             modifier=dict(modifier or {}),
             path=target,
         )
+        if existing is not None:
+            # Replace every modeled value, including omitted optional fields,
+            # through the source patcher so unknown blocks and comments survive.
+            dynamic_modifier.touched_fields.update({
+                "icon", "enable", "remove_trigger", "attacker_modifier", "modifier",
+            })
         self._dynamic_modifiers[modifier_id] = dynamic_modifier
         self._dynamic_modifier_sources[modifier_id] = target
         self._dirty_dynamic_modifiers.add(modifier_id)
