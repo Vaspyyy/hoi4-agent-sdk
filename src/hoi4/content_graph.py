@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterable
 
 from .localisation import parse_localization_dir
+from .parser import strip_comments
 from .types import ValidationError
 
 if TYPE_CHECKING:
@@ -318,7 +319,9 @@ def _all_script_text(mod: Mod) -> str:
         flattened.extend((modifier.enable, modifier.remove_trigger))
     for bookmark in mod._bookmarks:
         flattened.append(bookmark.effect)
-    return "\n".join(flattened)
+    # Each fragment has its own lexical context; never let a trailing comment
+    # (or a quote inside one) affect the next independent source.
+    return "\n".join(strip_comments(text) for text in flattened)
 
 
 def _installed_flag_usage(mod: Mod) -> tuple[set[str], set[str]]:
@@ -343,7 +346,7 @@ def _installed_flag_usage(mod: Mod) -> tuple[set[str], set[str]]:
                 text = path.read_text(encoding="utf-8-sig", errors="ignore")
             except OSError:
                 continue
-            for operation, flag in _FLAG_RE.findall(text):
+            for operation, flag in _FLAG_RE.findall(strip_comments(text)):
                 (read if operation.startswith("has_") else written).add(flag)
     mod._scan_cache[written_key] = written
     mod._scan_cache[read_key] = read

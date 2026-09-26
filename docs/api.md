@@ -795,6 +795,10 @@ deliberately unknown. Explicit nested scopes are still checked with
 reachability, incoming event references, idea grants, flag reads/writes, and
 localization use. `flag_allowlist=` and `localization_allowlist=` accept glob
 patterns for deliberate bookkeeping and reserved/future content.
+Comments are ignored in authored script, country history, and installed-game
+flag references without changing stored source. Quoted hashes and escaped
+quotes are preserved. Matching remains regex-based: effect-shaped text inside
+quoted strings can still count as a reference.
 It is deliberately structural. `analysis_scope` is `"structural"` and
 `proves_dynamic_achievability` is false because reference reachability cannot
 prove that popularity thresholds, variables, or mutually dependent triggers
