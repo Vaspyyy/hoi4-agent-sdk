@@ -171,6 +171,7 @@ def _province_id_array(
 def compute_adjacencies(
     province_data: list[dict[str, Any]], province_image: Image.Image
 ) -> set[tuple[int, int]]:
+    """Find orthogonal province neighbors, including HOI4's east–west wrap."""
     ids, _ = _province_id_array(province_data, province_image)
     result: set[tuple[int, int]] = set()
     horizontal = (ids[:, :-1] != ids[:, 1:]) & (ids[:, :-1] >= 0) & (ids[:, 1:] >= 0)
@@ -181,12 +182,16 @@ def compute_adjacencies(
     for y, x in zip(*np.where(vertical)):
         a, b = int(ids[y, x]), int(ids[y + 1, x])
         result.add((min(a, b), max(a, b)))
+    for a, b in zip(ids[:, :1].ravel(), ids[:, -1:].ravel()):
+        if a >= 0 and b >= 0 and a != b:
+            result.add((int(min(a, b)), int(max(a, b))))
     return result
 
 
 def compute_coastal_provinces(
     province_data: list[dict[str, Any]], province_image: Image.Image
 ) -> set[int]:
+    """Find land touching ocean orthogonally, with east–west wrapping only."""
     ids, water = _province_id_array(province_data, province_image)
     lake_ids = {
         int(item["province_id"]) for item in province_data if item.get("province_type") == "lake"
@@ -197,7 +202,10 @@ def compute_coastal_provinces(
         if item.get("province_type") in {"ocean", "sea"}
     }
     ocean = np.isin(ids, list(ocean_ids))
-    candidates = binary_dilation(ocean) & ~water & (ids >= 0)
+    ocean_contact = binary_dilation(ocean)
+    ocean_contact[:, :1] |= ocean[:, -1:]
+    ocean_contact[:, -1:] |= ocean[:, :1]
+    candidates = ocean_contact & ~water & (ids >= 0)
     return {int(value) for value in np.unique(ids[candidates]) if value not in lake_ids}
 
 
