@@ -46,6 +46,106 @@ def test_order_replacement_and_original_provenance(tmp_path):
     assert expected.read_text() == state("ITA")
 
 
+@pytest.mark.parametrize("layered", [False, True])
+@pytest.mark.parametrize("replacement", ["common/scripted_triggers", "common"])
+def test_content_discovery_filters_replaced_vanilla_without_hiding_writable_files(
+    tmp_path, layered, replacement
+):
+    game, base, _, top = roots(tmp_path)
+    hidden = put(game, "common/scripted_triggers/nested/hidden.txt", "hidden = yes")
+    override = put(game, "common/scripted_triggers/override.txt", "old = yes")
+    sibling = put(game, "common/scripted_triggers_extra/visible.txt", "visible = yes")
+    root_sibling = put(game, "common_extra/visible.txt", "visible = yes")
+    ordinary = put(game, "events/visible.txt", "visible = yes")
+    writable = put(top, "common/scripted_triggers/override.txt", "new = yes")
+    put(top, "descriptor.mod", f'replace_path="{replacement}"')
+    mod = Mod(top, hoi4_install=game, base_mod_paths=[base] if layered else [])
+
+    assert mod.content_source(hidden.relative_to(game)) is None
+    assert mod.content_source(override.relative_to(game)) == writable
+    assert mod.content_source(sibling.relative_to(game)) == (
+        sibling if replacement == "common/scripted_triggers" else None
+    )
+    if not layered:
+        # ContentLayers inventories only its configured runtime content roots.
+        assert mod.content_source(root_sibling.relative_to(game)) == root_sibling
+    assert mod.content_source(ordinary.relative_to(game)) == ordinary
+    assert mod.content_files("common/scripted_triggers") == {
+        "common/scripted_triggers/override.txt": writable
+    }
+    expected_common = {"common/scripted_triggers/override.txt": writable}
+    if replacement == "common/scripted_triggers":
+        expected_common["common/scripted_triggers_extra/visible.txt"] = sibling
+    assert mod.content_files("common") == expected_common
+    if not layered:
+        assert mod.content_files("common_extra") == {"common_extra/visible.txt": root_sibling}
+    assert mod.content_files("events") == {"events/visible.txt": ordinary}
+    with pytest.raises(ValueError, match="Unsafe content path"):
+        mod.content_source("../escape.txt")
+    with pytest.raises(ValueError, match="Unsafe content path"):
+        mod.content_files("../escape")
+
+
+@pytest.mark.parametrize("layered", [False, True])
+def test_empty_replacement_directory_and_ordinary_fallback(tmp_path, layered):
+    game, base, _, top = roots(tmp_path)
+    source = put(game, "common/scripted_triggers/old.txt", "old = yes")
+    mod = Mod(top, hoi4_install=game, base_mod_paths=[base] if layered else [])
+    assert mod.content_source("common/scripted_triggers/old.txt") == source
+    assert mod.content_files("common/scripted_triggers") == {
+        "common/scripted_triggers/old.txt": source
+    }
+
+    put(top, "descriptor.mod", 'replace_path="common/scripted_triggers"')
+    if layered:
+        mod.reload()
+    assert mod.content_source("common/scripted_triggers/old.txt") is None
+    assert mod.content_files("common/scripted_triggers") == {}
+    assert not (top / "common/scripted_triggers").exists()
+
+
+def test_unlayered_discovery_rejects_unsafe_descriptor_replacement(tmp_path):
+    game, _, _, top = roots(tmp_path)
+    put(game, "events/old.txt", "old = yes")
+    put(top, "events/local.txt", "local = yes")
+    put(top, "descriptor.mod", 'replace_path="../events"')
+    mod = Mod(top, hoi4_install=game)
+    with pytest.raises(ValueError, match="Unsafe content path"):
+        mod.content_source("events/local.txt")
+    with pytest.raises(ValueError, match="Unsafe content path"):
+        mod.content_files("events")
+
+
+@pytest.mark.parametrize("layered", [False, True])
+def test_replaced_vanilla_script_ids_do_not_block_public_authoring(tmp_path, layered):
+    game, base, _, top = roots(tmp_path)
+    put(game, "common/scripted_triggers/vanilla.txt", "example = { always = no }")
+    put(top, "descriptor.mod", 'replace_path="common/scripted_triggers"')
+    source = put(tmp_path, "import.txt", "example = { always = yes }")
+    mod = Mod(top, hoi4_install=game, base_mod_paths=[base] if layered else [])
+    mod.create_scripted_trigger("example", "always = yes")
+    with pytest.raises(ValueError, match="already queued"):
+        mod.create_scripted_trigger("example", "always = no", path="common/scripted_triggers/other.txt")
+    with pytest.raises(ValueError, match="conflict"):
+        mod.import_script_file(source, "common/scripted_triggers/import.txt")
+    result = mod.save(require_changes=True)
+    assert result.written_files
+
+    # A separate import is allowed when the only matching ID is suppressed vanilla.
+    import_top = tmp_path / "import_top"
+    put(import_top, "descriptor.mod", 'replace_path="common/scripted_triggers"')
+    importing = Mod(import_top, hoi4_install=game, base_mod_paths=[base] if layered else [])
+    importing.import_script_file(source, "common/scripted_triggers/import.txt")
+    assert importing.save(require_changes=True).written_files
+
+    # Without replacement the vanilla collision is active for both APIs.
+    active = Mod(tmp_path / "active", hoi4_install=game, base_mod_paths=[base] if layered else [])
+    with pytest.raises(ValueError, match="already exists"):
+        active.create_scripted_trigger("example", "always = yes")
+    with pytest.raises(ValueError, match="conflict"):
+        active.import_script_file(source, "common/scripted_triggers/import.txt")
+
+
 def test_state_fallback_save_and_reload_do_not_write_bases(tmp_path):
     game, a, b, top = roots(tmp_path)
     put(game, "history/states/1.txt", state("GER"))
