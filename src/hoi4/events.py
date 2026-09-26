@@ -160,7 +160,7 @@ def _extract_options(chunk: str) -> list[EventOption]:
         ):
             continue
         block_text = chunk[span.body_start : span.body_end]
-        opt = EventOption(raw_block=block_text.strip())
+        opt = EventOption(raw_block=block_text.strip(), _source_body=block_text)
 
         clean_block = strip_comments(block_text)
         name_m = re.search(r"\bname\s*=\s*(\S+)", clean_block)
@@ -373,12 +373,23 @@ def _patch_event_body(event: Event, body: str) -> str:
         if option is None:
             body = replace_assignment(body, span, None)
         elif span.body_start is not None and span.body_end is not None and option.raw_block:
-            option_body = body[span.body_start : span.body_end]
+            # The destination slot is only a location, never the option's identity.
+            # New options have no source body and cannot claim a loaded occurrence.
+            option_body = (
+                option._source_body if option._source_body is not None else option.raw_block
+            )
             body = replace_assignment_body(body, span, _patch_option_body(option, option_body))
         else:
             body = replace_assignment(body, span, _serialize_option(option, indent=0))
     for option in current_options[len(option_spans) :]:
-        body = append_assignment(body, _serialize_option(option, indent=0))
+        # A leading indent prevents append_assignment from reindenting every
+        # line of a retained source body when it moves beyond the old slots.
+        if option._source_body is not None:
+            option_body = _patch_option_body(option, option._source_body)
+            rendered = f"\toption = {{{option_body}}}"
+        else:
+            rendered = _serialize_option(option, indent=0)
+        body = append_assignment(body, rendered)
     return body
 
 

@@ -82,3 +82,118 @@ def test_direct_scalar_description_change_is_serialized(tmp_path):
     rendered = serialize_event(event)
     assert "desc = source.changed" in rendered
     assert "source.french" not in rendered
+
+
+OPTIONS_SOURCE = """add_namespace = source
+country_event = {
+    id = source.1
+    hidden = yes
+    option = {
+        name = source.same
+        # Owned by first.
+        custom_first = { value = 01 }
+        add_political_power = 1
+    }
+    # Between first and second.
+    option = {
+        name = source.same
+        # Owned by second.
+        custom_second = { value = 02 }
+        add_political_power = 2
+    }
+    # Between second and third.
+    option = {
+        name = source.third
+        # Owned by third.
+        custom_third = { value = 03 }
+        add_political_power = 3
+    }
+    # Event tail.
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "order",
+    [(1, 2), (0, 2), (2, 1, 0), ("new", 0, 1, 2), (0, "new", 2), ("new", 2, "new", 1), ()],
+)
+def test_replace_loaded_options_preserves_identity(tmp_path, order):
+    mod, path = make_mod(tmp_path, OPTIONS_SOURCE)
+    originals = mod.get_event("source.1").options
+    replacement = [
+        EventOption(name="source.new", effect="add_stability = 0.1")
+        if index == "new" else originals[index]
+        for index in order
+    ]
+    mod.update_event("source.1", options=replacement)
+    before = path.read_bytes()
+    preview = mod.preview()
+    assert preview
+    assert mod.preview() == preview
+    assert path.read_bytes() == before
+    result = mod.save(require_changes=True)
+    print(result)
+    assert result.written_files == [path]
+    saved = path.read_text()
+    loaded = Mod(tmp_path).get_event("source.1").options
+    assert [option.name for option in loaded] == [option.name for option in replacement]
+    for option, index in zip(loaded, order):
+        if index == "new":
+            assert option.effect == "add_stability = 0.1"
+            assert "custom_" not in option.raw_block
+        else:
+            assert option.raw_block == originals[index].raw_block
+    for index, label in enumerate(("first", "second", "third")):
+        assert (f"# Owned by {label}." in saved) == (index in order)
+        assert (f"custom_{label}" in saved) == (index in order)
+    assert "# Between first and second." in saved
+    assert "# Between second and third." in saved
+    assert "# Event tail." in saved
+    assert "hidden = yes" in saved
+
+    if loaded:
+        # save() reloads the same facade; edit the new position, including duplicate names.
+        selected = next(position for position, index in enumerate(order) if index != "new")
+        mod.update_event_option("source.1", selected, ai_chance="factor = 7")
+        assert "factor = 7" in mod.preview()
+        result = mod.save(require_changes=True)
+        print(result)
+        assert result.written_files == [path]
+        edited = Mod(tmp_path).get_event("source.1").options
+        assert edited[selected].ai_chance == "factor = 7"
+        assert [option.effect for option in edited] == [option.effect for option in loaded]
+        for position, option in enumerate(edited):
+            if position != selected:
+                assert option.raw_block == loaded[position].raw_block
+
+
+def test_unchanged_options_are_byte_identical(tmp_path):
+    from hoi4.events import serialize_events_file
+
+    mod, path = make_mod(tmp_path, OPTIONS_SOURCE)
+    namespace, events = load_events_file(path)
+    assert serialize_events_file(namespace, events, OPTIONS_SOURCE) == OPTIONS_SOURCE
+    mod.update_event("source.1", options=mod.get_event("source.1").options[:])
+    assert mod.preview() == ""
+    result = mod.save()
+    print(result)
+    assert result.no_changes
+    assert path.read_bytes() == OPTIONS_SOURCE.encode()
+
+
+def test_reordered_option_edit_before_save_uses_its_own_source(tmp_path):
+    mod, path = make_mod(tmp_path, OPTIONS_SOURCE)
+    options = mod.get_event("source.1").options
+    mod.update_event("source.1", options=[options[1], options[0]])
+    mod.update_event_option("source.1", 0, name="source.renamed", trigger="tag = GER")
+    assert "source.renamed" in mod.preview()
+    result = mod.save(require_changes=True)
+    print(result)
+    assert path in result.written_files
+    options = Mod(tmp_path).get_event("source.1").options
+    assert options[0].name == "source.renamed"
+    assert options[0].trigger == "tag = GER"
+    assert "custom_second = { value = 02 }" in options[0].raw_block
+    assert "# Owned by second." in options[0].raw_block
+    assert "custom_first" not in options[0].raw_block
+    assert "custom_first" in options[1].raw_block
