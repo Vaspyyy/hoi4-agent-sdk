@@ -948,6 +948,8 @@ class Mod:
         Focus, event, idea and on-action files are opt-in, like vanilla country
         reads. All siblings in the file are retained. Reading alone writes
         nothing; edits serialize a complete override into this mod on save.
+        Duplicate focus IDs within an inherited tree reject the entire import
+        before any trees are installed, regardless of ``strict_loading``.
         """
         relative = relative_content_path(relative_path)
         source = self.content_source(relative)
@@ -972,7 +974,17 @@ class Mod:
 
         directory = relative.parent.as_posix()
         if directory == "common/national_focus":
-            install(load_focus_trees(source), self._focus_trees)
+            trees = load_focus_trees(source)
+            for tree in trees:
+                seen_focus_ids: set[str] = set()
+                for focus in tree.focuses:
+                    if focus.id in seen_focus_ids:
+                        raise ValueError(
+                            f"Duplicate focus ID {focus.id!r} in inherited tree {tree.id!r} "
+                            f"from {relative}"
+                        )
+                    seen_focus_ids.add(focus.id)
+            install(trees, self._focus_trees)
         elif directory == "events":
             namespace, events = load_events_file(source)
             install(events, self._events)
