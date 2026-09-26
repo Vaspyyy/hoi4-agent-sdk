@@ -8018,9 +8018,27 @@ class Mod:
                     for ideology in self._ideologies.values()
                     if ideology.path == path
                 ]
+                original = self._original_files.get(path, "")
+                if (
+                    path not in self._original_files
+                    and not path.is_file()
+                    and self._base_content_root is not None
+                ):
+                    # A same-path override shadows the entire inherited file.
+                    # Seed both text and models: the serializer removes definitions
+                    # missing from its list. The fallback applies layer precedence
+                    # and replace_path; even an empty writable file wins over it.
+                    source = self._base_content_root / path.relative_to(self.mod_root)
+                    if source.is_file():
+                        original = self._read_current_text(source)
+                        updated_ids = {ideology.id for ideology in ideologies}
+                        ideologies.extend(
+                            sibling for sibling in load_ideologies_file(source)
+                            if sibling.id not in updated_ids
+                        )
                 rendered[path] = serialize_ideologies_file(
                     ideologies,
-                    original=self._original_files.get(path, ""),
+                    original=original,
                 )
 
         if "dynamic_modifiers" in self._dirty:

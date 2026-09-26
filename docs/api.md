@@ -947,6 +947,14 @@ atomic-save lifecycle as the original content model:
 | `update_ideology(ideology_id, **kwargs) -> bool` | `bool` | Source-patches a mod ideology or materializes a vanilla definition as a mod override. |
 | `delete_ideology(ideology_id) -> bool` | `bool` | Stages deletion of a mod ideology. |
 
+Creating or updating an ideology at a missing writable path (including the
+default `common/ideologies/00_mod_ideologies.txt`) preserves the complete effective
+inherited file at that path, including sibling definitions, comments, and unknown
+fields. Layer precedence and `replace_path` apply; an existing writable file,
+including an intentionally empty override, remains authoritative. As with name
+pools, this is a whole-file snapshot: later additions to the inherited file stay
+hidden by the saved override.
+
 ### Dynamic-modifier methods
 
 | Method | Returns | Description |
