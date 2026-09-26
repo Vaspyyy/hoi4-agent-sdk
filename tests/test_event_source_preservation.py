@@ -197,3 +197,38 @@ def test_reordered_option_edit_before_save_uses_its_own_source(tmp_path):
     assert "# Owned by second." in options[0].raw_block
     assert "custom_first" not in options[0].raw_block
     assert "custom_first" in options[1].raw_block
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_commented_trigger_update_preview_save_reload(tmp_path, newline):
+    source = SOURCE.replace(
+        "    hidden = yes",
+        "    trigger = { always = yes }\n"
+        "    immediate = { add_political_power = 1 }\n"
+        "    mean_time_to_happen = { days = 1 }\n"
+        "    hidden = yes",
+    ).replace("\n", newline)
+    path = tmp_path / "events" / "source.txt"
+    path.parent.mkdir()
+    path.write_bytes(source.encode())
+    mod = Mod(tmp_path)
+    mod.update_event("source.1", trigger="# explanation\nalways = no # final comment")
+    preview = mod.preview()
+    assert "# explanation" in preview
+    assert preview == mod.preview()
+    assert path.read_bytes() == source.encode()
+    result = mod.save(require_changes=True)
+    print(result)
+    assert result.written_files == [path]
+    saved = path.read_bytes().decode()
+    # Event loading already normalizes newlines through Path.read_text().
+    # The helper tests separately require CRLF preservation when given CRLF.
+    before, after = source.replace("\r\n", "\n").split(" always = yes ")
+    assert saved.startswith(before)
+    assert saved.endswith(after)
+    event = Mod(tmp_path).get_event("source.1")
+    assert "# explanation" in event.trigger
+    assert "always = no # final comment" in event.trigger
+    assert event.immediate == "add_political_power = 1"
+    assert event.mean_time_to_happen == "days = 1"
+    assert mod.preview() == ""

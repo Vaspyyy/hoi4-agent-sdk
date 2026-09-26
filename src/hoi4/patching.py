@@ -126,7 +126,13 @@ def set_block(text: str, key: str, body: str | None) -> str:
     current = text[first.body_start : first.body_end]
     if block_bodies_equivalent(current, cleaned):
         return text
-    return replace_assignment_body(text, first, _render_block_body_like(current, cleaned))
+    line_start = text.rfind("\n", 0, first.start) + 1
+    indent_match = re.match(r"[ \t]*", text[line_start:first.start])
+    indent = indent_match.group(0) if indent_match else ""
+    return replace_assignment_body(
+        text, first,
+        _render_block_body_like(current, cleaned, _line_ending(text), indent),
+    )
 
 
 def replace_assignment_body(text: str, span: AssignmentSpan, body: str) -> str:
@@ -307,18 +313,46 @@ def _skip_space_and_comments(text: str, start: int) -> int:
     return i
 
 
-def _render_block_body_like(current: str, body: str) -> str:
+def _block_comments(body: str) -> tuple[bool, bool]:
+    """Return whether real comments exist and whether the body ends in one."""
+    found = False
+    i = 0
+    while i < len(body):
+        if body[i] == '"':
+            i = _skip_quote(body, i)
+        elif body[i] == "#":
+            found = True
+            if "\n" not in body[i:]:
+                return True, True
+            i = _skip_comment(body, i)
+        else:
+            i += 1
+    return found, False
+
+
+def _render_block_body_like(
+    current: str, body: str, newline: str, outer_indent: str,
+) -> str:
     cleaned = _dedent_block_body(body)
     leading_match = re.match(r"\s*", current)
     trailing_match = re.search(r"\s*$", current)
     leading = leading_match.group(0) if leading_match else ""
     trailing = trailing_match.group(0) if trailing_match else ""
 
-    if "\n" not in current and "\r" not in current:
+    has_comments, ends_in_comment = _block_comments(cleaned)
+    if "\n" not in current and "\r" not in current and not has_comments:
         compact = " ".join(line.strip() for line in cleaned.splitlines() if line.strip())
         return leading + compact + trailing
 
-    newline = _line_ending(current)
+    if "\n" not in current and "\r" not in current:
+        leading = newline + outer_indent + "\t"
+        trailing = newline + outer_indent
+    else:
+        newline = _line_ending(current)
+        if ends_in_comment and "\n" not in trailing:
+            # A multiline source can still close on its final content line.
+            trailing = newline + outer_indent
+
     indent = re.split(r"\r?\n", leading)[-1]
     lines = cleaned.splitlines()
     if not lines:
