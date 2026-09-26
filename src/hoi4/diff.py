@@ -20,4 +20,9 @@ def unified_diff(original: str, modified: str, filename: str = "") -> str:
         fromfile=from_label,
         tofile=to_label,
     )
-    return "".join(diff_lines)
+    # difflib preserves unterminated content records, so joining them directly
+    # would merge adjacent removals, additions, or context lines in the preview.
+    return "".join(
+        line if line.endswith("\n") else line + "\n\\ No newline at end of file\n"
+        for line in diff_lines
+    )

@@ -886,6 +886,10 @@ When real `.gfx` data exists, icon validation uses only scanned icons. The built
 
 `mod.preview()` returns a unified diff string comparing in-memory state against the last-saved or originally-loaded file contents. Returns empty string if nothing is dirty.
 
+Unterminated diff content lines are followed by `\ No newline at end of file`
+markers. These separators and markers affect only the preview; saved source
+content is not normalized.
+
 ```python
 diff = mod.preview()
 if diff:
