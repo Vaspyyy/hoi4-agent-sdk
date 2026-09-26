@@ -4742,7 +4742,8 @@ class Mod:
         start = require_bookmark_date(start_date, label="bookmark start date")
         end = require_bookmark_date(end_date, label="bookmark end date")
         target = resolve_mod_output_path(self.mod_root, path)
-        self._original_files.setdefault(target, self._read_current_text(target))
+        if target not in self._original_files:
+            self._original_files[target] = self._read_bookmark_date_text(target)
         self._bookmark_date_defines = (target, start, end)
         self._dirty.add("bookmark_dates")
         return target
@@ -7743,7 +7744,7 @@ class Mod:
         rendered = self._render_dirty_files()
         self._assert_no_external_modifications(rendered)
         for path, current in rendered.items():
-            original = self._read_current_text(path)
+            original = self._read_rendered_text(path)
             rel = str(path.relative_to(self.mod_root))
             if current is None:
                 current = ""
@@ -7774,7 +7775,7 @@ class Mod:
             path: content
             for path, content in rendered.items()
             if (content is None and path.exists())
-            or (content is not None and self._read_current_text(path) != content)
+            or (content is not None and self._read_rendered_text(path) != content)
         }
         changed_assets = {
             path: content
@@ -8115,6 +8116,16 @@ class Mod:
     @staticmethod
     def _read_current_text(path: Path) -> str:
         return path.read_text(encoding="utf-8-sig", errors="ignore") if path.exists() else ""
+
+    @staticmethod
+    def _read_bookmark_date_text(path: Path) -> str:
+        # read_text() translates CRLF before the Lua patcher can preserve it.
+        return path.read_bytes().decode("utf-8-sig", errors="ignore") if path.exists() else ""
+
+    def _read_rendered_text(self, path: Path) -> str:
+        if self._bookmark_date_defines is not None and path == self._bookmark_date_defines[0]:
+            return self._read_bookmark_date_text(path)
+        return self._read_current_text(path)
 
     def _capture_source_baseline(self) -> None:
         """Fingerprint text sources so legacy writers cannot be overwritten silently."""

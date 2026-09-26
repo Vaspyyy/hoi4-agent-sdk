@@ -180,6 +180,89 @@ def test_new_bookmark_and_defines_serialize() -> None:
     parse_pdx(rendered)
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_lua_date_patch_skips_comments_and_strings_and_updates_all_active_assignments(
+    newline: str,
+) -> None:
+    lines = [
+        '-- NDefines.NGame.START_DATE = "1936.1.1.12"',
+        '--[=[ NDefines.NGame.END_DATE = "1950.1.1.12" ]=]',
+        'local example = "NDefines.NGame.START_DATE = \\"1936.1.1.12\\""',
+        "local other = 'NDefines.NGame.END_DATE = \"1950.1.1.12\"'",
+        'local long_example = [==[NDefines.NGame.START_DATE = "1936.1.1.12"]==]',
+        'NDefines.NGame.START_DATE = "1939.1.1.12" -- keep trailing comment',
+        'NDefines.NGame.START_DATE = "1941.1.1.12"',
+        'NDefines.NGame.END_DATE = "1950.1.1.12" -- end comment',
+    ]
+    original = newline.join(lines) + newline
+
+    rendered = patch_bookmark_dates_defines(
+        original, start_date="1940.1.1.12", end_date="1960.1.1.1",
+    )
+
+    assert rendered.startswith(newline.join(lines[:5]) + newline)
+    assert rendered.count('NDefines.NGame.START_DATE = "1940.1.1.12"') == 2
+    assert 'NDefines.NGame.END_DATE = "1960.1.1.1" -- end comment' in rendered
+    assert 'NDefines.NGame.START_DATE = "1939.1.1.12"' not in rendered
+    assert rendered.replace(newline, "").find("\n") < 0
+
+
+def test_lua_date_patch_appends_when_assignments_are_only_commented() -> None:
+    original = (
+        '-- NDefines.NGame.START_DATE = "1936.1.1.12"\n'
+        '--[==[ NDefines.NGame.END_DATE = "1950.1.1.12" ]==]\n'
+    )
+
+    rendered = patch_bookmark_dates_defines(
+        original, start_date="1940.1.1.12", end_date="1960.1.1.1",
+    )
+
+    assert rendered.startswith(original)
+    assert rendered.endswith(
+        'NDefines.NGame.START_DATE = "1940.1.1.12"\n'
+        'NDefines.NGame.END_DATE = "1960.1.1.1"\n'
+    )
+
+
+@pytest.mark.parametrize("expression", ["get_date()", '"1936.1.1.12" .. suffix', "[=[1936.1.1.12]=]"])
+def test_lua_date_patch_rejects_computed_or_unsupported_rhs(expression: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported Lua expression for NDefines.NGame.START_DATE"):
+        patch_bookmark_dates_defines(
+            f"NDefines.NGame.START_DATE = {expression}\n",
+            start_date="1940.1.1.12", end_date="1960.1.1.1",
+        )
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_bookmark_date_patch_preview_save_and_reload_preserve_source_bytes(
+    tmp_path: Path, newline: str,
+) -> None:
+    target = tmp_path / "common/defines/zz_bookmark_dates.lua"
+    target.parent.mkdir(parents=True)
+    original = (
+        '-- NDefines.NGame.START_DATE = "1936.1.1.12"' + newline
+        + 'NDefines.NGame.START_DATE = "1939.1.1.12" -- keep' + newline
+        + '--[=[ NDefines.NGame.END_DATE = "1950.1.1.12" ]=]' + newline
+    )
+    target.write_bytes(original.encode("utf-8"))
+    mod = Mod(tmp_path)
+    mod.set_bookmark_date_range("1940.1.1.12", "1960.1.1.1")
+
+    preview = mod.preview()
+    assert 'NDefines.NGame.START_DATE = "1940.1.1.12"' in preview
+    assert 'NDefines.NGame.END_DATE = "1960.1.1.1"' in preview
+    mod.save(require_changes=True)
+    saved = target.read_bytes()
+    assert saved.startswith(original.split("NDefines.NGame.START_DATE = \"1939", 1)[0].encode())
+    assert (f'NDefines.NGame.START_DATE = "1940.1.1.12" -- keep{newline}').encode() in saved
+    assert (f'NDefines.NGame.END_DATE = "1960.1.1.1"{newline}').encode() in saved
+    if newline == "\r\n":
+        assert saved.count(b"\r\n") == saved.count(b"\n")
+    reloaded = Mod(tmp_path)
+    reloaded.set_bookmark_date_range("1940.1.1.12", "1960.1.1.1")
+    assert 'NDefines.NGame.START_DATE = "1940.1.1.12"' not in reloaded.preview()
+
+
 @pytest.mark.parametrize("edit_bookmark", [False, True])
 @pytest.mark.parametrize("case", ["unique", "final", "first_variant", "second_variant"])
 def test_country_deletion_preview_save_reload(
