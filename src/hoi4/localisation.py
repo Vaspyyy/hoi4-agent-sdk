@@ -70,8 +70,9 @@ def parse_localization_file(path: Path) -> dict[str, str]:
         txt = raw.decode("utf-8", errors="ignore")
 
     for line in txt.splitlines():
-        if not line or line.strip().startswith("#") or line.strip().startswith("l_"):
+        if not line or line.strip().startswith("#"):
             continue
+        # Headers have no quoted value; l_-prefixed entry keys are valid.
         m = YML_ENTRY_RE.match(line)
         if m:
             value = _parse_quoted_value(line, m.end())

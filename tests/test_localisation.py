@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from hoi4.localisation import (
     parse_localization_file,
     serialize_localization_file,
@@ -19,8 +21,43 @@ class TestParseLocalizationFile:
         entries = parse_localization_file(FIXTURES / "GER_focus_l_english.yml")
         assert "l_english" not in entries
 
+    @pytest.mark.parametrize("header", ["l_english:", " l_english: # English", "l_german:"])
+    def test_reads_prefixed_keys_but_not_headers(self, tmp_path, header):
+        path = tmp_path / "test.yml"
+        path.write_text(
+            header + '\nl_custom_title:0 "Title"\n l_custom_desc: "Description"\n',
+            encoding="utf-8-sig",
+        )
+        assert parse_localization_file(path) == {
+            "l_custom_title": "Title",
+            "l_custom_desc": "Description",
+        }
+
 
 class TestSerializeLocalizationFile:
+    @pytest.mark.parametrize("newline", ["\n", "\r\n"])
+    def test_prefixed_keys_preserve_original_bytes_and_duplicates(self, tmp_path, newline):
+        original = newline.join(
+            [
+                "# translator note",
+                "l_english: # language",
+                ' l_custom_title:0 "Earlier" # shadowed',
+                r' l_custom_title:1 "Title \"quoted\"\nC:\\mods" # keep',
+                ' OTHER:0 "Original"',
+                "",
+            ]
+        )
+        path = tmp_path / "test_l_english.yml"
+        raw = original.encode("utf-8-sig")
+        path.write_bytes(raw)
+        entries = parse_localization_file(path)
+        assert entries["l_custom_title"] == 'Title "quoted"\nC:\\mods'
+        assert serialize_localization_file(entries, original).encode("utf-8-sig") == raw
+
+        entries["l_custom_title"] = "Updated"
+        rendered = serialize_localization_file(entries, original)
+        assert rendered == original.replace(r"Title \"quoted\"\nC:\\mods", "Updated")
+
     def test_produces_valid_yml(self):
         entries = {"KEY_A": "Value A", "KEY_B": "Value B"}
         result = serialize_localization_file(entries)
