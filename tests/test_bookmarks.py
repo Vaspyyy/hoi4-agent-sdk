@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from hoi4 import Mod
 from hoi4.bookmarks import Bookmark, BookmarkCountry, load_bookmarks_file
 from hoi4.bookmarks import patch_bookmark_dates_defines, serialize_bookmarks_file
 from hoi4.parser import parse_pdx
@@ -175,3 +178,91 @@ def test_new_bookmark_and_defines_serialize() -> None:
     assert '# keep' in defines
     assert 'NDefines.NGame.END_DATE = "1960.1.1.1"' in defines
     parse_pdx(rendered)
+
+
+@pytest.mark.parametrize("edit_bookmark", [False, True])
+@pytest.mark.parametrize("case", ["unique", "final", "first_variant", "second_variant"])
+def test_country_deletion_preview_save_reload(
+    tmp_path: Path, case: str, edit_bookmark: bool,
+) -> None:
+    source = SOURCE.replace('"---" = {', '"FRA" = {')
+    if case == "final":
+        start = source.index('        "GER" = {')
+        end = source.index('        "FRA" = {')
+        source = source[:start] + source[end:]
+    path = tmp_path / "common/bookmarks/test.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    mod = Mod(tmp_path)
+    original_countries = list(mod.get_bookmark("BOOKMARK_NAME").countries)
+    target = {"unique": 2, "final": 0, "first_variant": 0, "second_variant": 1}[case]
+    removed = original_countries[target]
+    survivors = original_countries[:target] + original_countries[target + 1:]
+
+    assert mod.delete_bookmark_country(
+        "BOOKMARK_NAME", removed.tag, occurrence=1 if case == "second_variant" else 0,
+    )
+    if edit_bookmark:
+        assert mod.update_bookmark("BOOKMARK_NAME", description="UPDATED_DESC")
+    preview = mod.preview()
+    assert "common/bookmarks/test.txt" in preview
+    assert any(
+        line.startswith("-") and removed.history in line for line in preview.splitlines()
+    )
+    assert path.read_text(encoding="utf-8") == source
+    assert mod.preview() == preview
+
+    result = mod.save(require_changes=True)
+    assert result.written_files == [path]
+    rendered = path.read_text(encoding="utf-8")
+    assert removed.history not in rendered
+    assert "# preserve header" in rendered
+    assert "randomize_weather = 22345 # obligatory seed" in rendered
+    assert "future_effect = { keep = yes }" in rendered
+    for survivor in survivors:
+        assert survivor.raw_block in rendered
+    assert [rendered.index(country.raw_block) for country in survivors] == sorted(
+        rendered.index(country.raw_block) for country in survivors
+    )
+
+    reloaded = Mod(tmp_path)
+    bookmark = reloaded.get_bookmark("BOOKMARK_NAME")
+    assert bookmark.description == ("UPDATED_DESC" if edit_bookmark else "BOOKMARK_DESC")
+    assert [country.history for country in bookmark.countries] == [
+        country.history for country in survivors
+    ]
+    assert [country.required_dlc for country in bookmark.countries] == [
+        country.required_dlc for country in survivors
+    ]
+    assert [country.available for country in bookmark.countries] == [
+        country.available for country in survivors
+    ]
+    assert reloaded.preview() == ""
+    assert serialize_bookmarks_file(load_bookmarks_file(path), original=rendered) == rendered
+
+
+@pytest.mark.parametrize("delete_existing", [False, True])
+def test_new_same_tag_country_is_appended_without_reusing_source_occurrence(
+    tmp_path: Path, delete_existing: bool,
+) -> None:
+    path = tmp_path / "common/bookmarks/test.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(SOURCE, encoding="utf-8")
+    mod = Mod(tmp_path)
+    if delete_existing:
+        assert mod.delete_bookmark_country("BOOKMARK_NAME", "GER", occurrence=1)
+    added = BookmarkCountry(tag="GER", history="NEW_VARIANT", required_dlc=["New DLC"])
+    mod.add_bookmark_country("BOOKMARK_NAME", added)
+    assert added.source_index is None
+    assert "NEW_VARIANT" in mod.preview()
+    result = mod.save(require_changes=True)
+    assert result.written_files == [path]
+
+    bookmark = Mod(tmp_path).get_bookmark("BOOKMARK_NAME")
+    expected = ["GER_BOOKMARK_DESC"]
+    if not delete_existing:
+        expected.append("GER_DLC_BOOKMARK_DESC")
+    expected.extend(["OTHER_COUNTRIES_DESC", "NEW_VARIANT"])
+    assert [country.history for country in bookmark.countries] == expected
+    assert bookmark.countries[-1].required_dlc == ["New DLC"]
+    assert "unknown_new_field = yes # preserve" in path.read_text(encoding="utf-8")
