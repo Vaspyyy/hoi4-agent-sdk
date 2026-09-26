@@ -115,7 +115,7 @@ ordering, and untouched variants.
 | `list_characters(tag=None, include_vanilla=True) -> list[str]` | List character IDs, optionally limited to one country |
 | `get_character(character_id, include_vanilla=True) -> Character` | Load a mod or vanilla character |
 | `create_character(tag, character, recruit=True, overwrite=False, path=None) -> Character` | Define a character, create localization, and normally add `recruit_character` to country history. `recruit=False` is for source-managed recruitment, never a runtime event effect. |
-| `update_character(character_id, **kwargs) -> bool` | Patch top-level `name`, `portraits`, or `country_tag` |
+| `update_character(character_id, **kwargs) -> bool` | Patch top-level `name` or `portraits` |
 | `delete_character(character_id, remove_recruitment=True) -> bool` | Delete a mod character and its generated localization/recruitment |
 | `add_character_instance(character_id, instance)` | Append a DLC/source variant |
 | `update_character_instance(character_id, occurrence, **kwargs)` | Patch one selected repeated instance |
@@ -123,6 +123,11 @@ ordering, and untouched variants.
 | `add_character_role(character_id, role, instance_occurrence=None)` | Add a direct or instance-scoped role |
 | `update_character_role(character_id, role_type, occurrence=None, instance_occurrence=None, **kwargs)` | Patch one role; repeated matches require `occurrence` |
 | `remove_character_role(character_id, role_type, occurrence=None, instance_occurrence=None)` | Remove one role; ambiguous removal raises |
+
+`update_character()` rejects `country_tag` with `TypeError`, even when assigning
+the existing tag. Remove that argument from update calls: persistent character
+reassignment is not supported. Rejection occurs before changing any fields,
+localization, or dirty state, including calls that also supply supported fields.
 
 Use `AdvisorRole(slot="political_advisor")` for political advisors. Service
 chiefs, high command, and theorists are also `AdvisorRole` values with their
