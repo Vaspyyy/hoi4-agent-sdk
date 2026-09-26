@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .effects_catalog import TECHNOLOGY_CATEGORIES
 from .events import VALID_EVENT_TYPES
+from .focus_layout import resolve_focus_positions
 from .parser import iter_assignment_blocks
 from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
@@ -83,6 +84,7 @@ VALIDATION_CODES: dict[str, str] = {
     ),
     "bad_idea_tooltip_pattern": "Effect removes several ideas and adds one idea; swap_ideas usually produces cleaner tooltips.",
     "idea_mutation_collision": "Focuses and delayed/runtime events mutate the same idea IDs.",
+    "unresolved_focus_position": "A focus position has a missing or cyclic local anchor.",
     "visual_overlap": "Focus tree layout contains visual overlap risk.",
     "faction_scope_footgun": "Faction effect direction depends on current scope.",
     "civil_war_scope_footgun": "Civil war effects need careful target/capital scope.",
@@ -774,6 +776,17 @@ def validate_focus_tree(
     all_known = local_ids | (known_focus_ids or set())
 
     seen_ids: set[str] = set()
+    layout = resolve_focus_positions(tree)
+    for focus_id, reason in layout.unresolved.items():
+        errors.append(
+            ValidationError(
+                message=f"Focus '{focus_id}' position unresolved: {reason}",
+                severity="warning",
+                code="unresolved_focus_position",
+                focus_id=focus_id,
+                file_path=str(tree.path) if tree.path else None,
+            )
+        )
     seen_positions: dict[tuple[int, int], str] = {}
     valid_filters = {
         "FOCUS_FILTER_POLITICAL",
@@ -815,12 +828,12 @@ def validate_focus_tree(
             )
         seen_ids.add(focus.id)
 
-        pos = (focus.x, focus.y)
-        if pos in seen_positions:
+        pos = layout.positions.get(focus.id)
+        if pos is not None and pos in seen_positions:
             errors.append(
                 ValidationError(
                     message=(
-                        f"Focus '{focus.id}' shares position ({focus.x}, {focus.y}) "
+                        f"Focus '{focus.id}' shares position ({pos[0]}, {pos[1]}) "
                         f"with '{seen_positions[pos]}'"
                     ),
                     severity="warning",
@@ -828,7 +841,7 @@ def validate_focus_tree(
                     file_path=str(tree.path) if tree.path else None,
                 )
             )
-        else:
+        elif pos is not None:
             seen_positions[pos] = focus.id
 
         for group in focus.prerequisites:
