@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from hoi4 import Mod
 from hoi4.characters import (
     AdvisorRole,
     ArmyCommanderRole,
@@ -145,3 +148,45 @@ def test_character_scalar_edit_preserves_unknown_fields(tmp_path: Path) -> None:
     assert 'name = "ABC_NEW_LEADER"' in rendered
     assert "custom_character_key = keep" in rendered
     assert "GFX_portrait_ABC_leader" in rendered
+
+
+@pytest.mark.parametrize("source", ["loaded", "loaded_edited", "created"])
+@pytest.mark.parametrize("country_tag", ["ABC", "BBB"])
+@pytest.mark.parametrize("mixed_fields", [False, True])
+def test_country_tag_update_rejected_without_disturbing_pending_work(
+    tmp_path: Path, source: str, country_tag: str, mixed_fields: bool,
+) -> None:
+    if source != "created":
+        _write(tmp_path / "common/characters/ABC.txt")
+    mod = Mod(tmp_path)
+    if source == "created":
+        mod.create_character(
+            "ABC", Character(id="ABC_leader", name="Original Leader"), recruit=False,
+        )
+    elif source == "loaded_edited":
+        assert mod.update_character("ABC_leader", name="Staged Leader")
+    character = mod.get_character("ABC_leader")
+    original_name = character.name
+    mod.set_loc("PENDING_WORK", "Keep this staged localization")
+    before = mod._snapshot()
+    preview = mod.preview()
+    # Insert supported fields first to catch partial mutation in mixed calls.
+    fields = (
+        {"name": "Rejected Leader", "portraits": [CharacterPortrait(large="GFX_rejected")]}
+        if mixed_fields else {}
+    )
+    fields["country_tag"] = country_tag
+
+    with pytest.raises(TypeError, match="Remove country_tag.*reassignment.*not supported"):
+        mod.update_character("ABC_leader", **fields)
+
+    assert mod._snapshot() == before
+    assert mod.preview() == preview
+    assert character.country_tag == "ABC"
+    assert character.name == original_name
+    result = mod.save(require_changes=True)
+    assert result.written_files
+    reloaded = Mod(tmp_path)
+    assert reloaded.get_character("ABC_leader").country_tag == "ABC"
+    assert reloaded.get_character("ABC_leader").name == original_name
+    assert reloaded.get_loc("PENDING_WORK") == "Keep this staged localization"

@@ -2026,7 +2026,13 @@ class Mod:
             character = self.get_character(character_id)
         except (KeyError, ValueError):
             return False
-        unknown = set(kwargs) - {"name", "portraits", "country_tag"}
+        if "country_tag" in kwargs:
+            raise TypeError(
+                "update_character() cannot update country_tag, even to the existing tag. "
+                "Remove country_tag from this call; persistent character reassignment "
+                "is not supported."
+            )
+        unknown = set(kwargs) - {"name", "portraits"}
         if unknown:
             raise TypeError(
                 f"Unknown character fields: {sorted(unknown)}. "
