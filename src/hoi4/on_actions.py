@@ -135,7 +135,10 @@ def _patch_on_action_body(action: OnAction, body: str) -> str:
     if not action.touched:
         return body
     body = set_block(body, "events", "\n".join(action.events) or None)
-    body = set_block(body, "random_events", "\n".join(action.random_events) or None)
+    # The public list omits assignment operators in weighted random_events.
+    # Keep the source block intact unless the caller changed that list.
+    if action.random_events != _extract_list(body, "random_events"):
+        body = set_block(body, "random_events", "\n".join(action.random_events) or None)
     body = set_block(body, "effect", action.effect or None)
     return body
 
