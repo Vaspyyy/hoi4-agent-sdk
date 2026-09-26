@@ -169,6 +169,8 @@ class EventOption:
     ai_chance: str = ""
     raw_block: str = ""
     touched: bool = False
+    # Exact interior retained independently of the option's current list position.
+    _source_body: Optional[str] = field(default=None, repr=False, compare=False)
 
 
 @dataclass

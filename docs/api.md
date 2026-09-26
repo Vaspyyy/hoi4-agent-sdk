@@ -338,6 +338,13 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 | `set_event_namespace(event_id: str, namespace: str) -> None` | `None` | Set which file this event writes to (`{namespace}_events.txt`) |
 | `add_event_option(event_id: str, option: EventOption) -> bool` | `bool` | Append an option to an event |
 
+`update_event(id, options=[...])` supports removing, reordering, and mixing loaded
+options with new `EventOption` objects. Each loaded option retains its own source
+body, including comments and unknown fields, even when names repeat. Comments
+inside an option move with that option; comments between option blocks remain at
+their original event-level positions. Target subsequent edits by the option's
+new zero-based index when names are repeated.
+
 ### Example
 
 ```python
