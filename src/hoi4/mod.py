@@ -2956,6 +2956,7 @@ class Mod:
             sections.append(f"callsigns = {{ {call} }}")
         self._country_name_pool_updates[tag] = "\n".join(sections)
         self._dirty.add("country_names")
+        self._scan_cache.pop("country_name_pools", None)
 
     @staticmethod
     def _country_oob_references(country: Country) -> tuple[OOBReference, ...]:
@@ -7787,21 +7788,33 @@ class Mod:
         )
         return result
 
+    def _render_country_name_pools(self) -> str:
+        relative = Path("common/names/00_generated_names.txt")
+        # The effective fallback already applies layer precedence and replace_path.
+        # Test existence, not truthiness: an empty writable override is authoritative.
+        text = ""
+        for root in self._data_roots():
+            source = root / relative
+            if source.is_file():
+                text = self._read_current_text(source)
+                break
+        # Compare original bodies in one scan. Rebuilding a large roster
+        # should not rescan the entire names file once per unchanged tag.
+        original_bodies: dict[str, str] = {}
+        for span in top_level_assignments(text):
+            if span.is_block and span.body_start is not None and span.body_end is not None:
+                original_bodies.setdefault(span.key, text[span.body_start:span.body_end])
+        for tag, body in sorted(self._country_name_pool_updates.items()):
+            if tag in original_bodies and block_bodies_equivalent(original_bodies[tag], body.strip()):
+                continue
+            text = set_block(text, tag, body)
+        return text
+
     def _render_dirty_files(self) -> dict[Path, str | None]:
         rendered: dict[Path, str | None] = dict(self._script_file_updates)
         if "country_names" in self._dirty:
             path = self.mod_root / "common" / "names" / "00_generated_names.txt"
-            text = self._read_current_text(path)
-            # Compare original bodies in one scan. Rebuilding a large roster
-            # should not rescan the entire names file once per unchanged tag.
-            original_bodies: dict[str, str] = {}
-            for span in top_level_assignments(text):
-                if span.is_block and span.body_start is not None and span.body_end is not None:
-                    original_bodies.setdefault(span.key, text[span.body_start:span.body_end])
-            for tag, body in sorted(self._country_name_pool_updates.items()):
-                if tag in original_bodies and block_bodies_equivalent(original_bodies[tag], body.strip()):
-                    continue
-                text = set_block(text, tag, body)
+            text = self._render_country_name_pools()
             rendered[path] = text or None
         if "countries" in self._dirty:
             tag_path = self.mod_root / "common" / "country_tags" / "00_generated_tags.txt"
@@ -8587,7 +8600,7 @@ class Mod:
         return self._script_vocabulary_cache
 
     def _effective_script_texts(self, relative: str) -> Iterator[tuple[Path, str]]:
-        """Read effective support scripts, overlaying unsaved imports by filename."""
+        """Read effective support scripts with pending imports and name-pool edits."""
         files: dict[Path, Path] = {}
         for root in reversed(self._data_roots()):
             for source in sorted((root / relative).rglob("*.txt")):
@@ -8595,9 +8608,19 @@ class Mod:
         for target in self._script_file_updates:
             if target.is_relative_to(self.mod_root / relative):
                 files.setdefault(target, target)
+        names_path = self.mod_root / "common/names/00_generated_names.txt"
+        pending_names = "country_names" in self._dirty and names_path.is_relative_to(
+            self.mod_root / relative
+        )
+        if pending_names:
+            files.setdefault(names_path, names_path)
         for target, source in files.items():
             try:
-                text = self._script_file_updates.get(target)
+                text = (
+                    self._render_country_name_pools()
+                    if pending_names and target == names_path
+                    else self._script_file_updates.get(target)
+                )
                 if text is None:
                     text = source.read_bytes().decode("utf-8-sig")
                 yield target, text
@@ -10091,7 +10114,7 @@ class Mod:
     def _known_country_name_pool_tags(self) -> set[str]:
         cached = self._scan_cache.get("country_name_pools")
         if cached is not None:
-            return set(cached) | set(self._country_name_pool_updates)
+            return set(cached)
         tags: set[str] = set()
         for _, text in self._effective_script_texts("common/names"):
             try:
@@ -10104,7 +10127,7 @@ class Mod:
             except ValueError:
                 continue
         self._scan_cache["country_name_pools"] = tags
-        return set(tags) | set(self._country_name_pool_updates)
+        return set(tags)
 
     def _known_sub_unit_types(self) -> set[str]:
         cached = self._scan_cache.get("sub_units")

@@ -207,6 +207,13 @@ Air-capable packages also require a country name pool so the engine can name
 generated aces. Runtime role unlocks must not use `recruit_character`; recruit
 the character from country history and gate role availability instead.
 
+`set_country_name_pool()` writes `common/names/00_generated_names.txt`. When
+that writable file is missing, it preserves the effective inherited file,
+including untouched country pools, the default pool, and comments. Layer
+precedence and `replace_path` apply; an existing writable file, even an empty
+one, remains authoritative. This creates a whole-file snapshot: later additions
+to the inherited file remain hidden by the saved override.
+
 Normal authoring should assign the OOB with `create_oob(..., assign=True)`. A
 single tag-owned OOB loaded explicitly by scenario/on-action script is also
 accepted, which supports established custom-start workflows without weakening
