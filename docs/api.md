@@ -154,6 +154,11 @@ large portrait used elsewhere.
 | `unassign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="") -> bool` | Remove one exact dated/conditioned assignment without re-rendering surrounding history |
 | `create_equipment_variant(country_tag, variant) -> EquipmentVariant` | Append a country-history equipment variant, including optional DLC conditions |
 
+Air-wing updates retain existing location/equipment occurrence order, including
+repeated locations, and preserve enclosing comments and unknown fields. New or
+relocated wings append to the first matching location (or a new location block).
+Removing the last wing retains the enclosing blocks and their unmodeled content.
+
 Validation rejects duplicate template names or battalion positions, unknown
 templates, unit definitions, or equipment, out-of-range factors, invalid
 locations, foreign-owned starting positions, duplicate ships, and malformed

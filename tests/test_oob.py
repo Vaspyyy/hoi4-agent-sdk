@@ -1133,3 +1133,151 @@ def test_bba_air_oob_requires_resolvable_country_variant(tmp_path: Path) -> None
         "ungated_bba_air_oob",
         "missing_bba_air_variant_name",
     } <= invalid_codes
+
+
+AIR_SOURCE = '''# Before air
+production = { future = keep }
+air_wings = { # outer comment
+    future_outer = keep
+    10 = { # first location
+        future_location = first
+        fighter_equipment_0 = { amount = 24 owner = ABC future_wing = keep }
+        # between wings
+        fighter_equipment_0 = { amount = 12 owner = ABC }
+    } # beside first location
+    # between locations
+    20 = { bomber_equipment_1 = { amount = 8 owner = ABC } }
+    10 = { # repeated location
+        future_location = second
+        fighter_equipment_0 = { amount = 6 owner = ABC }
+    }
+    # outer tail
+}
+# After air
+'''
+
+
+@pytest.mark.parametrize("operation", [
+    "unchanged", "amount", "reorder", "add_existing", "add_new", "remove",
+    "relocate_existing", "relocate_new", "remove_final", "equipment_type",
+])
+def test_air_wing_collection_preserves_enclosing_source(
+    tmp_path: Path, operation: str,
+) -> None:
+    path = _write(tmp_path / "history/units/ABC_air.txt", AIR_SOURCE)
+    mod = Mod(tmp_path)
+    wings = copy.deepcopy(mod.get_oob("ABC_air").air_wings)
+    expected = [(w.location, w.equipment_type, w.amount) for w in wings]
+    exact = None
+    if operation == "amount":
+        wings[3].amount = 9
+        wings[3].touched_fields.add("amount")
+        expected[3] = (10, "fighter_equipment_0", 9)
+        exact = AIR_SOURCE.replace("amount = 6", "amount = 9")
+    elif operation == "reorder":
+        wings.reverse()
+        exact = AIR_SOURCE
+    elif operation.startswith("add_"):
+        location = 10 if operation == "add_existing" else 30
+        wings.append(AirWing(location, "fighter_equipment_1", amount=5, owner="ABC"))
+        expected.insert(2 if location == 10 else 4, (location, "fighter_equipment_1", 5))
+    elif operation == "remove":
+        wings.pop(0)
+        expected.pop(0)
+        exact = AIR_SOURCE.replace(
+            "fighter_equipment_0 = { amount = 24 owner = ABC future_wing = keep }", "",
+        )
+    elif operation.startswith("relocate_"):
+        location = 20 if operation == "relocate_existing" else 30
+        wings[0].location = location
+        expected.pop(0)
+        expected.insert(2 if location == 20 else 3, (location, "fighter_equipment_0", 24))
+    elif operation == "remove_final":
+        wings = []
+        expected = []
+    elif operation == "equipment_type":
+        wings[3].equipment_type = "fighter_equipment_1"
+        expected[3] = (10, "fighter_equipment_1", 6)
+        exact = AIR_SOURCE.replace(
+            "fighter_equipment_0 = { amount = 6", "fighter_equipment_1 = { amount = 6",
+        )
+    else:
+        exact = AIR_SOURCE
+
+    mod.update_oob("ABC_air", air_wings=wings)
+    rendered = serialize_oob(mod.get_oob("ABC_air"))
+    preview = mod.preview()
+    if rendered != AIR_SOURCE:
+        assert "history/units/ABC_air.txt" in preview
+    result = mod.save(require_changes=rendered != AIR_SOURCE)
+    print(result)
+    print(result.written_files)
+    assert path.read_text(encoding="utf-8") == rendered
+    if exact is not None:
+        assert rendered == exact
+    for line in AIR_SOURCE.splitlines():
+        if "#" in line or "future_outer" in line or "future_location" in line:
+            assert line in rendered
+    assert "production = { future = keep }" in rendered
+    assert rendered.count("10 = {") == 2
+    reloaded = Mod(tmp_path).get_oob("ABC_air")
+    assert [(w.location, w.equipment_type, w.amount) for w in reloaded.air_wings] == expected
+    if operation.startswith("relocate_"):
+        assert "future_wing = keep" in reloaded.air_wings[2 if location == 20 else 3].raw_block
+
+
+def test_final_air_wing_removal_keeps_inline_comments(tmp_path: Path) -> None:
+    source = '''air_wings = { # outer
+    custom = yes
+    10 = { fighter_equipment_0 = { amount = 1 owner = ABC } # wing note
+        custom = yes
+    } # location note
+}
+'''
+    path = _write(tmp_path / "history/units/ABC_air.txt", source)
+    mod = Mod(tmp_path)
+    mod.update_oob("ABC_air", air_wings=[])
+    assert "fighter_equipment_0" in mod.preview()
+    result = mod.save(require_changes=True)
+    print(result)
+    print(result.written_files)
+    assert path.read_text(encoding="utf-8") == source.replace(
+        "fighter_equipment_0 = { amount = 1 owner = ABC }", "",
+    )
+    reloaded = Mod(tmp_path)
+    assert reloaded.get_oob("ABC_air").air_wings == []
+    reloaded.update_oob(
+        "ABC_air", air_wings=[AirWing(10, "fighter_equipment_0", 2)], kind="air",
+    )
+    result = reloaded.save(require_changes=True)
+    print(result)
+    assert len(Mod(tmp_path).get_oob("ABC_air").air_wings) == 1
+    assert path.read_text(encoding="utf-8").count("10 = {") == 1
+
+
+@pytest.mark.parametrize("insertion_index", [0, 1, 4])
+@pytest.mark.parametrize("location", [10, 30])
+def test_insert_air_wing_does_not_claim_surviving_source(
+    tmp_path: Path, insertion_index: int, location: int,
+) -> None:
+    path = _write(tmp_path / "history/units/ABC_air.txt", AIR_SOURCE)
+    mod = Mod(tmp_path)
+    wings = list(mod.get_oob("ABC_air").air_wings)
+    expected = [(w.location, w.equipment_type, w.amount) for w in wings]
+    wings.insert(insertion_index, AirWing(location, "fighter_equipment_1", 5, owner="ABC"))
+    expected.insert(2 if location == 10 else 4, (location, "fighter_equipment_1", 5))
+
+    mod.update_oob("ABC_air", air_wings=wings)
+    assert "fighter_equipment_1" in mod.preview()
+    result = mod.save(require_changes=True)
+    print(result)
+    print(result.written_files)
+    assert result.written_files
+    rendered = path.read_text(encoding="utf-8")
+    for line in AIR_SOURCE.splitlines():
+        assert line in rendered
+    reloaded = Mod(tmp_path).get_oob("ABC_air")
+    assert [(w.location, w.equipment_type, w.amount) for w in reloaded.air_wings] == expected
+    assert "future_wing" not in next(
+        w.raw_block for w in reloaded.air_wings if w.equipment_type == "fighter_equipment_1"
+    )
