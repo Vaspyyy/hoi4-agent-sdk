@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .layers import replace_paths
 from .progress import ProgressCallback as EventProgressCallback
 from .progress import report_progress
 from .parser import find_assignment_block
@@ -76,8 +77,9 @@ def load_map_state_data(
     mod_root: Path,
     hoi4_install: Path | None = None,
 ) -> MapStateData:
-    """Load vanilla state geography, then apply mod state overrides by ID."""
+    """Load states honoring descriptor replacements and mod overrides by ID."""
 
+    hidden_paths = replace_paths(mod_root)
     data = MapStateData()
     state_provinces: dict[int, set[int]] = {}
     for root in (hoi4_install, mod_root):
@@ -87,6 +89,10 @@ def load_map_state_data(
         if not directory.is_dir():
             continue
         for path in sorted(directory.glob("*.txt")):
+            if root != mod_root and any(
+                path.relative_to(root).is_relative_to(hidden) for hidden in hidden_paths
+            ):
+                continue
             try:
                 state = read_state(path)
             except (OSError, ValueError):
