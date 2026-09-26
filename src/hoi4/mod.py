@@ -2532,6 +2532,16 @@ class Mod:
                     wing.touched_fields.update(
                         {"amount", "owner", "creator", "version_name"}
                     )
+        if assign:
+            self._check_country_oob_assignment(
+                self.get_country(country_tag),
+                OOBReference(
+                    name,
+                    cast(Literal["land", "naval", "air"], selected_kind),
+                    required,
+                    excluded,
+                ),
+            )
         self._oobs[name] = oob
         self._dirty_oobs.add(name)
         self._dirty_oob_files.add(target)
@@ -2761,7 +2771,6 @@ class Mod:
         tag = require_country_tag(tag)
         name = require_script_id(name, label="OOB name")
         country = self.get_country(tag)
-        self._materialize_country_override(country)
         required = tuple(
             dict.fromkeys(value.strip() for value in required_dlc if value.strip())
         )
@@ -2771,26 +2780,9 @@ class Mod:
         if date and re.fullmatch(r"\d{1,4}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?", date) is None:
             raise ValueError(f"Invalid OOB assignment date: {date!r}")
         reference = OOBReference(name, kind, required, excluded, date)
-        existing = self._country_oob_references(country)
-        if reference in existing:
+        if not self._check_country_oob_assignment(country, reference):
             return
-        conflict = next(
-            (
-                item
-                for item in existing
-                if item.kind == kind
-                and item.required_dlc == required
-                and item.excluded_dlc == excluded
-                and item.date == date
-            ),
-            None,
-        )
-        if conflict is not None:
-            raise ValueError(
-                f"Country '{tag}' already assigns {kind} OOB '{conflict.name}' "
-                f"for date {date or '<scenario start>'}, required DLC {required}, "
-                f"and excluded DLC {excluded}."
-            )
+        self._materialize_country_override(country)
         if kind == "land" and not required and not excluded and not date:
             country.oob = name
             country.touched_fields.add("oob")
@@ -2802,6 +2794,36 @@ class Mod:
             )
         self._dirty_countries.add(tag)
         self._dirty.add("countries")
+
+    def _check_country_oob_assignment(
+        self,
+        country: Country,
+        reference: OOBReference,
+    ) -> bool:
+        """Reject conflicts without materializing country files; return whether new."""
+
+        existing = self._country_oob_references(country)
+        if reference in existing:
+            return False
+        conflict = next(
+            (
+                item
+                for item in existing
+                if item.kind == reference.kind
+                and item.required_dlc == reference.required_dlc
+                and item.excluded_dlc == reference.excluded_dlc
+                and item.date == reference.date
+            ),
+            None,
+        )
+        if conflict is not None:
+            raise ValueError(
+                f"Country '{country.tag}' already assigns {reference.kind} OOB '{conflict.name}' "
+                f"for date {reference.date or '<scenario start>'}, "
+                f"required DLC {reference.required_dlc}, "
+                f"and excluded DLC {reference.excluded_dlc}."
+            )
+        return True
 
     def unassign_country_oob(
         self,

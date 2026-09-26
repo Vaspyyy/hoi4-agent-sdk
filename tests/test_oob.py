@@ -1281,3 +1281,139 @@ def test_insert_air_wing_does_not_claim_surviving_source(
     assert "future_wing" not in next(
         w.raw_block for w in reloaded.air_wings if w.equipment_type == "fighter_equipment_1"
     )
+
+
+def _atomic_oob_content(kind: str, label: str) -> dict:
+    if kind == "naval":
+        return {"fleets": [Fleet(label, 100, [TaskForce(label, 100)])]}
+    if kind == "air":
+        return {"air_wings": [AirWing(location=100, equipment_type="fighter_equipment_0",
+                                     amount=10, version_name=label)]}
+    return {"templates": [DivisionTemplate(label, battalions=[Battalion("infantry", 0, 0)])]}
+
+
+@pytest.mark.parametrize("kind", ["land", "naval", "air"])
+@pytest.mark.parametrize("branch", [{}, {"required_dlc": ("Test DLC",)},
+                                    {"excluded_dlc": ("Test DLC",)}])
+@pytest.mark.parametrize("existing_state", ["new", "loaded", "pending"])
+def test_rejected_oob_creation_preserves_pending_state(
+    tmp_path: Path, kind: str, branch: dict, existing_state: str,
+) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Test Country")
+    mod.create_oob("ABC_old", "ABC", kind=kind, **branch,
+                   **_atomic_oob_content(kind, "Assigned"))
+    if existing_state != "new":
+        mod.create_oob("ABC_new", "ABC", kind=kind, assign=False,
+                       **_atomic_oob_content(kind, "Original"))
+    mod.save(require_changes=True)
+    mod = Mod(tmp_path)
+    if existing_state == "pending":
+        mod.update_oob("ABC_new", **_atomic_oob_content(kind, "Pending"))
+    mod.set_loc("unrelated", "Keep pending work")
+    country = mod.get_country("ABC")
+    country_before = copy.deepcopy(country)
+    original = mod.get_oob("ABC_new") if existing_state != "new" else None
+    original_before = copy.deepcopy(original)
+    preview = mod.preview()
+    references = mod._country_oob_references(country)
+
+    with pytest.raises(ValueError, match="already assigns"):
+        mod.create_oob("ABC_new", "ABC", kind=kind, overwrite=True,
+                       **branch, **_atomic_oob_content(kind, "Rejected"))
+
+    assert mod.get_country("ABC") is country
+    assert country == country_before
+    assert mod._country_oob_references(country) == references
+    assert mod.preview() == preview
+    if original is not None:
+        assert mod.get_oob("ABC_new") is original
+        assert original == original_before
+    else:
+        with pytest.raises(KeyError):
+            mod.get_oob("ABC_new")
+    result = mod.save(require_changes=True)
+    print(result)
+    print(result.written_files)
+    reloaded = Mod(tmp_path)
+    assert reloaded._country_oob_references(reloaded.get_country("ABC")) == references
+    assert reloaded.get_loc("unrelated") == "Keep pending work"
+    if original is None:
+        assert not (tmp_path / "history/units/ABC_new.txt").exists()
+    else:
+        assert serialize_oob(reloaded.get_oob("ABC_new")) == serialize_oob(original_before)
+
+
+def test_failed_oob_country_lookup_does_not_register_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = Mod(tmp_path)
+    mod.set_loc("unrelated", "Keep")
+    preview = mod.preview()
+    def missing_country(self, tag):
+        raise KeyError(tag)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Mod, "get_country", missing_country)
+        with pytest.raises(KeyError):
+            mod.create_oob("ABC_new", "ABC", **_atomic_oob_content("land", "Rejected"))
+    assert mod.preview() == preview
+    with pytest.raises(KeyError):
+        mod.get_oob("ABC_new")
+    result = mod.save(require_changes=True)
+    print(result)
+    assert not (tmp_path / "history/units/ABC_new.txt").exists()
+    # Unassigned content does not require an existing country.
+    mod.create_oob("ABC_new", "ABC", assign=False,
+                   **_atomic_oob_content("land", "Accepted"))
+
+
+@pytest.mark.parametrize("operation", ["create", "assign", "invalid_date"])
+def test_rejected_inherited_oob_assignment_does_not_materialize_country(
+    tmp_path: Path, operation: str,
+) -> None:
+    game = tmp_path / "game"
+    _write(game / "common/country_tags/test.txt", 'ABC = "countries/ABC.txt"\n')
+    _write(game / "common/countries/ABC.txt", "color = { 1 2 3 }\n")
+    _write(game / "history/countries/ABC.txt", 'capital = 1\noob = "ABC_old"\n')
+    mod = Mod(tmp_path / "mod", hoi4_install=game)
+    country = mod.get_country("ABC")
+    before = copy.deepcopy(country)
+    originals = dict(mod._original_files)
+    mod.set_loc("unrelated", "Keep")
+    preview = mod.preview()
+    with pytest.raises(ValueError):
+        if operation == "create":
+            mod.create_oob("ABC_new", "ABC", **_atomic_oob_content("land", "Rejected"))
+        else:
+            mod.assign_country_oob("ABC", "ABC_new",
+                                   date="invalid" if operation == "invalid_date" else "")
+    assert mod.get_country("ABC") is country
+    assert country == before
+    assert mod._original_files == originals
+    assert mod.preview() == preview
+    result = mod.save(require_changes=True)
+    print(result)
+    assert not (tmp_path / "mod/history").exists()
+
+
+@pytest.mark.parametrize("kind", ["land", "naval", "air"])
+def test_create_oob_same_reference_overwrite_succeeds(tmp_path: Path, kind: str) -> None:
+    mod = Mod(tmp_path)
+    country = mod.create_country("ABC", "Test Country")
+    mod.create_oob("ABC_old", "ABC", kind=kind,
+                   **_atomic_oob_content(kind, "Original"))
+    references = mod._country_oob_references(country)
+    replacement = mod.create_oob("ABC_old", "ABC", kind=kind, overwrite=True,
+                                  **_atomic_oob_content(kind, "Replacement"))
+    assert mod.get_oob("ABC_old") is replacement
+    assert mod._country_oob_references(country) == references
+    result = mod.save(require_changes=True)
+    print(result)
+    assert serialize_oob(Mod(tmp_path).get_oob("ABC_old")) == serialize_oob(replacement)
+
+
+def test_create_oob_preserves_unknown_country_defaults(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_oob("ABC_new", "ABC", **_atomic_oob_content("land", "Accepted"))
+    assert mod.get_country("ABC").oob == "ABC_new"
