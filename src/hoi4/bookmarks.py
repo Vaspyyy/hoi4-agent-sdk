@@ -333,10 +333,102 @@ def patch_bookmark_dates_defines(
     start_date: str,
     end_date: str,
 ) -> str:
-    """Patch ``NDefines.NGame`` date overrides without rewriting other defines."""
+    """Patch literal Lua date overrides, preserving comments and other source text.
 
-    result = set_scalar(original, "NDefines.NGame.START_DATE", pdx_string(start_date))
-    return set_scalar(result, "NDefines.NGame.END_DATE", pdx_string(end_date))
+    Computed assignments to either target are rejected rather than changed
+    partially. Every active literal assignment is updated, including later
+    assignments that would otherwise override an earlier edit.
+    """
+
+    tokens = _lua_tokens(original)
+    replacements: list[tuple[int, int, str]] = []
+    found: set[str] = set()
+    dates = {"START_DATE": start_date, "END_DATE": end_date}
+    for index in range(len(tokens) - 5):
+        prefix = tokens[index : index + 6]
+        if [token[1] for token in prefix[:4]] != ["NDefines", ".", "NGame", "."]:
+            continue
+        key = prefix[4][1]
+        if key not in dates or prefix[5][1] != "=":
+            continue
+        if index and tokens[index - 1][1] in {".", ":"}:
+            continue
+        rhs = tokens[index + 6] if index + 6 < len(tokens) else None
+        if rhs is None or rhs[0] != "string":
+            raise ValueError(f"Unsupported Lua expression for NDefines.NGame.{key}")
+        following = tokens[index + 7] if index + 7 < len(tokens) else None
+        if following is not None:
+            between = original[rhs[3] : following[2]]
+            if following[1] in {"..", "+", "-", "*", "/", "%", "^", "and", "or"} or (
+                "\n" not in between and "\r" not in between and following[1] != ";"
+            ):
+                raise ValueError(f"Unsupported Lua expression for NDefines.NGame.{key}")
+        found.add(key)
+        replacements.append((rhs[2], rhs[3], pdx_string(dates[key])))
+
+    result = original
+    for start, end, value in reversed(replacements):
+        result = result[:start] + value + result[end:]
+    newline = "\r\n" if "\r\n" in original else "\n"
+    for key, value in dates.items():
+        if key not in found:
+            if result and not result.endswith(("\n", "\r")):
+                result += newline
+            result += f"NDefines.NGame.{key} = {pdx_string(value)}{newline}"
+    return result
+
+
+def _lua_tokens(source: str) -> list[tuple[str, str, int, int]]:
+    """Return Lua code tokens while skipping comments and opaque string bodies."""
+
+    tokens: list[tuple[str, str, int, int]] = []
+    index = 0
+    while index < len(source):
+        start = index
+        char = source[index]
+        if char.isspace():
+            index += 1
+            continue
+        if source.startswith("--", index):
+            index += 2
+            opener = re.match(r"\[(=*)\[", source[index:])
+            if opener is not None:
+                closing = "]" + opener.group(1) + "]"
+                end = source.find(closing, index + len(opener.group(0)))
+                index = len(source) if end < 0 else end + len(closing)
+            else:
+                end = source.find("\n", index)
+                index = len(source) if end < 0 else end
+            continue
+        if char in {'"', "'"}:
+            index += 1
+            while index < len(source):
+                if source[index] == "\\":
+                    index += 2
+                elif source[index] == char:
+                    index += 1
+                    break
+                else:
+                    index += 1
+            tokens.append(("string", source[start:index], start, index))
+            continue
+        if char == "[":
+            opener = re.match(r"\[(=*)\[", source[index:])
+            if opener is not None:
+                closing = "]" + opener.group(1) + "]"
+                end = source.find(closing, index + len(opener.group(0)))
+                index = len(source) if end < 0 else end + len(closing)
+                tokens.append(("long_string", source[start:index], start, index))
+                continue
+        if char.isalpha() or char == "_":
+            index += 1
+            while index < len(source) and (source[index].isalnum() or source[index] == "_"):
+                index += 1
+            tokens.append(("identifier", source[start:index], start, index))
+            continue
+        index += 2 if source.startswith("..", index) else 1
+        tokens.append(("symbol", source[start:index], start, index))
+    return tokens
 
 
 def require_bookmark_date(value: str, *, label: str = "bookmark date") -> str:

@@ -1031,6 +1031,13 @@ sibling definitions. All non-reserved scalar assignments belong to the modeled
 | `delete_bookmark(name) -> bool` | `bool` | Stages deletion of a bookmark. |
 | `set_bookmark_date_range(start_date, end_date, *, path="common/defines/zz_bookmark_dates.lua") -> Path` | `Path` | Stages `START_DATE` and `END_DATE` defines in the normal transaction. |
 
+The date helper edits every active literal `NDefines.NGame.START_DATE` and
+`NDefines.NGame.END_DATE` Lua assignment. It skips Lua comments and string
+examples, preserves trailing comments and line endings, and appends an override
+when a date has no active assignment. Computed or otherwise unsupported target
+right-hand sides raise `ValueError`; the helper does not evaluate Lua expressions
+or control flow.
+
 ```python
 from hoi4 import BookmarkCountry, SubIdeology
 
