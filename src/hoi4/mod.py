@@ -8068,7 +8068,11 @@ class Mod:
                         entries,
                         original=self._original_files.get(path, ""),
                     )
-                    if entries
+                    if entries or (
+                        self._content_layers is not None
+                        and path.relative_to(self.mod_root)
+                        in self._content_layers.lower_sources
+                    )
                     else None
                 )
 
