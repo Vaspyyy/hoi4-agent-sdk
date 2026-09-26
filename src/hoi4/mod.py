@@ -27,7 +27,7 @@ import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from difflib import SequenceMatcher
-from typing import Any, Iterator, Literal, Optional, Sequence, TypedDict, TypeVar, cast
+from typing import Any, Iterator, Literal, Optional, Sequence, TypeVar, cast
 
 from .bookmarks import (
     DEFAULT_BOOKMARK_EFFECT,
@@ -150,7 +150,6 @@ from .progress import CancelCallback, ProgressCallback, check_cancelled, report_
 from .states import (
     build_state_index,
     find_state_file,
-    patch_state_history_owner_cores_text,
     read_state,
     serialize_state,
 )
@@ -403,12 +402,6 @@ def _infer_event_namespace(event_id: str) -> str | None:
     if namespace.replace("_", "").isalnum() and not namespace[0].isdigit():
         return namespace
     return None
-
-
-class StateHistoryPatch(TypedDict):
-    owner: str | None
-    add_cores: list[str]
-    remove_cores: list[str]
 
 
 class _DuplicateIdentifierError(RuntimeError):
@@ -835,7 +828,6 @@ class Mod:
         self._state_ids: list[int] = []
         self._state_source_paths: dict[int, Path] = {}
         self._dirty_states: set[int] = set()
-        self._state_history_patches: dict[int, StateHistoryPatch] = {}
         self._events: dict[str, Event] = {}
         self._event_namespaces: dict[str, Optional[str]] = {}
         self._dirty_events: set[str] = set()
@@ -3361,22 +3353,21 @@ class Mod:
         add_cores: list[str] | None = None,
         remove_cores: list[str] | None = None,
     ) -> State:
-        """Queue a minimal owner/core history patch for the next ``save()``."""
+        """Queue a minimal owner/core history patch for the next ``save()``.
+
+        Repeated patches and other state setters compose in call order on the
+        same pending State. Serialization patches its original source text.
+        """
         state = self.get_state(state_id)
         self._materialize_state_override(state)
         removed = {tag.upper() for tag in (remove_cores or [])}
-        state.cores = [core for core in state.cores if core not in removed]
+        state.cores = [core for core in state.cores if core.upper() not in removed]
         for core in add_cores or []:
             normalized = require_country_tag(core)
             if normalized not in state.cores:
                 state.cores.append(normalized)
         if owner is not None:
             state.owner = require_country_tag(owner)
-        self._state_history_patches[state_id] = {
-            "owner": state.owner if owner is not None else None,
-            "add_cores": list(add_cores or []),
-            "remove_cores": list(remove_cores or []),
-        }
         self._dirty.add("states")
         self._dirty_states.add(state_id)
         return state
@@ -7927,16 +7918,7 @@ class Mod:
                     self.mod_root,
                     state.path or Path("history") / "states" / f"{state_id}-STATE.txt",
                 )
-                patch = self._state_history_patches.get(state_id)
-                if patch is None:
-                    rendered[path] = serialize_state(state)
-                else:
-                    rendered[path] = patch_state_history_owner_cores_text(
-                        state.raw_text,
-                        owner=patch["owner"],
-                        add_cores=patch["add_cores"],
-                        remove_cores=patch["remove_cores"],
-                    )
+                rendered[path] = serialize_state(state)
 
         if "events" in self._dirty:
             event_files, namespaces = self._group_events_by_file(dirty_only=True)
@@ -8215,7 +8197,6 @@ class Mod:
         self._dirty_oobs.clear()
         self._dirty_oob_files.clear()
         self._dirty_states.clear()
-        self._state_history_patches.clear()
         self._dirty_events.clear()
         self._dirty_event_files.clear()
         self._event_file_namespaces.clear()
@@ -8294,7 +8275,6 @@ class Mod:
             "_inherited_state_source_paths",
             "_writable_state_directory_stamp",
             "_dirty_states",
-            "_state_history_patches",
             "_events",
             "_event_namespaces",
             "_dirty_events",

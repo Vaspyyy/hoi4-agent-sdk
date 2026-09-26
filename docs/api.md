@@ -286,6 +286,8 @@ mod.patch_state_history(52, owner="GER", add_cores=["GER"], remove_cores=["FRA"]
 print(mod.find_state("Sicily")[0]["id"])
 ```
 
+Repeated `patch_state_history()` calls and ordinary state setters compose in call order within the same pending batch; preview and save render the accumulated state.
+
 Loaded state files are patched through their original parsed content. Updating owner, cores, manpower, resources, buildings, or other modeled fields preserves unrelated vanilla data such as buildings, resources, local supplies, history bookmarks, resistance, and compliance blocks.
 
 `State.impassable: bool` represents the state-level `impassable = yes` flag.
