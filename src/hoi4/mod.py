@@ -9455,25 +9455,29 @@ class Mod:
 
     def _known_idea_ids(self) -> set[str]:
         ids = set(self._ideas)
-        cached = self._scan_cache.get("ideas")
-        if cached is not None:
-            ids.update(cached)
-            return ids
-        scanned: set[str] = set()
-        for base in self._data_roots():
+        # Dirty files will be serialized from their surviving models. Never
+        # recover deleted IDs from their on-disk contents (or a warmed scan).
+        replaced = set(self._group_ideas_by_file(dirty_only=True))
+        replaced.update(self._script_file_updates)
+        files: dict[Path, Path] = {}
+        for base in reversed(self._data_roots()):
             for rel in ("common/ideas", "common/national_ideas"):
-                ideas_dir = base / rel
-                if not ideas_dir.exists():
+                for source in (base / rel).glob("*.txt"):
+                    files[self.mod_root / source.relative_to(base)] = source
+        for target, source in files.items():
+            if target in replaced:
+                continue
+            # Cache file contributions separately so replacing one file does
+            # not hide a legitimate definition of the same ID in another.
+            key = f"ideas:{source}"
+            scanned = self._scan_cache.get(key)
+            if scanned is None:
+                try:
+                    scanned = scan_idea_ids_file(source)
+                except (OSError, ValueError):
                     continue
-                for path in ideas_dir.glob("*.txt"):
-                    if self.mod_root / path.relative_to(base) in self._script_file_updates:
-                        continue
-                    try:
-                        scanned.update(scan_idea_ids_file(path))
-                    except (OSError, ValueError):
-                        continue
-        self._scan_cache["ideas"] = scanned
-        ids.update(scanned)
+                self._scan_cache[key] = scanned
+            ids.update(scanned)
         return ids
 
     def _known_event_ids(self) -> set[str]:

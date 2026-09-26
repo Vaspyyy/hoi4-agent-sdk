@@ -167,3 +167,90 @@ def test_import_replacement_drops_obsolete_idea_references(tmp_path):
     assert "replacement" in mod._known_idea_ids()
     mod.save(require_changes=True)
     assert "obsolete" not in mod._known_idea_ids()
+
+
+def _write_idea_fixture(root, relative, ids):
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    definitions = " ".join(f"{idea_id} = {{ picture = generic }}" for idea_id in ids)
+    path.write_text(f"ideas = {{ country = {{ {definitions} }} }}")
+    return path
+
+
+def _unknown_ideas(errors):
+    return [error for error in errors if error.code == "unknown_idea_reference"]
+
+
+@pytest.mark.parametrize("warm", [False, True])
+@pytest.mark.parametrize("directory", ["ideas", "national_ideas"])
+def test_pending_idea_deletion_matches_reload(tmp_path, warm, directory):
+    root = tmp_path / "mod"
+    source = _write_idea_fixture(
+        root, f"common/{directory}/source.txt", ["obsolete", "sibling"]
+    )
+    events = root / "events" / "test.txt"
+    events.parent.mkdir(parents=True)
+    events.write_text(
+        "add_namespace = test\ncountry_event = {\n id = test.1\n is_triggered_only = yes\n"
+        " option = {\n name = test.1.a\n add_ideas = obsolete\n }\n}"
+    )
+    focuses = root / "common/national_focus/test.txt"
+    focuses.parent.mkdir(parents=True)
+    focuses.write_text(
+        "focus_tree = { id = test_tree focus = { id = test_focus x = 0 y = 0 "
+        "completion_reward = { add_ideas = obsolete } } }"
+    )
+    mod = Mod(root)
+    if warm:
+        assert not _unknown_ideas(mod.validate_effect("add_ideas = obsolete"))
+    assert mod.delete_idea("obsolete")
+    assert "obsolete" in source.read_text()  # The deletion is still pending.
+
+    def diagnostics():
+        effect = _unknown_ideas(mod.validate_effect("add_ideas = obsolete"))
+        full = _unknown_ideas(mod.validate(stage="build"))
+        assert len(effect) == 1
+        assert len(full) == 2
+        assert all(error.severity == "warning" for error in effect + full)
+        assert not _unknown_ideas(mod.validate_effect("add_ideas = sibling"))
+        return [(error.code, error.message) for error in effect + full]
+
+    before = diagnostics()
+    result = mod.save(require_changes=True)
+    assert str(source) in [str(path) for path in result.written_files]
+    mod.reload()
+    assert diagnostics() == before
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_pending_idea_deletion_rolls_back(tmp_path, warm):
+    _write_idea_fixture(tmp_path, "common/ideas/source.txt", ["obsolete", "sibling"])
+    mod = Mod(tmp_path)
+    if warm:
+        assert not _unknown_ideas(mod.validate_effect("add_ideas = obsolete"))
+    with mod.transaction():
+        assert mod.delete_idea("obsolete")
+        assert len(_unknown_ideas(mod.validate_effect("add_ideas = obsolete"))) == 1
+        assert not _unknown_ideas(mod.validate_effect("add_ideas = sibling"))
+    assert mod.preview() == ""
+    assert not _unknown_ideas(mod.validate_effect("add_ideas = obsolete"))
+
+
+@pytest.mark.parametrize("same_file", [False, True])
+def test_pending_idea_deletion_respects_inherited_file_precedence(tmp_path, same_file):
+    root, base = tmp_path / "mod", tmp_path / "base"
+    _write_idea_fixture(root, "common/ideas/source.txt", ["shared", "sibling"])
+    inherited = _write_idea_fixture(
+        base, f"common/ideas/{'source' if same_file else 'other'}.txt", ["shared"]
+    )
+    original = inherited.read_bytes()
+    mod = Mod(root, base_mod_paths=[base])
+    assert not _unknown_ideas(mod.validate_effect("add_ideas = shared"))
+    assert mod.delete_idea("shared")
+    # A different effective file can retain the ID. A same-path base file
+    # remains shadowed by the writable file, even after its idea is deleted.
+    assert bool(_unknown_ideas(mod.validate_effect("add_ideas = shared"))) == same_file
+    mod.save(require_changes=True)
+    mod.reload()
+    assert bool(_unknown_ideas(mod.validate_effect("add_ideas = shared"))) == same_file
+    assert inherited.read_bytes() == original
