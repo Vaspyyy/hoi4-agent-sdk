@@ -170,6 +170,7 @@ from .script_vocabulary import (
     validate_script_sources,
 )
 from .tags import (
+    _parse_country_tag_line,
     _parse_tag_file_mapping,
     load_all_tags,
     load_vanilla_tags,
@@ -236,9 +237,6 @@ _TECH_BLOCK_RE = re.compile(r"\bset_technology\s*=\s*\{([^{}]*)\}")
 _LOAD_FOCUS_TREE_RE = re.compile(r"\bload_focus_tree\s*=\s*\{[^{}]*\btree\s*=\s*([A-Za-z0-9_.:-]+)")
 _SCRIPT_BLOCK_ID_RE = re.compile(r"(?m)^\s*([A-Za-z0-9_.:-]+)\s*=\s*\{")
 _GFX_NAME_RE = re.compile(r"\bname\s*=\s*\"?([A-Za-z0-9_.:-]+)\"?")
-_COUNTRY_TAG_LINE_RE = re.compile(
-    r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"(?:\s*#.*)?\s*$'
-)
 _DATE_ASSIGNMENT_RE = re.compile(r"\d{1,4}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?")
 
 _ConditionAtom = tuple[Literal["dlc", "opaque"], str]
@@ -1118,10 +1116,10 @@ class Mod:
         for path in sorted(tags_dir.glob("*.txt")):
             text = path.read_text(encoding="utf-8", errors="ignore")
             for line in text.splitlines():
-                match = _COUNTRY_TAG_LINE_RE.match(line)
-                if match is None:
+                entry = _parse_country_tag_line(line)
+                if entry is None:
                     continue
-                tag, target = match.groups()
+                tag, target = entry
                 if tag in sources:
                     self._record_duplicate_identifier(
                         "country_tag", tag, sources[tag], path
@@ -1166,12 +1164,12 @@ class Mod:
         )
         if generated_tags.is_file():
             self._created_country_tags.update(
-                match.group(1)
+                entry[0]
                 for line in generated_tags.read_text(
                     encoding="utf-8",
                     errors="ignore",
                 ).splitlines()
-                if (match := _COUNTRY_TAG_LINE_RE.match(line)) is not None
+                if (entry := _parse_country_tag_line(line)) is not None
             )
         override_tags = set(mod_mapping)
         history_dir = self.mod_root / "history" / "countries"
