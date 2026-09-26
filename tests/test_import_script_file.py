@@ -151,3 +151,31 @@ def test_complete_conversion_colors_use_effective_countries_only(tmp_path):
 
     assert country_color_tags(target.read_text()) == {"ABC", "DEF"}
     assert "80 20 30" in target.read_text()
+
+
+def test_import_overwrite_preview_marks_missing_newlines_without_changing_saved_bytes(tmp_path):
+    from hoi4.release_gate import measure_unified_diff
+
+    original = "check = { always = yes }"
+    replacement = "check = { always = no }"
+    rel = "common/scripted_triggers/source.txt"
+    mod = Mod(tmp_path / "mod")
+    target = mod.import_script_file(source(tmp_path, original), rel)
+    mod.save(require_changes=True)
+    src = source(tmp_path, replacement, "replacement.txt")
+    mod.import_script_file(src, rel, overwrite=True)
+
+    preview = mod.preview()
+
+    assert preview == (
+        f"--- a/{rel}\n+++ b/{rel}\n@@ -1 +1 @@\n"
+        f"-{original}\n\\ No newline at end of file\n"
+        f"+{replacement}\n\\ No newline at end of file\n"
+    )
+    stats = measure_unified_diff(preview)
+    assert (stats.additions, stats.deletions, stats.changed_lines) == (1, 1, 2)
+    assert target.read_bytes() == original.encode("utf-8")
+    result = mod.save(require_changes=True)
+    assert result.written_files == [target]
+    assert target.read_bytes() == src.read_bytes() == replacement.encode("utf-8")
+    assert mod.preview() == ""
