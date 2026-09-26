@@ -291,3 +291,101 @@ def test_content_liveness_accepts_cross_vanilla_flag_dependencies(
     assert "MOD_written" in report.flags_written
     assert report.flags_read_only == ()
     assert report.flags_set_only == ()
+
+
+@pytest.mark.parametrize("source_kind", ["focus", "country_history"])
+def test_content_liveness_ignores_comments_without_mutating_sources(
+    tmp_path: Path, source_kind: str,
+) -> None:
+    mod = Mod(tmp_path)
+    for event_id in ("abc.1", "abc.2"):
+        mod.create_event(event_id, is_triggered_only=True)
+    for idea_id in ("ABC_dead", "ABC_live"):
+        mod.create_idea(idea_id)
+    for key in ("LOC_unused", "LOC_used", "LOC_hash#key", "LOC_escaped"):
+        mod.set_loc(key, key)
+    script = '\n'.join([
+        '# country_event = { id = abc.1 }',
+        'country_event = { id = abc.2 } # country_event = { id = abc.1 }',
+        'add_ideas = { ABC_live # ABC_dead',
+        '}',
+        '# add_ideas = ABC_dead',
+        'set_country_flag = ABC_set_only # has_country_flag = ABC_set_only',
+        'has_country_flag = ABC_read_only # set_country_flag = ABC_read_only',
+        'set_country_flag = ABC_paired',
+        'has_country_flag = ABC_paired',
+        '# set_country_flag = ABC_commented_write',
+        '# has_country_flag = ABC_commented_read',
+        'custom_effect_tooltip = LOC_used # LOC_unused',
+        'custom_effect_tooltip = "LOC_hash#key"',
+        r'log = "escaped \" # LOC_escaped" # LOC_unused',
+        '# trailing comment with an unmatched " and no newline',
+    ])
+    if source_kind == "focus":
+        mod.create_focus_tree("ABC_tree", "ABC")
+        mod.add_focus(
+            "ABC_tree", Focus(id="ABC_source", completion_reward=script),
+        )
+        source = mod.get_focus_tree("ABC_tree").focuses[0]
+        # This independent fragment must survive the previous trailing comment.
+        source.available = "has_country_flag = ABC_next_fragment"
+    else:
+        source = mod.create_country("ABC", "Example", capital=1)
+        source.raw_history = script
+    preview_before = mod.preview()
+
+    report = mod.analyze_content_liveness()
+
+    assert report.unfired_events == ("abc.1",)
+    assert report.fired_events == ("abc.2",)
+    assert report.ungranted_ideas == ("ABC_dead",)
+    assert report.granted_ideas == ("ABC_live",)
+    assert report.flags_written == ("ABC_paired", "ABC_set_only")
+    expected_reads = {"ABC_paired", "ABC_read_only"}
+    if source_kind == "focus":
+        expected_reads.add("ABC_next_fragment")
+    assert set(report.flags_read) == expected_reads
+    assert report.flags_set_only == ("ABC_set_only",)
+    assert set(report.flags_read_only) == expected_reads - {"ABC_paired"}
+    assert report.unused_localization == ("LOC_unused",)
+    assert {"LOC_used", "LOC_hash#key", "LOC_escaped"} <= set(report.used_localization)
+    release_findings = mod.validate(stage="release")
+    for finding in report.findings:
+        assert finding in release_findings
+    assert mod.preview() == preview_before
+    if source_kind == "focus":
+        assert source.completion_reward == script
+    else:
+        assert source.raw_history == script
+
+
+@pytest.mark.parametrize("directory", ["common", "events", "history"])
+def test_content_liveness_ignores_commented_vanilla_flag_dependencies(
+    tmp_path: Path, directory: str,
+) -> None:
+    game_root = tmp_path / "game"
+    path = game_root / directory / "external.txt"
+    path.parent.mkdir(parents=True)
+    script = (
+        '# has_country_flag = MOD_written\n'
+        '# set_global_flag = VANILLA_written\n'
+        'has_country_flag = MOD_live # has_country_flag = MOD_written\n'
+        'set_global_flag = VANILLA_live # set_global_flag = VANILLA_written'
+    )
+    path.write_text(script, encoding="utf-8")
+    mod = Mod(tmp_path / "mod", hoi4_install=game_root)
+    mod.create_focus_tree("ABC_tree", "ABC")
+    mod.add_focus("ABC_tree", Focus(
+        id="ABC_cross_content",
+        available="has_global_flag = VANILLA_written\nhas_global_flag = VANILLA_live",
+        completion_reward="set_country_flag = MOD_written\nset_country_flag = MOD_live",
+    ))
+
+    report = mod.analyze_content_liveness()
+
+    assert report.flags_set_only == ("MOD_written",)
+    assert report.flags_read_only == ("VANILLA_written",)
+    # Repeat through release validation to exercise the cached vanilla scan too.
+    release_findings = mod.validate(stage="release")
+    assert all(finding in release_findings for finding in report.findings)
+    assert path.read_text(encoding="utf-8") == script
