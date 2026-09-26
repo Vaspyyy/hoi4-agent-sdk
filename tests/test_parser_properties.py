@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from hypothesis import given, strategies as st
 
-from hoi4.parser import parse_pdx, serialize_pdx
+from hoi4.parser import PdxNode, parse_pdx, serialize_pdx
 from hoi4.patching import top_level_assignments
+from hoi4.script import pdx_value
 from hoi4.structured_patching import patch_scalar_mapping
 
 identifier = st.from_regex(r"[a-z][a-z0-9_]{0,12}", fullmatch=True)
@@ -26,6 +27,13 @@ scalar = st.one_of(
         max_size=20,
     ).map(lambda value: '"' + value.replace('"', '\\"') + '"'),
 )
+
+
+@given(st.text(alphabet='abc012 _-{}#"\\=<>!\t', max_size=30))
+def test_generated_scalar_values_round_trip(value: str) -> None:
+    assert parse_pdx(f"name = {pdx_value(value)}").find("name").value == value
+    source = serialize_pdx(PdxNode(key="name", value=value))
+    assert parse_pdx(source).find("name").value == value
 
 
 @st.composite

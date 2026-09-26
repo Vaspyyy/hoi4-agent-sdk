@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from ._scalar import needs_quotes as _needs_quotes
+
 
 def normalize_block_body(body: str) -> str:
     """Return a block body without one redundant outer ``{ ... }`` pair."""
@@ -111,12 +113,6 @@ def validate_script_syntax(script: str) -> list[str]:
     for open_line, open_col in stack:
         issues.append(f"Unclosed opening brace from line {open_line}, column {open_col}")
     return issues
-
-
-def _needs_quotes(value: str) -> bool:
-    if value == "":
-        return True
-    return any(ch.isspace() for ch in value) or any(ch in value for ch in '{}#"')
 
 
 def _outer_braces_wrap_all(text: str) -> bool:

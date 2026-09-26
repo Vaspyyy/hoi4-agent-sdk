@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
 
+from ._scalar import needs_quotes
+
 
 class ParseError(ValueError):
     """Raised when Paradox script cannot be parsed without losing structure."""
@@ -410,7 +412,7 @@ def serialize_pdx(node: PdxNode, indent: int = 0) -> str:
     elif node.value is not None:
         if node.key is not None:
             v = node.value
-            if node.quoted or any(ch.isspace() for ch in v) or any(ch in v for ch in '{}#"'):
+            if node.quoted or needs_quotes(v):
                 v = '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
             parts.append(f"{tab}{node.key} {node.operator} {v}\n")
         else:
