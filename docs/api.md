@@ -938,6 +938,12 @@ atomic-save lifecycle as the original content model:
 | `Mod.effect_remove_dynamic_modifier(modifier_id, scope=None)` | `str` | Builds `remove_dynamic_modifier`; optionally scoped. |
 | `Mod.effect_force_update_dynamic_modifier()` | `str` | Builds `force_update_dynamic_modifier = yes`. |
 
+At the same destination path, `create_dynamic_modifier(..., overwrite=True)`
+replaces all modeled fields, clearing omitted optional fields and replacing the
+entire `modifier` mapping. It preserves unknown blocks, unrelated comments, and
+sibling definitions. All non-reserved scalar assignments belong to the modeled
+`modifier` mapping. Use `update_dynamic_modifier()` for targeted field changes.
+
 ### Bookmark methods
 
 | Method | Returns | Description |
