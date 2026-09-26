@@ -1253,3 +1253,31 @@ def test_final_air_wing_removal_keeps_inline_comments(tmp_path: Path) -> None:
     print(result)
     assert len(Mod(tmp_path).get_oob("ABC_air").air_wings) == 1
     assert path.read_text(encoding="utf-8").count("10 = {") == 1
+
+
+@pytest.mark.parametrize("insertion_index", [0, 1, 4])
+@pytest.mark.parametrize("location", [10, 30])
+def test_insert_air_wing_does_not_claim_surviving_source(
+    tmp_path: Path, insertion_index: int, location: int,
+) -> None:
+    path = _write(tmp_path / "history/units/ABC_air.txt", AIR_SOURCE)
+    mod = Mod(tmp_path)
+    wings = list(mod.get_oob("ABC_air").air_wings)
+    expected = [(w.location, w.equipment_type, w.amount) for w in wings]
+    wings.insert(insertion_index, AirWing(location, "fighter_equipment_1", 5, owner="ABC"))
+    expected.insert(2 if location == 10 else 4, (location, "fighter_equipment_1", 5))
+
+    mod.update_oob("ABC_air", air_wings=wings)
+    assert "fighter_equipment_1" in mod.preview()
+    result = mod.save(require_changes=True)
+    print(result)
+    print(result.written_files)
+    assert result.written_files
+    rendered = path.read_text(encoding="utf-8")
+    for line in AIR_SOURCE.splitlines():
+        assert line in rendered
+    reloaded = Mod(tmp_path).get_oob("ABC_air")
+    assert [(w.location, w.equipment_type, w.amount) for w in reloaded.air_wings] == expected
+    assert "future_wing" not in next(
+        w.raw_block for w in reloaded.air_wings if w.equipment_type == "fighter_equipment_1"
+    )

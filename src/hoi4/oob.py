@@ -1484,12 +1484,12 @@ def _patch_air_wings(text: str, air_wings: list[AirWing]) -> str:
         # Keep empty wrappers: they can still contain comments and unknown fields.
         body = replace_assignment_body(body, location, location_body)
     for location_id, wings in pending.items():
-        children = "\n\n".join(_wrap_block(
+        rendered_children = "\n\n".join(_wrap_block(
             wing.equipment_type,
             _patch_air_wing_body(wing.raw_block, wing, all_fields=not wing.raw_block),
             1,
         ) for wing in wings)
-        body = append_assignment(body, _wrap_block(str(location_id), children, 0))
+        body = append_assignment(body, _wrap_block(str(location_id), rendered_children, 0))
     return replace_assignment_body(text, span, body)
 
 

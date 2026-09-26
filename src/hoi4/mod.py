@@ -2648,14 +2648,20 @@ class Mod:
             oob.touched_fields.add("fleets")
         if air_wings is not None:
             wing_replacements = copy.deepcopy(list(air_wings))
+            # Loaded entries keep their occurrences even when new wings precede them.
+            claimed_sources = {
+                wing.source_index for wing in wing_replacements if wing.source_index >= 0
+            }
             for index, wing in enumerate(wing_replacements):
                 if (
                     index < len(oob.air_wings)
+                    and oob.air_wings[index].source_index not in claimed_sources
                     and wing.source_index < 0
                     and not wing.raw_block
                 ):
                     source = oob.air_wings[index]
                     wing.source_index = source.source_index
+                    claimed_sources.add(source.source_index)
                     wing.source_location_index = source.source_location_index
                     wing.raw_block = source.raw_block
                     wing.touched_fields.update(
