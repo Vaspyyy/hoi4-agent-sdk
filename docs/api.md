@@ -1446,6 +1446,11 @@ Relative configuration paths resolve beside `.hoi4.json`. The public
 **game → ordered base mods → writable mod**, with each mod's explicit
 `descriptor.mod` `replace_path` declarations removing matching lower files.
 Use directory-backed dependencies; packed DLC archives are not expanded.
+Without base mods, `content_source()` and `content_files()` apply the writable
+descriptor's replacement paths to vanilla fallback files as well. Writable
+files remain visible within replaced directories. In this unlayered mode,
+these two discovery methods reread `descriptor.mod` on each call; with base
+mods, call `reload()` after changing a descriptor to rebuild the layer snapshot.
 
 `write_mod_descriptors(..., dependencies=["Magna Europa"])` (and the
 `generate_mod_descriptor` wrapper) writes dependency names into both descriptors;

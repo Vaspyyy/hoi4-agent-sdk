@@ -42,7 +42,7 @@ from .bookmarks import (
 )
 from .assets import FlagAssetSet
 from .config import find_config
-from .layers import ContentLayers, relative_content_path
+from .layers import ContentLayers, relative_content_path, replace_paths
 from .content_validation import (
     validate_bookmark,
     validate_dynamic_modifier,
@@ -911,9 +911,16 @@ class Mod:
         relative = relative_content_path(relative_path)
         if self._content_layers is not None:
             return self._content_layers.source(relative)
-        for root in (self.mod_root, self.hoi4_install):
-            if root is not None and (root / relative).is_file():
-                return root / relative
+        hidden_paths = replace_paths(self.mod_root) if self.hoi4_install is not None else ()
+        writable = self.mod_root / relative
+        if writable.is_file():
+            return writable
+        if self.hoi4_install is not None and not any(
+            relative.is_relative_to(hidden) for hidden in hidden_paths
+        ):
+            vanilla = self.hoi4_install / relative
+            if vanilla.is_file():
+                return vanilla
         return None
 
     def content_files(self, directory: str | Path) -> dict[str, Path]:
@@ -925,9 +932,13 @@ class Mod:
         else:
             files = {}
             if self.hoi4_install is not None:
-                for path in (self.hoi4_install / relative).rglob("*"):
-                    if path.is_file():
-                        files[str(path.relative_to(self.hoi4_install))] = path
+                hidden_paths = replace_paths(self.mod_root)
+                if not any(relative.is_relative_to(hidden) for hidden in hidden_paths):
+                    for path in (self.hoi4_install / relative).rglob("*"):
+                        if path.is_file():
+                            path_relative = path.relative_to(self.hoi4_install)
+                            if not any(path_relative.is_relative_to(hidden) for hidden in hidden_paths):
+                                files[str(path_relative)] = path
         for path in (self.mod_root / relative).rglob("*"):
             if path.is_file():
                 files[str(path.relative_to(self.mod_root))] = path
