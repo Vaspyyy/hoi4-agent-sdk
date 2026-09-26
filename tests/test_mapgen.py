@@ -291,6 +291,74 @@ class TestExportHelpers:
         ]
         assert compute_adjacencies(data, Image.fromarray(pixels)) == {(1, 2)}
 
+    @pytest.mark.parametrize(
+        ("rows", "water_type", "edges", "coastal"),
+        [
+            ([[1, 2, 3]] * 2, "ocean", {(1, 2), (2, 3), (1, 3)}, {1, 2}),
+            ([[3, 2, 1]] * 2, "sea", {(1, 2), (2, 3), (1, 3)}, {1, 2}),
+            ([[1, 3, 2]], "ocean", {(1, 2), (2, 3), (1, 3)}, {1, 2}),
+            ([[1, 2, 3]], "lake", {(1, 2), (2, 3), (1, 3)}, set()),
+            # Unknown pixels separate the poles and cannot become graph nodes.
+            ([[1, 1, 1], [0, 0, 0], [3, 3, 3]], "ocean", set(), set()),
+            # Even diagonal contact across the seam must not count.
+            ([[1, 0, 0], [0, 0, 3]], "ocean", set(), set()),
+            ([[1, 0, 3]], "ocean", {(1, 3)}, {1}),
+            ([[0, 1, 3]], "ocean", {(1, 3)}, {1}),
+            ([[1, 2, 1]], "ocean", {(1, 2)}, set()),
+            ([[1]], "ocean", set(), set()),
+            ([[3]], "ocean", set(), set()),
+            ([[1], [3]], "ocean", {(1, 3)}, {1}),
+            ([[1, 3]], "ocean", {(1, 3)}, {1}),
+            ([[1, 2]], "ocean", {(1, 2)}, set()),
+        ],
+    )
+    def test_wrapped_export_topology(self, rows, water_type, edges, coastal) -> None:
+        provinces = [
+            {"province_id": i, "R": i, "G": 0, "B": 0, "province_type": kind}
+            for i, kind in [(1, "land"), (2, "land"), (3, water_type)]
+        ]
+        pixels = np.zeros((len(rows), len(rows[0]), 3), dtype=np.uint8)
+        pixels[:, :, 0] = rows
+        image = Image.fromarray(pixels)
+        assert compute_adjacencies(provinces, image) == edges
+        assert export_module.compute_coastal_provinces(provinces, image) == coastal
+
+    @pytest.mark.parametrize("override", [False, True])
+    @pytest.mark.parametrize("rows", [[1, 2, 3], [1, 3, 2]])
+    def test_master_export_seam_contacts(self, tmp_path: Path, rows, override: bool) -> None:
+        provinces = [
+            {
+                "province_id": i, "R": i, "G": 0, "B": 0,
+                "province_type": kind, "territory_id": i, "x": float(rows.index(i)),
+                "y": 0.0,
+            }
+            for i, kind in [(1, "land"), (2, "land"), (3, "ocean")]
+        ]
+        territories = [
+            {"territory_id": i, "territory_type": kind, "province_ids": [i]}
+            for i, kind in [(1, "land"), (2, "land"), (3, "ocean")]
+        ]
+        pixels = np.zeros((2, 3, 3), dtype=np.uint8)
+        pixels[:, :, 0] = rows
+        export_all_map_files(
+            provinces, Image.fromarray(pixels), territories, tmp_path,
+            coastal=set() if override else None,
+            adjacencies=set() if override else None,
+        )
+        with (tmp_path / "map/definition.csv").open() as stream:
+            definitions = {int(row[0]): row for row in csv.reader(stream, delimiter=";")}
+        for province_id in (1, 2):
+            assert definitions[province_id][5] == ("false" if override else "true")
+            state = tmp_path / f"history/states/{province_id}.txt"
+            content = state.read_text()
+            assert ("naval_base = 1" in content) is not override
+            if not override:
+                assert f"{province_id} = {{\n\t\t\t\tnaval_base = 1" in content
+        assert definitions[3][5] == "false"
+        assert (tmp_path / "map/railways.txt").read_text() == (
+            "" if override else "1 2 1 2\n"
+        )
+
     def test_cancelled_master_export_does_not_touch_destination(self, tmp_path: Path) -> None:
         map_dir = tmp_path / "map"
         map_dir.mkdir()
