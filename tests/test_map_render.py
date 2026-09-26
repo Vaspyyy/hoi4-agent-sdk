@@ -117,3 +117,80 @@ def test_render_cancellation_raises_public_exception(tmp_path: Path) -> None:
             tmp_path / "mod",
             cancelled=lambda: True,
         )
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [None, "history/states", "history", "history\\states", "history/states/1.txt",
+     "history/state", "events"],
+)
+@pytest.mark.parametrize("mod_states", [True, False])
+def test_state_replacement_mappings_and_pixels(
+    tmp_path: Path, replacement: str | None, mod_states: bool
+) -> None:
+    np = pytest.importorskip("numpy")
+    image_module = pytest.importorskip("PIL.Image")
+    vanilla = tmp_path / "game"
+    mod = tmp_path / "mod"
+    for root in (vanilla, mod):
+        (root / "history/states").mkdir(parents=True)
+    (vanilla / "history/states/1.txt").write_text(
+        'state = { id = 1 name = "OLD" provinces = { 1 } history = { owner = AAA } }',
+        encoding="utf-8",
+    )
+    if mod_states:
+        (mod / "history/states/2.txt").write_text(
+            'state = { id = 2 name = "NEW" provinces = { 2 } history = { owner = BBB } }',
+            encoding="utf-8",
+        )
+    if replacement is not None:
+        (mod / "descriptor.mod").write_text(
+            f'replace_path="{replacement}"\n', encoding="utf-8-sig"
+        )
+    hidden = replacement not in (None, "history/state", "events")
+    owners = {} if hidden else {1: "AAA"}
+    names = {} if hidden else {1: "OLD"}
+    provinces = {} if hidden else {1: 1}
+    if mod_states:
+        owners[2] = "BBB"
+        names[2] = "NEW"
+        provinces[2] = 2
+
+    data = load_map_state_data(mod, vanilla)
+    assert data.owners == owners
+    assert data.names == names
+    assert data.province_to_state == provinces
+
+    (mod / "common/countries").mkdir(parents=True)
+    (mod / "common/countries/colors.txt").write_text(
+        "AAA = { color = rgb { 12 34 56 } }\nBBB = { color = rgb { 65 43 21 } }\n",
+        encoding="utf-8",
+    )
+    definition = mod / "definition.csv"
+    definition.write_text("1;10;20;30;land;false\n2;40;50;60;land;false\n", encoding="utf-8")
+    bitmap = mod / "provinces.bmp"
+    image_module.fromarray(np.array([[[10, 20, 30], [40, 50, 60]]], dtype=np.uint8)).save(bitmap)
+    result = render_political_map(bitmap, definition, mod, hoi4_install=vanilla, draw_borders=False)
+
+    assert result.pixels[0, 0].tolist() == ([30, 80, 160] if hidden else [12, 34, 56])
+    assert result.pixels[0, 1].tolist() == ([65, 43, 21] if mod_states else [30, 80, 160])
+    assert result.state_count == len(owners)
+    assert result.country_count == len(owners)
+    assert result.unassigned_state_count == 0
+
+
+@pytest.mark.parametrize("descriptor", ['replace_path="../history"', 'replace_path="history'])
+@pytest.mark.parametrize("with_vanilla", [True, False])
+def test_state_loader_propagates_shared_descriptor_errors(
+    tmp_path: Path, descriptor: str, with_vanilla: bool
+) -> None:
+    from hoi4.layers import replace_paths
+
+    mod = tmp_path / "mod"
+    mod.mkdir()
+    (mod / "descriptor.mod").write_text(descriptor, encoding="utf-8")
+    with pytest.raises(ValueError) as expected:
+        replace_paths(mod)
+    with pytest.raises(type(expected.value)) as actual:
+        load_map_state_data(mod, tmp_path / "game" if with_vanilla else None)
+    assert str(actual.value) == str(expected.value)
