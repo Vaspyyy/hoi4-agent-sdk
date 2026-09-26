@@ -530,6 +530,16 @@ Use `MODIFIER_CATEGORIES` to discover available modifier keys (see Catalogs sect
 
 Focus trees are collections of focuses. Each focus has a position (x, y), cost, prerequisites, and completion reward.
 
+Layout bounds, overlap checks, and validation resolve `relative_position_id` chains
+within the tree's local focus models, preserving the serialized `x`/`y` offsets.
+Missing anchors (including shared/inherited anchors without a local model) and
+cycles produce `unresolved_focus_position` warnings. Validation still checks
+collisions among resolved focuses. Bounds, continuous-focus placement, and
+`assert_no_visual_overlap()` raise `ValueError` when any position is unresolved;
+validation skips the continuous-focus clearance check in that case. Full shared
+focus expansion and conditional in-game layout changes are not modeled. These
+static checks do not establish the layout displayed by the game.
+
 ### Methods
 
 | Method | Returns | Description |

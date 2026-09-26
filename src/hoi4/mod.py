@@ -86,6 +86,7 @@ from .dynamic_modifiers import (
 from .events import load_events_file, scan_event_ids_file, serialize_events_file
 from .effects_catalog import TECHNOLOGY_CATEGORIES
 from .focus import load_focus_tree, load_focus_trees, serialize_focus_file
+from .focus_layout import resolve_focus_positions, visual_overlap_issues
 from .idea_icons import (
     DEFAULT_IDEA_ICON,
     IDEA_SPRITE_PREFIX,
@@ -4877,8 +4878,10 @@ class Mod:
         tree = self.get_focus_tree(tree_id)
         if not tree.focuses:
             return {"min_x": 0, "max_x": 0, "min_y": 0, "max_y": 0, "width": 0, "height": 0}
-        xs = [focus.x for focus in tree.focuses]
-        ys = [focus.y for focus in tree.focuses]
+        layout = resolve_focus_positions(tree)
+        layout.require_complete()
+        xs = [pos[0] for pos in layout.positions.values()]
+        ys = [pos[1] for pos in layout.positions.values()]
         return {
             "min_x": min(xs),
             "max_x": max(xs),
@@ -4899,25 +4902,11 @@ class Mod:
 
     def assert_no_visual_overlap(self, tree_id: str, *, min_continuous_padding: int = 100) -> bool:
         tree = self.get_focus_tree(tree_id)
-        positions: dict[tuple[int, int], str] = {}
-        issues: list[str] = []
-        for focus in tree.focuses:
-            pos = (focus.x, focus.y)
-            if pos in positions:
-                issues.append(f"{focus.id} overlaps {positions[pos]} at x={focus.x}, y={focus.y}")
-            else:
-                positions[pos] = focus.id
-        if tree.continuous_focus_position:
-            match = re.search(r"\by\s*=\s*(-?\d+)", tree.continuous_focus_position)
-            if match:
-                min_y = (
-                    self.focus_tree_bounds(tree_id)["max_y"] + 1
-                ) * 100 + min_continuous_padding
-                y = int(match.group(1))
-                if y < min_y:
-                    issues.append(
-                        f"continuous_focus_position y={y} is above recommended minimum y={min_y}"
-                    )
+        layout = resolve_focus_positions(tree)
+        layout.require_complete()
+        issues = visual_overlap_issues(
+            tree, layout, min_continuous_padding=min_continuous_padding
+        )
         if issues:
             raise ValueError("; ".join(issues))
         return True
@@ -7202,12 +7191,11 @@ class Mod:
                 known_tags=known_tags,
             )
             errors.extend(tree_errors)
-            try:
-                self.assert_no_visual_overlap(tree.id)
-            except ValueError as exc:
+            overlap_issues = visual_overlap_issues(tree, resolve_focus_positions(tree))
+            if overlap_issues:
                 errors.append(
                     ValidationError(
-                        message=f"Focus tree '{tree.id}' visual overlap risk: {exc}",
+                        message=f"Focus tree '{tree.id}' visual overlap risk: {'; '.join(overlap_issues)}",
                         severity="warning",
                         code="visual_overlap",
                         file_path=str(tree.path) if tree.path else None,
