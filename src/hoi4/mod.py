@@ -7318,9 +7318,15 @@ class Mod:
         *,
         since: datetime | None = None,
         start_offset: int = 0,
+        incremental: bool = False,
         require_fresh: bool = False,
     ) -> list[ValidationError]:
-        """Return HOI4 engine errors attributable to files in this mod."""
+        """Return HOI4 engine errors attributable to files in this mod.
+
+        ``incremental=True`` retains the trailing record until the next header.
+        Use ``parse_hoi4_error_log`` to obtain a report with a resume offset;
+        this facade returns only validation errors. The default flushes EOF.
+        """
 
         from .game_log import parse_hoi4_error_log
 
@@ -7338,6 +7344,7 @@ class Mod:
             self.mod_root,
             since=since,
             start_offset=start_offset,
+            incremental=incremental,
             fresh_after=fresh_after,
         )
         return list(report.validation_errors)

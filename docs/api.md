@@ -1108,6 +1108,33 @@ returns a non-zero status for mod-owned errors. Add
 accepts `--error-log PATH` and requires it to postdate the corpus unless
 `--allow-stale-log` is explicitly supplied.
 
+For actively growing logs, add `--incremental`. The parser retains the trailing
+record until the next complete header (through `]:`) establishes its boundary;
+a newline alone does not finish a multiline record. Resume each poll with
+`--start-offset` set to the returned `next_offset` byte position. Pending records
+are not emitted or included in ignored/unscoped counts, and unchanged polls
+leave the offset unchanged. After the writer stops, omit `--incremental` at that
+saved offset to flush the final record, even if it has no terminating newline.
+The default remains a one-shot read through EOF. Invalid offsets, including an
+offset beyond EOF after log truncation, still raise `ValueError`; rotation is
+not handled automatically.
+
+The public `parse_hoi4_error_log(log_path, mod_root, *, incremental=False, ...)`
+returns a `GameLogReport` with `next_offset`. For example:
+
+```python
+report = parse_hoi4_error_log(log_path, mod_root, incremental=True)
+report = parse_hoi4_error_log(
+    log_path, mod_root, start_offset=report.next_offset, incremental=True,
+)
+# Once writing has stopped, consume the retained tail.
+final = parse_hoi4_error_log(log_path, mod_root, start_offset=report.next_offset)
+```
+
+`Mod.validate_game_log(..., incremental=True)` applies the same buffering when
+returning validation errors. Use the public parser when you need the report's
+resume offset; the facade continues to return only `list[ValidationError]`.
+
 The stricter installed-game compatibility audit is:
 
 ```bash

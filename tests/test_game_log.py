@@ -197,3 +197,162 @@ def test_release_gate_fails_on_mod_owned_engine_error(tmp_path: Path) -> None:
     assert report.game_log is not None
     assert len(report.game_log.entries) == 1
     assert report.to_dict()["game_log"] is not None
+
+
+def _incremental_log(tmp_path: Path) -> tuple[Path, Path, bytes, bytes]:
+    mod_root = tmp_path / "mod"
+    target = mod_root / "events/café.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("test\n", encoding="utf-8")
+    first = (
+        '[12:00:00][no_game_date][persistent.cpp:67]: Unknown effect: café\r\n'
+        'continued in file: "events/café.txt" near line: 5\r\n'
+    ).encode()
+    last = (
+        '[12:00:01][no_game_date][effect.cpp:358]: Second error '
+        'in file: "events/café.txt" near line: 9'
+    ).encode()
+    return mod_root, tmp_path / "error.log", first, last
+
+
+def test_incremental_all_byte_splits_and_final_flush(tmp_path: Path) -> None:
+    """Every split includes headers, paths, UTF-8, and CRLF continuations."""
+    mod_root, log_path, first, last = _incremental_log(tmp_path)
+    complete = first + last
+    log_path.write_bytes(complete)
+    expected = parse_hoi4_error_log(log_path, mod_root)
+    mtime = log_path.stat().st_mtime
+    for split in range(len(complete) + 1):
+        log_path.write_bytes(complete[:split])
+        os.utime(log_path, (mtime, mtime))
+        initial = parse_hoi4_error_log(log_path, mod_root, incremental=True)
+        poll = parse_hoi4_error_log(
+            log_path, mod_root, start_offset=initial.next_offset, incremental=True
+        )
+        assert poll.next_offset == initial.next_offset
+        assert not poll.entries
+        assert poll.ignored_entry_count == poll.unscoped_entry_count == 0
+        with log_path.open("ab") as stream:
+            stream.write(complete[split:])
+        os.utime(log_path, (mtime, mtime))
+        resumed = parse_hoi4_error_log(
+            log_path, mod_root, start_offset=poll.next_offset, incremental=True
+        )
+        assert resumed.next_offset == len(first)
+        final = parse_hoi4_error_log(log_path, mod_root, start_offset=resumed.next_offset)
+        assert initial.entries + resumed.entries + final.entries == expected.entries
+        assert final.next_offset == len(complete)
+        assert not parse_hoi4_error_log(
+            log_path, mod_root, start_offset=final.next_offset
+        ).entries
+
+
+def test_incremental_byte_at_a_time_and_multiple_completed_records(tmp_path: Path) -> None:
+    mod_root, log_path, first, last = _incremental_log(tmp_path)
+    complete = first + first + last
+    log_path.write_bytes(complete)
+    expected = parse_hoi4_error_log(log_path, mod_root)
+    mtime = log_path.stat().st_mtime
+    batch = parse_hoi4_error_log(log_path, mod_root, incremental=True)
+    assert batch.entries == expected.entries[:2]
+    assert batch.next_offset == 2 * len(first)
+
+    log_path.write_bytes(b"")
+    offset = 0
+    entries = ()
+    for byte in complete:
+        with log_path.open("ab") as stream:
+            stream.write(bytes([byte]))
+        os.utime(log_path, (mtime, mtime))
+        report = parse_hoi4_error_log(
+            log_path, mod_root, start_offset=offset, incremental=True
+        )
+        entries += report.entries
+        offset = report.next_offset
+    assert offset == 2 * len(first)
+    assert entries == expected.entries[:2]
+    final = parse_hoi4_error_log(log_path, mod_root, start_offset=offset)
+    assert entries + final.entries == expected.entries
+
+
+def test_incremental_boundaries_precede_attribution_and_time_filters(tmp_path: Path) -> None:
+    mod_root, log_path, first, _ = _incremental_log(tmp_path)
+    for tail, unscoped in [
+        (b"Unscoped error", 1),
+        (b'Error in file: "events/other.txt" near line: 2', 0),
+    ]:
+        last = b"[12:00:01][no_game_date][effect.cpp:1]: " + tail
+        log_path.write_bytes(first + last)
+        initial = parse_hoi4_error_log(log_path, mod_root, incremental=True)
+        assert len(initial.entries) == 1
+        assert initial.next_offset == len(first)
+        assert initial.ignored_entry_count == initial.unscoped_entry_count == 0
+        poll = parse_hoi4_error_log(
+            log_path, mod_root, start_offset=initial.next_offset, incremental=True
+        )
+        assert not poll.entries
+        assert poll.next_offset == initial.next_offset
+        assert poll.ignored_entry_count == poll.unscoped_entry_count == 0
+        final = parse_hoi4_error_log(log_path, mod_root, start_offset=poll.next_offset)
+        assert not final.entries
+        assert final.ignored_entry_count == 1
+        assert final.unscoped_entry_count == unscoped
+        assert final.next_offset == len(first + last)
+
+        timestamp = initial.entries[0].timestamp
+        assert timestamp is not None
+        filtered = parse_hoi4_error_log(
+            log_path, mod_root, incremental=True, since=timestamp.replace(second=1)
+        )
+        assert not filtered.entries
+        assert filtered.ignored_entry_count == 1
+        assert filtered.unscoped_entry_count == 0
+        assert filtered.next_offset == len(first)
+
+
+def test_incremental_preserves_invalid_offset_errors(tmp_path: Path) -> None:
+    import pytest
+
+    mod_root, log_path, first, last = _incremental_log(tmp_path)
+    log_path.write_bytes(first + last)
+    report = parse_hoi4_error_log(log_path, mod_root, incremental=True)
+    log_path.write_bytes(b"")
+    for incremental in (False, True):
+        for offset in (-1, report.next_offset):
+            with pytest.raises(ValueError, match="start_offset must be between"):
+                parse_hoi4_error_log(
+                    log_path, mod_root, start_offset=offset, incremental=incremental
+                )
+
+
+def test_incremental_facade_and_cli(tmp_path: Path) -> None:
+    import json
+    import subprocess
+    import sys
+
+    mod_root, log_path, first, last = _incremental_log(tmp_path)
+    log_path.write_bytes(first)
+    mod = Mod(mod_root)
+    assert not mod.validate_game_log(log_path, incremental=True)
+    assert len(mod.validate_game_log(log_path)) == 1
+    log_path.write_bytes(first + last)
+    assert len(mod.validate_game_log(log_path, incremental=True)) == 1
+    assert not mod.validate_game_log(log_path, incremental=True, start_offset=len(first))
+    assert len(mod.validate_game_log(log_path, start_offset=len(first))) == 1
+    command = [
+        sys.executable, str(Path(__file__).parents[1] / "scripts/parse_hoi4_log.py"),
+        str(mod_root), "--log", str(log_path), "--json",
+    ]
+    initial = subprocess.run(command + ["--incremental"], capture_output=True, text=True)
+    assert initial.returncode == 1, initial.stderr
+    data = json.loads(initial.stdout)
+    assert data["owned_errors"] == 1
+    assert data["next_offset"] == len(first)
+    resume = command + ["--start-offset", str(data["next_offset"])]
+    poll = subprocess.run(resume + ["--incremental"], capture_output=True, text=True)
+    assert poll.returncode == 0, poll.stderr
+    assert json.loads(poll.stdout)["next_offset"] == len(first)
+    final = subprocess.run(resume, capture_output=True, text=True)
+    assert final.returncode == 1, final.stderr
+    assert json.loads(final.stdout)["owned_errors"] == 1
+    assert json.loads(final.stdout)["next_offset"] == len(first + last)

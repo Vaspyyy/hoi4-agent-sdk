@@ -269,7 +269,12 @@ python scripts/audit_hoi4_install.py /path/to/mod --hoi4-install /path/to/hoi4 \
 
 `scripts/parse_hoi4_log.py` is also available as a focused post-launch build
 step. It reports only errors whose referenced files exist in the selected mod,
-groups them by class, and can continue from a saved byte offset. Attribution
+groups them by class, and can continue from a saved byte offset. While the game
+is writing, use `--incremental` and resume with `--start-offset` set to the
+reported `next_offset`. The trailing record is retained until the next complete
+header, including multiline details and partial UTF-8 bytes. After writing
+stops, omit `--incremental` at the saved offset to flush the final record.
+Default one-shot parsing still consumes the entire file. Attribution
 accepts both quoted and unquoted `file:` paths in any mod-owned directory, so
 task-force equipment-variant failures are not silently dropped.
 
