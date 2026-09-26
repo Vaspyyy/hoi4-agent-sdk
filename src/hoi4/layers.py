@@ -92,6 +92,10 @@ class ContentLayers:
                     self.sources = {
                         p: s for p, s in self.sources.items() if not p.is_relative_to(hidden)
                     }
+            if root == top:
+                # Retain files an override would expose if deleted, after the
+                # top descriptor's replace_path rules have been applied.
+                self.lower_sources = self.sources.copy()
             self.sources.update(_files(root))
         cache = Path.home() / ".cache" / "hoi4-sdk"
         cache.mkdir(parents=True, exist_ok=True)

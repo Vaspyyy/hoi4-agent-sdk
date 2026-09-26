@@ -604,6 +604,14 @@ by this API.
 | `search_loc(query: str) -> dict[str, str]` | `dict` | Case-insensitive substring search in keys and values |
 | `all_loc() -> dict[str, str]` | `dict` | Full copy of all entries |
 
+When deleting the last entry in a layered localization file, saving retains an
+empty override (including its header and comments) if removing the file would
+expose a lower-layer file. Keep this override: removing it restores inherited
+entries in the SDK. It masks the entire lower file, including entries added by
+future base-mod updates. Files with no lower-layer fallback are still deleted
+when their last entry is removed. This describes SDK layer resolution; in-game
+behavior requires separate verification.
+
 ### Key Conventions
 
 - Pass keys **without** `:0` suffix — the serializer adds it automatically

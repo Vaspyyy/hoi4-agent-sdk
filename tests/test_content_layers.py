@@ -197,6 +197,60 @@ def test_inherited_localization_is_read_and_overridden_safely(tmp_path):
     assert "New title" in output and "Keep me" in output
 
 
+@pytest.mark.parametrize("existing_override", [False, True])
+def test_delete_last_inherited_localization_preserves_empty_override(tmp_path, existing_override):
+    game, a, b, top = roots(tmp_path)
+    relative = "localisation/english/nested/ancient_l_english.yml"
+    game_source = put(game, relative, 'l_english:\n ancient:0 "Game"\n')
+    source = put(a, relative, '# Base comment\nl_english:\n ancient:0 "Base"\n')
+    target = top / relative
+    comment = "Base comment"
+    if existing_override:
+        put(top, relative, '# Override comment\nl_english:\n ancient:0 "Override"\n')
+        comment = "Override comment"
+    originals = {p: p.read_bytes() for p in (game_source, source)}
+    mod = Mod(top, hoi4_install=game, base_mod_paths=[a, b])
+    assert mod.delete_loc("ancient")
+    assert mod.get_loc("ancient") is None
+    assert mod.preview()
+    result = mod.save(require_changes=True)
+    print(result)
+    assert target in result.written_files
+    assert target.read_text(encoding="utf-8-sig") == f"# {comment}\nl_english:\n"
+    assert mod.get_loc("ancient") is None
+    mod.reload()
+    assert mod.get_loc("ancient") is None
+    assert not mod.preview()
+    assert all(p.read_bytes() == original for p, original in originals.items())
+    # The retained header/comment baseline also survives adding a new entry.
+    mod.set_loc("new_key", "New", file_path=target)
+    result = mod.save(require_changes=True)
+    print(result)
+    assert target in result.written_files
+    assert comment in target.read_text(encoding="utf-8-sig")
+    assert mod.get_loc("new_key") == "New"
+    assert mod.get_loc("ancient") is None
+
+
+@pytest.mark.parametrize("mode", ["standalone", "top_only", "top_replace", "base_replace"])
+def test_delete_last_localization_without_fallback_removes_file(tmp_path, mode):
+    _, a, b, top = roots(tmp_path)
+    relative = "localisation/english/ancient_l_english.yml"
+    if mode in {"top_replace", "base_replace"}:
+        put(a, relative, 'l_english:\n ancient:0 "Base"\n')
+        put(top if mode == "top_replace" else b, "descriptor.mod",
+            'replace_path="localisation"')
+    target = put(top, relative, 'l_english:\n ancient:0 "Top"\n')
+    mod = Mod(top, base_mod_paths=[] if mode == "standalone" else [a, b])
+    assert mod.delete_loc("ancient")
+    result = mod.save(require_changes=True)
+    print(result)
+    assert not target.exists()
+    mod.reload()
+    assert mod.get_loc("ancient") is None
+    assert not mod.preview()
+
+
 def test_explicit_descendant_replacement_expansion(tmp_path):
     from hoi4.layers import expand_replace_paths
 
