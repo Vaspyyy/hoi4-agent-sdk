@@ -224,6 +224,10 @@ precedence and `replace_path` apply; an existing writable file, even an empty
 one, remains authoritative. This creates a whole-file snapshot: later additions
 to the inherited file remain hidden by the saved override.
 
+Assignment conflicts are checked before `create_oob()` registers or replaces
+content. A rejected assignment leaves existing OOBs, country assignments, and
+prior pending edits unchanged, including with `overwrite=True`.
+
 Normal authoring should assign the OOB with `create_oob(..., assign=True)`. A
 single tag-owned OOB loaded explicitly by scenario/on-action script is also
 accepted, which supports established custom-start workflows without weakening
