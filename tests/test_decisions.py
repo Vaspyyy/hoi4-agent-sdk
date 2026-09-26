@@ -7,6 +7,7 @@ from hoi4.decisions import (
     serialize_decision_categories_file,
     serialize_decisions_file,
 )
+from hoi4.patching import top_level_assignments
 
 
 def test_loads_decision_category_and_decision(tmp_path):
@@ -154,3 +155,93 @@ def test_touching_legacy_combined_decision_file_migrates_category_metadata(tmp_p
     assert "legacy_category = {" in category_text
     assert "icon = generic_decision" in category_text
     assert "allowed =" in category_text
+
+
+@pytest.mark.parametrize("metadata_source", ["none", "legacy", "separate"])
+def test_cost_edit_keeps_nested_metadata_in_decisions(tmp_path, metadata_source):
+    path = tmp_path / "common/decisions/test_decisions.txt"
+    path.parent.mkdir(parents=True)
+    metadata = """    icon = category_icon
+    allowed = { original_tag = TST }
+    visible = { always = yes }
+"""
+    first = """    first = {
+        icon = first_icon
+        cost = 5
+        allowed = { has_country_flag = first_allowed }
+        visible = { has_war = yes }
+        complete_effect = { add_political_power = 5 }
+    }
+"""
+    sibling = """    second = {
+        # Preserve this sibling exactly.
+        icon = second_icon
+        cost = 10
+        allowed = { has_country_flag = second_allowed }
+        visible = { has_war = no }
+        complete_effect = { add_stability = 0.05 }
+    }
+"""
+    # Place legacy fields after decisions so nested fields cannot win by order.
+    source = "test_category = {\n" + first + sibling
+    if metadata_source == "legacy":
+        source += metadata
+    source += "}\n"
+    path.write_text(source, encoding="utf-8")
+    category_path = path.parent / "categories/test_decision_categories.txt"
+    separate_source = "test_category = {\n" + metadata + "}\n"
+    if metadata_source == "separate":
+        category_path.parent.mkdir()
+        category_path.write_text(separate_source, encoding="utf-8")
+
+    expected = (
+        ("", "", "") if metadata_source == "none"
+        else ("category_icon", "original_tag = TST", "always = yes")
+    )
+    mod = Mod(tmp_path)
+    category = mod.get_decision_category("test_category")
+    sibling_before = mod.get_decision("second").raw_block
+    assert (category.icon, category.allowed, category.visible) == expected
+    assert mod.update_decision("first", cost=15)
+
+    preview = mod.preview()
+    assert "+        cost = 15" in preview
+    assert path.read_text(encoding="utf-8") == source
+    added = "\n".join(line[1:] for line in preview.splitlines()
+                      if line.startswith("+") and not line.startswith("+++"))
+    assert "first_icon" not in added
+    assert "has_war" not in added
+    assert "first_allowed" not in added
+    if metadata_source == "legacy":
+        assert "icon = category_icon" in added
+        assert "original_tag = TST" in added
+        assert "always = yes" in added
+
+    result = mod.save(require_changes=True)
+    print(result)
+    print(result.written_files)
+    expected_paths = {path} if metadata_source == "separate" else {path, category_path}
+    assert set(result.written_files) == expected_paths
+    saved = path.read_text(encoding="utf-8")
+    assert first.replace("cost = 5", "cost = 15") in saved
+    assert sibling in saved
+    category_text = category_path.read_text(encoding="utf-8")
+    if metadata_source == "separate":
+        assert category_text == separate_source
+    assert "first_icon" not in category_text
+    assert "second_icon" not in category_text
+    assert "has_war" not in category_text
+    assert "has_country_flag" not in category_text
+    category_span = top_level_assignments(saved)[0]
+    body = saved[category_span.body_start:category_span.body_end]
+    assert [span.key for span in top_level_assignments(body)] == ["first", "second"]
+
+    reloaded = Mod(tmp_path)
+    category = reloaded.get_decision_category("test_category")
+    assert (category.icon, category.allowed, category.visible) == expected
+    assert reloaded.get_decision("first").cost == 15
+    assert reloaded.get_decision("first").icon == "first_icon"
+    assert reloaded.get_decision("first").visible == "has_war = yes"
+    assert reloaded.get_decision("second").cost == 10
+    assert reloaded.get_decision("second").raw_block == sibling_before
+    assert reloaded.preview() == ""
