@@ -1412,18 +1412,85 @@ def _serialize_air_wings(air_wings: list[AirWing]) -> str:
 
 def _patch_air_wings(text: str, air_wings: list[AirWing]) -> str:
     span = _block_span(text, "air_wings")
-    rendered = _serialize_air_wings(air_wings)
-    rendered_span = _block_span(rendered, "air_wings")
-    rendered_body = (
-        rendered[rendered_span.body_start : rendered_span.body_end]
-        if rendered_span is not None
-        and rendered_span.body_start is not None
-        and rendered_span.body_end is not None
-        else ""
-    )
-    if span is None:
-        return append_assignment(text, rendered) if air_wings else text
-    return replace_assignment_body(text, span, rendered_body) if air_wings else replace_assignment(text, span, None)
+    if span is None or span.body_start is None or span.body_end is None:
+        return append_assignment(text, _serialize_air_wings(air_wings)) if air_wings else text
+    body = text[span.body_start : span.body_end]
+    locations = [
+        child for child in top_level_assignments(body)
+        if child.key.isdigit() and child.is_block
+        and child.body_start is not None and child.body_end is not None
+    ]
+    source = {wing.source_index: wing for wing in air_wings if wing.source_index >= 0}
+    # Indices are global across location occurrences, including repeated locations.
+    children_by_location = []
+    source_index = 0
+    retained: set[int] = set()
+    for location_index, location in enumerate(locations):
+        assert location.body_start is not None and location.body_end is not None
+        location_body = body[location.body_start : location.body_end]
+        children = []
+        for child in top_level_assignments(location_body):
+            if not child.is_block or child.body_start is None or child.body_end is None:
+                continue
+            wing = source.get(source_index)
+            if wing is not None and (
+                wing.source_location_index == location_index
+                and wing.location == int(location.key)
+            ):
+                retained.add(source_index)
+            else:
+                wing = None
+            children.append((child, wing))
+            source_index += 1
+        children_by_location.append(children)
+
+    # New and relocated wings are appended to the first matching location;
+    # existing occurrences never move just because the supplied list is reordered.
+    pending: dict[int, list[AirWing]] = {}
+    for wing in air_wings:
+        if wing.source_index not in retained:
+            pending.setdefault(wing.location, []).append(wing)
+    first_location: dict[int, int] = {}
+    for index, location in enumerate(locations):
+        first_location.setdefault(int(location.key), index)
+    for index in reversed(range(len(locations))):
+        location = locations[index]
+        assert location.body_start is not None and location.body_end is not None
+        location_body = body[location.body_start : location.body_end]
+        for child, wing in reversed(children_by_location[index]):
+            if wing is None:
+                # Delete only the assignment, leaving adjacent comments intact.
+                location_body = location_body[:child.start] + location_body[child.end:]
+                continue
+            assert child.body_start is not None and child.body_end is not None
+            location_body = replace_assignment_body(
+                location_body, child,
+                _patch_air_wing_body(location_body[child.body_start:child.body_end], wing),
+            )
+            if child.key != wing.equipment_type:
+                key_match = re.match(r'"(?:\\.|[^"\\])*"|[^\s=]+', location_body[child.start:])
+                assert key_match is not None
+                key_end = child.start + key_match.end()
+                location_body = (
+                    location_body[:child.start] + wing.equipment_type + location_body[key_end:]
+                )
+        if first_location[int(location.key)] == index:
+            for wing in pending.pop(int(location.key), []):
+                location_body = append_assignment(location_body, _wrap_block(
+                    wing.equipment_type,
+                    _patch_air_wing_body(wing.raw_block, wing, all_fields=not wing.raw_block),
+                    0,
+                ))
+        # Keep empty wrappers: they can still contain comments and unknown fields.
+        body = replace_assignment_body(body, location, location_body)
+    for location_id, wings in pending.items():
+        children = "\n\n".join(_wrap_block(
+            wing.equipment_type,
+            _patch_air_wing_body(wing.raw_block, wing, all_fields=not wing.raw_block),
+            1,
+        ) for wing in wings)
+        body = append_assignment(body, _wrap_block(str(location_id), children, 0))
+    return replace_assignment_body(text, span, body)
 
 
 def _patch_repeated_blocks(
