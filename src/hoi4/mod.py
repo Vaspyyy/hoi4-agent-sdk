@@ -4799,9 +4799,16 @@ class Mod:
         return True
 
     def update_focus_tree(self, tree_id: str, **kwargs) -> bool:
+        """Patch tree-level fields; country selector reassignment is unsupported."""
         tree = self._focus_trees.get(tree_id)
         if tree is None:
             return False
+        if "country_tag" in kwargs:
+            raise TypeError(
+                "update_focus_tree() cannot update country_tag, even to the existing tag. "
+                "Remove country_tag from this call; country selector reassignment "
+                "is not supported. Set country_tag when creating a new tree instead."
+            )
         if "id" in kwargs:
             raise ValueError("Focus tree IDs are immutable; create a new tree instead")
         old_path = tree.path

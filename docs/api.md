@@ -537,7 +537,7 @@ Focus trees are collections of focuses. Each focus has a position (x, y), cost, 
 | `list_focus_trees() -> list[str]` | Sorted tree IDs | All loaded tree IDs |
 | `get_focus_tree(tree_id: str) -> FocusTree` | `FocusTree` | Raises `KeyError` if not found |
 | `create_focus_tree(tree_id: str, country_tag: str, overwrite=False) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
-| `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields |
+| `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields; `country_tag` is used only at creation |
 | `update_focus_tree(tree_id: str, **kwargs) -> bool` | `bool` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id: str) -> bool` | `bool` | Remove tree |
 | `add_focus(tree_id: str, focus: Focus) -> None` | `None` | Append focus to tree |
@@ -555,6 +555,15 @@ Focus trees are collections of focuses. Each focus has a position (x, y), cost, 
 | `set_focuses_mutually_exclusive(tree_id, focus_a_id, focus_b_id) -> bool` | `bool` | Add reciprocal simple mutual exclusion groups |
 | `set_focus_loc(focus_id, name, description, file_path=None) -> None` | `None` | Set both focus name and description localization |
 | `create_industrial_branch(tree_id, tag, anchor_focus_id=None, state_id=None, grounded=True) -> list[Focus]` | `list[Focus]` | Generate a small grounded industrial branch with localization |
+
+`update_focus_tree()` rejects `country_tag` with `TypeError` for existing trees,
+including newly created unsaved trees and same-tag assignments. Country selector
+reassignment is unsupported: remove `country_tag` from update calls and set it
+when creating a new tree with `create_focus_tree()` instead. Rejection happens
+before any fields are changed, including in mixed-field calls, and preserves
+pending edits and localization. Calls for missing tree IDs still return `False`.
+Loaded selectors, including weighted or complex conditions, are not rewritten
+from this metadata field.
 
 ### Prerequisites
 
