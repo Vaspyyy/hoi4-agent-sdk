@@ -1,3 +1,5 @@
+import pytest
+
 from hoi4 import Mod
 
 
@@ -80,6 +82,40 @@ def test_inherited_duplicate_ids_are_rejected_atomically(tmp_path):
         mod.load_inherited_content("events/base.txt")
     assert mod.list_events() == []
     assert mod.preview() == ""
+
+
+@pytest.mark.parametrize("strict_loading", [False, True])
+def test_inherited_duplicate_focus_ids_are_rejected_atomically(tmp_path, strict_loading):
+    base = tmp_path / "base"
+    relative = "common/national_focus/base.txt"
+    source = base / relative
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """focus_tree = {
+    id = valid_tree
+    focus = { id = valid_focus x = 0 y = 0 }
+}
+focus_tree = {
+    id = duplicate_tree
+    focus = { id = shared_focus x = 0 y = 0 }
+    focus = { id = shared_focus x = 1 y = 0 }
+    focus = { id = editable_focus x = 2 y = 0 }
+}
+""",
+        encoding="utf-8",
+    )
+    original = source.read_bytes()
+    root = tmp_path / "mod"
+    mod = Mod(root, base_mod_paths=[base], strict_loading=strict_loading)
+
+    # Retrying must reject again, rather than treating a failed import as loaded.
+    for _ in range(2):
+        with pytest.raises(ValueError, match="Duplicate focus ID 'shared_focus'.*'duplicate_tree'"):
+            mod.load_inherited_content(relative)
+        assert mod.list_focus_trees() == []
+        assert mod.preview() == ""
+    assert source.read_bytes() == original
+    assert not (root / relative).exists()
 
 
 def test_imported_catalogs_refresh_warm_caches_and_rollback(tmp_path):
