@@ -449,7 +449,8 @@ def _resize_image(
         contained = ImageOps.contain(image, size, method=lanczos)
         canvas = Image.new("RGBA", size, (0, 0, 0, 0))
         offset = ((size[0] - contained.width) // 2, (size[1] - contained.height) // 2)
-        canvas.paste(contained, offset, contained)
+        # Copy RGBA pixels directly; using their alpha as a mask applies it twice.
+        canvas.paste(contained, offset)
         return canvas
     raise ValueError("resize_mode must be 'stretch', 'cover', or 'contain'")
 

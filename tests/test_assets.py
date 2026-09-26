@@ -137,6 +137,36 @@ class TestFlags:
 
 
 class TestPortraits:
+    @pytest.mark.parametrize("color", [(200, 100, 50, 128), (70, 80, 90, 0), (20, 40, 60, 255)])
+    @pytest.mark.parametrize(
+        "source_size, target_size, bounds",
+        [
+            ((6, 4), (6, 4), (0, 0, 6, 4)),
+            ((6, 1), (6, 4), (0, 1, 6, 2)),
+            ((1, 4), (6, 4), (2, 0, 3, 4)),
+        ],
+    )
+    def test_contain_preserves_rgba_and_centered_padding(
+        self, tmp_path: Path, color, source_size, target_size, bounds
+    ) -> None:
+        source = tmp_path / "portrait.png"
+        Image.new("RGBA", source_size, color).save(source)
+
+        portrait = import_portrait_to_mod(
+            tmp_path / "mod", "TST", "leader", source,
+            output_format="tga", size=target_size, resize_mode="contain",
+        )
+
+        left, top, right, bottom = bounds
+        with Image.open(portrait) as image:
+            assert image.format == "TGA"
+            assert image.mode == "RGBA"
+            assert image.size == target_size
+            for y in range(image.height):
+                for x in range(image.width):
+                    expected = color if left <= x < right and top <= y < bottom else (0, 0, 0, 0)
+                    assert image.getpixel((x, y)) == expected
+
     def test_imports_tga_portrait_at_standard_size_and_exports_png(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "portrait.png", (500, 300))
         root = tmp_path / "mod"
@@ -226,6 +256,26 @@ class TestPortraits:
 
 
 class TestTransactionalAssets:
+    def test_contain_portrait_pixels_survive_save_and_reopen(self, tmp_path: Path) -> None:
+        source = tmp_path / "portrait.png"
+        original = Image.new("RGBA", (156, 105), (200, 100, 50, 128))
+        original.putpixel((0, 0), (70, 80, 90, 0))
+        original.putpixel((155, 104), (20, 40, 60, 255))
+        original.save(source)
+        mod = Mod(tmp_path / "mod")
+
+        portrait = mod.import_portrait_to_mod(
+            "TST", "leader", source, output_format="tga", resize_mode="contain"
+        )
+        assert not portrait.exists()
+        saved = mod.save(require_changes=True)
+        assert portrait in saved.written_files
+        with Image.open(portrait) as image:
+            assert image.size == (156, 210)
+            assert image.crop((0, 52, 156, 157)).tobytes() == original.tobytes()
+            assert image.crop((0, 0, 156, 52)).getbbox() is None
+            assert image.crop((0, 157, 156, 210)).getbbox() is None
+
     def test_mod_stages_flag_until_save(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "flag.png")
         root = tmp_path / "mod"
