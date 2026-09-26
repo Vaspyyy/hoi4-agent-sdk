@@ -267,11 +267,8 @@ def _patch_bookmark_countries(body: str, countries: list[BookmarkCountry]) -> st
             ),
             None,
         )
-        if match_index is None:
-            match_index = next(
-                (i for i, country in enumerate(remaining) if country.tag == span.key),
-                None,
-            )
+        # Loaded entries belong to one source occurrence. New entries have no
+        # source index and are appended below, even when their tag already exists.
         if match_index is None:
             body = replace_assignment(body, span, None)
             continue
@@ -318,10 +315,9 @@ def serialize_bookmarks_file(bookmarks: list[Bookmark], *, original: str = "") -
             body = replace_assignment(body, span, None)
             continue
         bookmark = remaining.pop(match_index)
-        if bookmark.raw_block and not bookmark.touched_fields and all(
-            country.raw_block and not country.touched_fields for country in bookmark.countries
-        ):
-            continue
+        # Reconcile countries even when no surviving field was touched: the
+        # list may have lost entries (including its final country). Untouched
+        # country blocks are retained verbatim by the patcher.
         if span.body_start is None or span.body_end is None:
             continue
         patched = _patch_bookmark_body(bookmark.raw_block, bookmark)
