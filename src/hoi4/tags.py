@@ -10,8 +10,18 @@ from typing import Optional
 
 from .paths import require_country_tag
 
-TAG_LINE_RE = re.compile(r'^\s*([A-Z0-9]{3})\s*=\s*".*"\s*$')
+# Keep the generated-table writer's sorting and deduplication policy separate.
 TAG_FILE_RE = re.compile(r'^\s*([A-Z0-9]{3})\s*=\s*"(.+)"\s*$')
+
+_COUNTRY_TAG_LINE_RE = re.compile(
+    r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"(?:\s*#.*)?\s*$'
+)
+
+
+def _parse_country_tag_line(line: str) -> tuple[str, str] | None:
+    """Read a registration without treating hashes inside its quoted path as comments."""
+    match = _COUNTRY_TAG_LINE_RE.match(line)
+    return (match.group(1), match.group(2)) if match else None
 
 
 def _parse_tag_file_mapping(country_tags_dir: Path) -> dict[str, str]:
@@ -21,9 +31,10 @@ def _parse_tag_file_mapping(country_tags_dir: Path) -> dict[str, str]:
     for f in sorted(country_tags_dir.glob("*.txt")):
         txt = f.read_text(encoding="utf-8", errors="ignore")
         for line in txt.splitlines():
-            m = TAG_FILE_RE.match(line)
-            if m:
-                mapping[m.group(1)] = m.group(2)
+            entry = _parse_country_tag_line(line)
+            if entry:
+                tag, target = entry
+                mapping[tag] = target
     return mapping
 
 
@@ -59,9 +70,9 @@ def load_mod_tags(mod_root: Path) -> list[str]:
     for f in d.glob("*.txt"):
         txt = f.read_text(encoding="utf-8", errors="ignore")
         for line in txt.splitlines():
-            m = TAG_LINE_RE.match(line)
-            if m:
-                tags.add(m.group(1))
+            entry = _parse_country_tag_line(line)
+            if entry:
+                tags.add(entry[0])
     return sorted(tags)
 
 
