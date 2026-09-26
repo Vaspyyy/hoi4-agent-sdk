@@ -5,6 +5,40 @@ import pytest
 from hoi4 import Mod
 
 
+def test_unrelated_edit_preserves_prefixed_localization(tmp_path: Path) -> None:
+    path = tmp_path / "localisation/english/test_l_english.yml"
+    path.parent.mkdir(parents=True)
+    original = (
+        "\ufeff# translator note\nl_english: # English\n"
+        ' l_custom_title:0 "Title" # keep this entry\n'
+        ' OTHER:0 "Original" # edit this entry\n'
+    )
+    path.write_bytes(original.encode("utf-8"))
+    mod = Mod(tmp_path)
+    assert mod.get_loc("l_custom_title") == "Title"
+    assert mod.get_loc("l_english") is None
+    mod.set_loc("OTHER", "Updated")
+    result = mod.save(require_changes=True)
+    assert result.written_files == [path]
+    assert path.read_bytes() == original.replace('"Original"', '"Updated"').encode("utf-8")
+    reloaded = Mod(tmp_path)
+    assert reloaded.get_loc("l_custom_title") == "Title"
+    assert reloaded.get_loc("OTHER") == "Updated"
+
+
+@pytest.mark.parametrize("key", ["l_custom_title", "l_english"])
+def test_set_prefixed_localization_survives_save_reload(tmp_path: Path, key: str) -> None:
+    mod = Mod(tmp_path)
+    value = 'Title "quoted"\nC:\\mods'
+    mod.set_loc(key, value)
+    result = mod.save(require_changes=True)
+    assert result.written_files == [mod.default_loc_file]
+    assert mod.default_loc_file.read_bytes().startswith(b"\xef\xbb\xbfl_english:")
+    reloaded = Mod(tmp_path)
+    assert reloaded.get_loc(key) == value
+    assert reloaded.preview() == ""
+
+
 @pytest.mark.parametrize("existing", [False, True])
 def test_unsupported_localization_destination_leaves_changes_untouched(
     tmp_path: Path, existing: bool
