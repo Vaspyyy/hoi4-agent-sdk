@@ -17,6 +17,10 @@ def main() -> int:
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--since", type=datetime.fromisoformat)
     parser.add_argument("--start-offset", type=int, default=0)
+    parser.add_argument(
+        "--incremental", action="store_true",
+        help="Retain the trailing record; omit this flag after writing stops to flush it.",
+    )
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args()
 
@@ -25,6 +29,7 @@ def main() -> int:
         args.mod_root,
         since=args.since,
         start_offset=args.start_offset,
+        incremental=args.incremental,
     )
     if args.as_json:
         print(json.dumps(report.to_dict(), indent=2, sort_keys=True))

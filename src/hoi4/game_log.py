@@ -234,8 +234,17 @@ def parse_hoi4_error_log(
     since: datetime | None = None,
     start_offset: int = 0,
     fresh_after: datetime | None = None,
+    incremental: bool = False,
 ) -> GameLogReport:
-    """Return engine errors whose referenced relative path exists in ``mod_root``."""
+    """Return engine errors whose referenced relative path exists in ``mod_root``.
+
+    With ``incremental=True``, retain the last record until another complete
+    header establishes its boundary. Resume with the returned byte
+    ``next_offset``; pending data is neither emitted nor counted as ignored.
+    Once writing stops, use the default mode at that offset to flush the tail,
+    even without a final newline. Offsets beyond EOF (e.g. after truncation)
+    raise ``ValueError`` in either mode.
+    """
 
     path = Path(log_path).resolve()
     root = Path(mod_root).resolve()
@@ -254,7 +263,23 @@ def parse_hoi4_error_log(
     if normalized_fresh_after is not None and normalized_fresh_after.tzinfo is None:
         normalized_fresh_after = normalized_fresh_after.astimezone()
 
-    records = _parse_records(raw[start_offset:].decode("utf-8", errors="replace"), log_mtime)
+    next_offset = len(raw)
+    if incremental:
+        # Surrogate escapes keep byte positions exact even for incomplete UTF-8.
+        # Do not consume anything until a header is known; this also preserves
+        # a split first header. A complete header needs no terminating newline.
+        next_offset = start_offset
+        position = start_offset
+        for line in raw[start_offset:].decode("utf-8", errors="surrogateescape").splitlines(
+            keepends=True
+        ):
+            if _RECORD_RE.match(line.rstrip()):
+                next_offset = position
+            position += len(line.encode("utf-8", errors="surrogateescape"))
+
+    records = _parse_records(
+        raw[start_offset:next_offset].decode("utf-8", errors="replace"), log_mtime
+    )
     history_names: list[tuple[str, str]] = []
     history_dir = root / "history" / "countries"
     if history_dir.is_dir():
@@ -321,7 +346,7 @@ def parse_hoi4_error_log(
         ignored_entry_count=ignored,
         unscoped_entry_count=unscoped,
         start_offset=start_offset,
-        next_offset=len(raw),
+        next_offset=next_offset,
         log_mtime=log_mtime,
         fresh_after=normalized_fresh_after,
     )
