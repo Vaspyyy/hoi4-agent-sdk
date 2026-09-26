@@ -96,6 +96,24 @@ def _looks_like_category(body: str) -> bool:
     )
 
 
+def _extract_category_metadata(body: str) -> dict[str, str]:
+    """Read only direct category fields, never fields inside decisions."""
+    metadata: dict[str, str] = {}
+    for span in top_level_assignments(body):
+        if span.key in metadata:
+            continue
+        if span.key == "icon" and not span.is_block:
+            metadata[span.key] = body[span.value_start : span.value_end]
+        elif (
+            span.key in {"allowed", "visible"}
+            and span.is_block
+            and span.body_start is not None
+            and span.body_end is not None
+        ):
+            metadata[span.key] = dedent_block_body(body[span.body_start : span.body_end])
+    return metadata
+
+
 def load_decisions_file(path: Path) -> list[DecisionCategory]:
     txt = path.read_text(encoding="utf-8", errors="ignore")
     categories: list[DecisionCategory] = []
@@ -104,11 +122,12 @@ def load_decisions_file(path: Path) -> list[DecisionCategory]:
             continue
         category_id = span.key
         category_body = txt[span.body_start : span.body_end]
+        metadata = _extract_category_metadata(category_body)
         category = DecisionCategory(
             id=category_id,
-            icon=_extract_scalar(category_body, "icon"),
-            allowed=_extract_block(category_body, "allowed"),
-            visible=_extract_block(category_body, "visible"),
+            icon=metadata.get("icon", ""),
+            allowed=metadata.get("allowed", ""),
+            visible=metadata.get("visible", ""),
             path=path,
             raw_block=category_body.strip(),
         )
@@ -128,12 +147,13 @@ def load_decision_categories_file(path: Path) -> list[DecisionCategory]:
         if not span.is_block or span.body_start is None or span.body_end is None:
             continue
         body = txt[span.body_start : span.body_end]
+        metadata = _extract_category_metadata(body)
         categories.append(
             DecisionCategory(
                 id=span.key,
-                icon=_extract_scalar(body, "icon"),
-                allowed=_extract_block(body, "allowed"),
-                visible=_extract_block(body, "visible"),
+                icon=metadata.get("icon", ""),
+                allowed=metadata.get("allowed", ""),
+                visible=metadata.get("visible", ""),
                 definition_path=path,
                 definition_raw_block=body.strip(),
             )
