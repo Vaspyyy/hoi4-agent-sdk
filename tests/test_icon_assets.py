@@ -21,6 +21,22 @@ from hoi4.assets import (
 Image = pytest.importorskip("PIL.Image")
 
 
+def _dxt5_supported() -> bool:
+    import io
+
+    buffer = io.BytesIO()
+    try:
+        Image.new("RGBA", (4, 4)).save(buffer, format="DDS", pixel_format="DXT5")
+    except (KeyError, OSError, ValueError):
+        return False
+    return buffer.getvalue()[84:88] == b"DXT5"
+
+
+# Older optional Pillow releases cannot encode DXT5; the importers then raise
+# DDSExportUnsupportedError, which tests/test_assets.py covers.
+requires_dxt5 = pytest.mark.skipif(not _dxt5_supported(), reason="Pillow cannot encode DXT5 DDS")
+
+
 def _make_image(
     path: Path,
     size: tuple[int, int] = (300, 200),
@@ -124,6 +140,7 @@ class TestSpriteTextPatching:
 
 
 class TestModIconImports:
+    @requires_dxt5
     def test_focus_icon_with_shine_is_staged_until_save(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "icon.png")
         root = tmp_path / "my_mod"
@@ -161,6 +178,7 @@ class TestModIconImports:
             in shine_text
         )
 
+    @requires_dxt5
     def test_reimporting_identical_icon_is_a_noop(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "icon.png")
         root = tmp_path / "mod"
@@ -183,6 +201,7 @@ class TestModIconImports:
         assert fresh._pending_asset_writes == staged
         assert {path: path.read_bytes() for path in _sprite_files(root)} == before
 
+    @requires_dxt5
     def test_overwrite_semantics(self, tmp_path: Path) -> None:
         red = _make_image(tmp_path / "red.png")
         blue = _make_image(tmp_path / "blue.png", color=(10, 20, 220, 255))
@@ -203,6 +222,7 @@ class TestModIconImports:
         mod.save(require_changes=True)
         assert texture.read_bytes() != original
 
+    @requires_dxt5
     def test_existing_gfx_file_is_preserved_byte_for_byte(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "icon.png")
         root = tmp_path / "mod"
@@ -236,6 +256,7 @@ class TestModIconImports:
         )
         assert _dds_size(root / "gfx/interface/ideas/new_spirit.dds") == IDEA_ICON_SIZE
 
+    @requires_dxt5
     def test_replacing_one_sprite_keeps_neighbours(self, tmp_path: Path) -> None:
         red = _make_image(tmp_path / "red.png")
         root = tmp_path / "mod"
@@ -271,6 +292,7 @@ class TestModIconImports:
             "    }\n"
         )
 
+    @requires_dxt5
     def test_duplicate_sprite_in_another_file_is_rejected(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "icon.png")
         root = tmp_path / "mod"
@@ -291,6 +313,7 @@ class TestModIconImports:
             encoding="utf-8"
         )
 
+    @requires_dxt5
     def test_decision_and_category_assets(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "icon.png")
         root = tmp_path / "mod"
@@ -313,6 +336,7 @@ class TestModIconImports:
         for sprite in (decision, category_icon, picture):
             assert text.count(f'name = "{sprite}"') == 1
 
+    @requires_dxt5
     def test_event_pictures_report_and_news(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "picture.png")
         root = tmp_path / "mod"
@@ -332,6 +356,7 @@ class TestModIconImports:
         assert 'texturefile = "gfx/event_pictures/headline.dds"' in text
         assert 'name = "GFX_report_event_strike"' in text
 
+    @requires_dxt5
     def test_transaction_rollback_discards_staged_files(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "icon.png")
         root = tmp_path / "mod"
@@ -354,6 +379,7 @@ class TestModIconImports:
                 raise RuntimeError("boom")
         assert mod.preview() == ""
 
+    @requires_dxt5
     def test_validate_accepts_staged_focus_and_idea_icons(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "icon.png")
         root = tmp_path / "mod"
@@ -403,6 +429,7 @@ class TestModIconImports:
 
 
 class TestStandaloneIconImport:
+    @requires_dxt5
     def test_writes_immediately_and_is_idempotent(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "icon.png")
         root = tmp_path / "Fancy Mod!"
@@ -423,6 +450,7 @@ class TestStandaloneIconImport:
         assert {path: path.stat().st_mtime_ns for path in _sprite_files(root)} == before
         assert {path: path.read_bytes() for path in _sprite_files(root)} == contents
 
+    @requires_dxt5
     def test_focus_without_shine_and_unknown_kind(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "icon.png")
         root = tmp_path / "mod"
