@@ -72,7 +72,8 @@ with mod.transaction():
   `common/` databases through one definition API
 - ideology definitions and bookmark scenarios
 - project scaffolding, launcher descriptors, and safe mod discovery
-- flag, portrait, and bookmark-picture import/export with optional Pillow support
+- flag, portrait, and bookmark-picture import/export plus custom focus, idea,
+  decision, and event graphics with optional Pillow support
 - key-free Wikimedia Commons image search and downloads with source/license metadata
 - optional Gemini generation of reviewable flag and leader-portrait PNG candidates
 - political-map rendering and procedural map/province generation

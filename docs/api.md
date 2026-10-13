@@ -1214,6 +1214,50 @@ transaction.
 when its `cancelled` callback returns true, so UI integrations can stop work
 without treating cancellation as a rendering failure.
 
+### Custom focus, idea, decision, and event graphics
+
+Custom icons and pictures use the same staged, Pillow-backed import path as
+flags and portraits. Each method writes a DXT5 `.dds` texture, merges one sprite
+into a mod-scoped `interface/<mod-folder>_<group>.gfx` file, and returns the
+sprite name to reference from script:
+
+```python
+icon = mod.import_focus_icon("focus_ABC_industry", "industry.png")
+mod.add_focus("abc_focus", Focus(id="ABC_industry", icon=icon))  # GFX_focus_ABC_industry
+spirit = mod.import_idea_icon("ABC_spirit", "spirit.png")         # GFX_idea_ABC_spirit
+mod.create_idea("ABC_spirit", icon=spirit)                        # picture = ABC_spirit
+mod.import_decision_icon("ABC_rally", "rally.png")                # GFX_decision_ABC_rally
+mod.import_decision_category_icon("ABC_cat", "cat.png")           # GFX_decision_category_ABC_cat
+mod.import_decision_category_picture("ABC_cat", "banner.png")     # GFX_decision_cat_picture_ABC_cat
+mod.import_event_picture("ABC_strike", "strike.png")              # GFX_report_event_ABC_strike
+mod.import_event_picture("ABC_news", "paper.png", news=True)      # GFX_news_event_ABC_news
+```
+
+| Method | Texture | Default canvas | `.gfx` group |
+| --- | --- | --- | --- |
+| `import_focus_icon` | `gfx/interface/goals/<name>.dds` | 95x85 | `_goals` (+ `_goals_shine`) |
+| `import_idea_icon` | `gfx/interface/ideas/<name>.dds` | 64x64 | `_ideas` |
+| `import_decision_icon` | `gfx/interface/decisions/<name>.dds` | 64x64 | `_decisions` |
+| `import_decision_category_icon` | `gfx/interface/decisions/categories/<name>.dds` | 64x64 | `_decisions` |
+| `import_decision_category_picture` | `gfx/interface/decisions/category_pictures/<name>.dds` | 610x200 | `_decisions` |
+| `import_event_picture` | `gfx/event_pictures/<name>.dds` | 210x176 (news 397x153) | `_eventpictures` |
+
+Every size is a default; pass `size=(w, h)` to override it. Icons default to
+`resize_mode="contain"` on a transparent canvas, pictures to `"cover"`. Focus
+icons also receive HOI4's standard `GFX_<name>_shine` animation unless
+`shine=False`. A leading sprite prefix in `name` (`GFX_idea_x`) is ignored.
+
+If the target `.gfx` already exists, only the matching `SpriteType` entry
+(matched by its `name`) is appended or replaced; every other byte, including
+comments and line endings, is preserved. Re-importing an identical image is a
+no-op. With the default `overwrite=False`, a different existing texture or
+sprite entry raises `FileExistsError`. A sprite already declared in another mod
+`.gfx` file is rejected; pass `gfx_file="interface/that_file.gfx"` to update it
+there. Staged sprites are visible to `validate(validate_icons=True)` and the
+icon suggestion helpers before `save()`, and `transaction()` rollback discards
+them. `import_icon_to_mod(mod_root, kind, name, image)` is the immediate
+standalone equivalent; `upsert_sprite_type()` exposes the text patcher.
+
 ### Wikimedia Commons images
 
 `CommonsImageClient` searches existing images and downloads reviewed sources

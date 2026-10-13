@@ -40,7 +40,7 @@ from .bookmarks import (
     require_bookmark_country_key,
     serialize_bookmarks_file,
 )
-from .assets import FlagAssetSet
+from .assets import FlagAssetSet, IconAsset
 from .config import find_config
 from .layers import ContentLayers, relative_content_path
 from .content_validation import (
@@ -8119,6 +8119,226 @@ class Mod:
         self._stage_asset_files({output: content}, overwrite=overwrite)
         return output
 
+    def import_focus_icon(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (95, 85),
+        resize_mode: Literal["stretch", "cover", "contain"] = "contain",
+        shine: bool = True,
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage a focus icon and return its ``GFX_<name>`` sprite for ``Focus.icon``.
+
+        Writes ``gfx/interface/goals/<name>.dds``, merges the sprite into
+        ``interface/<mod>_goals.gfx`` (or ``gfx_file``), and with ``shine=True``
+        adds the standard ``GFX_<name>_shine`` animation to the sibling
+        ``*_shine.gfx`` file. A leading ``GFX_`` in ``name`` is ignored.
+        """
+
+        return self._stage_icon_asset(
+            "focus",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            shine=shine,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_idea_icon(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (64, 64),
+        resize_mode: Literal["stretch", "cover", "contain"] = "contain",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage an idea picture and return its ``GFX_idea_<name>`` sprite.
+
+        ``Idea.icon`` accepts either the returned sprite or the bare ``name``;
+        both serialize as ``picture = <name>``.
+        """
+
+        return self._stage_icon_asset(
+            "idea",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_decision_icon(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (64, 64),
+        resize_mode: Literal["stretch", "cover", "contain"] = "contain",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage a decision icon and return its ``GFX_decision_<name>`` sprite.
+
+        ``Decision.icon`` may use either the returned sprite or the bare name.
+        """
+
+        return self._stage_icon_asset(
+            "decision",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_decision_category_icon(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (64, 64),
+        resize_mode: Literal["stretch", "cover", "contain"] = "contain",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage a ``GFX_decision_category_<name>`` icon for ``DecisionCategory.icon``."""
+
+        return self._stage_icon_asset(
+            "decision_category",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_decision_category_picture(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (610, 200),
+        resize_mode: Literal["stretch", "cover", "contain"] = "cover",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage a category banner and return its ``GFX_decision_cat_picture_<name>``.
+
+        The sprite is referenced by a category definition's ``picture`` field.
+        """
+
+        return self._stage_icon_asset(
+            "decision_category_picture",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_event_picture(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        news: bool = False,
+        size: tuple[int, int] | None = None,
+        resize_mode: Literal["stretch", "cover", "contain"] = "cover",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage an event picture and return the sprite for ``Event.picture``.
+
+        Report events use a 210x176 ``GFX_report_event_<name>`` picture; news
+        events (``news=True``) use 397x153 ``GFX_news_event_<name>``.
+        """
+
+        return self._stage_icon_asset(
+            "news_event" if news else "event",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def _stage_icon_asset(
+        self,
+        kind: str,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] | None,
+        resize_mode: Literal["stretch", "cover", "contain"],
+        shine: bool = False,
+        gfx_file: str | Path | None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"],
+        overwrite: bool,
+    ) -> IconAsset:
+        """Plan an icon against staged and on-disk files, then stage the changes."""
+
+        from .assets import plan_icon_asset
+
+        def read(path: Path) -> bytes | None:
+            pending = self._pending_asset_writes.get(path)
+            if pending is not None:
+                return pending
+            return path.read_bytes() if path.is_file() else None
+
+        interface_dir = self.mod_root / "interface"
+        declared = {
+            path
+            for path in self._pending_asset_writes
+            if path.suffix.lower() == ".gfx"
+        }
+        if interface_dir.is_dir():
+            declared.update(
+                path.resolve(strict=False)
+                for path in interface_dir.rglob("*.gfx")
+                if path.is_file()
+            )
+        asset, files = plan_icon_asset(
+            self.mod_root,
+            kind,
+            name,
+            src_image,
+            read=read,
+            size=size,
+            resize_mode=resize_mode,
+            shine=shine,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+            declared_gfx=sorted(declared),
+        )
+        if files:
+            self._stage_asset_files(files, overwrite=True)
+        return asset
+
     # ── Preview & Save ───────────────────────────────────────────
 
     def preview_summary(self) -> str:
@@ -9943,20 +10163,29 @@ class Mod:
 
     def _known_focus_icons(self) -> set[str]:
         cached = self._scan_cache.get("focus_icons")
-        if cached is not None:
-            return set(cached)
-        icons: set[str] = set()
-        for base in self._data_roots():
-            interface_dir = base / "interface"
-            if not interface_dir.exists():
-                continue
-            for path in interface_dir.rglob("*.gfx"):
-                try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
+        if cached is None:
+            cached = set()
+            for base in self._data_roots():
+                interface_dir = base / "interface"
+                if not interface_dir.exists():
                     continue
-                icons.update(name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_"))
-        self._scan_cache["focus_icons"] = icons
+                for path in interface_dir.rglob("*.gfx"):
+                    try:
+                        text = path.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        continue
+                    cached.update(
+                        name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_")
+                    )
+            self._scan_cache["focus_icons"] = cached
+        icons = set(cached)
+        # Staged sprite declarations are visible before save; they are not cached.
+        for path, content in self._pending_asset_writes.items():
+            if path.suffix.lower() == ".gfx":
+                text = content.decode("utf-8", errors="ignore")
+                icons.update(
+                    name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_")
+                )
         return icons
 
     def _known_sprite_textures(self) -> dict[str, str]:
