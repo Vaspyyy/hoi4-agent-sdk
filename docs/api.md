@@ -732,7 +732,8 @@ Localization uses HOI4 YML format (`l_<language>:` header, ` KEY:0 "value"`
 entries, UTF-8 with BOM). Files live at
 `localisation/<language>/*_l_<language>.yml`. Supported languages are listed in
 `hoi4.localisation.LOCALISATION_LANGUAGES`: `english`, `braz_por`, `french`,
-`german`, `japanese`, `polish`, `russian`, `spanish`, and `simp_chinese`.
+`german`, `japanese`, `polish`, `russian`, `spanish`, `simp_chinese`, and
+`korean` (the ten languages HOI4 1.19 ships in `localisation/languages.yml`).
 
 Every method takes a keyword-only `language=` that defaults to `"english"`, so
 English-only code is unchanged. An `l_` prefix is accepted (`"l_german"`);
@@ -947,7 +948,7 @@ except OperationCancelled:
 | **OOB** | Unique land templates/grid positions, separate correctly assigned land/naval/air files, known unit and equipment IDs, valid owned locations, valid factors, fleet/task-force/ship structure, DLC-aware hull variant resolution, and valid country-history references |
 | **Geography** | Significant capital-disconnected owned components and fully enclosed foreign land components warn unless explicitly allowlisted |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
-| **Map** | Land provinces belong to exactly one state (missing: warning `province_missing_state`; duplicate: error `province_in_multiple_states`); state provinces exist and are land; land and sea provinces belong to exactly one strategic region; supply nodes, railways (levels, land provinces, adjacency when the mod overrides `railways.txt` and the province map is readable), and `buildings.txt` state/sea-province references resolve |
+| **Map** | Land provinces belong to exactly one state (missing: warning `province_missing_state`; duplicate: error `province_in_multiple_states`); state provinces exist and are not sea provinces (vanilla states include lakes); land and sea provinces belong to exactly one strategic region (an empty region is a warning, as vanilla ships three); supply nodes, railways (levels, land provinces, adjacency when the mod overrides `railways.txt` and the province map is readable), and `buildings.txt` references resolve: the last field is a sea province, except for `floating_harbor`, which names its coastal land province. The whole check was run against the HOI4 1.19.3 map with no findings |
 | **Event** | Has ID, has title, has description, has options, option gameplay effects, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |
 | **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, no prerequisite cycles, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, continuous focus overlap risk, optional focus icon existence |
@@ -1354,14 +1355,15 @@ mod.import_event_picture("ABC_news", "paper.png", news=True)      # GFX_news_eve
 
 | Method | Texture | Default canvas | `.gfx` group |
 | --- | --- | --- | --- |
-| `import_focus_icon` | `gfx/interface/goals/<name>.dds` | 95x85 | `_goals` (+ `_goals_shine`) |
-| `import_idea_icon` | `gfx/interface/ideas/<name>.dds` | 64x64 | `_ideas` |
-| `import_decision_icon` | `gfx/interface/decisions/<name>.dds` | 64x64 | `_decisions` |
-| `import_decision_category_icon` | `gfx/interface/decisions/categories/<name>.dds` | 64x64 | `_decisions` |
-| `import_decision_category_picture` | `gfx/interface/decisions/category_pictures/<name>.dds` | 610x200 | `_decisions` |
+| `import_focus_icon` | `gfx/interface/goals/<name>.dds` | 100x88 | `_goals` (+ `_goals_shine`) |
+| `import_idea_icon` | `gfx/interface/ideas/<name>.dds` | 65x67 | `_ideas` |
+| `import_decision_icon` | `gfx/interface/decisions/<name>.dds` | 33x32 | `_decisions` |
+| `import_decision_category_icon` | `gfx/interface/decisions/categories/<name>.dds` | 52x40 | `_decisions` |
+| `import_decision_category_picture` | `gfx/interface/decisions/category_pictures/<name>.dds` | 114x101 | `_decisions` |
 | `import_event_picture` | `gfx/event_pictures/<name>.dds` | 210x176 (news 397x153) | `_eventpictures` |
 
-Every size is a default; pass `size=(w, h)` to override it. Icons default to
+Default canvases are the most common vanilla texture sizes in HOI4 1.19; pass
+`size=(w, h)` to override them. Icons default to
 `resize_mode="contain"` on a transparent canvas, pictures to `"cover"`. Focus
 icons also receive HOI4's standard `GFX_<name>_shine` animation unless
 `shine=False`. A leading sprite prefix in `name` (`GFX_idea_x`) is ignored.
@@ -1710,11 +1712,16 @@ identifier is a field (for example `defined_text = { name = GetFoo ... }`).
 Supported kinds: `scripted_effect`, `scripted_trigger`, `scripted_localisation`,
 `country_leader_trait`, `unit_leader_trait`, `technology`, `sub_unit`,
 `equipment`, `ai_strategy`, `ai_strategy_plan`, `ai_template`, `ai_equipment`,
-`ai_peace`, `ai_area`, `opinion_modifier`, `static_modifier`, `wargoal`,
+`ai_area`, `opinion_modifier`, `static_modifier`, `wargoal`,
 `autonomy_state`, `game_rule`, `state_category`, `building`, `resource`,
 `ability`, `scripted_diplomatic_action`, `scripted_gui`, `unit_name_list`,
 `division_name_list`, `ship_name_list`, `balance_of_power`,
-`military_industrial_organization`, `special_project`, and `operation`.
+`military_industrial_organization`, `special_project`, `operation`,
+`occupation_law`, `doctrine_folder`, `grand_doctrine`, `doctrine_track`, and
+`subdoctrine`. Container and entry layouts were checked against HOI4 1.19.3;
+`equipment` uses the vanilla `equipments = { ... }` wrapper. `subdoctrine` has
+no default file because vanilla groups subdoctrines by folder, so pass
+`path="common/doctrines/subdoctrines/<land|sea|air|special_forces>/....txt"`.
 
 Typed helpers render common bodies:
 

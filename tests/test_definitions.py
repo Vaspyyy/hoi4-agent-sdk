@@ -166,7 +166,7 @@ def test_bodies_cannot_escape_and_paths_must_match_domain(tmp_path: Path) -> Non
 
 
 def test_sub_units_ignore_nested_equipment_directory(tmp_path: Path) -> None:
-    _write(tmp_path, "common/units/equipment/guns.txt", "equipment = {\n\tgun = { year = 1918 }\n}\n")
+    _write(tmp_path, "common/units/equipment/guns.txt", "equipments = {\n\tgun = { year = 1918 }\n}\n")
     _write(tmp_path, "common/units/infantry.txt", "sub_units = {\n\tinfantry = { group = infantry }\n}\n")
     mod = Mod(tmp_path)
     assert [d.id for d in mod.list_definitions("sub_unit")] == ["infantry"]
@@ -221,5 +221,23 @@ def test_import_script_file_accepts_new_domains(tmp_path: Path) -> None:
 
 def test_every_kind_has_a_valid_default_path() -> None:
     for kind in DEFINITION_KINDS.values():
-        assert kind.default_path.startswith("common/") and kind.default_path.endswith(".txt")
         assert not (kind.container and kind.entry_key)
+        if not kind.default_file:
+            continue
+        assert kind.default_path.startswith("common/") and kind.default_path.endswith(".txt")
+
+
+def test_doctrines_and_equipment_follow_vanilla_layouts(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_definition("equipment", "abc_gun", "year = 1936")
+    mod.create_definition("grand_doctrine", "abc_doctrine", "folder = land\nxp_cost = 100")
+    with pytest.raises(ValueError, match="explicit path"):
+        mod.create_definition("subdoctrine", "abc_sub", "track = infantry")
+    mod.create_definition("subdoctrine", "abc_sub", "track = infantry",
+                          path="common/doctrines/subdoctrines/land/abc.txt")
+    mod.save()
+    assert (tmp_path / "common/units/equipment/00_sdk_generated.txt").read_text(
+        encoding="utf-8").startswith("equipments = {")
+    assert (tmp_path / "common/doctrines/grand_doctrines/00_sdk_generated.txt").read_text(
+        encoding="utf-8").startswith("abc_doctrine = {")
+    assert Mod(tmp_path).get_definition("subdoctrine", "abc_sub") is not None

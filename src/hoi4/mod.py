@@ -3909,8 +3909,10 @@ class Mod:
             kind = self._effective_province_types().get(adjacent_sea_province)
             if self._effective_province_types() and kind is None:
                 raise KeyError(f"Province {adjacent_sea_province} is not in definition.csv")
-            if kind is not None and kind != "sea":
-                raise ValueError(f"Province {adjacent_sea_province} is not a sea province")
+            # Floating harbors reference their coastal land province instead.
+            expected = "land" if building == "floating_harbor" else "sea"
+            if kind is not None and kind != expected:
+                raise ValueError(f"Province {adjacent_sea_province} is not a {expected} province")
         px, py, pz, protation = coordinates
         line = render_map_building(state_id, building, px, py, pz, protation, adjacent_sea_province)
         text = append_line(self._map_text(BUILDINGS_FILE) or "", line)
@@ -9447,7 +9449,7 @@ class Mod:
         name: str,
         src_image: str | Path,
         *,
-        size: tuple[int, int] = (95, 85),
+        size: tuple[int, int] = (100, 88),
         resize_mode: Literal["stretch", "cover", "contain"] = "contain",
         shine: bool = True,
         gfx_file: str | Path | None = None,
@@ -9479,7 +9481,7 @@ class Mod:
         name: str,
         src_image: str | Path,
         *,
-        size: tuple[int, int] = (64, 64),
+        size: tuple[int, int] = (65, 67),
         resize_mode: Literal["stretch", "cover", "contain"] = "contain",
         gfx_file: str | Path | None = None,
         dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
@@ -9507,7 +9509,7 @@ class Mod:
         name: str,
         src_image: str | Path,
         *,
-        size: tuple[int, int] = (64, 64),
+        size: tuple[int, int] = (33, 32),
         resize_mode: Literal["stretch", "cover", "contain"] = "contain",
         gfx_file: str | Path | None = None,
         dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
@@ -9534,7 +9536,7 @@ class Mod:
         name: str,
         src_image: str | Path,
         *,
-        size: tuple[int, int] = (64, 64),
+        size: tuple[int, int] = (52, 40),
         resize_mode: Literal["stretch", "cover", "contain"] = "contain",
         gfx_file: str | Path | None = None,
         dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
@@ -9558,7 +9560,7 @@ class Mod:
         name: str,
         src_image: str | Path,
         *,
-        size: tuple[int, int] = (610, 200),
+        size: tuple[int, int] = (114, 101),
         resize_mode: Literal["stretch", "cover", "contain"] = "cover",
         gfx_file: str | Path | None = None,
         dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",

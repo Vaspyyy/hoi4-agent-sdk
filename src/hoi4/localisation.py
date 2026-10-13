@@ -25,6 +25,7 @@ LOCALISATION_LANGUAGES: tuple[str, ...] = (
     "russian",
     "spanish",
     "simp_chinese",
+    "korean",
 )
 DEFAULT_LOCALISATION_LANGUAGE = "english"
 

@@ -626,7 +626,8 @@ def validate_map_consistency(
     if known:
         for state_id, provinces in sorted(state_provinces.items()):
             unknown = sorted({p for p in provinces if p not in known})
-            non_land = sorted({p for p in provinces if p in known and p not in land})
+            # Vanilla states include lake provinces; only sea provinces are invalid.
+            non_land = sorted({p for p in provinces if p in sea})
             if unknown:
                 errors.append(
                     ValidationError(
@@ -644,7 +645,7 @@ def validate_map_consistency(
                 errors.append(
                     ValidationError(
                         message=(
-                            f"State {state_id} contains non-land provinces: "
+                            f"State {state_id} contains sea provinces: "
                             f"{_preview(non_land)}"
                         ),
                         severity="error",
@@ -687,7 +688,7 @@ def validate_map_consistency(
                 errors.append(
                     ValidationError(
                         message=f"Strategic region {region.id} has no provinces",
-                        severity="error",
+                        severity="warning",
                         code="empty_strategic_region",
                         file_path=region.path,
                     )
@@ -802,10 +803,13 @@ def validate_map_consistency(
         for entry in parsed_buildings:
             if entry.state_id not in state_provinces:
                 unknown_states.setdefault(entry.state_id, entry.index)
+            # The last field is the adjacent sea province, except for floating
+            # harbors, which reference the coastal land province (HOI4 1.19).
+            expected = land if entry.building == "floating_harbor" else sea
             if (
                 known
                 and entry.adjacent_sea_province
-                and entry.adjacent_sea_province not in sea
+                and entry.adjacent_sea_province not in expected
             ):
                 bad_sea.setdefault(entry.adjacent_sea_province, entry.index)
         for state_id, index in sorted(unknown_states.items()):
@@ -822,7 +826,7 @@ def validate_map_consistency(
         for province, index in sorted(bad_sea.items()):
             errors.append(
                 ValidationError(
-                    message=f"buildings.txt references unknown or non-sea province {province} as adjacent sea",
+                    message=f"buildings.txt references unknown or wrong-type adjacent province {province}",
                     severity="error",
                     code="map_building_unknown_province",
                     file_path=buildings_path,

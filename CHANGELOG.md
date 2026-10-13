@@ -13,10 +13,11 @@ All notable changes to this project are documented here. The format follows
 - Transactional support-script imports, source-preserving scripted-trigger
   authoring, explicit conversion color-table rebuilding, and impassable states.
 - Generic keyed `common/` definitions (`list/get/create/update/delete_definition`)
-  for 32 domains, including scripted effects and localisation, leader traits,
+  for 36 domains, including scripted effects and localisation, leader traits,
   technologies, sub-units, equipment, AI strategies, opinion and static
   modifiers, wargoals, autonomy states, game rules, scripted GUIs, unit name
-  lists, balance of power, MIOs and special projects, with typed helpers,
+  lists, balance of power, MIOs, special projects, occupation laws and
+  doctrines, with typed helpers,
   container-aware byte-preserving patches, duplicate-ID and unknown-trait
   validation, and a wider `import_script_file()` allow-list.
 
@@ -42,7 +43,7 @@ All notable changes to this project are documented here. The format follows
   visible to icon validation before save.
 - Multi-language localisation: `get_loc`, `set_loc`, `delete_loc`,
   `search_loc`, and `all_loc` take `language=` (default `"english"`) for all
-  nine HOI4 languages, indexing inherited and mod files per language without
+  ten HOI4 languages, indexing inherited and mod files per language without
   mixing them. `set_loc(..., replace=True)` writes vanilla overrides to
   `localisation/<language>/replace/`, and `copy_loc_to_languages()` fills
   missing translations from English. Validation reports header/folder

@@ -54,6 +54,8 @@ class DefinitionKind:
 
     @property
     def default_path(self) -> str:
+        if not self.default_file:
+            raise ValueError(f"{self.name} definitions need an explicit path= under {self.directory}/")
         return f"{self.directory}/{self.default_file}"
 
 
@@ -93,12 +95,11 @@ DEFINITION_KINDS: dict[str, DefinitionKind] = {
         ),
         _kind("technology", "common/technologies", "Research items.", container="technologies"),
         _kind("sub_unit", "common/units", "Battalion and company types.", container="sub_units"),
-        _kind("equipment", "common/units/equipment", "Equipment archetypes and models.", container="equipment"),
+        _kind("equipment", "common/units/equipment", "Equipment archetypes and models.", container="equipments"),
         _kind("ai_strategy", "common/ai_strategy", "AI diplomatic and military strategies."),
         _kind("ai_strategy_plan", "common/ai_strategy_plans", "Long-term AI focus/strategy plans."),
         _kind("ai_template", "common/ai_templates", "AI division-template roles."),
         _kind("ai_equipment", "common/ai_equipment", "AI equipment-design roles."),
-        _kind("ai_peace", "common/ai_peace", "AI peace-conference behaviour."),
         _kind("ai_area", "common/ai_areas", "Named AI geographic areas.", container="areas"),
         _kind(
             "opinion_modifier", "common/opinion_modifiers",
@@ -134,6 +135,15 @@ DEFINITION_KINDS: dict[str, DefinitionKind] = {
         ),
         _kind("special_project", "common/special_projects/projects", "Special projects."),
         _kind("operation", "common/operations", "Intelligence operations."),
+        _kind("occupation_law", "common/occupation_laws", "Occupation laws."),
+        _kind("doctrine_folder", "common/doctrines/folders", "Doctrine folders (land, naval, air)."),
+        _kind("grand_doctrine", "common/doctrines/grand_doctrines", "Grand doctrines."),
+        _kind("doctrine_track", "common/doctrines/tracks", "Subdoctrine tracks."),
+        _kind(
+            "subdoctrine", "common/doctrines/subdoctrines",
+            "Subdoctrines; vanilla groups them in land/sea/air/special_forces folders.",
+            recursive=True, default_file="",
+        ),
     )
 }
 

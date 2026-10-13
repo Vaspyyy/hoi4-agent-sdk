@@ -502,6 +502,10 @@ def test_map_buildings_add_list_remove(tmp_path: Path) -> None:
         mod.add_map_building(42, "arms_factory", 1, 1, 1, 0)
     with pytest.raises(ValueError, match="not a sea"):
         mod.add_map_building(1, "naval_base", 1, 1, 1, 0, adjacent_sea_province=3)
+    with pytest.raises(ValueError, match="not a land"):
+        mod.add_map_building(1, "floating_harbor", 1, 1, 1, 0, adjacent_sea_province=7)
+    with mod.transaction():
+        mod.add_map_building(1, "floating_harbor", 1, 1, 1, 0, adjacent_sea_province=3)
     added = mod.add_map_building(2, "bunker", 5.25, 1.0, 2.5, 0.75)
     assert isinstance(added, MapBuilding)
     assert added.index == 4 and added.z == 2.5
@@ -566,7 +570,7 @@ def test_validation_reports_map_reference_problems(tmp_path: Path) -> None:
     assert codes["malformed_railway"]
     assert codes["map_building_unknown_state"]
     # Land province 2 is known but cannot be a naval base's adjacent sea.
-    assert any("province 2 " in message for message in codes["map_building_unknown_province"])
+    assert any(message.endswith("province 2") for message in codes["map_building_unknown_province"])
     severities = {
         issue.code: issue.severity
         for issue in mod.validate()
@@ -687,3 +691,30 @@ def test_replace_path_hides_inherited_states_and_regions(tmp_path: Path) -> None
     ]
     assert not MAP_CODES & set(_codes(mod))
     assert mod.create_state([4], name="Middle") == 3
+
+
+def test_validation_accepts_vanilla_lake_floating_harbor_and_empty_region_shapes() -> None:
+    from hoi4.map_editing import StrategicRegion, parse_map_buildings, validate_map_consistency
+
+    buildings = parse_map_buildings(
+        "1;floating_harbor;1.0;1.0;1.0;0.0;1\n"   # floating harbors name coastal land
+        "1;naval_base_spawn;1.0;1.0;1.0;0.0;3\n"  # naval bases name the sea
+        "1;floating_harbor;1.0;1.0;1.0;0.0;3\n"   # a sea province is wrong here
+    )
+    issues = validate_map_consistency(
+        province_types={1: "land", 2: "lake", 3: "sea"},
+        state_provinces={1: [1, 2]},
+        state_paths={1: "history/states/1-A.txt"},
+        regions=[
+            StrategicRegion(1, "R1", (1, 2, 3), "map/strategicregions/1.txt"),
+            StrategicRegion(2, "R2", (), "map/strategicregions/2.txt"),
+        ],
+        supply_nodes=None,
+        railways=None,
+        buildings=buildings,
+    )
+    by_code = {(issue.code, issue.severity, issue.line) for issue in issues}
+    assert by_code == {
+        ("empty_strategic_region", "warning", None),
+        ("map_building_unknown_province", "error", 3),
+    }

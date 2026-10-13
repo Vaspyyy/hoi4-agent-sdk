@@ -41,11 +41,11 @@ VANILLA_FLAG_IDEOLOGIES: tuple[str, ...] = (
 )
 PORTRAIT_SIZE = (156, 210)
 BOOKMARK_PICTURE_SIZE = (180, 104)
-FOCUS_ICON_SIZE = (95, 85)
-IDEA_ICON_SIZE = (64, 64)
-DECISION_ICON_SIZE = (64, 64)
-DECISION_CATEGORY_ICON_SIZE = (64, 64)
-DECISION_CATEGORY_PICTURE_SIZE = (610, 200)
+FOCUS_ICON_SIZE = (100, 88)
+IDEA_ICON_SIZE = (65, 67)
+DECISION_ICON_SIZE = (33, 32)
+DECISION_CATEGORY_ICON_SIZE = (52, 40)
+DECISION_CATEGORY_PICTURE_SIZE = (114, 101)
 EVENT_PICTURE_SIZE = (210, 176)
 NEWS_EVENT_PICTURE_SIZE = (397, 153)
 FOCUS_SHINE_OVERLAY = "gfx/interface/goals/shine_overlay.dds"
@@ -744,8 +744,9 @@ def import_icon_to_mod(
 ) -> IconAsset:
     """Immediately write a custom icon texture and merge its sprite declaration.
 
-    ``kind`` is one of :data:`ICON_KINDS`. Default canvases are 95x85 focus
-    icons, 64x64 idea/decision/category icons, 610x200 decision-category
+    ``kind`` is one of :data:`ICON_KINDS`. Default canvases match the most
+    common vanilla textures: 100x88 focus icons, 65x67 idea icons, 33x32
+    decision icons, 52x40 decision-category icons, 114x101 decision-category
     pictures, 210x176 report-event pictures, and 397x153 news-event pictures.
     Icons default to ``contain`` (transparent letterboxing); pictures to
     ``cover``.

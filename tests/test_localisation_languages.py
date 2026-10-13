@@ -42,6 +42,7 @@ def test_supported_languages_constant() -> None:
         "russian",
         "spanish",
         "simp_chinese",
+        "korean",
     )
 
 
