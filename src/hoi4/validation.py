@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .decisions import decision_has_mission_timeout
 from .effects_catalog import TECHNOLOGY_CATEGORIES
 from .events import VALID_EVENT_TYPES
 from .focus_layout import resolve_focus_positions
@@ -14,7 +15,7 @@ from .parser import iter_assignment_blocks
 from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
 from .script import validate_script_syntax
-from .types import Country, Event, FocusTree, Idea, State, ValidationError
+from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationError
 
 TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
 _TAG_DEFINITION_RE = re.compile(
@@ -32,6 +33,16 @@ VALIDATION_CODES: dict[str, str] = {
     "localization_bom": "A localization file is missing the UTF-8 byte-order mark HOI4 expects.",
     "localization_encoding": "A localization file is not valid UTF-8.",
     "localization_header": "A localization file has no valid l_<language>: header.",
+    "localization_language_mismatch": (
+        "A localization file's l_<language>: header does not match its language folder."
+    ),
+    "missing_translation": (
+        "English localization keys are missing from another language the mod ships."
+    ),
+    "mission_with_cost": "A mission (days_mission_timeout) also declares a cost.",
+    "mission_activation_without_timeout": (
+        "A decision has an activation trigger but no days_mission_timeout."
+    ),
     "country_scope_core_effect": "Core add/remove effect appears outside an explicit state scope.",
     "history_set_owner_in_effect": "State history owner directive appears in runtime effect script.",
     "unknown_tech_bonus_category": "add_tech_bonus category is not in the technology category catalog.",
@@ -240,6 +251,7 @@ _ERROR_CODES = {
     "localization_bom",
     "localization_encoding",
     "localization_header",
+    "localization_language_mismatch",
     "missing_effect_target",
     "state_buildings_outside_history",
     "duplicate_country_tag",
@@ -275,6 +287,7 @@ _ERROR_CODES = {
     "invalid_idea_picture_prefix",
     "invalid_character_roles_key",
     "invalid_decision_category_layout",
+    "mission_activation_without_timeout",
     "invalid_set_politics_field",
     "game_log_error",
     "stale_game_log",
@@ -1253,4 +1266,39 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
             )
         )
 
+    return errors
+
+
+def validate_decision(decision: Decision) -> list[ValidationError]:
+    """Light structural checks for missions and targeted decisions."""
+    errors: list[ValidationError] = []
+    file_path = str(decision.path) if decision.path else None
+    is_mission = decision_has_mission_timeout(decision)
+    if is_mission and (decision.cost or decision.custom_cost_trigger.strip()):
+        errors.append(
+            ValidationError(
+                message=(
+                    f"Decision '{decision.id}' is a mission (days_mission_timeout) but "
+                    "also has a cost; missions start from activation and are never "
+                    "paid for, so remove cost/custom_cost_trigger"
+                ),
+                severity="warning",
+                code="mission_with_cost",
+                decision_id=decision.id,
+                file_path=file_path,
+            )
+        )
+    if decision.activation.strip() and not is_mission:
+        errors.append(
+            ValidationError(
+                message=(
+                    f"Decision '{decision.id}' has an activation trigger but no "
+                    "days_mission_timeout; activation only applies to missions"
+                ),
+                severity="error",
+                code="mission_activation_without_timeout",
+                decision_id=decision.id,
+                file_path=file_path,
+            )
+        )
     return errors

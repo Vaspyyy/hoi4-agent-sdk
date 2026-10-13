@@ -29,6 +29,26 @@ All notable changes to this project are documented here. The format follows
   pictures, and report/news event pictures. Sprites are merged into mod-scoped
   `.gfx` files by name without disturbing other entries, and staged sprites are
   visible to icon validation before save.
+- Multi-language localisation: `get_loc`, `set_loc`, `delete_loc`,
+  `search_loc`, and `all_loc` take `language=` (default `"english"`) for all
+  nine HOI4 languages, indexing inherited and mod files per language without
+  mixing them. `set_loc(..., replace=True)` writes vanilla overrides to
+  `localisation/<language>/replace/`, and `copy_loc_to_languages()` fills
+  missing translations from English. Validation reports header/folder
+  language mismatches and English keys missing from a shipped language.
+- Decision missions and targeted decisions: `Decision` models mission fields
+  (`days_mission_timeout`, `activation`, `timeout_effect`, `cancel_trigger`,
+  `cancel_effect`, `is_good`, `selectable_mission`), targeted fields
+  (`target_trigger`, `targets`, `target_array`, `target_root_trigger`,
+  `state_target`, `targets_dynamic`, `target_non_existing`, `on_map_mode`),
+  and general fields (`allowed`, `days_re_enable`, `war_with_on_remove`,
+  `custom_cost_trigger`, `custom_cost_text`, `cancel_if_not_visible`,
+  `modifier`, `remove_trigger`, `highlight_states`, `priority`). They are
+  parsed, rendered, and patched in place by `update_decision`; edits now patch
+  only changed fields, so unmodeled spellings such as `cost = @constant`
+  survive. New `Mod.create_mission()` and `Mod.create_targeted_decision()`
+  helpers, plus `mission_with_cost` and `mission_activation_without_timeout`
+  validation.
 
 ### Changed
 

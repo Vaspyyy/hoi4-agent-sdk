@@ -281,8 +281,46 @@ Decision(id: str, category: str = "",
          complete_effect: str = "",
          remove_effect: str = "",
          ai_will_do: str = "",
-         path: Path | None = None)
+         path: Path | None = None,
+         *,  # keyword fields below (declared after the internal raw_block/touched)
+         # Missions
+         days_mission_timeout: int | None = None,
+         activation: str = "",            # trigger block
+         timeout_effect: str = "",        # effect block
+         cancel_trigger: str = "",
+         cancel_effect: str = "",
+         is_good: bool | None = None,
+         selectable_mission: bool | None = None,
+         # Targeted decisions
+         target_trigger: str = "",        # FROM is the candidate target
+         targets: list[str] = [],         # rendered as targets = { GER ITA }
+         target_array: str = "",          # e.g. "global.majors"
+         target_root_trigger: str = "",
+         state_target: bool | None = None,
+         targets_dynamic: bool | None = None,
+         target_non_existing: bool | None = None,
+         on_map_mode: str = "",
+         # General
+         allowed: str = "",
+         days_re_enable: int | None = None,
+         war_with_on_remove: str = "",
+         custom_cost_trigger: str = "",
+         custom_cost_text: str = "",      # localization key
+         cancel_if_not_visible: bool | None = None,
+         modifier: str = "",              # modifier block while active
+         remove_trigger: str = "",
+         highlight_states: str = "",
+         priority: int | None = None)
 ```
+
+Block fields hold raw Paradox script bodies without the outer braces. The newer
+fields are read from top-level assignments only, so `ai_will_do = { modifier =
+{ ... } }` never appears as `Decision.modifier`. On save, a touched decision
+patches only fields whose value changed; spellings the model cannot represent
+(`cost = @constant`, `priority = { base = 5 }`) are left as written. A
+`days_mission_timeout = @constant` still counts as a mission for validation.
+They are appended to the dataclass, so existing positional construction is
+unchanged; pass them by keyword.
 
 ### DecisionCategory
 ```python

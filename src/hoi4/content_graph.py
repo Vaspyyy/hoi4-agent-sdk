@@ -380,6 +380,8 @@ def _known_localization_uses(mod: Mod) -> set[str]:
         result.update((idea.id, f"{idea.id}_desc"))
     for decision in mod._decisions.values():
         result.update((decision.id, f"{decision.id}_desc"))
+        if decision.custom_cost_text:
+            result.add(decision.custom_cost_text)
     for category in mod._decision_categories.values():
         result.add(category.id)
     for character in mod._characters.values():

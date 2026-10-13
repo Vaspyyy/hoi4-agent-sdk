@@ -428,13 +428,15 @@ migrates its category metadata automatically.
 | `get_decision(decision_id: str) -> Decision` | `Decision` | Get a decision |
 | `get_decision_category(category_id: str) -> DecisionCategory` | `DecisionCategory` | Get a category |
 | `create_decision_category(category_id, icon="", allowed="", visible="", path=None, category_path=None, overwrite=False) -> DecisionCategory` | `DecisionCategory` | Create or route a category. `path` targets decision content; optional `category_path` must be under `common/decisions/categories`. Raises if it exists unless `overwrite=True`. |
-| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. |
+| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, **fields) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. Also accepts every mission, targeted, and general field listed below by keyword. |
 | `ensure_decision_category(category_id, **kwargs) -> DecisionCategory` | `DecisionCategory` | Idempotent create-or-update wrapper |
 | `ensure_decision(category_id, decision_id, **kwargs) -> Decision` | `Decision` | Idempotent create-or-update wrapper |
 | `create_decision_chain(category_id, steps, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Decisions | Build staged decisions with generated completion flags, event calls, localization, and final event |
+| `create_mission(category_id, decision_id, *, days_mission_timeout, activation="", available="", complete_effect="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a mission: it starts when `activation` holds, completes with `complete_effect` once `available` holds, otherwise runs `timeout_effect` after the timeout. Rejects a positive `cost`/`custom_cost_trigger` and non-positive timeouts. |
+| `create_targeted_decision(category_id, decision_id, *, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a decision with one instance per target country or state. Requires at least one of `target_trigger`, `targets`, `target_array`, or `state_target=True`. |
 | `create_recovery_decision(category_id, decision_id, effect, hidden=False, ...) -> Decision` | `Decision` | Create a visible or hidden repair/migration decision for already-started saves |
 | `update_decision_category(category_id: str, **kwargs) -> bool` | `bool` | Update a decision category |
-| `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update a decision |
+| `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update any modeled decision field, including the mission/targeted/general fields; edits patch the source in place |
 | `delete_decision(decision_id: str) -> bool` | `bool` | Remove a decision |
 
 ### Example
@@ -460,6 +462,48 @@ mod.create_decision_chain("slv_revolt", [
     {"id": "SLV_launch_revolt",
      "complete_effect": Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
 ], final_event="slv.99")
+```
+
+### Missions, targeted decisions, and other fields
+
+Besides the classic fields, `Decision` models these as first-class fields. They
+are parsed from source, rendered for new decisions, and patched in place by
+`update_decision`; unknown keys, comments, and repeated blocks are kept.
+
+| Group | Fields |
+|-------|--------|
+| Missions | `days_mission_timeout` (int), `activation`, `timeout_effect`, `cancel_trigger`, `cancel_effect` (blocks), `is_good`, `selectable_mission` (bool) |
+| Targeted | `target_trigger`, `target_root_trigger` (blocks), `targets` (list of tags, `targets = { A B }`), `target_array`, `on_map_mode` (str), `state_target`, `targets_dynamic`, `target_non_existing` (bool) |
+| General | `allowed`, `custom_cost_trigger`, `modifier`, `remove_trigger`, `highlight_states` (blocks), `days_re_enable`, `priority` (int), `war_with_on_remove`, `custom_cost_text` (str), `cancel_if_not_visible` (bool) |
+
+Pass block fields as script bodies without the outer braces; empty strings,
+`None`, or `[]` remove a field. Validation warns with `mission_with_cost` when
+a mission also has a positive `cost` or a `custom_cost_trigger`, and reports
+`mission_activation_without_timeout` (error) for `activation` without
+`days_mission_timeout`. Trigger and effect fields take part in script
+vocabulary, reference, and liveness checks in the decision owner's scope.
+
+```python
+mod.create_mission(
+    "TST_crisis",
+    "TST_hold_the_line",
+    days_mission_timeout=90,
+    activation="has_war = yes",
+    available="surrender_progress < 0.1",
+    complete_effect="add_stability = 0.05",
+    timeout_effect="add_stability = -0.1",
+    is_good=True,
+    loc_name="Hold the Line",
+)
+mod.create_targeted_decision(
+    "TST_diplomacy",
+    "TST_improve_relations",
+    targets=["GER", "ITA"],
+    target_trigger="FROM = { exists = yes }",
+    cost=25,
+    complete_effect="add_opinion_modifier = { target = FROM modifier = improve_relation }",
+)
+mod.update_decision("TST_hold_the_line", days_mission_timeout=120)
 ```
 
 ### Event Types
@@ -638,20 +682,38 @@ mod.add_focus("west_focus", Focus(
 Focus tree files write to `common/national_focus/{TAG}_focus.txt`.
 ## Localization
 
-Localization uses HOI4 YML format (`l_english:` header, ` KEY:0 "value"` entries).
-The `Mod` localization API loads English `.yml` files under `localisation/english`
-and stores their keys and values in a flat dict. Other languages are not supported
-by this API.
+Localization uses HOI4 YML format (`l_<language>:` header, ` KEY:0 "value"`
+entries, UTF-8 with BOM). Files live at
+`localisation/<language>/*_l_<language>.yml`. Supported languages are listed in
+`hoi4.localisation.LOCALISATION_LANGUAGES`: `english`, `braz_por`, `french`,
+`german`, `japanese`, `polish`, `russian`, `spanish`, and `simp_chinese`.
+
+Every method takes a keyword-only `language=` that defaults to `"english"`, so
+English-only code is unchanged. An `l_` prefix is accepted (`"l_german"`);
+unknown languages raise `ValueError`. Each language is indexed separately, with
+inherited base-layer files first and the mod's own files on top, exactly like
+English. English loads with the mod; another language is indexed on its first
+use. Languages are never mixed: `get_loc(key, language="german")` returns `None`
+for an English-only key rather than falling back.
 
 ### Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_loc(key: str) -> str \| None` | `str \| None` | Get localized string |
-| `set_loc(key: str, value: str, file_path=None) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or `default_loc_file` for new entries. Custom paths must be `.yml` files under `localisation/english`; unsupported paths raise `ValueError` before modifying the entry. |
-| `delete_loc(key: str) -> bool` | `bool` | Remove entry |
-| `search_loc(query: str) -> dict[str, str]` | `dict` | Case-insensitive substring search in keys and values |
-| `all_loc() -> dict[str, str]` | `dict` | Full copy of all entries |
+| `get_loc(key, *, language="english") -> str \| None` | `str \| None` | Get one language's localized string |
+| `set_loc(key, value, file_path=None, *, language="english", replace=False) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `replace=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `file_path` inside `replace/`), which is how a mod overrides base-game keys. |
+| `delete_loc(key, *, language="english") -> bool` | `bool` | Remove one language's entry |
+| `search_loc(query, *, language="english") -> dict[str, str]` | `dict` | Case-insensitive substring search in one language's keys and values |
+| `all_loc(*, language="english") -> dict[str, str]` | `dict` | Full copy of one language's entries |
+| `copy_loc_to_languages(keys=None, languages=None, *, overwrite=False) -> dict[str, list[str]]` | `dict` | Fill missing translations with the English text so players of other languages do not see raw keys. `keys` defaults to every English key the mod authors (inherited base-game text is never copied); `languages` defaults to every non-English language. New entries go to the file mirroring their English source (`events_l_english.yml` -> `events_l_german.yml`, `replace/` kept). Existing translations are kept unless `overwrite=True`. Returns the keys written per language. |
+
+Deleting a character or country also removes its generated keys from every
+non-English language the mod ships.
+
+Validation reports `localization_language_mismatch` (error) when a file's
+`l_<language>:` header does not match its `localisation/<language>` folder, and
+`missing_translation` (warning, one per language) when English keys the mod
+authors are missing from a language that already has mod files.
 
 When deleting the last entry in a layered localization file, saving retains an
 empty override (including its header and comments) if removing the file would
@@ -683,9 +745,15 @@ mod.set_loc(
     "The time has come to stand alone.\nThe nation awaits our decision.",
 )
 mod.search_loc("independence")
+
+# Translations and vanilla overrides.
+mod.set_loc("WST_independence", "Unabhängigkeit erklären", language="german")
+mod.set_loc("GER_anschluss", "Union with Austria", replace=True)
+mod.copy_loc_to_languages(languages=["french", "spanish"])
 ```
 
-Default file: `localisation/english/mod_l_english.yml`.
+Default file: `localisation/english/mod_l_english.yml` (for other languages,
+`localisation/<language>/mod_l_<language>.yml`).
 
 ## Effect Builders
 
@@ -973,6 +1041,10 @@ mod_root/
     english/
       mod_l_english.yml              # Default localization target
       {TAG}_country_l_english.yml    # Country-specific localization
+      replace/
+        mod_replace_l_english.yml    # set_loc(..., replace=True) overrides
+    german/                          # Same layout for every other language
+      mod_l_german.yml
 ```
 
 ## Ideologies, Dynamic Modifiers, and Bookmarks
@@ -1500,7 +1572,7 @@ this does not infer filesystem paths or replacement policy.
 - `mod.content_files("history/states")` returns effective relative filenames
   mapped to original source paths. `state_index()` additionally reports
   `source_path` and `source_layer` when layers are configured.
-- Country/state/OOB fallback, English localization, asset resolution, province checks, and their
+- Country/state/OOB fallback, localization in every language, asset resolution, province checks, and their
   validators use the effective content. Game script documentation remains tied
   to the actual installed game.
 - Focus/event/idea/on-action files retain opt-in inherited loading:

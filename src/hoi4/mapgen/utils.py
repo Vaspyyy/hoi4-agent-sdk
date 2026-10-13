@@ -176,7 +176,7 @@ def _remove_enclaves(region_map: np.ndarray, mask: np.ndarray) -> None:
         if count <= 1:
             continue
         sizes = np.bincount(labeled.ravel())[1:]
-        largest = int(sizes.argmax()) + 1
+        largest = int(np.argmax(sizes)) + 1
         small = region_mask & (labeled != largest)
         region_map[small] = -1
         cleared |= small
@@ -187,7 +187,7 @@ def _remove_enclaves(region_map: np.ndarray, mask: np.ndarray) -> None:
         neighbours = binary_dilation(fragment) & (region_map >= 0) & mask
         ids, counts = np.unique(region_map[neighbours], return_counts=True)
         if len(ids):
-            region_map[fragment] = ids[int(counts.argmax())]
+            region_map[fragment] = ids[int(np.argmax(counts))]
 
 
 def assign_regions(
