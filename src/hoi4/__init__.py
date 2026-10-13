@@ -14,9 +14,11 @@ Usage:
 from importlib.metadata import PackageNotFoundError, version
 
 from .assets import (
+    ICON_KINDS,
     BookmarkPictureAsset,
     DDSExportUnsupportedError,
     FlagAssetSet,
+    IconAsset,
     ImageBackendUnavailableError,
     UnsupportedImageFormatError,
     export_flag_from_mod,
@@ -25,7 +27,11 @@ from .assets import (
     find_portrait_path,
     import_bookmark_picture_to_mod,
     import_flag_to_mod,
+    import_icon_to_mod,
     import_portrait_to_mod,
+    render_focus_shine_sprite,
+    render_sprite_type,
+    upsert_sprite_type,
     write_portrait_gfx,
 )
 from .bookmarks import Bookmark, BookmarkCountry
@@ -220,6 +226,12 @@ __all__ = [
     "import_flag_to_mod",
     "import_portrait_to_mod",
     "write_portrait_gfx",
+    "ICON_KINDS",
+    "IconAsset",
+    "import_icon_to_mod",
+    "render_focus_shine_sprite",
+    "render_sprite_type",
+    "upsert_sprite_type",
     "MapRenderCancelled",
     "PoliticalMapResult",
     "TerritoryComponent",

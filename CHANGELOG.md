@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format follows
   with creator/license metadata, retrieval time, checksums, and verified local
   cache reuse. SVG flags use Commons raster thumbnails. Sources feed the
   existing transactional flag/portrait import APIs without a Gemini key.
+- Transactional `Mod` importers for custom focus icons (with standard shine
+  sprites), idea icons, decision and decision-category icons, decision-category
+  pictures, and report/news event pictures. Sprites are merged into mod-scoped
+  `.gfx` files by name without disturbing other entries, and staged sprites are
+  visible to icon validation before save.
 
 ### Changed
 
