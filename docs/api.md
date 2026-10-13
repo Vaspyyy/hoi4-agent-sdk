@@ -428,13 +428,15 @@ migrates its category metadata automatically.
 | `get_decision(decision_id: str) -> Decision` | `Decision` | Get a decision |
 | `get_decision_category(category_id: str) -> DecisionCategory` | `DecisionCategory` | Get a category |
 | `create_decision_category(category_id, icon="", allowed="", visible="", path=None, category_path=None, overwrite=False) -> DecisionCategory` | `DecisionCategory` | Create or route a category. `path` targets decision content; optional `category_path` must be under `common/decisions/categories`. Raises if it exists unless `overwrite=True`. |
-| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. |
+| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, **fields) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. Also accepts every mission, targeted, and general field listed below by keyword. |
 | `ensure_decision_category(category_id, **kwargs) -> DecisionCategory` | `DecisionCategory` | Idempotent create-or-update wrapper |
 | `ensure_decision(category_id, decision_id, **kwargs) -> Decision` | `Decision` | Idempotent create-or-update wrapper |
 | `create_decision_chain(category_id, steps, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Decisions | Build staged decisions with generated completion flags, event calls, localization, and final event |
+| `create_mission(category_id, decision_id, *, days_mission_timeout, activation="", available="", complete_effect="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a mission: it starts when `activation` holds, completes with `complete_effect` once `available` holds, otherwise runs `timeout_effect` after the timeout. Rejects a positive `cost`/`custom_cost_trigger` and non-positive timeouts. |
+| `create_targeted_decision(category_id, decision_id, *, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a decision with one instance per target country or state. Requires at least one of `target_trigger`, `targets`, `target_array`, or `state_target=True`. |
 | `create_recovery_decision(category_id, decision_id, effect, hidden=False, ...) -> Decision` | `Decision` | Create a visible or hidden repair/migration decision for already-started saves |
 | `update_decision_category(category_id: str, **kwargs) -> bool` | `bool` | Update a decision category |
-| `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update a decision |
+| `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update any modeled decision field, including the mission/targeted/general fields; edits patch the source in place |
 | `delete_decision(decision_id: str) -> bool` | `bool` | Remove a decision |
 
 ### Example
@@ -460,6 +462,48 @@ mod.create_decision_chain("slv_revolt", [
     {"id": "SLV_launch_revolt",
      "complete_effect": Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
 ], final_event="slv.99")
+```
+
+### Missions, targeted decisions, and other fields
+
+Besides the classic fields, `Decision` models these as first-class fields. They
+are parsed from source, rendered for new decisions, and patched in place by
+`update_decision`; unknown keys, comments, and repeated blocks are kept.
+
+| Group | Fields |
+|-------|--------|
+| Missions | `days_mission_timeout` (int), `activation`, `timeout_effect`, `cancel_trigger`, `cancel_effect` (blocks), `is_good`, `selectable_mission` (bool) |
+| Targeted | `target_trigger`, `target_root_trigger` (blocks), `targets` (list of tags, `targets = { A B }`), `target_array`, `on_map_mode` (str), `state_target`, `targets_dynamic`, `target_non_existing` (bool) |
+| General | `allowed`, `custom_cost_trigger`, `modifier`, `remove_trigger`, `highlight_states` (blocks), `days_re_enable`, `priority` (int), `war_with_on_remove`, `custom_cost_text` (str), `cancel_if_not_visible` (bool) |
+
+Pass block fields as script bodies without the outer braces; empty strings,
+`None`, or `[]` remove a field. Validation warns with `mission_with_cost` when
+a mission also has a positive `cost` or a `custom_cost_trigger`, and reports
+`mission_activation_without_timeout` (error) for `activation` without
+`days_mission_timeout`. Trigger and effect fields take part in script
+vocabulary, reference, and liveness checks in the decision owner's scope.
+
+```python
+mod.create_mission(
+    "TST_crisis",
+    "TST_hold_the_line",
+    days_mission_timeout=90,
+    activation="has_war = yes",
+    available="surrender_progress < 0.1",
+    complete_effect="add_stability = 0.05",
+    timeout_effect="add_stability = -0.1",
+    is_good=True,
+    loc_name="Hold the Line",
+)
+mod.create_targeted_decision(
+    "TST_diplomacy",
+    "TST_improve_relations",
+    targets=["GER", "ITA"],
+    target_trigger="FROM = { exists = yes }",
+    cost=25,
+    complete_effect="add_opinion_modifier = { target = FROM modifier = improve_relation }",
+)
+mod.update_decision("TST_hold_the_line", days_mission_timeout=120)
 ```
 
 ### Event Types

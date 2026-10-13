@@ -10,9 +10,19 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any, Callable
 
-from .parser import find_assignment_block, iter_assignment_blocks, strip_comments
+from ._scalar import needs_quotes
+from .parser import (
+    ParseError,
+    TokenType,
+    find_assignment_block,
+    iter_assignment_blocks,
+    strip_comments,
+    tokenize,
+)
 from .patching import (
+    AssignmentSpan,
     append_assignment,
     dedent_block_body,
     replace_assignment,
@@ -25,6 +35,91 @@ from .types import Decision, DecisionCategory
 
 
 SCALAR_RE = re.compile(r"\b([A-Za-z0-9_]+)\s*=\s*([^\s{}#]+)")
+
+# Field kinds: "int", "bool", "str" (scalar, quoted when needed), "atom" (bare
+# scalar), "list" (``key = { A B }``), and "block" (raw Paradox script).
+# Legacy fields keep their historical readers; the mission/targeted/general
+# fields are read from top-level assignments only, so nested keys such as an
+# ``ai_will_do = { modifier = { ... } }`` never leak into ``Decision.modifier``.
+_LEGACY_FIELDS: dict[str, str] = {
+    "icon": "atom",
+    "cost": "int",
+    "days_remove": "int",
+    "fire_only_once": "bool",
+    "available": "block",
+    "visible": "block",
+    "complete_effect": "block",
+    "remove_effect": "block",
+    "ai_will_do": "block",
+}
+_EXTENDED_FIELDS: dict[str, str] = {
+    "days_mission_timeout": "int",
+    "activation": "block",
+    "timeout_effect": "block",
+    "cancel_trigger": "block",
+    "cancel_effect": "block",
+    "is_good": "bool",
+    "selectable_mission": "bool",
+    "target_trigger": "block",
+    "targets": "list",
+    "target_array": "str",
+    "target_root_trigger": "block",
+    "state_target": "bool",
+    "targets_dynamic": "bool",
+    "target_non_existing": "bool",
+    "on_map_mode": "str",
+    "allowed": "block",
+    "days_re_enable": "int",
+    "war_with_on_remove": "str",
+    "custom_cost_trigger": "block",
+    "custom_cost_text": "str",
+    "cancel_if_not_visible": "bool",
+    "modifier": "block",
+    "remove_trigger": "block",
+    "highlight_states": "block",
+    "priority": "int",
+}
+DECISION_FIELD_KINDS: dict[str, str] = {**_LEGACY_FIELDS, **_EXTENDED_FIELDS}
+
+# Render order for new decisions: scalars first, then trigger/effect blocks.
+# The legacy fields keep their historical relative order.
+_RENDER_ORDER: tuple[str, ...] = (
+    "icon",
+    "priority",
+    "cost",
+    "custom_cost_text",
+    "days_remove",
+    "days_re_enable",
+    "days_mission_timeout",
+    "fire_only_once",
+    "is_good",
+    "selectable_mission",
+    "cancel_if_not_visible",
+    "state_target",
+    "targets",
+    "target_array",
+    "targets_dynamic",
+    "target_non_existing",
+    "on_map_mode",
+    "war_with_on_remove",
+    "allowed",
+    "visible",
+    "available",
+    "target_root_trigger",
+    "target_trigger",
+    "activation",
+    "highlight_states",
+    "cancel_trigger",
+    "remove_trigger",
+    "custom_cost_trigger",
+    "complete_effect",
+    "remove_effect",
+    "timeout_effect",
+    "cancel_effect",
+    "modifier",
+    "ai_will_do",
+)
+assert set(_RENDER_ORDER) == set(DECISION_FIELD_KINDS)
 
 
 def _extract_block(text: str, key: str) -> str:
@@ -55,6 +150,133 @@ def _extract_bool(text: str, key: str) -> bool | None:
     if raw == "no":
         return False
     return None
+
+
+def _first_spans(body: str) -> dict[str, AssignmentSpan]:
+    spans: dict[str, AssignmentSpan] = {}
+    try:
+        for span in top_level_assignments(body):
+            spans.setdefault(span.key, span)
+    except ParseError:
+        return {}
+    return spans
+
+
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+
+def _parse_atom_list(body: str) -> list[str]:
+    """Read ``A B "C"``; anything structured is not a plain list."""
+    values: list[str] = []
+    try:
+        tokens = tokenize(body)
+    except (ParseError, ValueError):
+        return []
+    for token in tokens:
+        if token.type in {TokenType.COMMENT, TokenType.EOF}:
+            continue
+        if token.type not in {TokenType.IDENT, TokenType.STRING, TokenType.NUMBER}:
+            return []
+        values.append(token.value)
+    return values
+
+
+def _top_level_value(body: str, span: AssignmentSpan | None, kind: str) -> Any:
+    if kind == "block":
+        if span is None or span.body_start is None or span.body_end is None:
+            return ""
+        return dedent_block_body(body[span.body_start : span.body_end])
+    if kind == "list":
+        if span is None or span.body_start is None or span.body_end is None:
+            return []
+        return _parse_atom_list(body[span.body_start : span.body_end])
+    if span is None or span.is_block:
+        return "" if kind in {"str", "atom"} else None
+    raw = body[span.value_start : span.value_end]
+    if kind == "int":
+        try:
+            return int(_unquote(raw))
+        except ValueError:
+            return None
+    if kind == "bool":
+        value = _unquote(raw)
+        return True if value == "yes" else False if value == "no" else None
+    return _unquote(raw)
+
+
+_LEGACY_READERS: dict[str, Callable[[str, str], Any]] = {
+    "atom": _extract_scalar,
+    "int": _extract_int,
+    "bool": _extract_bool,
+    "block": _extract_block,
+}
+
+
+def _read_decision_fields(body: str) -> dict[str, Any]:
+    values: dict[str, Any] = {
+        key: _LEGACY_READERS[kind](body, key) for key, kind in _LEGACY_FIELDS.items()
+    }
+    spans = _first_spans(body)
+    for key, kind in _EXTENDED_FIELDS.items():
+        values[key] = _top_level_value(body, spans.get(key), kind)
+    return values
+
+
+def _quote_if_needed(value: str) -> str:
+    if needs_quotes(value):
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return value
+
+
+def _normalized_targets(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return value.split()
+    return [str(item) for item in value]
+
+
+def _render_scalar(kind: str, value: Any) -> str | None:
+    if kind == "int":
+        return None if value is None else str(value)
+    if kind == "bool":
+        return None if value is None else ("yes" if value else "no")
+    text = "" if value is None else str(value)
+    if not text:
+        return None
+    return text if kind == "atom" else _quote_if_needed(text)
+
+
+def _render_list(value: Any) -> str | None:
+    items = _normalized_targets(value)
+    return " ".join(_quote_if_needed(item) for item in items) if items else None
+
+
+def _model_value(decision: Decision, key: str) -> Any:
+    value = getattr(decision, key)
+    if DECISION_FIELD_KINDS[key] == "list":
+        return _normalized_targets(value)
+    return value
+
+
+def decision_has_mission_timeout(decision: Decision) -> bool:
+    """Whether the decision is a mission, counting unmodeled source spellings.
+
+    ``days_mission_timeout = @constant`` cannot be read as an int, but it is
+    preserved on save, so it still makes the decision a mission.
+    """
+    if decision.days_mission_timeout is not None:
+        return True
+    if not decision.raw_block:
+        return False
+    span = _first_spans(decision.raw_block).get("days_mission_timeout")
+    return (
+        span is not None
+        and _top_level_value(decision.raw_block, span, "int") is None
+    )
 
 
 def _brace_depth_at(text: str, pos: int) -> int:
@@ -89,6 +311,12 @@ def _looks_like_category(body: str) -> bool:
         "days_remove",
         "fire_only_once",
         "cost",
+        # Missions and targeted decisions need not use any key above.
+        "days_mission_timeout",
+        "activation",
+        "timeout_effect",
+        "target_trigger",
+        "selectable_mission",
     }
     clean = strip_comments(body)
     return bool(iter_assignment_blocks(body, "available")) or any(
@@ -180,17 +408,9 @@ def _parse_decision(decision_id: str, category_id: str, body: str, path: Path) -
     return Decision(
         id=decision_id,
         category=category_id,
-        icon=_extract_scalar(body, "icon"),
-        cost=_extract_int(body, "cost"),
-        days_remove=_extract_int(body, "days_remove"),
-        fire_only_once=_extract_bool(body, "fire_only_once"),
-        available=_extract_block(body, "available"),
-        visible=_extract_block(body, "visible"),
-        complete_effect=_extract_block(body, "complete_effect"),
-        remove_effect=_extract_block(body, "remove_effect"),
-        ai_will_do=_extract_block(body, "ai_will_do"),
         path=path,
         raw_block=body.strip(),
+        **_read_decision_fields(body),
     )
 
 
@@ -199,21 +419,21 @@ def serialize_decision(decision: Decision) -> str:
         body = _patch_decision_body(decision, decision.raw_block)
         return f"\t{decision.id} = {{\n{_indent(body, 2)}\n\t}}"
     lines = [f"\t{decision.id} = {{"]
-    if decision.icon:
-        lines.append(f"\t\ticon = {decision.icon}")
-    if decision.cost is not None:
-        lines.append(f"\t\tcost = {decision.cost}")
-    if decision.days_remove is not None:
-        lines.append(f"\t\tdays_remove = {decision.days_remove}")
-    if decision.fire_only_once is not None:
-        lines.append(f"\t\tfire_only_once = {'yes' if decision.fire_only_once else 'no'}")
-    for key in ["visible", "available", "complete_effect", "remove_effect", "ai_will_do"]:
-        body = getattr(decision, key)
-        if body:
-            lines.append(f"\t\t{key} = {{")
-            for line in body.strip().split("\n"):
-                lines.append(f"\t\t\t{line.strip()}")
-            lines.append("\t\t}")
+    for key in _RENDER_ORDER:
+        kind = DECISION_FIELD_KINDS[key]
+        value = getattr(decision, key)
+        if kind == "block":
+            if value:
+                lines.append(f"\t\t{key} = {{")
+                for line in value.strip().split("\n"):
+                    lines.append(f"\t\t\t{line.strip()}")
+                lines.append("\t\t}")
+            continue
+        rendered = _render_list(value) if kind == "list" else _render_scalar(kind, value)
+        if rendered is not None:
+            lines.append(
+                f"\t\t{key} = {{ {rendered} }}" if kind == "list" else f"\t\t{key} = {rendered}"
+            )
     lines.append("\t}")
     return "\n".join(lines)
 
@@ -268,21 +488,21 @@ def _serialize_category(category: DecisionCategory) -> str:
 def _patch_decision_body(decision: Decision, body: str) -> str:
     if not decision.touched:
         return body
-    body = set_scalar(body, "icon", decision.icon or None)
-    body = set_scalar(body, "cost", None if decision.cost is None else str(decision.cost))
-    body = set_scalar(
-        body, "days_remove", None if decision.days_remove is None else str(decision.days_remove)
-    )
-    body = set_scalar(
-        body,
-        "fire_only_once",
-        None
-        if decision.fire_only_once is None
-        else ("yes" if decision.fire_only_once else "no"),
-    )
-    for key in ["visible", "available", "complete_effect", "remove_effect", "ai_will_do"]:
-        value = getattr(decision, key)
-        body = set_block(body, key, value or None)
+    # Patch only fields whose model value differs from what this source reads
+    # as. Spellings the model cannot represent (``cost = @constant``, a
+    # ``priority = { ... }`` block) therefore survive edits to other fields.
+    current = _read_decision_fields(body)
+    for key in _RENDER_ORDER:
+        kind = DECISION_FIELD_KINDS[key]
+        value = _model_value(decision, key)
+        if value == current[key]:
+            continue
+        if kind == "block":
+            body = set_block(body, key, value or None)
+        elif kind == "list":
+            body = set_block(body, key, _render_list(value))
+        else:
+            body = set_scalar(body, key, _render_scalar(kind, value))
     return body
 
 

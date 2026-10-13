@@ -202,6 +202,7 @@ from .validation import (
     collect_character_ids,
     validate_country,
     validate_country_history_references,
+    validate_decision,
     validate_event,
     validate_focus_tree,
     validate_idea,
@@ -570,6 +571,20 @@ def _decision_category_definition_path(mod_root: Path, decision_path: Path) -> P
     if stem.endswith("_decisions"):
         stem = stem[: -len("_decisions")]
     return decisions_root / "categories" / f"{stem}_decision_categories.txt"
+
+
+def _decision_targets(value: object) -> list[str]:
+    """Normalize ``targets`` to a list of bare tokens (tags or scopes)."""
+    if value is None:
+        return []
+    items = value.split() if isinstance(value, str) else list(cast(Iterable[object], value))
+    targets: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if not text or any(ch.isspace() or ch in '{}#"=' for ch in text):
+            raise ValueError(f"Invalid decision target {item!r}; pass tags such as 'GER'")
+        targets.append(text)
+    return targets
 
 
 def _filter_validation_errors(
@@ -4054,7 +4069,42 @@ class Mod:
         ai_will_do: str = "",
         path: str | Path | None = None,
         overwrite: bool = False,
+        days_mission_timeout: int | None = None,
+        activation: str = "",
+        timeout_effect: str = "",
+        cancel_trigger: str = "",
+        cancel_effect: str = "",
+        is_good: bool | None = None,
+        selectable_mission: bool | None = None,
+        target_trigger: str = "",
+        targets: Sequence[str] | str = (),
+        target_array: str = "",
+        target_root_trigger: str = "",
+        state_target: bool | None = None,
+        targets_dynamic: bool | None = None,
+        target_non_existing: bool | None = None,
+        on_map_mode: str = "",
+        allowed: str = "",
+        days_re_enable: int | None = None,
+        war_with_on_remove: str = "",
+        custom_cost_trigger: str = "",
+        custom_cost_text: str = "",
+        cancel_if_not_visible: bool | None = None,
+        modifier: str = "",
+        remove_trigger: str = "",
+        highlight_states: str = "",
+        priority: int | None = None,
     ) -> Decision:
+        """Create a decision, mission, or targeted decision.
+
+        Missions use ``days_mission_timeout`` with ``activation``,
+        ``timeout_effect``, ``cancel_trigger``/``cancel_effect``, ``is_good``,
+        and ``selectable_mission``. Targeted decisions use ``target_trigger``
+        with ``targets`` (tags, rendered ``targets = { A B }``),
+        ``target_array``, ``target_root_trigger``, ``state_target``,
+        ``targets_dynamic``, ``target_non_existing``, and ``on_map_mode``.
+        Block fields take raw Paradox script bodies without outer braces.
+        """
         category_id = require_script_id(category_id, label="decision category ID")
         decision_id = require_script_id(decision_id, label="decision ID")
         existing = self._decisions.get(decision_id)
@@ -4096,6 +4146,31 @@ class Mod:
             ai_will_do=ai_will_do,
             path=category.path,
             touched=True,
+            days_mission_timeout=days_mission_timeout,
+            activation=activation,
+            timeout_effect=timeout_effect,
+            cancel_trigger=cancel_trigger,
+            cancel_effect=cancel_effect,
+            is_good=is_good,
+            selectable_mission=selectable_mission,
+            target_trigger=target_trigger,
+            targets=_decision_targets(targets),
+            target_array=target_array,
+            target_root_trigger=target_root_trigger,
+            state_target=state_target,
+            targets_dynamic=targets_dynamic,
+            target_non_existing=target_non_existing,
+            on_map_mode=on_map_mode,
+            allowed=allowed,
+            days_re_enable=days_re_enable,
+            war_with_on_remove=war_with_on_remove,
+            custom_cost_trigger=custom_cost_trigger,
+            custom_cost_text=custom_cost_text,
+            cancel_if_not_visible=cancel_if_not_visible,
+            modifier=modifier,
+            remove_trigger=remove_trigger,
+            highlight_states=highlight_states,
+            priority=priority,
         )
         category.decisions.append(decision)
         self._decisions[decision_id] = decision
@@ -4126,6 +4201,8 @@ class Mod:
                 "Decision identity/category are immutable; recreate the decision to move it"
             )
         kwargs.pop("path", None)
+        if "targets" in kwargs:
+            kwargs["targets"] = _decision_targets(kwargs["targets"])
         _set_fields(decision, kwargs)
         decision.touched = True
         self._dirty.add("decisions")
@@ -4261,6 +4338,105 @@ class Mod:
             decisions.append(decision)
             previous_flag = flag
         return decisions
+
+    def create_mission(
+        self,
+        category_id: str,
+        decision_id: str,
+        *,
+        days_mission_timeout: int,
+        activation: str = "",
+        available: str = "",
+        complete_effect: str = "",
+        timeout_effect: str = "",
+        cancel_trigger: str = "",
+        cancel_effect: str = "",
+        is_good: bool | None = None,
+        selectable_mission: bool | None = None,
+        loc_name: str = "",
+        loc_desc: str = "",
+        **kwargs: Any,
+    ) -> Decision:
+        """Create a mission: a timed decision that starts when ``activation``
+        holds, completes with ``complete_effect`` once ``available`` holds, and
+        otherwise runs ``timeout_effect`` after ``days_mission_timeout`` days.
+
+        Missions are never paid for, so ``cost``/``custom_cost_trigger`` are
+        rejected. Other ``create_decision`` keywords pass through.
+        """
+        if isinstance(days_mission_timeout, bool) or not isinstance(days_mission_timeout, int):
+            raise TypeError("days_mission_timeout must be an int number of days")
+        if days_mission_timeout <= 0:
+            raise ValueError("days_mission_timeout must be positive")
+        if kwargs.get("cost") or kwargs.get("custom_cost_trigger"):
+            raise ValueError("Missions cannot have cost or custom_cost_trigger")
+        decision = self.create_decision(
+            category_id,
+            decision_id,
+            days_mission_timeout=days_mission_timeout,
+            activation=activation,
+            available=available,
+            complete_effect=complete_effect,
+            timeout_effect=timeout_effect,
+            cancel_trigger=cancel_trigger,
+            cancel_effect=cancel_effect,
+            is_good=is_good,
+            selectable_mission=selectable_mission,
+            **kwargs,
+        )
+        if loc_name:
+            self.set_loc(decision_id, loc_name)
+        if loc_desc:
+            self.set_loc(f"{decision_id}_desc", loc_desc)
+        return decision
+
+    def create_targeted_decision(
+        self,
+        category_id: str,
+        decision_id: str,
+        *,
+        target_trigger: str = "",
+        targets: Sequence[str] | str = (),
+        target_array: str = "",
+        target_root_trigger: str = "",
+        state_target: bool | None = None,
+        targets_dynamic: bool | None = None,
+        target_non_existing: bool | None = None,
+        on_map_mode: str = "",
+        loc_name: str = "",
+        loc_desc: str = "",
+        **kwargs: Any,
+    ) -> Decision:
+        """Create a targeted decision with one instance per country or state.
+
+        ``target_trigger`` filters candidates (``FROM`` is the target);
+        ``targets``/``target_array`` restrict the candidate list and
+        ``state_target=True`` targets states. At least one targeting field is
+        required. Other ``create_decision`` keywords pass through.
+        """
+        if not (target_trigger.strip() or targets or target_array or state_target):
+            raise ValueError(
+                "A targeted decision needs target_trigger, targets, target_array, "
+                "or state_target=True"
+            )
+        decision = self.create_decision(
+            category_id,
+            decision_id,
+            target_trigger=target_trigger,
+            targets=targets,
+            target_array=target_array,
+            target_root_trigger=target_root_trigger,
+            state_target=state_target,
+            targets_dynamic=targets_dynamic,
+            target_non_existing=target_non_existing,
+            on_map_mode=on_map_mode,
+            **kwargs,
+        )
+        if loc_name:
+            self.set_loc(decision_id, loc_name)
+        if loc_desc:
+            self.set_loc(f"{decision_id}_desc", loc_desc)
+        return decision
 
     def create_recovery_decision(
         self,
@@ -6413,6 +6589,12 @@ class Mod:
                 decision.remove_effect,
                 decision.path,
             )
+            for effect_field in ("timeout_effect", "cancel_effect"):
+                add_script(
+                    f"decision {decision.id} {effect_field}",
+                    getattr(decision, effect_field),
+                    decision.path,
+                )
         for occurrences in self._on_action_occurrences.values():
             for action in occurrences:
                 add_script(
@@ -7332,6 +7514,9 @@ class Mod:
                     errors.extend(
                         validate_event(probe, namespace="on_action", known_tags=known_tags)
                     )
+
+        for decision in self._decisions.values():
+            errors.extend(validate_decision(decision))
 
         begin_phase("ideas", "Validating ideas and assignments")
         for idea in self._ideas.values():
@@ -8727,7 +8912,12 @@ class Mod:
                         lines.extend(
                             self._effect_semantic_lines(
                                 _join_script_parts(
-                                    [decision.complete_effect, decision.remove_effect]
+                                    [
+                                        decision.complete_effect,
+                                        decision.remove_effect,
+                                        decision.timeout_effect,
+                                        decision.cancel_effect,
+                                    ]
                                 ),
                                 f"decision {decision.id}",
                             )
@@ -9055,6 +9245,41 @@ class Mod:
                 decision.path,
                 scope="COUNTRY",
             )
+            # Mission and targeted-decision fields run in the decision
+            # owner's (country) scope; targets are reached through FROM.
+            for trigger_field in (
+                "allowed",
+                "activation",
+                "cancel_trigger",
+                "remove_trigger",
+                "target_trigger",
+                "target_root_trigger",
+                "custom_cost_trigger",
+            ):
+                add(
+                    getattr(decision, trigger_field),
+                    "trigger",
+                    "decision",
+                    decision.id,
+                    decision.path,
+                    scope="COUNTRY",
+                )
+            for effect_field in ("timeout_effect", "cancel_effect"):
+                add(
+                    getattr(decision, effect_field),
+                    "effect",
+                    "decision",
+                    decision.id,
+                    decision.path,
+                    scope="COUNTRY",
+                )
+            add(
+                decision.modifier,
+                "modifier",
+                "decision",
+                decision.id,
+                decision.path,
+            )
         for idea in self._ideas.values():
             add(
                 idea.allowed,
@@ -9221,6 +9446,15 @@ class Mod:
                             decision.visible,
                             decision.complete_effect,
                             decision.remove_effect,
+                            decision.allowed,
+                            decision.activation,
+                            decision.cancel_trigger,
+                            decision.remove_trigger,
+                            decision.target_trigger,
+                            decision.target_root_trigger,
+                            decision.custom_cost_trigger,
+                            decision.timeout_effect,
+                            decision.cancel_effect,
                         ]
                     ),
                     "decision",
