@@ -13,6 +13,17 @@ All notable changes to this project are documented here. The format follows
 - Transactional support-script imports, source-preserving scripted-trigger
   authoring, explicit conversion color-table rebuilding, and impassable states.
 
+- Map editing for the existing map: `create_state`, `move_provinces`, and
+  `split_state` move provinces with their victory points and province-level
+  history buildings; strategic-region listing, moves, and creation with copied
+  weather; supply-node, railway, and `buildings.txt` position editing with
+  optional reassignment of positions inside moved provinces. Edits are
+  transactional, copy inherited files into the mod, and touch only the affected
+  lines or province IDs.
+- Validation checks that land provinces belong to exactly one state, land and
+  sea provinces to exactly one strategic region, and that supply-node, railway,
+  and building-position references resolve.
+
 - `CommonsImageClient` searches Wikimedia Commons and downloads raster sources
   with creator/license metadata, retrieval time, checksums, and verified local
   cache reuse. SVG flags use Commons raster thumbnails. Sources feed the
@@ -26,6 +37,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Inherited state lookups now honor same-named mod files and the mod
+  descriptor's `replace_path` when no base mods are configured, matching how
+  the game resolves files. Province-list changes to existing state files now
+  remove or append IDs in place instead of re-rendering the block.
 - Country-package validation now accepts HOI4's effective `default` name pool
   as a fallback for countries with air wings, while still rejecting packages
   that have neither a country-specific nor default pool.

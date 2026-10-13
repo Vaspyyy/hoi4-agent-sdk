@@ -67,6 +67,7 @@ from .game_log import (
     parse_hoi4_error_log,
 )
 from .ideologies import Ideology, SubIdeology
+from .map_editing import MapBuilding, MapEditReport, Railway, StrategicRegion
 from .map_render import MapRenderCancelled, PoliticalMapResult, render_political_map
 from .map_topology import TerritoryComponent
 from .oob import (
@@ -223,6 +224,10 @@ __all__ = [
     "MapRenderCancelled",
     "PoliticalMapResult",
     "TerritoryComponent",
+    "MapBuilding",
+    "MapEditReport",
+    "Railway",
+    "StrategicRegion",
     "render_political_map",
     "ModDescriptorFiles",
     "DiscoveredMod",
