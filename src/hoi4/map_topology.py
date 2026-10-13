@@ -8,6 +8,7 @@ with the ``map`` extra to catch accidental enclaves and disconnected states.
 from __future__ import annotations
 
 import csv
+import math
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from functools import lru_cache
@@ -251,36 +252,13 @@ def _load_province_topology(
             "pip install hoi4-agent-sdk[map]"
         ) from error
 
-    rgb_to_province = parse_definition_csv(definition_path)
     province_types = _province_types(definition_path)
     land_provinces = frozenset(
         province_id
         for province_id, province_type in province_types.items()
         if province_type == "land"
     )
-    pixels = np.asarray(
-        image_module.open(provinces_path).convert("RGB"),
-        dtype=np.uint32,
-    )
-    packed = (
-        (pixels[:, :, 0] << 16)
-        | (pixels[:, :, 1] << 8)
-        | pixels[:, :, 2]
-    )
-    packed_to_province = {
-        (red << 16) | (green << 8) | blue: province_id
-        for (red, green, blue), province_id in rgb_to_province.items()
-    }
-    unique_colors, inverse = np.unique(packed, return_inverse=True)
-    color_ids = np.fromiter(
-        (
-            packed_to_province.get(int(color), 0)
-            for color in unique_colors
-        ),
-        dtype=np.int32,
-        count=len(unique_colors),
-    )
-    province_grid = color_ids[inverse].reshape(packed.shape)
+    province_grid = _province_id_grid(np, image_module, provinces_path, definition_path)
     graph: dict[int, set[int]] = {
         province_id: set() for province_id in land_provinces
     }
@@ -310,6 +288,124 @@ def _load_province_topology(
     if adjacency_path is not None:
         _add_explicit_adjacencies(graph, adjacency_path, land_provinces)
     return land_provinces, graph, frozenset(coastal_land_provinces)
+
+
+def _province_id_grid(
+    np: Any,
+    image_module: Any,
+    provinces_path: Path,
+    definition_path: Path,
+) -> Any:
+    """Return a top-down array of province IDs (0 for unknown colors)."""
+
+    rgb_to_province = parse_definition_csv(definition_path)
+    pixels = np.asarray(
+        image_module.open(provinces_path).convert("RGB"),
+        dtype=np.uint32,
+    )
+    packed = (
+        (pixels[:, :, 0] << 16)
+        | (pixels[:, :, 1] << 8)
+        | pixels[:, :, 2]
+    )
+    packed_to_province = {
+        (red << 16) | (green << 8) | blue: province_id
+        for (red, green, blue), province_id in rgb_to_province.items()
+    }
+    unique_colors, inverse = np.unique(packed, return_inverse=True)
+    color_ids = np.fromiter(
+        (
+            packed_to_province.get(int(color), 0)
+            for color in unique_colors
+        ),
+        dtype=np.int32,
+        count=len(unique_colors),
+    )
+    return color_ids[inverse].reshape(packed.shape)
+
+
+@dataclass(frozen=True)
+class ProvinceGrid:
+    """Province lookup for HOI4 map coordinates.
+
+    HOI4 positions use ``x`` from the western edge and ``z`` from the
+    *southern* edge; image rows count from the top, so ``z`` is flipped.
+    """
+
+    width: int
+    height: int
+    grid: Any
+
+    def province_at(self, x: float, z: float) -> int | None:
+        column = math.floor(x)
+        row = self.height - 1 - math.floor(z)
+        if not (0 <= column < self.width and 0 <= row < self.height):
+            return None
+        province_id = int(self.grid[row, column])
+        return province_id or None
+
+
+def load_province_grid(mod_root: Path, hoi4_install: Path | None) -> ProvinceGrid:
+    """Load the effective ``provinces.bmp`` as a province-ID lookup grid.
+
+    Raises ``FileNotFoundError`` when a map file is missing and
+    ``RuntimeError`` when the optional ``map`` extra is not installed.
+    """
+
+    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
+    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
+    return _load_province_grid(
+        provinces_path,
+        definition_path,
+        (provinces_path.stat().st_mtime_ns, definition_path.stat().st_mtime_ns),
+    )
+
+
+@lru_cache(maxsize=2)
+def _load_province_grid(
+    provinces_path: Path,
+    definition_path: Path,
+    fingerprints: tuple[int, int],
+) -> ProvinceGrid:
+    del fingerprints  # cache key only
+    try:
+        np = import_module("numpy")
+        image_module = import_module("PIL.Image")
+    except ImportError as error:  # pragma: no cover - optional environment
+        raise RuntimeError(
+            'Province lookup requires the "map" extra: '
+            "pip install hoi4-agent-sdk[map]"
+        ) from error
+    grid = _province_id_grid(np, image_module, provinces_path, definition_path)
+    height, width = grid.shape
+    return ProvinceGrid(width=int(width), height=int(height), grid=grid)
+
+
+def load_land_adjacency(
+    mod_root: Path,
+    hoi4_install: Path | None,
+) -> dict[int, set[int]]:
+    """Return the effective land-province adjacency graph.
+
+    Pixel borders (with east-west wrap) and passable ``adjacencies.csv`` rows
+    contribute edges. Raises like :func:`load_province_grid`.
+    """
+
+    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
+    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
+    adjacency_path = _optional_effective_map_file(mod_root, hoi4_install, "adjacencies.csv")
+    fingerprints = (
+        provinces_path.stat().st_mtime_ns,
+        definition_path.stat().st_mtime_ns,
+        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
+    )
+    _land, graph, _coastal = _load_province_topology(
+        provinces_path,
+        definition_path,
+        adjacency_path,
+        fingerprints,
+    )
+    return graph
 
 
 def _effective_map_file(

@@ -317,6 +317,52 @@ Use `mod.set_state_properties(state_id, impassable=True)` to queue it; setting
 traversability only: ownership, cores, and population remain separate fields.
 
 Use `patch_state_history()` when owner/core changes must avoid reserializing unrelated state content such as complex vanilla `victory_points` formatting. The change remains in memory for `preview()` and is written transactionally by `save()`.
+
+### Map editing
+
+These methods edit the existing (vanilla or base-mod) map. Like other edits
+they are queued in memory, shown by `preview()`/`preview_summary()`, rolled back
+by `transaction()`, and written atomically by `save()`. An inherited file is
+copied into the mod at the same relative path and patched there; untouched
+bytes stay identical. Line-based files (`map/supply_nodes.txt`,
+`map/railways.txt`, `map/buildings.txt`) change only on the touched lines.
+Province-list edits remove or append the affected IDs in place.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `create_state(provinces, *, name, owner=None, cores=None, state_category="rural", manpower=0, state_id=None, resources=None, buildings="", impassable=False, localisation_file=None, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True)` | `int` | New `history/states/<id>-<name>.txt` (ID defaults to the highest effective ID + 1) plus `STATE_<id>` localisation. Provinces leave their states with their victory points and `history.buildings` province blocks. `owner`/`cores` set to `None` copy the source state that contributes the most provinces. Report warnings are issued as `RuntimeWarning`. |
+| `move_provinces(provinces, to_state, *, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True)` | `MapEditReport` | Same data-moving rules. Emptying a source raises `ValueError` unless `delete_empty_states=True` (the file is deleted, or shadowed by an empty override when inherited) or `allow_empty_source=True` (kept empty, with a warning). |
+| `split_state(state_id, provinces, **create_state_kwargs)` | `int` | `create_state()` for provinces that must all belong to `state_id` |
+| `list_strategic_regions()` / `get_strategic_region(region_id)` | `StrategicRegion` | `id`, `name`, `provinces`, `path`, `has_weather` |
+| `move_provinces_to_strategic_region(provinces, region_id)` | `StrategicRegion` | Moves land or sea provinces; refuses to empty a region |
+| `create_strategic_region(name, provinces, *, region_id=None, weather=None, localisation_file=None)` | `int` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
+| `list_supply_nodes()` / `add_supply_node(province)` / `remove_supply_node(province)` | `list[int]` / `None` | Land provinces only |
+| `list_railways()` / `add_railway(level, provinces, *, check_adjacency=True)` | `Railway` | Levels 1-5. Consecutive provinces must be adjacent when the province map and the `map` extra are available. |
+| `remove_railway(railway)` / `set_railway_level(railway, level)` | `int` | Select a listed `Railway`, or a province route matched in either direction |
+| `list_map_buildings(state_id=None)` / `add_map_building(state_id, building, x, y, z, rotation, adjacent_sea_province=0)` | `MapBuilding` | `z` is the north-south map coordinate |
+| `remove_map_buildings(state_id=None, building=None, *, entries=())` | `int` | Remove positions by filters or listed entries |
+
+`MapEditReport` lists the moved provinces, source states, deleted or emptied
+states, moved victory points and province buildings, the number of reassigned
+building positions, and `warnings`. With `reassign_map_buildings=True`,
+`buildings.txt` positions inside moved provinces follow them; the province is
+looked up from `provinces.bmp` and `definition.csv` at `(x, z)`. Positions of
+a fully emptied state are reassigned without that lookup. If the province map
+or the `map` extra is missing, positions are left unchanged and the report says
+so. Dated history entries (for example `1939.1.1 = { buildings = { ... } }`)
+that mention moved provinces are left in place and reported. Deleting a state
+other than the highest ID also warns, because HOI4 expects contiguous state IDs.
+
+```python
+with mod.transaction():
+    new_id = mod.split_state(42, [3001, 3002], name="Upper Valley")
+    report = mod.move_provinces([3003], new_id)
+    mod.move_provinces_to_strategic_region([3001, 3002, 3003], 17)
+    mod.add_supply_node(3002)
+    mod.add_railway(2, [3001, 3002, 3003])
+    print(report.warnings)
+    print(mod.preview())
+```
 ## Events
 
 Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`.
@@ -901,6 +947,7 @@ except OperationCancelled:
 | **OOB** | Unique land templates/grid positions, separate correctly assigned land/naval/air files, known unit and equipment IDs, valid owned locations, valid factors, fleet/task-force/ship structure, DLC-aware hull variant resolution, and valid country-history references |
 | **Geography** | Significant capital-disconnected owned components and fully enclosed foreign land components warn unless explicitly allowlisted |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
+| **Map** | Land provinces belong to exactly one state (missing: warning `province_missing_state`; duplicate: error `province_in_multiple_states`); state provinces exist and are land; land and sea provinces belong to exactly one strategic region; supply nodes, railways (levels, land provinces, adjacency when the mod overrides `railways.txt` and the province map is readable), and `buildings.txt` state/sea-province references resolve |
 | **Event** | Has ID, has title, has description, has options, option gameplay effects, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |
 | **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, no prerequisite cycles, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, continuous focus overlap risk, optional focus icon existence |
