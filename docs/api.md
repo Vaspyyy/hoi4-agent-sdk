@@ -638,20 +638,38 @@ mod.add_focus("west_focus", Focus(
 Focus tree files write to `common/national_focus/{TAG}_focus.txt`.
 ## Localization
 
-Localization uses HOI4 YML format (`l_english:` header, ` KEY:0 "value"` entries).
-The `Mod` localization API loads English `.yml` files under `localisation/english`
-and stores their keys and values in a flat dict. Other languages are not supported
-by this API.
+Localization uses HOI4 YML format (`l_<language>:` header, ` KEY:0 "value"`
+entries, UTF-8 with BOM). Files live at
+`localisation/<language>/*_l_<language>.yml`. Supported languages are listed in
+`hoi4.localisation.LOCALISATION_LANGUAGES`: `english`, `braz_por`, `french`,
+`german`, `japanese`, `polish`, `russian`, `spanish`, and `simp_chinese`.
+
+Every method takes a keyword-only `language=` that defaults to `"english"`, so
+English-only code is unchanged. An `l_` prefix is accepted (`"l_german"`);
+unknown languages raise `ValueError`. Each language is indexed separately, with
+inherited base-layer files first and the mod's own files on top, exactly like
+English. English loads with the mod; another language is indexed on its first
+use. Languages are never mixed: `get_loc(key, language="german")` returns `None`
+for an English-only key rather than falling back.
 
 ### Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_loc(key: str) -> str \| None` | `str \| None` | Get localized string |
-| `set_loc(key: str, value: str, file_path=None) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or `default_loc_file` for new entries. Custom paths must be `.yml` files under `localisation/english`; unsupported paths raise `ValueError` before modifying the entry. |
-| `delete_loc(key: str) -> bool` | `bool` | Remove entry |
-| `search_loc(query: str) -> dict[str, str]` | `dict` | Case-insensitive substring search in keys and values |
-| `all_loc() -> dict[str, str]` | `dict` | Full copy of all entries |
+| `get_loc(key, *, language="english") -> str \| None` | `str \| None` | Get one language's localized string |
+| `set_loc(key, value, file_path=None, *, language="english", replace=False) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `replace=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `file_path` inside `replace/`), which is how a mod overrides base-game keys. |
+| `delete_loc(key, *, language="english") -> bool` | `bool` | Remove one language's entry |
+| `search_loc(query, *, language="english") -> dict[str, str]` | `dict` | Case-insensitive substring search in one language's keys and values |
+| `all_loc(*, language="english") -> dict[str, str]` | `dict` | Full copy of one language's entries |
+| `copy_loc_to_languages(keys=None, languages=None, *, overwrite=False) -> dict[str, list[str]]` | `dict` | Fill missing translations with the English text so players of other languages do not see raw keys. `keys` defaults to every English key the mod authors (inherited base-game text is never copied); `languages` defaults to every non-English language. New entries go to the file mirroring their English source (`events_l_english.yml` -> `events_l_german.yml`, `replace/` kept). Existing translations are kept unless `overwrite=True`. Returns the keys written per language. |
+
+Deleting a character or country also removes its generated keys from every
+non-English language the mod ships.
+
+Validation reports `localization_language_mismatch` (error) when a file's
+`l_<language>:` header does not match its `localisation/<language>` folder, and
+`missing_translation` (warning, one per language) when English keys the mod
+authors are missing from a language that already has mod files.
 
 When deleting the last entry in a layered localization file, saving retains an
 empty override (including its header and comments) if removing the file would
@@ -683,9 +701,15 @@ mod.set_loc(
     "The time has come to stand alone.\nThe nation awaits our decision.",
 )
 mod.search_loc("independence")
+
+# Translations and vanilla overrides.
+mod.set_loc("WST_independence", "Unabhängigkeit erklären", language="german")
+mod.set_loc("GER_anschluss", "Union with Austria", replace=True)
+mod.copy_loc_to_languages(languages=["french", "spanish"])
 ```
 
-Default file: `localisation/english/mod_l_english.yml`.
+Default file: `localisation/english/mod_l_english.yml` (for other languages,
+`localisation/<language>/mod_l_<language>.yml`).
 
 ## Effect Builders
 
@@ -973,6 +997,10 @@ mod_root/
     english/
       mod_l_english.yml              # Default localization target
       {TAG}_country_l_english.yml    # Country-specific localization
+      replace/
+        mod_replace_l_english.yml    # set_loc(..., replace=True) overrides
+    german/                          # Same layout for every other language
+      mod_l_german.yml
 ```
 
 ## Ideologies, Dynamic Modifiers, and Bookmarks
@@ -1456,7 +1484,7 @@ this does not infer filesystem paths or replacement policy.
 - `mod.content_files("history/states")` returns effective relative filenames
   mapped to original source paths. `state_index()` additionally reports
   `source_path` and `source_layer` when layers are configured.
-- Country/state/OOB fallback, English localization, asset resolution, province checks, and their
+- Country/state/OOB fallback, localization in every language, asset resolution, province checks, and their
   validators use the effective content. Game script documentation remains tied
   to the actual installed game.
 - Focus/event/idea/on-action files retain opt-in inherited loading:

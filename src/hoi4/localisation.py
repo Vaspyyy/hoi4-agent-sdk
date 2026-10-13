@@ -10,6 +10,73 @@ import re
 from pathlib import Path
 
 YML_ENTRY_RE = re.compile(r'^\s*([^:#\s]+)\s*:\s*(?:\d+\s*)?\s*"')
+_HEADER_RE = re.compile(r"^\s*l_([A-Za-z_]+)\s*:\s*(?:#.*)?$")
+
+#: Languages HOI4 loads, in the game's own folder/header spelling. Files live
+#: at ``localisation/<language>/*_l_<language>.yml`` with a ``l_<language>:``
+#: header and are encoded as UTF-8 with a byte-order mark.
+LOCALISATION_LANGUAGES: tuple[str, ...] = (
+    "english",
+    "braz_por",
+    "french",
+    "german",
+    "japanese",
+    "polish",
+    "russian",
+    "spanish",
+    "simp_chinese",
+)
+DEFAULT_LOCALISATION_LANGUAGE = "english"
+
+
+def normalize_localisation_language(language: str) -> str:
+    """Return the canonical HOI4 language name, accepting an ``l_`` prefix."""
+    text = str(language).strip().lower()
+    if text.startswith("l_"):
+        text = text[2:]
+    if text not in LOCALISATION_LANGUAGES:
+        raise ValueError(
+            f"Unsupported HOI4 localisation language {language!r}; "
+            f"expected one of {', '.join(LOCALISATION_LANGUAGES)}"
+        )
+    return text
+
+
+def localisation_header_language(text: str) -> str | None:
+    """Return the language named by a file's ``l_<language>:`` header.
+
+    Only the first non-blank, non-comment line is considered, matching how
+    HOI4 reads the header. ``None`` means that line is not a header.
+    """
+    for line in text.lstrip("﻿").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = _HEADER_RE.match(line)
+        return match.group(1).lower() if match else None
+    return None
+
+
+def localisation_language_for_path(path: Path) -> str | None:
+    """Return the language folder a localisation path belongs to, if any."""
+    parts = [part.lower() for part in Path(path).parts]
+    for index in range(len(parts) - 2, -1, -1):
+        if parts[index] in {"localisation", "localization"}:
+            candidate = parts[index + 1]
+            if candidate in LOCALISATION_LANGUAGES:
+                return candidate
+    return None
+
+
+def localisation_file_name(stem: str, language: str) -> str:
+    """Return ``<stem>_l_<language>.yml``, swapping an existing language suffix."""
+    language = normalize_localisation_language(language)
+    for known in LOCALISATION_LANGUAGES:
+        suffix = f"_l_{known}"
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    return f"{stem}_l_{language}.yml"
 
 
 def normalize_localization_key(key: str) -> str:
@@ -82,10 +149,15 @@ def parse_localization_file(path: Path) -> dict[str, str]:
     return out
 
 
-def serialize_localization_file(entries: dict[str, str], original: str = "") -> str:
+def serialize_localization_file(
+    entries: dict[str, str],
+    original: str = "",
+    *,
+    language: str = DEFAULT_LOCALISATION_LANGUAGE,
+) -> str:
     if original:
         return _patch_localization_text(entries, original)
-    lines = ["l_english:"]
+    lines = [f"l_{normalize_localisation_language(language)}:"]
     for key in sorted(entries):
         normalized = normalize_localization_key(key)
         lines.append(f' {normalized}:0 "{_escape_localization_value(entries[key])}"')
@@ -93,13 +165,22 @@ def serialize_localization_file(entries: dict[str, str], original: str = "") -> 
     return "\n".join(lines)
 
 
-def write_localization_file(path: Path, entries: dict[str, str]) -> None:
+def write_localization_file(
+    path: Path, entries: dict[str, str], *, language: str | None = None
+) -> None:
+    """Write entries; a new file's header follows ``language`` or its folder."""
     path.parent.mkdir(parents=True, exist_ok=True)
     original = (
         path.read_text(encoding="utf-8-sig", errors="ignore") if path.exists() else ""
     )
+    resolved = (
+        language
+        or localisation_language_for_path(path)
+        or DEFAULT_LOCALISATION_LANGUAGE
+    )
     path.write_text(
-        serialize_localization_file(entries, original=original), encoding="utf-8-sig"
+        serialize_localization_file(entries, original=original, language=resolved),
+        encoding="utf-8-sig",
     )
 
 

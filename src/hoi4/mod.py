@@ -27,7 +27,7 @@ import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from difflib import SequenceMatcher
-from typing import Any, Iterator, Literal, Optional, Sequence, TypeVar, cast
+from typing import Any, Iterable, Iterator, Literal, Optional, Sequence, TypeVar, cast
 
 from .bookmarks import (
     DEFAULT_BOOKMARK_EFFECT,
@@ -96,6 +96,12 @@ from .idea_icons import (
 from .ideas import read_ideas_file, scan_idea_ids_file, serialize_ideas_file
 from .ideologies import Ideology, SubIdeology, load_ideologies_file, serialize_ideologies_file
 from .localisation import (
+    DEFAULT_LOCALISATION_LANGUAGE,
+    LOCALISATION_LANGUAGES,
+    localisation_file_name,
+    localisation_header_language,
+    localisation_language_for_path,
+    normalize_localisation_language,
     normalize_localization_key,
     parse_localization_dir,
     serialize_localization_file,
@@ -786,6 +792,26 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
                         line=1,
                     )
                 )
+                continue
+            folder = path.relative_to(localization).parts[0].lower()
+            header = localisation_header_language(text)
+            if (
+                folder in LOCALISATION_LANGUAGES
+                and header is not None
+                and header != folder
+            ):
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"Localization file header 'l_{header}:' does not match its "
+                            f"folder localisation/{folder}; HOI4 expects 'l_{folder}:': {path}"
+                        ),
+                        severity="error",
+                        code="localization_language_mismatch",
+                        file_path=str(path),
+                        line=1,
+                    )
+                )
     return errors
 
 
@@ -862,6 +888,12 @@ class Mod:
         self._loc_sources: dict[str, Path] = {}
         self._dirty_loc_keys: set[str] = set()
         self._dirty_loc_files: set[Path] = set()
+        # English stays in the tables above; every other language is indexed
+        # lazily, as a whole (inherited layers plus the mod), on first use.
+        self._foreign_loc_entries: dict[str, dict[str, str]] = {}
+        self._foreign_loc_sources: dict[str, dict[str, Path]] = {}
+        self._foreign_dirty_loc_keys: dict[str, set[str]] = {}
+        self._loaded_loc_languages: set[str] = set()
         self._original_files: dict[Path, str] = {}
         self._source_baseline: dict[Path, bytes] = {}
         self._pending_asset_writes: dict[Path, bytes] = {}
@@ -1319,22 +1351,32 @@ class Mod:
                 continue
 
     def _load_localization(self) -> None:
+        self._load_localization_language(
+            DEFAULT_LOCALISATION_LANGUAGE, self._loc_entries, self._loc_sources
+        )
+
+    def _load_localization_language(
+        self,
+        language: str,
+        loc_entries: dict[str, str],
+        loc_sources: dict[str, Path],
+    ) -> None:
         if self._content_layers is not None:
             assert self._base_content_root is not None
-            inherited = self._base_content_root / "localisation" / "english"
+            inherited = self._base_content_root / "localisation" / language
             entries, sources = parse_localization_dir(inherited)
-            self._loc_entries.update(entries)
+            loc_entries.update(entries)
             for key, source in sources.items():
                 target = self.mod_root / source.relative_to(self._base_content_root)
-                self._loc_sources[key] = target
+                loc_sources[key] = target
                 if target not in self._original_files:
                     self._original_files[target] = source.read_text(encoding="utf-8-sig", errors="ignore")
-        loc_dir = self.mod_root / "localisation" / "english"
+        loc_dir = self.mod_root / "localisation" / language
         if not loc_dir.exists():
             return
         entries, sources = parse_localization_dir(loc_dir)
-        self._loc_entries.update(entries)
-        self._loc_sources.update(sources)
+        loc_entries.update(entries)
+        loc_sources.update(sources)
         # Keep every localization source, including header/comment-only files.
         # Otherwise adding the first modeled key to such a file would serialize
         # from an empty baseline and silently discard its existing content.
@@ -1609,6 +1651,15 @@ class Mod:
     @property
     def default_loc_file(self) -> Path:
         return self.mod_root / "localisation" / "english" / "mod_l_english.yml"
+
+    def _default_loc_file_for(self, language: str, *, replace: bool = False) -> Path:
+        """Default new-entry file; ``replace`` targets the override folder."""
+        if language == DEFAULT_LOCALISATION_LANGUAGE and not replace:
+            return self.default_loc_file
+        folder = self.mod_root / "localisation" / language
+        if replace:
+            return folder / "replace" / f"mod_replace_l_{language}.yml"
+        return folder / f"mod_l_{language}.yml"
 
     # ── Countries ────────────────────────────────────────────────
 
@@ -2062,8 +2113,8 @@ class Mod:
                 character.id,
                 recruited=False,
             )
-        self.delete_loc(character.id)
-        self.delete_loc(f"{character.id}_desc")
+        self._delete_loc_all_languages(character.id)
+        self._delete_loc_all_languages(f"{character.id}_desc")
         return True
 
     def add_character_instance(
@@ -3120,7 +3171,7 @@ class Mod:
         if country.leader:
             loc_keys.extend((country.leader.character_id, f"{country.leader.character_id}_desc"))
         for key in set(loc_keys):
-            self.delete_loc(key)
+            self._delete_loc_all_languages(key)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
         return True
@@ -5896,61 +5947,219 @@ class Mod:
 
     # ── Localization ─────────────────────────────────────────────
 
-    def get_loc(self, key: str) -> Optional[str]:
-        return self._loc_entries.get(self._normalize_loc_key(key))
+    def get_loc(
+        self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
+    ) -> Optional[str]:
+        """Return one language's text for ``key``; no cross-language fallback."""
+        _, entries, _, _ = self._loc_tables(language)
+        return entries.get(self._normalize_loc_key(key))
 
     @staticmethod
     def _normalize_loc_key(key: str) -> str:
         return normalize_localization_key(key)
 
-    def set_loc(self, key: str, value: str, file_path: str | Path | None = None) -> None:
-        """Set an English entry; custom destinations must be English YML files."""
+    def _loc_tables(
+        self, language: str
+    ) -> tuple[str, dict[str, str], dict[str, Path], set[str]]:
+        """Return ``(language, entries, sources, dirty_keys)`` for one language.
+
+        English uses the tables loaded with the mod. Other languages are
+        indexed on first use exactly like English: inherited base layers
+        first, then the mod's own ``localisation/<language>`` files.
+        """
+        language = normalize_localisation_language(language)
+        if language == DEFAULT_LOCALISATION_LANGUAGE:
+            return language, self._loc_entries, self._loc_sources, self._dirty_loc_keys
+        if language not in self._loaded_loc_languages:
+            entries = self._foreign_loc_entries.setdefault(language, {})
+            sources = self._foreign_loc_sources.setdefault(language, {})
+            self._load_localization_language(language, entries, sources)
+            self._loaded_loc_languages.add(language)
+        return (
+            language,
+            self._foreign_loc_entries.setdefault(language, {}),
+            self._foreign_loc_sources.setdefault(language, {}),
+            self._foreign_dirty_loc_keys.setdefault(language, set()),
+        )
+
+    def set_loc(
+        self,
+        key: str,
+        value: str,
+        file_path: str | Path | None = None,
+        *,
+        language: str = DEFAULT_LOCALISATION_LANGUAGE,
+        replace: bool = False,
+    ) -> None:
+        """Set one language's entry (English by default).
+
+        Custom destinations must be ``.yml`` files under
+        ``localisation/<language>``. ``replace=True`` routes the entry to
+        ``localisation/<language>/replace/`` (``mod_replace_l_<language>.yml``
+        unless ``file_path`` names another file there), which is how a mod
+        overrides keys defined by the base game.
+        """
+        language, entries, sources, dirty_keys = self._loc_tables(language)
+        language_dir = self.mod_root / "localisation" / language
         target = None
         if file_path is not None:
             target = resolve_mod_output_path(self.mod_root, file_path)
-            if (
-                not target.is_relative_to(self.mod_root / "localisation" / "english")
-                or target.suffix != ".yml"
-            ):
+            if not target.is_relative_to(language_dir) or target.suffix != ".yml":
                 raise ValueError(
-                    "set_loc() supports only .yml files under localisation/english; "
+                    f"set_loc() supports only .yml files under localisation/{language}; "
                     "other localization destinations are not loaded and cannot be safely edited"
                 )
+            if replace and not target.is_relative_to(language_dir / "replace"):
+                raise ValueError(
+                    f"set_loc(replace=True) needs a file under localisation/{language}/replace"
+                )
+        elif replace:
+            target = self._default_loc_file_for(language, replace=True)
         key = self._normalize_loc_key(key)
-        old_source = self._loc_sources.get(key)
-        self._loc_entries[key] = value
-        if key.startswith("STATE_"):
+        old_source = sources.get(key)
+        entries[key] = value
+        if language == DEFAULT_LOCALISATION_LANGUAGE and key.startswith("STATE_"):
             self._state_index_cache.clear()
         if target is not None:
-            self._loc_sources[key] = target
-        elif key not in self._loc_sources:
-            self._loc_sources[key] = self.default_loc_file
+            sources[key] = target
+        elif key not in sources:
+            sources[key] = self._default_loc_file_for(language)
         self._dirty.add("localization")
-        self._dirty_loc_keys.add(key)
+        dirty_keys.add(key)
         if old_source is not None:
             self._dirty_loc_files.add(old_source)
-        self._dirty_loc_files.add(self._loc_sources[key])
+        self._dirty_loc_files.add(sources[key])
 
-    def delete_loc(self, key: str) -> bool:
+    def delete_loc(
+        self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
+    ) -> bool:
+        language, entries, sources, dirty_keys = self._loc_tables(language)
         key = self._normalize_loc_key(key)
-        if key in self._loc_entries:
-            source = self._loc_sources.get(key, self.default_loc_file)
-            del self._loc_entries[key]
-            self._loc_sources.pop(key, None)
-            if key.startswith("STATE_"):
+        if key in entries:
+            source = sources.get(key, self._default_loc_file_for(language))
+            del entries[key]
+            sources.pop(key, None)
+            if language == DEFAULT_LOCALISATION_LANGUAGE and key.startswith("STATE_"):
                 self._state_index_cache.clear()
             self._dirty.add("localization")
-            self._dirty_loc_keys.add(key)
+            dirty_keys.add(key)
             self._dirty_loc_files.add(source)
             return True
         return False
 
-    def search_loc(self, query: str) -> dict[str, str]:
+    def search_loc(
+        self, query: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
+    ) -> dict[str, str]:
+        _, entries, _, _ = self._loc_tables(language)
         q = query.lower()
-        return {k: v for k, v in self._loc_entries.items() if q in k.lower() or q in v.lower()}
+        return {k: v for k, v in entries.items() if q in k.lower() or q in v.lower()}
 
-    def all_loc(self) -> dict[str, str]:
-        return dict(self._loc_entries)
+    def all_loc(self, *, language: str = DEFAULT_LOCALISATION_LANGUAGE) -> dict[str, str]:
+        _, entries, _, _ = self._loc_tables(language)
+        return dict(entries)
+
+    def copy_loc_to_languages(
+        self,
+        keys: Iterable[str] | None = None,
+        languages: Iterable[str] | None = None,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, list[str]]:
+        """Fill missing translations with the English text.
+
+        ``keys`` defaults to every English key the mod itself authors
+        (inherited base-game text is never copied). ``languages`` defaults to
+        every supported non-English language. Existing translations are kept
+        unless ``overwrite=True``. New entries go to the file mirroring their
+        English source, e.g. ``localisation/english/replace/x_l_english.yml``
+        becomes ``localisation/german/replace/x_l_german.yml``. Returns the
+        keys written per language.
+        """
+        if languages is None:
+            targets = [
+                language
+                for language in LOCALISATION_LANGUAGES
+                if language != DEFAULT_LOCALISATION_LANGUAGE
+            ]
+        else:
+            targets = []
+            for raw_language in [languages] if isinstance(languages, str) else languages:
+                language = normalize_localisation_language(raw_language)
+                if language == DEFAULT_LOCALISATION_LANGUAGE:
+                    raise ValueError("copy_loc_to_languages() copies from English; omit it")
+                if language not in targets:
+                    targets.append(language)
+        if keys is None:
+            source_keys = sorted(self._authored_loc_keys(DEFAULT_LOCALISATION_LANGUAGE))
+        else:
+            source_keys = list(
+                dict.fromkeys(
+                    self._normalize_loc_key(key)
+                    for key in ([keys] if isinstance(keys, str) else keys)
+                )
+            )
+            missing = [key for key in source_keys if key not in self._loc_entries]
+            if missing:
+                raise KeyError(f"No English localization for: {', '.join(missing)}")
+        written: dict[str, list[str]] = {}
+        for language in targets:
+            _, entries, sources, _ = self._loc_tables(language)
+            written[language] = []
+            for key in source_keys:
+                value = self._loc_entries[key]
+                if key in entries and (not overwrite or entries[key] == value):
+                    continue
+                file_path = (
+                    None
+                    if key in sources
+                    else self._mirrored_loc_file(
+                        self._loc_sources.get(key, self.default_loc_file), language
+                    )
+                )
+                self.set_loc(key, value, file_path, language=language)
+                written[language].append(key)
+        return written
+
+    def _mirrored_loc_file(self, english_source: Path, language: str) -> Path:
+        english_dir = self.mod_root / "localisation" / DEFAULT_LOCALISATION_LANGUAGE
+        if not english_source.is_relative_to(english_dir):
+            return self._default_loc_file_for(language)
+        relative = english_source.relative_to(english_dir)
+        return (
+            self.mod_root
+            / "localisation"
+            / language
+            / relative.parent
+            / localisation_file_name(relative.stem, language)
+        )
+
+    def _authored_loc_keys(self, language: str) -> set[str]:
+        """Keys the mod itself defines in ``language`` (not inherited text)."""
+        language, entries, _, dirty_keys = self._loc_tables(language)
+        if self._content_layers is None:
+            return set(entries)
+        on_disk, _ = parse_localization_dir(self.mod_root / "localisation" / language)
+        return {key for key in set(on_disk) | dirty_keys if key in entries}
+
+    def _shipped_loc_languages(self) -> list[str]:
+        """Non-English languages with mod files on disk or pending entries."""
+        shipped: list[str] = []
+        for language in LOCALISATION_LANGUAGES:
+            if language == DEFAULT_LOCALISATION_LANGUAGE:
+                continue
+            folder = self.mod_root / "localisation" / language
+            has_files = folder.is_dir() and any(
+                path.is_file() for path in folder.rglob("*.yml")
+            )
+            if has_files or self._foreign_dirty_loc_keys.get(language):
+                shipped.append(language)
+        return shipped
+
+    def _delete_loc_all_languages(self, key: str) -> None:
+        """Delete ``key`` in English and every language the mod ships."""
+        self.delete_loc(key)
+        for language in self._shipped_loc_languages():
+            self.delete_loc(key, language=language)
 
     def get_country_context(self, tag: str, *, copy_states: bool = False) -> dict:
         tag = require_country_tag(tag)
@@ -7298,6 +7507,7 @@ class Mod:
                     allowlist=script_token_allowlist,
                 )
             )
+        errors.extend(self._validate_localization_languages())
         if strict_localization:
             errors.extend(self._validate_localization_references())
         if stage == "release":
@@ -8120,6 +8330,10 @@ class Mod:
                     serialize_localization_file(
                         entries,
                         original=self._original_files.get(path, ""),
+                        language=localisation_language_for_path(
+                            path.relative_to(self.mod_root)
+                        )
+                        or DEFAULT_LOCALISATION_LANGUAGE,
                     )
                     if entries or (
                         self._content_layers is not None
@@ -8300,6 +8514,10 @@ class Mod:
         self._loc_sources.clear()
         self._dirty_loc_keys.clear()
         self._dirty_loc_files.clear()
+        self._foreign_loc_entries.clear()
+        self._foreign_loc_sources.clear()
+        self._foreign_dirty_loc_keys.clear()
+        self._loaded_loc_languages.clear()
         self._pending_asset_writes.clear()
         self._pending_asset_baselines.clear()
         self._country_name_pool_updates.clear()
@@ -8385,6 +8603,10 @@ class Mod:
             "_loc_sources",
             "_dirty_loc_keys",
             "_dirty_loc_files",
+            "_foreign_loc_entries",
+            "_foreign_loc_sources",
+            "_foreign_dirty_loc_keys",
+            "_loaded_loc_languages",
             "_original_files",
             "_pending_asset_writes",
             "_pending_asset_baselines",
@@ -8556,6 +8778,9 @@ class Mod:
                     lines.append(f"{tree_id} focus {fid}: removed")
         if "localization" in self._dirty:
             lines.append(f"localization: {len(self._dirty_loc_keys)} key(s)")
+            for language, dirty_keys in sorted(self._foreign_dirty_loc_keys.items()):
+                if dirty_keys:
+                    lines.append(f"localization ({language}): {len(dirty_keys)} key(s)")
         return lines
 
     def _effect_semantic_lines(self, script: str, owner: str) -> list[str]:
@@ -9331,6 +9556,40 @@ class Mod:
 
     def _has_loc(self, key: str) -> bool:
         return key in self._loc_entries or f"{key}:0" in self._loc_entries
+
+    def _validate_localization_languages(self) -> list[ValidationError]:
+        """Warn about authored English keys missing from a shipped language.
+
+        Header/folder agreement is a source-tree check; see
+        ``_validate_source_tree``. Languages the mod does not ship at all are
+        not reported: HOI4 then falls back to raw keys everywhere, which is a
+        packaging choice rather than a gap.
+        """
+        errors: list[ValidationError] = []
+        shipped = self._shipped_loc_languages()
+        if not shipped:
+            return errors
+        english_keys = self._authored_loc_keys(DEFAULT_LOCALISATION_LANGUAGE)
+        for language in shipped:
+            _, entries, _, _ = self._loc_tables(language)
+            missing = sorted(key for key in english_keys if key not in entries)
+            if not missing:
+                continue
+            preview = ", ".join(missing[:10]) + (", ..." if len(missing) > 10 else "")
+            errors.append(
+                ValidationError(
+                    message=(
+                        f"{len(missing)} English localization key(s) have no {language} "
+                        f"translation: {preview}. Players see raw keys; call "
+                        f"copy_loc_to_languages(languages=['{language}']) to fill them "
+                        "from English"
+                    ),
+                    severity="warning",
+                    code="missing_translation",
+                    file_path=str(self.mod_root / "localisation" / language),
+                )
+            )
+        return errors
 
     def _validate_idea_mutation_collisions(self) -> list[ValidationError]:
         focus_mutations: dict[str, set[str]] = {}
@@ -10756,20 +11015,34 @@ class Mod:
         return grouped
 
     def _group_loc_by_file(self, dirty_only: bool = False) -> dict[Path, dict[str, str]]:
+        tables: list[tuple[Path, dict[str, str], dict[str, Path], set[str]]] = [
+            (self.default_loc_file, self._loc_entries, self._loc_sources, self._dirty_loc_keys)
+        ]
+        for language in sorted(self._loaded_loc_languages):
+            tables.append(
+                (
+                    self._default_loc_file_for(language),
+                    self._foreign_loc_entries.get(language, {}),
+                    self._foreign_loc_sources.get(language, {}),
+                    self._foreign_dirty_loc_keys.get(language, set()),
+                )
+            )
         dirty_files: set[Path] = set(self._dirty_loc_files) if dirty_only else set()
         if dirty_only:
-            for key in self._dirty_loc_keys:
-                source = self._loc_sources.get(key, self.default_loc_file)
-                dirty_files.add(source)
+            for default_file, _, sources, dirty_keys in tables:
+                for key in dirty_keys:
+                    source = sources.get(key, default_file)
+                    dirty_files.add(source)
 
         file_entries: dict[Path, dict[str, str]] = {path: {} for path in dirty_files}
-        for key, value in self._loc_entries.items():
-            source = self._loc_sources.get(key, self.default_loc_file)
-            if dirty_only and source not in dirty_files:
-                continue
-            if source not in file_entries:
-                file_entries[source] = {}
-            file_entries[source][key] = value
+        for default_file, entries, sources, _ in tables:
+            for key, value in entries.items():
+                source = sources.get(key, default_file)
+                if dirty_only and source not in dirty_files:
+                    continue
+                if source not in file_entries:
+                    file_entries[source] = {}
+                file_entries[source][key] = value
         return file_entries
 
     def _group_events_by_file(

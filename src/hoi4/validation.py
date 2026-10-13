@@ -32,6 +32,12 @@ VALIDATION_CODES: dict[str, str] = {
     "localization_bom": "A localization file is missing the UTF-8 byte-order mark HOI4 expects.",
     "localization_encoding": "A localization file is not valid UTF-8.",
     "localization_header": "A localization file has no valid l_<language>: header.",
+    "localization_language_mismatch": (
+        "A localization file's l_<language>: header does not match its language folder."
+    ),
+    "missing_translation": (
+        "English localization keys are missing from another language the mod ships."
+    ),
     "country_scope_core_effect": "Core add/remove effect appears outside an explicit state scope.",
     "history_set_owner_in_effect": "State history owner directive appears in runtime effect script.",
     "unknown_tech_bonus_category": "add_tech_bonus category is not in the technology category catalog.",
@@ -240,6 +246,7 @@ _ERROR_CODES = {
     "localization_bom",
     "localization_encoding",
     "localization_header",
+    "localization_language_mismatch",
     "missing_effect_target",
     "state_buildings_outside_history",
     "duplicate_country_tag",

@@ -17,6 +17,13 @@ All notable changes to this project are documented here. The format follows
   with creator/license metadata, retrieval time, checksums, and verified local
   cache reuse. SVG flags use Commons raster thumbnails. Sources feed the
   existing transactional flag/portrait import APIs without a Gemini key.
+- Multi-language localisation: `get_loc`, `set_loc`, `delete_loc`,
+  `search_loc`, and `all_loc` take `language=` (default `"english"`) for all
+  nine HOI4 languages, indexing inherited and mod files per language without
+  mixing them. `set_loc(..., replace=True)` writes vanilla overrides to
+  `localisation/<language>/replace/`, and `copy_loc_to_languages()` fills
+  missing translations from English. Validation reports header/folder
+  language mismatches and English keys missing from a shipped language.
 
 ### Changed
 
