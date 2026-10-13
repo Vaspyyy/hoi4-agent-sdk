@@ -210,10 +210,11 @@ TST_missions = {
     assert decision.cost is None
     assert decision.days_mission_timeout is None
     assert decision.priority is None
-    # An unparsed days_mission_timeout still makes this a mission.
-    assert not [
-        issue for issue in mod.validate() if issue.code == "mission_activation_without_timeout"
-    ]
+    # An unparsed days_mission_timeout still makes this a mission, and an
+    # unparsed cost still counts as a cost.
+    codes = {issue.code for issue in mod.validate() if issue.decision_id == "TST_const"}
+    assert "mission_activation_without_timeout" not in codes
+    assert "mission_with_cost" in codes
     mod.update_decision("TST_const", complete_effect="add_political_power = 2")
     mod.save()
     assert path.read_text(encoding="utf-8") == source.replace(

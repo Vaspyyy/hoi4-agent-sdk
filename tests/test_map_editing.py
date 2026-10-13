@@ -549,7 +549,11 @@ def test_validation_reports_map_reference_problems(tmp_path: Path) -> None:
     _write(mod_root, "map/strategicregions/2-Sea.txt", SEA_REGION.replace("7 ", "7 1 "))
     _write(mod_root, "map/supply_nodes.txt", "1 1\n1 7\n")
     _write(mod_root, "map/railways.txt", "1 2 1 6\n1 3 1 2\n")
-    _write(mod_root, "map/buildings.txt", BUILDINGS + "9;arms_factory;1;1;1;0;0\n")
+    _write(
+        mod_root,
+        "map/buildings.txt",
+        BUILDINGS + "9;arms_factory;1;1;1;0;0\n1;naval_base;1;1;1;0;2\n",
+    )
     mod = Mod(mod_root, hoi4_install=tmp_path / "game")
 
     codes = _codes(mod)
@@ -561,6 +565,8 @@ def test_validation_reports_map_reference_problems(tmp_path: Path) -> None:
     assert any("not adjacent" in message for message in codes["invalid_railway"])
     assert codes["malformed_railway"]
     assert codes["map_building_unknown_state"]
+    # Land province 2 is known but cannot be a naval base's adjacent sea.
+    assert any("province 2 " in message for message in codes["map_building_unknown_province"])
     severities = {
         issue.code: issue.severity
         for issue in mod.validate()

@@ -805,7 +805,7 @@ def validate_map_consistency(
             if (
                 known
                 and entry.adjacent_sea_province
-                and entry.adjacent_sea_province not in known
+                and entry.adjacent_sea_province not in sea
             ):
                 bad_sea.setdefault(entry.adjacent_sea_province, entry.index)
         for state_id, index in sorted(unknown_states.items()):
@@ -822,7 +822,7 @@ def validate_map_consistency(
         for province, index in sorted(bad_sea.items()):
             errors.append(
                 ValidationError(
-                    message=f"buildings.txt references unknown sea province {province}",
+                    message=f"buildings.txt references unknown or non-sea province {province} as adjacent sea",
                     severity="error",
                     code="map_building_unknown_province",
                     file_path=buildings_path,

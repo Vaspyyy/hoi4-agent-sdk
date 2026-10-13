@@ -9058,15 +9058,17 @@ class Mod:
                 continue
             seen: dict[str, str] = {}
             for definition in self.list_definitions(kind):
-                first = seen.setdefault(definition.id, definition.relative_path)
-                if first == definition.relative_path:
+                if definition.id not in seen:
+                    seen[definition.id] = definition.relative_path
                     continue
+                first = seen[definition.id]
                 if not (definition.source_path.is_relative_to(self.mod_root)
                         or self.mod_root.joinpath(first).exists()):
                     continue
                 issues.append(ValidationError(
                     message=(f"Duplicate {kind.name} {definition.id!r} in "
-                             f"{first} and {definition.relative_path}"),
+                             + (f"{first} (twice)" if first == definition.relative_path
+                                else f"{first} and {definition.relative_path}")),
                     severity="error",
                     code="duplicate_definition_id",
                     file_path=str(definition.source_path),

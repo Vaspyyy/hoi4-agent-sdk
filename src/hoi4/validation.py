@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .decisions import decision_has_mission_timeout
+from .decisions import decision_has_cost, decision_has_mission_timeout
 from .effects_catalog import TECHNOLOGY_CATEGORIES
 from .events import VALID_EVENT_TYPES
 from .focus_layout import resolve_focus_positions
@@ -1274,7 +1274,7 @@ def validate_decision(decision: Decision) -> list[ValidationError]:
     errors: list[ValidationError] = []
     file_path = str(decision.path) if decision.path else None
     is_mission = decision_has_mission_timeout(decision)
-    if is_mission and (decision.cost or decision.custom_cost_trigger.strip()):
+    if is_mission and (decision_has_cost(decision) or decision.custom_cost_trigger.strip()):
         errors.append(
             ValidationError(
                 message=(

@@ -191,6 +191,13 @@ def test_validation_reports_duplicate_mod_definitions(tmp_path: Path) -> None:
     assert any(issue.code == "duplicate_definition_id" for issue in issues)
 
 
+def test_validation_reports_duplicate_definitions_within_one_file(tmp_path: Path) -> None:
+    _write(tmp_path, "common/scripted_effects/a.txt",
+           "same = { add_stability = 0.1 }\nsame = { add_stability = 0.2 }\n")
+    issues = [issue for issue in Mod(tmp_path).validate() if issue.code == "duplicate_definition_id"]
+    assert len(issues) == 1 and "(twice)" in issues[0].message
+
+
 def test_unknown_character_traits_are_reported_with_an_install(tmp_path: Path) -> None:
     game = tmp_path / "game"
     _write(game, "common/country_leader/00_traits.txt", "leader_traits = {\n\tknown_trait = { }\n}\n")

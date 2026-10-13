@@ -262,6 +262,20 @@ def _model_value(decision: Decision, key: str) -> Any:
     return value
 
 
+def decision_has_cost(decision: Decision) -> bool:
+    """Whether the decision charges a cost, counting unmodeled spellings.
+
+    ``cost = @constant`` cannot be read as an int but is preserved on save,
+    so it still counts as a cost.
+    """
+    if decision.cost:
+        return True
+    if decision.cost is not None or not decision.raw_block:
+        return False
+    span = _first_spans(decision.raw_block).get("cost")
+    return span is not None and _top_level_value(decision.raw_block, span, "int") is None
+
+
 def decision_has_mission_timeout(decision: Decision) -> bool:
     """Whether the decision is a mission, counting unmodeled source spellings.
 
