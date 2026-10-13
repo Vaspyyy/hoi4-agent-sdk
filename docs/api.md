@@ -1494,9 +1494,11 @@ with their instance. SDK writes remain exclusively inside the writable mod.
 `common/special_projects/projects`, `common/unit_medals`, `common/collections`,
 `common/military_industrial_organization/organizations`,
 `common/resistance_compliance_modifiers`, `common/raids`, `common/operations`,
-`common/operation_phases`, `common/intelligence_agencies`, and
-`common/intelligence_agency_upgrades`, plus descendants
-of `common/factions` and `common/peace_conference`. These support domains permit
+`common/operation_phases`, `common/intelligence_agencies`,
+`common/intelligence_agency_upgrades`, `common/bop`, `common/continuous_focus`,
+`common/occupation_laws`, `common/terrain`, `common/units/names_railway_guns`,
+and every directory in `DEFINITION_KINDS` (below), plus descendants
+of `common/factions`, `common/peace_conference`, and `common/doctrines`. These support domains permit
 source-derived compatibility overrides; parsing checks syntax, not engine
 semantics. Country, state, event,
 and other modeled gameplay files must use their domain facade methods.
@@ -1524,6 +1526,64 @@ mod.create_scripted_trigger(
     "my_campaign_prepared", "has_war_support > 0.4\nhas_stability > 0.5",
 )
 # Validate, inspect preview, then save using this same Mod instance.
+```
+
+### Common definitions
+
+Keyed `common/` databases share one facade. Each supported domain is described
+by a `DefinitionKind` in `hoi4.DEFINITION_KINDS`: its directory, an optional
+container block (for example `technologies = { ... }`), or an entry key whose
+identifier is a field (for example `defined_text = { name = GetFoo ... }`).
+
+| Method | Description |
+|--------|-------------|
+| `definition_kinds() -> dict[str, DefinitionKind]` | Supported domains. |
+| `list_definitions(kind) -> list[ScriptDefinition]` | Effective definitions from the mod, base mods and the game, including pending edits. |
+| `get_definition(kind, definition_id) -> ScriptDefinition \| None` | One definition; `body` omits outer braces and entry identifier fields. |
+| `create_definition(kind, definition_id, body, *, path=None, overwrite=False) -> Path` | Queue a definition. Containers are created or reused; identifiers must be unique across the effective domain. `overwrite=True` patches an existing definition in its current file. |
+| `update_definition(kind, definition_id, body) -> Path` | Replace an existing body in place. Inherited files are copied into the mod first. |
+| `delete_definition(kind, definition_id) -> Path` | Remove one definition and keep every sibling. |
+
+Supported kinds: `scripted_effect`, `scripted_trigger`, `scripted_localisation`,
+`country_leader_trait`, `unit_leader_trait`, `technology`, `sub_unit`,
+`equipment`, `ai_strategy`, `ai_strategy_plan`, `ai_template`, `ai_equipment`,
+`ai_peace`, `ai_area`, `opinion_modifier`, `static_modifier`, `wargoal`,
+`autonomy_state`, `game_rule`, `state_category`, `building`, `resource`,
+`ability`, `scripted_diplomatic_action`, `scripted_gui`, `unit_name_list`,
+`division_name_list`, `ship_name_list`, `balance_of_power`,
+`military_industrial_organization`, `special_project`, and `operation`.
+
+Typed helpers render common bodies:
+
+| Method | Writes |
+|--------|--------|
+| `create_scripted_effect(effect_id, body)` | `common/scripted_effects` |
+| `create_scripted_localisation(name, [(trigger_body, loc_key), ...])` | `defined_text` with ordered `text` alternatives; an empty trigger is the final fallback. |
+| `create_country_leader_trait(trait_id, body)` / `create_unit_leader_trait(trait_id, body)` | `leader_traits = { ... }` in `common/country_leader` / `common/unit_leader` |
+| `create_technology(technology_id, body)` / `create_sub_unit(sub_unit_id, body)` | `technologies = { ... }` / `sub_units = { ... }` |
+| `create_ai_strategy(plan_id, [(type, id, value), ...], *, allowed="", enable="", abort="")` | `common/ai_strategy` |
+| `create_opinion_modifier(modifier_id, *, value, decay=None, trade=False, target=False, days=None, ...)` | `opinion_modifiers = { ... }` |
+| `create_static_modifier(modifier_id, {modifier: value})` | `common/modifiers` |
+
+All of these accept `path=` and `overwrite=` and participate in preview,
+transactions and atomic save. Unchanged bytes, comments, `@variables` and
+unknown keys in touched files are preserved. Pending scripted effects and
+technologies are visible to validation before saving. Validation reports
+`duplicate_definition_id` for identifiers defined twice where a mod file is
+involved and, with an installed game configured, `unknown_character_trait`
+warnings for character role traits that no `common/country_leader` or
+`common/unit_leader` file defines. Bodies are syntax-checked only: engine
+semantics remain the caller's responsibility.
+
+```python
+mod.create_technology("ABC_rifle_tech", "research_cost = 1.5\nstart_year = 1936")
+mod.create_scripted_localisation(
+    "GetABCLeaderTitle",
+    [("has_government = fascism", "ABC_TITLE_FASCIST"), ("", "ABC_TITLE_DEFAULT")],
+)
+mod.create_ai_strategy(
+    "ABC_hates_XYZ", [("antagonize", "XYZ", 150)], enable="original_tag = ABC",
+)
 ```
 
 `hoi4.layers.expand_replace_paths(paths, content_roots)` returns replacement roots

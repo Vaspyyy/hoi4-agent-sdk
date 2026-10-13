@@ -48,6 +48,7 @@ from .commons_images import (
 from .content_graph import ContentLivenessReport
 from .mod import ExternalModificationError, Mod
 from .config import Config, find_config
+from .definitions import DEFINITION_KINDS, DefinitionKind, ScriptDefinition
 from .dynamic_modifiers import DynamicModifier
 from .gemini_images import (
     DEFAULT_GEMINI_IMAGE_MODEL,
@@ -186,6 +187,9 @@ __all__ = [
     "Bookmark",
     "BookmarkCountry",
     "DynamicModifier",
+    "DEFINITION_KINDS",
+    "DefinitionKind",
+    "ScriptDefinition",
     "CommonsImage",
     "CommonsImageClient",
     "CommonsImageError",

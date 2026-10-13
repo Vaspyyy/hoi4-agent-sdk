@@ -67,6 +67,9 @@ with mod.transaction():
   modifiers
 - states, ownership, cores, resources, buildings, and victory points
 - focus trees, events, on-actions, decisions, ideas, and dynamic modifiers
+- scripted effects and localisation, leader traits, technologies, sub-units,
+  AI strategies, opinion/static modifiers, wargoals, game rules and other keyed
+  `common/` databases through one definition API
 - ideology definitions and bookmark scenarios
 - project scaffolding, launcher descriptors, and safe mod discovery
 - flag, portrait, and bookmark-picture import/export with optional Pillow support

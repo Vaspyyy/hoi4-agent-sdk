@@ -12,6 +12,13 @@ All notable changes to this project are documented here. The format follows
   provenance, and opt-in inherited focus/event/idea/on-action editing.
 - Transactional support-script imports, source-preserving scripted-trigger
   authoring, explicit conversion color-table rebuilding, and impassable states.
+- Generic keyed `common/` definitions (`list/get/create/update/delete_definition`)
+  for 32 domains, including scripted effects and localisation, leader traits,
+  technologies, sub-units, equipment, AI strategies, opinion and static
+  modifiers, wargoals, autonomy states, game rules, scripted GUIs, unit name
+  lists, balance of power, MIOs and special projects, with typed helpers,
+  container-aware byte-preserving patches, duplicate-ID and unknown-trait
+  validation, and a wider `import_script_file()` allow-list.
 
 - `CommonsImageClient` searches Wikimedia Commons and downloads raster sources
   with creator/license metadata, retrieval time, checksums, and verified local
