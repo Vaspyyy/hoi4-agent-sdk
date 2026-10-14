@@ -14,9 +14,11 @@ Usage:
 from importlib.metadata import PackageNotFoundError, version
 
 from .assets import (
+    ICON_KINDS,
     BookmarkPictureAsset,
     DDSExportUnsupportedError,
     FlagAssetSet,
+    IconAsset,
     ImageBackendUnavailableError,
     UnsupportedImageFormatError,
     export_flag_from_mod,
@@ -25,7 +27,11 @@ from .assets import (
     find_portrait_path,
     import_bookmark_picture_to_mod,
     import_flag_to_mod,
+    import_icon_to_mod,
     import_portrait_to_mod,
+    render_focus_shine_sprite,
+    render_sprite_type,
+    upsert_sprite_type,
     write_portrait_gfx,
 )
 from .bookmarks import Bookmark, BookmarkCountry
@@ -48,6 +54,7 @@ from .commons_images import (
 from .content_graph import ContentLivenessReport
 from .mod import ExternalModificationError, Mod
 from .config import Config, find_config
+from .definitions import DEFINITION_KINDS, DefinitionKind, ScriptDefinition
 from .dynamic_modifiers import DynamicModifier
 from .gemini_images import (
     DEFAULT_GEMINI_IMAGE_MODEL,
@@ -67,6 +74,7 @@ from .game_log import (
     parse_hoi4_error_log,
 )
 from .ideologies import Ideology, SubIdeology
+from .map_editing import MapBuilding, MapEditReport, Railway, StrategicRegion
 from .map_render import MapRenderCancelled, PoliticalMapResult, render_political_map
 from .map_topology import TerritoryComponent
 from .oob import (
@@ -186,6 +194,9 @@ __all__ = [
     "Bookmark",
     "BookmarkCountry",
     "DynamicModifier",
+    "DEFINITION_KINDS",
+    "DefinitionKind",
+    "ScriptDefinition",
     "CommonsImage",
     "CommonsImageClient",
     "CommonsImageError",
@@ -220,9 +231,19 @@ __all__ = [
     "import_flag_to_mod",
     "import_portrait_to_mod",
     "write_portrait_gfx",
+    "ICON_KINDS",
+    "IconAsset",
+    "import_icon_to_mod",
+    "render_focus_shine_sprite",
+    "render_sprite_type",
+    "upsert_sprite_type",
     "MapRenderCancelled",
     "PoliticalMapResult",
     "TerritoryComponent",
+    "MapBuilding",
+    "MapEditReport",
+    "Railway",
+    "StrategicRegion",
     "render_political_map",
     "ModDescriptorFiles",
     "DiscoveredMod",

@@ -317,6 +317,52 @@ Use `mod.set_state_properties(state_id, impassable=True)` to queue it; setting
 traversability only: ownership, cores, and population remain separate fields.
 
 Use `patch_state_history()` when owner/core changes must avoid reserializing unrelated state content such as complex vanilla `victory_points` formatting. The change remains in memory for `preview()` and is written transactionally by `save()`.
+
+### Map editing
+
+These methods edit the existing (vanilla or base-mod) map. Like other edits
+they are queued in memory, shown by `preview()`/`preview_summary()`, rolled back
+by `transaction()`, and written atomically by `save()`. An inherited file is
+copied into the mod at the same relative path and patched there; untouched
+bytes stay identical. Line-based files (`map/supply_nodes.txt`,
+`map/railways.txt`, `map/buildings.txt`) change only on the touched lines.
+Province-list edits remove or append the affected IDs in place.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `create_state(provinces, *, name, owner=None, cores=None, state_category="rural", manpower=0, state_id=None, resources=None, buildings="", impassable=False, localisation_file=None, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True)` | `int` | New `history/states/<id>-<name>.txt` (ID defaults to the highest effective ID + 1) plus `STATE_<id>` localisation. Provinces leave their states with their victory points and `history.buildings` province blocks. `owner`/`cores` set to `None` copy the source state that contributes the most provinces. Report warnings are issued as `RuntimeWarning`. |
+| `move_provinces(provinces, to_state, *, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True)` | `MapEditReport` | Same data-moving rules. Emptying a source raises `ValueError` unless `delete_empty_states=True` (the file is deleted, or shadowed by an empty override when inherited) or `allow_empty_source=True` (kept empty, with a warning). |
+| `split_state(state_id, provinces, **create_state_kwargs)` | `int` | `create_state()` for provinces that must all belong to `state_id` |
+| `list_strategic_regions()` / `get_strategic_region(region_id)` | `StrategicRegion` | `id`, `name`, `provinces`, `path`, `has_weather` |
+| `move_provinces_to_strategic_region(provinces, region_id)` | `StrategicRegion` | Moves land or sea provinces; refuses to empty a region |
+| `create_strategic_region(name, provinces, *, region_id=None, weather=None, localisation_file=None)` | `int` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
+| `list_supply_nodes()` / `add_supply_node(province)` / `remove_supply_node(province)` | `list[int]` / `None` | Land provinces only |
+| `list_railways()` / `add_railway(level, provinces, *, check_adjacency=True)` | `Railway` | Levels 1-5. Consecutive provinces must be adjacent when the province map and the `map` extra are available. |
+| `remove_railway(railway)` / `set_railway_level(railway, level)` | `int` | Select a listed `Railway`, or a province route matched in either direction |
+| `list_map_buildings(state_id=None)` / `add_map_building(state_id, building, x, y, z, rotation, adjacent_sea_province=0)` | `MapBuilding` | `z` is the north-south map coordinate |
+| `remove_map_buildings(state_id=None, building=None, *, entries=())` | `int` | Remove positions by filters or listed entries |
+
+`MapEditReport` lists the moved provinces, source states, deleted or emptied
+states, moved victory points and province buildings, the number of reassigned
+building positions, and `warnings`. With `reassign_map_buildings=True`,
+`buildings.txt` positions inside moved provinces follow them; the province is
+looked up from `provinces.bmp` and `definition.csv` at `(x, z)`. Positions of
+a fully emptied state are reassigned without that lookup. If the province map
+or the `map` extra is missing, positions are left unchanged and the report says
+so. Dated history entries (for example `1939.1.1 = { buildings = { ... } }`)
+that mention moved provinces are left in place and reported. Deleting a state
+other than the highest ID also warns, because HOI4 expects contiguous state IDs.
+
+```python
+with mod.transaction():
+    new_id = mod.split_state(42, [3001, 3002], name="Upper Valley")
+    report = mod.move_provinces([3003], new_id)
+    mod.move_provinces_to_strategic_region([3001, 3002, 3003], 17)
+    mod.add_supply_node(3002)
+    mod.add_railway(2, [3001, 3002, 3003])
+    print(report.warnings)
+    print(mod.preview())
+```
 ## Events
 
 Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`.
@@ -428,13 +474,15 @@ migrates its category metadata automatically.
 | `get_decision(decision_id: str) -> Decision` | `Decision` | Get a decision |
 | `get_decision_category(category_id: str) -> DecisionCategory` | `DecisionCategory` | Get a category |
 | `create_decision_category(category_id, icon="", allowed="", visible="", path=None, category_path=None, overwrite=False) -> DecisionCategory` | `DecisionCategory` | Create or route a category. `path` targets decision content; optional `category_path` must be under `common/decisions/categories`. Raises if it exists unless `overwrite=True`. |
-| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. |
+| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, **fields) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. Also accepts every mission, targeted, and general field listed below by keyword. |
 | `ensure_decision_category(category_id, **kwargs) -> DecisionCategory` | `DecisionCategory` | Idempotent create-or-update wrapper |
 | `ensure_decision(category_id, decision_id, **kwargs) -> Decision` | `Decision` | Idempotent create-or-update wrapper |
 | `create_decision_chain(category_id, steps, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Decisions | Build staged decisions with generated completion flags, event calls, localization, and final event |
+| `create_mission(category_id, decision_id, *, days_mission_timeout, activation="", available="", complete_effect="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a mission: it starts when `activation` holds, completes with `complete_effect` once `available` holds, otherwise runs `timeout_effect` after the timeout. Rejects a positive `cost`/`custom_cost_trigger` and non-positive timeouts. |
+| `create_targeted_decision(category_id, decision_id, *, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a decision with one instance per target country or state. Requires at least one of `target_trigger`, `targets`, `target_array`, or `state_target=True`. |
 | `create_recovery_decision(category_id, decision_id, effect, hidden=False, ...) -> Decision` | `Decision` | Create a visible or hidden repair/migration decision for already-started saves |
 | `update_decision_category(category_id: str, **kwargs) -> bool` | `bool` | Update a decision category |
-| `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update a decision |
+| `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update any modeled decision field, including the mission/targeted/general fields; edits patch the source in place |
 | `delete_decision(decision_id: str) -> bool` | `bool` | Remove a decision |
 
 ### Example
@@ -460,6 +508,48 @@ mod.create_decision_chain("slv_revolt", [
     {"id": "SLV_launch_revolt",
      "complete_effect": Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
 ], final_event="slv.99")
+```
+
+### Missions, targeted decisions, and other fields
+
+Besides the classic fields, `Decision` models these as first-class fields. They
+are parsed from source, rendered for new decisions, and patched in place by
+`update_decision`; unknown keys, comments, and repeated blocks are kept.
+
+| Group | Fields |
+|-------|--------|
+| Missions | `days_mission_timeout` (int), `activation`, `timeout_effect`, `cancel_trigger`, `cancel_effect` (blocks), `is_good`, `selectable_mission` (bool) |
+| Targeted | `target_trigger`, `target_root_trigger` (blocks), `targets` (list of tags, `targets = { A B }`), `target_array`, `on_map_mode` (str), `state_target`, `targets_dynamic`, `target_non_existing` (bool) |
+| General | `allowed`, `custom_cost_trigger`, `modifier`, `remove_trigger`, `highlight_states` (blocks), `days_re_enable`, `priority` (int), `war_with_on_remove`, `custom_cost_text` (str), `cancel_if_not_visible` (bool) |
+
+Pass block fields as script bodies without the outer braces; empty strings,
+`None`, or `[]` remove a field. Validation warns with `mission_with_cost` when
+a mission also has a positive `cost` or a `custom_cost_trigger`, and reports
+`mission_activation_without_timeout` (error) for `activation` without
+`days_mission_timeout`. Trigger and effect fields take part in script
+vocabulary, reference, and liveness checks in the decision owner's scope.
+
+```python
+mod.create_mission(
+    "TST_crisis",
+    "TST_hold_the_line",
+    days_mission_timeout=90,
+    activation="has_war = yes",
+    available="surrender_progress < 0.1",
+    complete_effect="add_stability = 0.05",
+    timeout_effect="add_stability = -0.1",
+    is_good=True,
+    loc_name="Hold the Line",
+)
+mod.create_targeted_decision(
+    "TST_diplomacy",
+    "TST_improve_relations",
+    targets=["GER", "ITA"],
+    target_trigger="FROM = { exists = yes }",
+    cost=25,
+    complete_effect="add_opinion_modifier = { target = FROM modifier = improve_relation }",
+)
+mod.update_decision("TST_hold_the_line", days_mission_timeout=120)
 ```
 
 ### Event Types
@@ -638,20 +728,39 @@ mod.add_focus("west_focus", Focus(
 Focus tree files write to `common/national_focus/{TAG}_focus.txt`.
 ## Localization
 
-Localization uses HOI4 YML format (`l_english:` header, ` KEY:0 "value"` entries).
-The `Mod` localization API loads English `.yml` files under `localisation/english`
-and stores their keys and values in a flat dict. Other languages are not supported
-by this API.
+Localization uses HOI4 YML format (`l_<language>:` header, ` KEY:0 "value"`
+entries, UTF-8 with BOM). Files live at
+`localisation/<language>/*_l_<language>.yml`. Supported languages are listed in
+`hoi4.localisation.LOCALISATION_LANGUAGES`: `english`, `braz_por`, `french`,
+`german`, `japanese`, `polish`, `russian`, `spanish`, `simp_chinese`, and
+`korean` (the ten languages HOI4 1.19 ships in `localisation/languages.yml`).
+
+Every method takes a keyword-only `language=` that defaults to `"english"`, so
+English-only code is unchanged. An `l_` prefix is accepted (`"l_german"`);
+unknown languages raise `ValueError`. Each language is indexed separately, with
+inherited base-layer files first and the mod's own files on top, exactly like
+English. English loads with the mod; another language is indexed on its first
+use. Languages are never mixed: `get_loc(key, language="german")` returns `None`
+for an English-only key rather than falling back.
 
 ### Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_loc(key: str) -> str \| None` | `str \| None` | Get localized string |
-| `set_loc(key: str, value: str, file_path=None) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or `default_loc_file` for new entries. Custom paths must be `.yml` files under `localisation/english`; unsupported paths raise `ValueError` before modifying the entry. |
-| `delete_loc(key: str) -> bool` | `bool` | Remove entry |
-| `search_loc(query: str) -> dict[str, str]` | `dict` | Case-insensitive substring search in keys and values |
-| `all_loc() -> dict[str, str]` | `dict` | Full copy of all entries |
+| `get_loc(key, *, language="english") -> str \| None` | `str \| None` | Get one language's localized string |
+| `set_loc(key, value, file_path=None, *, language="english", replace=False) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `replace=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `file_path` inside `replace/`), which is how a mod overrides base-game keys. |
+| `delete_loc(key, *, language="english") -> bool` | `bool` | Remove one language's entry |
+| `search_loc(query, *, language="english") -> dict[str, str]` | `dict` | Case-insensitive substring search in one language's keys and values |
+| `all_loc(*, language="english") -> dict[str, str]` | `dict` | Full copy of one language's entries |
+| `copy_loc_to_languages(keys=None, languages=None, *, overwrite=False) -> dict[str, list[str]]` | `dict` | Fill missing translations with the English text so players of other languages do not see raw keys. `keys` defaults to every English key the mod authors (inherited base-game text is never copied); `languages` defaults to every non-English language. New entries go to the file mirroring their English source (`events_l_english.yml` -> `events_l_german.yml`, `replace/` kept). Existing translations are kept unless `overwrite=True`. Returns the keys written per language. |
+
+Deleting a character or country also removes its generated keys from every
+non-English language the mod ships.
+
+Validation reports `localization_language_mismatch` (error) when a file's
+`l_<language>:` header does not match its `localisation/<language>` folder, and
+`missing_translation` (warning, one per language) when English keys the mod
+authors are missing from a language that already has mod files.
 
 When deleting the last entry in a layered localization file, saving retains an
 empty override (including its header and comments) if removing the file would
@@ -683,9 +792,15 @@ mod.set_loc(
     "The time has come to stand alone.\nThe nation awaits our decision.",
 )
 mod.search_loc("independence")
+
+# Translations and vanilla overrides.
+mod.set_loc("WST_independence", "Unabhängigkeit erklären", language="german")
+mod.set_loc("GER_anschluss", "Union with Austria", replace=True)
+mod.copy_loc_to_languages(languages=["french", "spanish"])
 ```
 
-Default file: `localisation/english/mod_l_english.yml`.
+Default file: `localisation/english/mod_l_english.yml` (for other languages,
+`localisation/<language>/mod_l_<language>.yml`).
 
 ## Effect Builders
 
@@ -833,6 +948,7 @@ except OperationCancelled:
 | **OOB** | Unique land templates/grid positions, separate correctly assigned land/naval/air files, known unit and equipment IDs, valid owned locations, valid factors, fleet/task-force/ship structure, DLC-aware hull variant resolution, and valid country-history references |
 | **Geography** | Significant capital-disconnected owned components and fully enclosed foreign land components warn unless explicitly allowlisted |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
+| **Map** | Land provinces belong to exactly one state (missing: warning `province_missing_state`; duplicate: error `province_in_multiple_states`); state provinces exist and are not sea provinces (vanilla states include lakes); land and sea provinces belong to exactly one strategic region (an empty region is a warning, as vanilla ships three); supply nodes, railways (levels, land provinces, adjacency when the mod overrides `railways.txt` and the province map is readable), and `buildings.txt` references resolve: the last field is a sea province, except for `floating_harbor`, which names its coastal land province. The whole check was run against the HOI4 1.19.3 map with no findings |
 | **Event** | Has ID, has title, has description, has options, option gameplay effects, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
 | **Idea** | Has ID, has modifiers |
 | **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, no prerequisite cycles, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, continuous focus overlap risk, optional focus icon existence |
@@ -973,6 +1089,10 @@ mod_root/
     english/
       mod_l_english.yml              # Default localization target
       {TAG}_country_l_english.yml    # Country-specific localization
+      replace/
+        mod_replace_l_english.yml    # set_loc(..., replace=True) overrides
+    german/                          # Same layout for every other language
+      mod_l_german.yml
 ```
 
 ## Ideologies, Dynamic Modifiers, and Bookmarks
@@ -1213,6 +1333,51 @@ transaction.
 `render_political_map()` raises the root-exported `MapRenderCancelled` exception
 when its `cancelled` callback returns true, so UI integrations can stop work
 without treating cancellation as a rendering failure.
+
+### Custom focus, idea, decision, and event graphics
+
+Custom icons and pictures use the same staged, Pillow-backed import path as
+flags and portraits. Each method writes a DXT5 `.dds` texture, merges one sprite
+into a mod-scoped `interface/<mod-folder>_<group>.gfx` file, and returns the
+sprite name to reference from script:
+
+```python
+icon = mod.import_focus_icon("focus_ABC_industry", "industry.png")
+mod.add_focus("abc_focus", Focus(id="ABC_industry", icon=icon))  # GFX_focus_ABC_industry
+spirit = mod.import_idea_icon("ABC_spirit", "spirit.png")         # GFX_idea_ABC_spirit
+mod.create_idea("ABC_spirit", icon=spirit)                        # picture = ABC_spirit
+mod.import_decision_icon("ABC_rally", "rally.png")                # GFX_decision_ABC_rally
+mod.import_decision_category_icon("ABC_cat", "cat.png")           # GFX_decision_category_ABC_cat
+mod.import_decision_category_picture("ABC_cat", "banner.png")     # GFX_decision_cat_picture_ABC_cat
+mod.import_event_picture("ABC_strike", "strike.png")              # GFX_report_event_ABC_strike
+mod.import_event_picture("ABC_news", "paper.png", news=True)      # GFX_news_event_ABC_news
+```
+
+| Method | Texture | Default canvas | `.gfx` group |
+| --- | --- | --- | --- |
+| `import_focus_icon` | `gfx/interface/goals/<name>.dds` | 100x88 | `_goals` (+ `_goals_shine`) |
+| `import_idea_icon` | `gfx/interface/ideas/<name>.dds` | 65x67 | `_ideas` |
+| `import_decision_icon` | `gfx/interface/decisions/<name>.dds` | 33x32 | `_decisions` |
+| `import_decision_category_icon` | `gfx/interface/decisions/categories/<name>.dds` | 52x40 | `_decisions` |
+| `import_decision_category_picture` | `gfx/interface/decisions/category_pictures/<name>.dds` | 114x101 | `_decisions` |
+| `import_event_picture` | `gfx/event_pictures/<name>.dds` | 210x176 (news 397x153) | `_eventpictures` |
+
+Default canvases are the most common vanilla texture sizes in HOI4 1.19; pass
+`size=(w, h)` to override them. Icons default to
+`resize_mode="contain"` on a transparent canvas, pictures to `"cover"`. Focus
+icons also receive HOI4's standard `GFX_<name>_shine` animation unless
+`shine=False`. A leading sprite prefix in `name` (`GFX_idea_x`) is ignored.
+
+If the target `.gfx` already exists, only the matching `SpriteType` entry
+(matched by its `name`) is appended or replaced; every other byte, including
+comments and line endings, is preserved. Re-importing an identical image is a
+no-op. With the default `overwrite=False`, a different existing texture or
+sprite entry raises `FileExistsError`. A sprite already declared in another mod
+`.gfx` file is rejected; pass `gfx_file="interface/that_file.gfx"` to update it
+there. Staged sprites are visible to `validate(validate_icons=True)` and the
+icon suggestion helpers before `save()`, and `transaction()` rollback discards
+them. `import_icon_to_mod(mod_root, kind, name, image)` is the immediate
+standalone equivalent; `upsert_sprite_type()` exposes the text patcher.
 
 ### Wikimedia Commons images
 
@@ -1456,7 +1621,7 @@ this does not infer filesystem paths or replacement policy.
 - `mod.content_files("history/states")` returns effective relative filenames
   mapped to original source paths. `state_index()` additionally reports
   `source_path` and `source_layer` when layers are configured.
-- Country/state/OOB fallback, English localization, asset resolution, province checks, and their
+- Country/state/OOB fallback, localization in every language, asset resolution, province checks, and their
   validators use the effective content. Game script documentation remains tied
   to the actual installed game.
 - Focus/event/idea/on-action files retain opt-in inherited loading:
@@ -1494,9 +1659,11 @@ with their instance. SDK writes remain exclusively inside the writable mod.
 `common/special_projects/projects`, `common/unit_medals`, `common/collections`,
 `common/military_industrial_organization/organizations`,
 `common/resistance_compliance_modifiers`, `common/raids`, `common/operations`,
-`common/operation_phases`, `common/intelligence_agencies`, and
-`common/intelligence_agency_upgrades`, plus descendants
-of `common/factions` and `common/peace_conference`. These support domains permit
+`common/operation_phases`, `common/intelligence_agencies`,
+`common/intelligence_agency_upgrades`, `common/bop`, `common/continuous_focus`,
+`common/occupation_laws`, `common/terrain`, `common/units/names_railway_guns`,
+and every directory in `DEFINITION_KINDS` (below), plus descendants
+of `common/factions`, `common/peace_conference`, and `common/doctrines`. These support domains permit
 source-derived compatibility overrides; parsing checks syntax, not engine
 semantics. Country, state, event,
 and other modeled gameplay files must use their domain facade methods.
@@ -1524,6 +1691,69 @@ mod.create_scripted_trigger(
     "my_campaign_prepared", "has_war_support > 0.4\nhas_stability > 0.5",
 )
 # Validate, inspect preview, then save using this same Mod instance.
+```
+
+### Common definitions
+
+Keyed `common/` databases share one facade. Each supported domain is described
+by a `DefinitionKind` in `hoi4.DEFINITION_KINDS`: its directory, an optional
+container block (for example `technologies = { ... }`), or an entry key whose
+identifier is a field (for example `defined_text = { name = GetFoo ... }`).
+
+| Method | Description |
+|--------|-------------|
+| `definition_kinds() -> dict[str, DefinitionKind]` | Supported domains. |
+| `list_definitions(kind) -> list[ScriptDefinition]` | Effective definitions from the mod, base mods and the game, including pending edits. |
+| `get_definition(kind, definition_id) -> ScriptDefinition \| None` | One definition; `body` omits outer braces and entry identifier fields. |
+| `create_definition(kind, definition_id, body, *, path=None, overwrite=False) -> Path` | Queue a definition. Containers are created or reused; identifiers must be unique across the effective domain. `overwrite=True` patches an existing definition in its current file. |
+| `update_definition(kind, definition_id, body) -> Path` | Replace an existing body in place. Inherited files are copied into the mod first. |
+| `delete_definition(kind, definition_id) -> Path` | Remove one definition and keep every sibling. |
+
+Supported kinds: `scripted_effect`, `scripted_trigger`, `scripted_localisation`,
+`country_leader_trait`, `unit_leader_trait`, `technology`, `sub_unit`,
+`equipment`, `ai_strategy`, `ai_strategy_plan`, `ai_template`, `ai_equipment`,
+`ai_area`, `opinion_modifier`, `static_modifier`, `wargoal`,
+`autonomy_state`, `game_rule`, `state_category`, `building`, `resource`,
+`ability`, `scripted_diplomatic_action`, `scripted_gui`, `unit_name_list`,
+`division_name_list`, `ship_name_list`, `balance_of_power`,
+`military_industrial_organization`, `special_project`, `operation`,
+`occupation_law`, `doctrine_folder`, `grand_doctrine`, `doctrine_track`, and
+`subdoctrine`. Container and entry layouts were checked against HOI4 1.19.3;
+`equipment` uses the vanilla `equipments = { ... }` wrapper. `subdoctrine` has
+no default file because vanilla groups subdoctrines by folder, so pass
+`path="common/doctrines/subdoctrines/<land|sea|air|special_forces>/....txt"`.
+
+Typed helpers render common bodies:
+
+| Method | Writes |
+|--------|--------|
+| `create_scripted_effect(effect_id, body)` | `common/scripted_effects` |
+| `create_scripted_localisation(name, [(trigger_body, loc_key), ...])` | `defined_text` with ordered `text` alternatives; an empty trigger is the final fallback. |
+| `create_country_leader_trait(trait_id, body)` / `create_unit_leader_trait(trait_id, body)` | `leader_traits = { ... }` in `common/country_leader` / `common/unit_leader` |
+| `create_technology(technology_id, body)` / `create_sub_unit(sub_unit_id, body)` | `technologies = { ... }` / `sub_units = { ... }` |
+| `create_ai_strategy(plan_id, [(type, id, value), ...], *, allowed="", enable="", abort="")` | `common/ai_strategy` |
+| `create_opinion_modifier(modifier_id, *, value, decay=None, trade=False, target=False, days=None, ...)` | `opinion_modifiers = { ... }` |
+| `create_static_modifier(modifier_id, {modifier: value})` | `common/modifiers` |
+
+All of these accept `path=` and `overwrite=` and participate in preview,
+transactions and atomic save. Unchanged bytes, comments, `@variables` and
+unknown keys in touched files are preserved. Pending scripted effects and
+technologies are visible to validation before saving. Validation reports
+`duplicate_definition_id` for identifiers defined twice where a mod file is
+involved and, with an installed game configured, `unknown_character_trait`
+warnings for character role traits that no `common/country_leader` or
+`common/unit_leader` file defines. Bodies are syntax-checked only: engine
+semantics remain the caller's responsibility.
+
+```python
+mod.create_technology("ABC_rifle_tech", "research_cost = 1.5\nstart_year = 1936")
+mod.create_scripted_localisation(
+    "GetABCLeaderTitle",
+    [("has_government = fascism", "ABC_TITLE_FASCIST"), ("", "ABC_TITLE_DEFAULT")],
+)
+mod.create_ai_strategy(
+    "ABC_hates_XYZ", [("antagonize", "XYZ", 150)], enable="original_tag = ABC",
+)
 ```
 
 `hoi4.layers.expand_replace_paths(paths, content_roots)` returns replacement roots

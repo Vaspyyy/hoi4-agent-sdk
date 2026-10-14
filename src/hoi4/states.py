@@ -13,6 +13,7 @@ import textwrap
 from pathlib import Path
 from typing import Optional, Sequence
 
+from .map_editing import list_ints, patch_int_list_body
 from .parser import PdxNode, parse_pdx, serialize_pdx
 from .patching import AssignmentSpan, replace_assignment, top_level_assignments
 from .types import State
@@ -382,11 +383,7 @@ def _patch_existing_state(state: State) -> str:
             _render_resources(state.resources) if state.resources else None,
         )
     if state.provinces != original.provinces:
-        state_body = _set_direct_block(
-            state_body,
-            "provinces",
-            " ".join(str(province) for province in state.provinces),
-        )
+        state_body = _set_state_provinces(state_body, original.provinces, state.provinces)
 
     history_replaced = state.history.strip() != original.history.strip()
     if history_replaced:
@@ -439,6 +436,26 @@ def _patch_existing_state(state: State) -> str:
         state.raw_text[: state_span.body_start]
         + state_body
         + state.raw_text[state_span.body_end :]
+    )
+
+
+def _set_state_provinces(
+    state_body: str,
+    original: Sequence[int],
+    updated: Sequence[int],
+) -> str:
+    """Remove/append province atoms in place; re-render only for reorders."""
+    span = _find_direct_assignment(state_body, "provinces", block=True)
+    if span is not None and span.body_start is not None and span.body_end is not None:
+        body = state_body[span.body_start : span.body_end]
+        if list_ints(body) == list(original):
+            patched = patch_int_list_body(body, original, updated)
+            if patched is not None:
+                return state_body[: span.body_start] + patched + state_body[span.body_end :]
+    return _set_direct_block(
+        state_body,
+        "provinces",
+        " ".join(str(province) for province in updated),
     )
 
 

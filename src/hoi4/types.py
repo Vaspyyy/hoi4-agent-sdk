@@ -247,6 +247,34 @@ class Decision:
     path: Optional[Path] = None
     raw_block: str = ""
     touched: bool = False
+    # Missions (timed decisions that fire on their own).
+    days_mission_timeout: int | None = None
+    activation: str = ""
+    timeout_effect: str = ""
+    cancel_trigger: str = ""
+    cancel_effect: str = ""
+    is_good: Optional[bool] = None
+    selectable_mission: Optional[bool] = None
+    # Targeted decisions (one instance per country or state target).
+    target_trigger: str = ""
+    targets: list[str] = field(default_factory=list)
+    target_array: str = ""
+    target_root_trigger: str = ""
+    state_target: Optional[bool] = None
+    targets_dynamic: Optional[bool] = None
+    target_non_existing: Optional[bool] = None
+    on_map_mode: str = ""
+    # General decision fields.
+    allowed: str = ""
+    days_re_enable: int | None = None
+    war_with_on_remove: str = ""
+    custom_cost_trigger: str = ""
+    custom_cost_text: str = ""
+    cancel_if_not_visible: Optional[bool] = None
+    modifier: str = ""
+    remove_trigger: str = ""
+    highlight_states: str = ""
+    priority: int | None = None
 
 
 @dataclass

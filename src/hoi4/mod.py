@@ -19,7 +19,9 @@ import csv
 import dataclasses
 import os
 import re
+import math
 import tempfile
+import textwrap
 import unicodedata
 from datetime import datetime
 from heapq import nlargest
@@ -27,7 +29,7 @@ import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from difflib import SequenceMatcher
-from typing import Any, Iterator, Literal, Optional, Sequence, TypeVar, cast
+from typing import Any, Iterable, Iterator, Literal, Optional, Sequence, TypeVar, cast
 
 from .bookmarks import (
     DEFAULT_BOOKMARK_EFFECT,
@@ -40,9 +42,9 @@ from .bookmarks import (
     require_bookmark_country_key,
     serialize_bookmarks_file,
 )
-from .assets import FlagAssetSet
+from .assets import FlagAssetSet, IconAsset
 from .config import find_config
-from .layers import ContentLayers, relative_content_path
+from .layers import ContentLayers, relative_content_path, replace_paths
 from .content_validation import (
     validate_bookmark,
     validate_dynamic_modifier,
@@ -78,6 +80,7 @@ from .decisions import (
     serialize_decisions_file,
 )
 from .diff import unified_diff
+from .definitions import DefinitionKind, ScriptDefinition
 from .dynamic_modifiers import (
     DynamicModifier,
     load_dynamic_modifiers_file,
@@ -96,14 +99,56 @@ from .idea_icons import (
 from .ideas import read_ideas_file, scan_idea_ids_file, serialize_ideas_file
 from .ideologies import Ideology, SubIdeology, load_ideologies_file, serialize_ideologies_file
 from .localisation import (
+    DEFAULT_LOCALISATION_LANGUAGE,
+    LOCALISATION_LANGUAGES,
+    localisation_file_name,
+    localisation_header_language,
+    localisation_language_for_path,
+    normalize_localisation_language,
     normalize_localization_key,
     parse_localization_dir,
     serialize_localization_file,
+)
+from .map_editing import (
+    BUILDINGS_FILE,
+    MAX_RAILWAY_LEVEL,
+    RAILWAYS_FILE,
+    STRATEGIC_REGIONS_DIR,
+    SUPPLY_NODES_FILE,
+    MapBuilding,
+    MapEditReport,
+    Railway,
+    StrategicRegion,
+    add_supply_node_text,
+    append_line,
+    append_province_buildings,
+    dated_history_province_references,
+    join_victory_points,
+    parse_map_buildings,
+    parse_railways,
+    parse_strategic_regions,
+    parse_supply_nodes,
+    patch_region_provinces,
+    region_weather_assignment,
+    remove_lines,
+    remove_supply_node_text,
+    render_map_building,
+    render_railway,
+    render_strategic_region,
+    set_map_building_state_text,
+    set_railway_level_text,
+    split_lines,
+    split_province_buildings,
+    split_victory_points,
+    state_file_provinces,
+    validate_map_consistency,
 )
 from .map_topology import (
     TerritoryComponent,
     find_country_territory_components,
     find_enclosed_foreign_components,
+    load_land_adjacency,
+    load_province_grid,
 )
 from .on_actions import load_on_actions_file, serialize_on_actions_file
 from .oob import (
@@ -196,6 +241,7 @@ from .validation import (
     collect_character_ids,
     validate_country,
     validate_country_history_references,
+    validate_decision,
     validate_event,
     validate_focus_tree,
     validate_idea,
@@ -566,6 +612,20 @@ def _decision_category_definition_path(mod_root: Path, decision_path: Path) -> P
     return decisions_root / "categories" / f"{stem}_decision_categories.txt"
 
 
+def _decision_targets(value: object) -> list[str]:
+    """Normalize ``targets`` to a list of bare tokens (tags or scopes)."""
+    if value is None:
+        return []
+    items = value.split() if isinstance(value, str) else list(cast(Iterable[object], value))
+    targets: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if not text or any(ch.isspace() or ch in '{}#"=' for ch in text):
+            raise ValueError(f"Invalid decision target {item!r}; pass tags such as 'GER'")
+        targets.append(text)
+    return targets
+
+
 def _filter_validation_errors(
     errors: list[ValidationError],
     suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
@@ -786,6 +846,26 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
                         line=1,
                     )
                 )
+                continue
+            folder = path.relative_to(localization).parts[0].lower()
+            header = localisation_header_language(text)
+            if (
+                folder in LOCALISATION_LANGUAGES
+                and header is not None
+                and header != folder
+            ):
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"Localization file header 'l_{header}:' does not match its "
+                            f"folder localisation/{folder}; HOI4 expects 'l_{folder}:': {path}"
+                        ),
+                        severity="error",
+                        code="localization_language_mismatch",
+                        file_path=str(path),
+                        line=1,
+                    )
+                )
     return errors
 
 
@@ -827,6 +907,9 @@ class Mod:
         self._state_ids: list[int] = []
         self._state_source_paths: dict[int, Path] = {}
         self._dirty_states: set[int] = set()
+        self._deleted_state_ids: set[int] = set()
+        self._deleted_state_files: dict[Path, str | None] = {}
+        self._map_file_updates: dict[str, str] = {}
         self._events: dict[str, Event] = {}
         self._event_namespaces: dict[str, Optional[str]] = {}
         self._dirty_events: set[str] = set()
@@ -862,6 +945,12 @@ class Mod:
         self._loc_sources: dict[str, Path] = {}
         self._dirty_loc_keys: set[str] = set()
         self._dirty_loc_files: set[Path] = set()
+        # English stays in the tables above; every other language is indexed
+        # lazily, as a whole (inherited layers plus the mod), on first use.
+        self._foreign_loc_entries: dict[str, dict[str, str]] = {}
+        self._foreign_loc_sources: dict[str, dict[str, Path]] = {}
+        self._foreign_dirty_loc_keys: dict[str, set[str]] = {}
+        self._loaded_loc_languages: set[str] = set()
         self._original_files: dict[Path, str] = {}
         self._source_baseline: dict[Path, bytes] = {}
         self._pending_asset_writes: dict[Path, bytes] = {}
@@ -1319,22 +1408,32 @@ class Mod:
                 continue
 
     def _load_localization(self) -> None:
+        self._load_localization_language(
+            DEFAULT_LOCALISATION_LANGUAGE, self._loc_entries, self._loc_sources
+        )
+
+    def _load_localization_language(
+        self,
+        language: str,
+        loc_entries: dict[str, str],
+        loc_sources: dict[str, Path],
+    ) -> None:
         if self._content_layers is not None:
             assert self._base_content_root is not None
-            inherited = self._base_content_root / "localisation" / "english"
+            inherited = self._base_content_root / "localisation" / language
             entries, sources = parse_localization_dir(inherited)
-            self._loc_entries.update(entries)
+            loc_entries.update(entries)
             for key, source in sources.items():
                 target = self.mod_root / source.relative_to(self._base_content_root)
-                self._loc_sources[key] = target
+                loc_sources[key] = target
                 if target not in self._original_files:
                     self._original_files[target] = source.read_text(encoding="utf-8-sig", errors="ignore")
-        loc_dir = self.mod_root / "localisation" / "english"
+        loc_dir = self.mod_root / "localisation" / language
         if not loc_dir.exists():
             return
         entries, sources = parse_localization_dir(loc_dir)
-        self._loc_entries.update(entries)
-        self._loc_sources.update(sources)
+        loc_entries.update(entries)
+        loc_sources.update(sources)
         # Keep every localization source, including header/comment-only files.
         # Otherwise adding the first modeled key to such a file would serialize
         # from an empty baseline and silently discard its existing content.
@@ -1609,6 +1708,15 @@ class Mod:
     @property
     def default_loc_file(self) -> Path:
         return self.mod_root / "localisation" / "english" / "mod_l_english.yml"
+
+    def _default_loc_file_for(self, language: str, *, replace: bool = False) -> Path:
+        """Default new-entry file; ``replace`` targets the override folder."""
+        if language == DEFAULT_LOCALISATION_LANGUAGE and not replace:
+            return self.default_loc_file
+        folder = self.mod_root / "localisation" / language
+        if replace:
+            return folder / "replace" / f"mod_replace_l_{language}.yml"
+        return folder / f"mod_l_{language}.yml"
 
     # ── Countries ────────────────────────────────────────────────
 
@@ -2062,8 +2170,8 @@ class Mod:
                 character.id,
                 recruited=False,
             )
-        self.delete_loc(character.id)
-        self.delete_loc(f"{character.id}_desc")
+        self._delete_loc_all_languages(character.id)
+        self._delete_loc_all_languages(f"{character.id}_desc")
         return True
 
     def add_character_instance(
@@ -3120,7 +3228,7 @@ class Mod:
         if country.leader:
             loc_keys.extend((country.leader.character_id, f"{country.leader.character_id}_desc"))
         for key in set(loc_keys):
-            self.delete_loc(key)
+            self._delete_loc_all_languages(key)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
         return True
@@ -3160,7 +3268,10 @@ class Mod:
     def state_index(self, include_vanilla: bool = True) -> list[dict]:
         cached = self._state_index_cache.get(include_vanilla)
         if cached is not None:
-            return [dict(entry) for entry in cached]
+            return [
+                dict(entry) for entry in cached
+                if entry["id"] not in self._deleted_state_ids
+            ]
         state_localization = self._state_localization_entries()
         entries: list[dict] = []
         for source, base in [("mod", self.mod_root), ("vanilla", self._base_content_root)]:
@@ -3170,6 +3281,8 @@ class Mod:
                 continue
             states_dir = base / "history" / "states"
             for entry in build_state_index(states_dir):
+                if source == "vanilla" and self._is_shadowed_by_mod(base, Path(entry["path"])):
+                    continue
                 item = dict(entry)
                 item["source"] = source
                 if self._content_layers is not None:
@@ -3196,7 +3309,7 @@ class Mod:
                 by_id[entry["id"]] = entry
         result = sorted(by_id.values(), key=lambda item: item["id"])
         self._state_index_cache[include_vanilla] = [dict(entry) for entry in result]
-        return result
+        return [entry for entry in result if entry["id"] not in self._deleted_state_ids]
 
     def get_state_name_map(self, include_vanilla: bool = True) -> dict[int, str]:
         return {
@@ -3280,6 +3393,8 @@ class Mod:
         """
         if state_id in self._states:
             return self._states[state_id]
+        if state_id in self._deleted_state_ids:
+            raise KeyError(f"State {state_id} is queued for deletion")
         # Scan inherited content once, never once per missing filename prefix.
         # Writable directory additions retain existing live-discovery behavior;
         # directory timestamps avoid scanning unchanged files for every state.
@@ -3300,6 +3415,8 @@ class Mod:
             if self._inherited_state_source_paths is None:
                 inherited_paths: dict[int, Path] = {}
                 for entry in build_state_index(self._base_content_root / "history" / "states"):
+                    if self._is_shadowed_by_mod(self._base_content_root, Path(entry["path"])):
+                        continue
                     inherited_paths.setdefault(entry["id"], Path(entry["path"]))
                 self._inherited_state_source_paths = inherited_paths
             f = self._inherited_state_source_paths.get(state_id)
@@ -3411,6 +3528,883 @@ class Mod:
         for sid in state_ids:
             results.append(self.set_state_owner(sid, tag, add_core))
         return results
+
+    # ── Map editing ─────────────────────────────────────────────
+
+    def create_state(
+        self,
+        provinces: Sequence[int],
+        *,
+        name: str,
+        owner: str | None = None,
+        cores: Sequence[str] | None = None,
+        state_category: str = "rural",
+        manpower: int | str = 0,
+        state_id: int | None = None,
+        resources: dict[str, str | int | float] | None = None,
+        buildings: str = "",
+        impassable: bool = False,
+        localisation_file: str | Path | None = None,
+        allow_empty_source: bool = False,
+        delete_empty_states: bool = False,
+        reassign_map_buildings: bool = True,
+    ) -> int:
+        """Queue a new state made of ``provinces`` and return its ID.
+
+        Provinces leave their current states together with their victory
+        points and province-level history buildings. ``owner``/``cores`` left
+        as ``None`` inherit from the source state contributing most provinces.
+        ``name`` is written as ``STATE_<id>`` localisation. Map building
+        positions inside moved provinces are reassigned; anything skipped is
+        reported through :class:`RuntimeWarning`. Use :meth:`move_provinces`
+        when the full :class:`MapEditReport` is needed.
+        """
+
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("create_state() requires a non-empty name")
+        if not re.fullmatch(r"[A-Za-z0-9_]+", state_category or ""):
+            raise ValueError(f"Invalid state_category {state_category!r}")
+        manpower_text = str(manpower).strip()
+        if not manpower_text.isdigit():
+            raise ValueError(f"manpower must be a non-negative integer, got {manpower!r}")
+        province_list = self._normalize_province_ids(provinces)
+        effective_ids = set(self._effective_state_provinces()[0])
+        if state_id is None:
+            new_id = max(effective_ids, default=0) + 1
+        else:
+            if isinstance(state_id, bool) or not isinstance(state_id, int) or state_id <= 0:
+                raise ValueError(f"state_id must be a positive integer, got {state_id!r}")
+            if state_id in effective_ids:
+                raise ValueError(f"State {state_id} already exists")
+            new_id = state_id
+        target_path = resolve_mod_output_path(
+            self.mod_root,
+            Path("history") / "states" / f"{new_id}-{safe_file_stem(name.strip(), fallback='STATE')}.txt",
+        )
+        if target_path.exists() and target_path not in self._deleted_state_files:
+            raise FileExistsError(f"State file already exists: {target_path}")
+        plan = self._plan_province_move(province_list, new_id)
+        primary_state: State | None = None
+        if plan and (owner is None or cores is None):
+            primary_id = max(sorted(plan), key=lambda sid: len(plan[sid]))
+            primary_state = self.get_state(primary_id)
+        owner_tag = (
+            require_country_tag(owner) if owner
+            else (primary_state.owner if primary_state is not None and owner is None else "")
+        )
+        if cores is None:
+            core_tags = list(primary_state.cores) if primary_state is not None else []
+        else:
+            core_tags = []
+            for core in cores:
+                tag = require_country_tag(core)
+                if tag not in core_tags:
+                    core_tags.append(tag)
+        state = State(
+            id=new_id,
+            name=f"STATE_{new_id}",
+            owner=owner_tag,
+            cores=core_tags,
+            resources=dict(resources or {}),
+            buildings=textwrap.dedent(buildings).strip(),
+            manpower=manpower_text,
+            state_category=state_category,
+            impassable=impassable,
+            path=target_path,
+        )
+        snapshot = self._snapshot()
+        try:
+            self._states[new_id] = state
+            self._state_source_paths[new_id] = target_path
+            self._deleted_state_ids.discard(new_id)
+            self._state_index_cache.clear()
+            report = self._apply_province_move(
+                plan,
+                province_list,
+                state,
+                created=True,
+                allow_empty_source=allow_empty_source,
+                delete_empty_states=delete_empty_states,
+                reassign_map_buildings=reassign_map_buildings,
+            )
+            self.set_loc(f"STATE_{new_id}", name.strip(), file_path=localisation_file)
+        except Exception:
+            self._restore(snapshot)
+            raise
+        for message in report.warnings:
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+        return new_id
+
+    def move_provinces(
+        self,
+        provinces: Sequence[int],
+        to_state: int,
+        *,
+        allow_empty_source: bool = False,
+        delete_empty_states: bool = False,
+        reassign_map_buildings: bool = True,
+    ) -> MapEditReport:
+        """Queue moving ``provinces`` (with their province data) into ``to_state``.
+
+        A source state that would lose every province raises ``ValueError``
+        unless ``delete_empty_states=True`` (delete it; reported) or
+        ``allow_empty_source=True`` (keep it empty; reported as a warning).
+        """
+
+        province_list = self._normalize_province_ids(provinces)
+        target = self.get_state(to_state)
+        plan = self._plan_province_move(province_list, target.id)
+        snapshot = self._snapshot()
+        try:
+            self._materialize_state_override(target)
+            return self._apply_province_move(
+                plan,
+                province_list,
+                target,
+                created=False,
+                allow_empty_source=allow_empty_source,
+                delete_empty_states=delete_empty_states,
+                reassign_map_buildings=reassign_map_buildings,
+            )
+        except Exception:
+            self._restore(snapshot)
+            raise
+
+    def split_state(
+        self,
+        state_id: int,
+        provinces: Sequence[int],
+        /,
+        **create_state_kwargs: Any,
+    ) -> int:
+        """Create a new state from some of ``state_id``'s provinces."""
+
+        province_list = self._normalize_province_ids(provinces)
+        state = self.get_state(state_id)
+        outside = [province for province in province_list if province not in state.provinces]
+        if outside:
+            raise ValueError(
+                f"Province(s) {', '.join(map(str, outside))} do not belong to state {state_id}"
+            )
+        return self.create_state(province_list, **create_state_kwargs)
+
+    def list_strategic_regions(self) -> list[StrategicRegion]:
+        """Return effective strategic regions (mod files override base files)."""
+
+        regions: list[StrategicRegion] = []
+        for relative in self._strategic_region_files():
+            text = self._map_text(relative)
+            if text is None:
+                continue
+            try:
+                regions.extend(parse_strategic_regions(text, relative))
+            except ParseError:
+                continue
+        return sorted(regions, key=lambda region: (region.id, region.path))
+
+    def get_strategic_region(self, region_id: int) -> StrategicRegion:
+        for region in self.list_strategic_regions():
+            if region.id == region_id:
+                return region
+        raise KeyError(f"Strategic region {region_id} not found")
+
+    def move_provinces_to_strategic_region(
+        self,
+        provinces: Sequence[int],
+        region_id: int,
+    ) -> StrategicRegion:
+        """Queue moving land or sea provinces into strategic region ``region_id``."""
+
+        province_list = self._normalize_province_ids(provinces)
+        self._require_known_provinces(province_list)
+        regions = self.list_strategic_regions()
+        target = next((region for region in regions if region.id == region_id), None)
+        if target is None:
+            raise KeyError(f"Strategic region {region_id} not found")
+        texts = self._strategic_region_removals(regions, province_list, skip=target)
+        additions = [province for province in province_list if province not in target.provinces]
+        if additions:
+            base = texts.get(target.path, self._map_text(target.path) or "")
+            texts[target.path] = patch_region_provinces(base, region_id, add=additions)
+        for relative, text in texts.items():
+            self._queue_map_text(relative, text)
+        return self.get_strategic_region(region_id)
+
+    def create_strategic_region(
+        self,
+        name: str,
+        provinces: Sequence[int],
+        *,
+        region_id: int | None = None,
+        weather: str | None = None,
+        localisation_file: str | Path | None = None,
+    ) -> int:
+        """Queue a new strategic region and return its ID.
+
+        ``weather`` may be a ``weather = { ... }`` assignment or its body. When
+        omitted, the weather block of the region currently holding most of the
+        provinces is copied verbatim.
+        """
+
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("create_strategic_region() requires a non-empty name")
+        province_list = self._normalize_province_ids(provinces)
+        self._require_known_provinces(province_list)
+        regions = self.list_strategic_regions()
+        existing = {region.id for region in regions}
+        if region_id is None:
+            new_id = max(existing, default=0) + 1
+        else:
+            if isinstance(region_id, bool) or not isinstance(region_id, int) or region_id <= 0:
+                raise ValueError(f"region_id must be a positive integer, got {region_id!r}")
+            if region_id in existing:
+                raise ValueError(f"Strategic region {region_id} already exists")
+            new_id = region_id
+        relative = (
+            f"{STRATEGIC_REGIONS_DIR}/{new_id}-"
+            f"{safe_file_stem(name.strip(), fallback='region')}.txt"
+        )
+        if self._map_text(relative) is not None:
+            raise FileExistsError(f"Strategic region file already exists: {relative}")
+        weather_text = weather
+        if weather_text is None:
+            wanted = set(province_list)
+            donors = sorted(
+                (
+                    (-len(wanted.intersection(region.provinces)), region.id, region)
+                    for region in regions
+                    if region.has_weather and wanted.intersection(region.provinces)
+                ),
+                key=lambda item: (item[0], item[1]),
+            )
+            if donors:
+                donor = donors[0][2]
+                weather_text = region_weather_assignment(
+                    self._map_text(donor.path) or "", donor.id
+                )
+            else:
+                warnings.warn(
+                    f"Strategic region {new_id} has no weather block: none of its "
+                    "provinces belonged to a region with weather",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+        texts = self._strategic_region_removals(regions, province_list, skip=None)
+        texts[relative] = render_strategic_region(
+            new_id, f"STRATEGICREGION_{new_id}", province_list, weather_text
+        )
+        self.set_loc(f"STRATEGICREGION_{new_id}", name.strip(), file_path=localisation_file)
+        for path, text in texts.items():
+            self._queue_map_text(path, text)
+        return new_id
+
+    def list_supply_nodes(self) -> list[int]:
+        text = self._map_text(SUPPLY_NODES_FILE)
+        return [] if text is None else [province for _, province in parse_supply_nodes(text)]
+
+    def add_supply_node(self, province: int) -> None:
+        """Queue a ``map/supply_nodes.txt`` entry for a land province."""
+
+        province = self._require_land_province(province)
+        text = self._map_text(SUPPLY_NODES_FILE) or ""
+        if any(value == province for _, value in parse_supply_nodes(text)):
+            raise ValueError(f"Province {province} already has a supply node")
+        self._queue_map_text(SUPPLY_NODES_FILE, add_supply_node_text(text, province))
+
+    def remove_supply_node(self, province: int) -> None:
+        text = self._map_text(SUPPLY_NODES_FILE)
+        updated, removed = remove_supply_node_text(text or "", province)
+        if not removed:
+            raise KeyError(f"Province {province} has no supply node")
+        self._queue_map_text(SUPPLY_NODES_FILE, updated)
+
+    def list_railways(self) -> list[Railway]:
+        text = self._map_text(RAILWAYS_FILE)
+        return [] if text is None else parse_railways(text)[0]
+
+    def add_railway(
+        self,
+        level: int,
+        provinces: Sequence[int],
+        *,
+        check_adjacency: bool = True,
+    ) -> Railway:
+        """Queue a railway line through consecutive land provinces.
+
+        Consecutive provinces must be adjacent when the effective province map
+        (and the optional ``map`` extra) is available; otherwise that check is
+        skipped.
+        """
+
+        if isinstance(level, bool) or not isinstance(level, int) or not (
+            1 <= level <= MAX_RAILWAY_LEVEL
+        ):
+            raise ValueError(f"Railway level must be 1-{MAX_RAILWAY_LEVEL}, got {level!r}")
+        route = [self._require_land_province(province) for province in provinces]
+        if len(route) < 2:
+            raise ValueError("A railway needs at least two provinces")
+        if len(set(route)) != len(route):
+            raise ValueError("A railway cannot visit the same province twice")
+        if check_adjacency:
+            graph = self._optional_land_adjacency()
+            if graph is not None:
+                for left, right in zip(route, route[1:]):
+                    if right not in graph.get(left, set()):
+                        raise ValueError(f"Provinces {left} and {right} are not adjacent")
+        text = append_line(self._map_text(RAILWAYS_FILE) or "", render_railway(level, route))
+        self._queue_map_text(RAILWAYS_FILE, text)
+        return Railway(level=level, provinces=tuple(route), index=len(split_lines(text)) - 1)
+
+    def remove_railway(self, railway: Railway | Sequence[int]) -> int:
+        """Remove railway lines matching a listed ``Railway`` or a province route.
+
+        A route matches in either direction. Returns the number of removed lines.
+        """
+
+        text, matches = self._match_railways(railway)
+        self._queue_map_text(RAILWAYS_FILE, remove_lines(text, (item.index for item in matches)))
+        return len(matches)
+
+    def set_railway_level(self, railway: Railway | Sequence[int], level: int) -> int:
+        if isinstance(level, bool) or not isinstance(level, int) or not (
+            1 <= level <= MAX_RAILWAY_LEVEL
+        ):
+            raise ValueError(f"Railway level must be 1-{MAX_RAILWAY_LEVEL}, got {level!r}")
+        text, matches = self._match_railways(railway)
+        for item in matches:
+            text = set_railway_level_text(text, item.index, level)
+        self._queue_map_text(RAILWAYS_FILE, text)
+        return len(matches)
+
+    def list_map_buildings(self, state_id: int | None = None) -> list[MapBuilding]:
+        text = self._map_text(BUILDINGS_FILE)
+        if text is None:
+            return []
+        entries = parse_map_buildings(text)[0]
+        return [entry for entry in entries if state_id is None or entry.state_id == state_id]
+
+    def add_map_building(
+        self,
+        state_id: int,
+        building: str,
+        x: float,
+        y: float,
+        z: float,
+        rotation: float,
+        adjacent_sea_province: int = 0,
+    ) -> MapBuilding:
+        """Queue a ``map/buildings.txt`` position (``z`` is the north-south axis)."""
+
+        self.get_state(state_id)
+        if not isinstance(building, str) or not re.fullmatch(r"[A-Za-z0-9_]+", building):
+            raise ValueError(f"Invalid building type {building!r}")
+        coordinates = [float(value) for value in (x, y, z, rotation)]
+        if not all(math.isfinite(value) for value in coordinates):
+            raise ValueError("Building coordinates and rotation must be finite numbers")
+        if isinstance(adjacent_sea_province, bool) or not isinstance(adjacent_sea_province, int) or (
+            adjacent_sea_province < 0
+        ):
+            raise ValueError("adjacent_sea_province must be 0 or a sea province ID")
+        if adjacent_sea_province:
+            kind = self._effective_province_types().get(adjacent_sea_province)
+            if self._effective_province_types() and kind is None:
+                raise KeyError(f"Province {adjacent_sea_province} is not in definition.csv")
+            # Floating harbors reference their coastal land province instead.
+            expected = "land" if building == "floating_harbor" else "sea"
+            if kind is not None and kind != expected:
+                raise ValueError(f"Province {adjacent_sea_province} is not a {expected} province")
+        px, py, pz, protation = coordinates
+        line = render_map_building(state_id, building, px, py, pz, protation, adjacent_sea_province)
+        text = append_line(self._map_text(BUILDINGS_FILE) or "", line)
+        self._queue_map_text(BUILDINGS_FILE, text)
+        return MapBuilding(
+            state_id=state_id,
+            building=building,
+            x=round(coordinates[0], 2),
+            y=round(coordinates[1], 2),
+            z=round(coordinates[2], 2),
+            rotation=round(coordinates[3], 2),
+            adjacent_sea_province=adjacent_sea_province,
+            index=len(split_lines(text)) - 1,
+        )
+
+    def remove_map_buildings(
+        self,
+        state_id: int | None = None,
+        building: str | None = None,
+        *,
+        entries: Sequence[MapBuilding] = (),
+    ) -> int:
+        """Remove building positions by state/type filters or listed entries."""
+
+        if state_id is None and building is None and not entries:
+            raise ValueError("remove_map_buildings() requires state_id, building, or entries")
+        text = self._map_text(BUILDINGS_FILE)
+        parsed = parse_map_buildings(text or "")[0]
+        if entries:
+            current = set(parsed)
+            stale = [entry for entry in entries if entry not in current]
+            if stale:
+                raise KeyError(
+                    "Map building entries are stale or missing: "
+                    + ", ".join(f"line {entry.index + 1}" for entry in stale)
+                )
+            indices = {entry.index for entry in entries}
+        else:
+            indices = {
+                entry.index
+                for entry in parsed
+                if (state_id is None or entry.state_id == state_id)
+                and (building is None or entry.building == building)
+            }
+        if indices and text is not None:
+            self._queue_map_text(BUILDINGS_FILE, remove_lines(text, indices))
+        return len(indices)
+
+    # Map-editing helpers
+
+    def _is_shadowed_by_mod(self, base: Path, path: Path) -> bool:
+        try:
+            relative = path.relative_to(base)
+        except ValueError:
+            return False
+        return self._mod_hides_inherited(relative)
+
+    def _mod_hides_inherited(self, relative: Path) -> bool:
+        """Whether the mod hides an inherited file (same name or replace_path).
+
+        Layered snapshots already omit hidden files; this covers a direct
+        ``hoi4_install`` base.
+        """
+
+        if self._content_layers is not None:
+            return False
+        if (self.mod_root / relative).is_file():
+            return True
+        hidden = self._scan_cache.get("mod_replace_paths")
+        if hidden is None:
+            try:
+                hidden = {path.as_posix() for path in replace_paths(self.mod_root)}
+            except (OSError, ValueError):
+                hidden = set()
+            self._scan_cache["mod_replace_paths"] = hidden
+        return any(relative.is_relative_to(Path(path)) for path in hidden)
+
+    def _map_text(self, relative: str) -> str | None:
+        """Pending or effective text of a map file; ``None`` when absent."""
+
+        if relative in self._map_file_updates:
+            return self._map_file_updates[relative]
+        source = self.content_source(relative)
+        if source is None or (
+            not source.is_relative_to(self.mod_root)
+            and self._mod_hides_inherited(Path(relative))
+        ):
+            return None
+        return source.read_bytes().decode("utf-8", errors="replace")
+
+    def _queue_map_text(self, relative: str, text: str) -> None:
+        resolve_mod_output_path(self.mod_root, relative)
+        self._map_file_updates[relative] = text
+        self._dirty.add("map")
+
+    def _strategic_region_files(self) -> list[str]:
+        files = {
+            Path(relative).as_posix()
+            for relative, source in self.content_files(STRATEGIC_REGIONS_DIR).items()
+            if relative.endswith(".txt")
+            and (
+                source.is_relative_to(self.mod_root)
+                or not self._mod_hides_inherited(Path(relative))
+            )
+        }
+        files.update(
+            relative for relative in self._map_file_updates
+            if relative.startswith(STRATEGIC_REGIONS_DIR + "/")
+        )
+        return sorted(files)
+
+    def _strategic_region_removals(
+        self,
+        regions: Sequence[StrategicRegion],
+        provinces: Sequence[int],
+        *,
+        skip: StrategicRegion | None,
+    ) -> dict[str, str]:
+        wanted = set(provinces)
+        texts: dict[str, str] = {}
+        for region in regions:
+            if region == skip:
+                continue
+            moving = [province for province in region.provinces if province in wanted]
+            if not moving:
+                continue
+            if set(region.provinces) <= wanted:
+                raise ValueError(
+                    f"Moving these provinces would leave strategic region {region.id} empty"
+                )
+            base = texts.get(region.path, self._map_text(region.path) or "")
+            texts[region.path] = patch_region_provinces(base, region.id, remove=moving)
+        return texts
+
+    @staticmethod
+    def _normalize_province_ids(provinces: Sequence[int] | int) -> list[int]:
+        values = [provinces] if isinstance(provinces, int) else list(provinces)
+        result: list[int] = []
+        for province in values:
+            if isinstance(province, bool) or not isinstance(province, int) or province <= 0:
+                raise ValueError(f"Province IDs must be positive integers, got {province!r}")
+            if province not in result:
+                result.append(province)
+        if not result:
+            raise ValueError("At least one province is required")
+        return result
+
+    def _require_known_provinces(self, provinces: Sequence[int]) -> None:
+        types = self._effective_province_types()
+        if not types:
+            return
+        unknown = [province for province in provinces if province not in types]
+        if unknown:
+            raise KeyError(
+                f"Province(s) {', '.join(map(str, unknown))} are not in definition.csv"
+            )
+
+    def _require_land_province(self, province: int) -> int:
+        (province,) = self._normalize_province_ids([province])
+        types = self._effective_province_types()
+        if types:
+            kind = types.get(province)
+            if kind is None:
+                raise KeyError(f"Province {province} is not in definition.csv")
+            if kind != "land":
+                raise ValueError(f"Province {province} is a {kind} province, not land")
+        return province
+
+    def _optional_land_adjacency(self) -> dict[int, set[int]] | None:
+        try:
+            return load_land_adjacency(self.mod_root, self._base_content_root)
+        except (FileNotFoundError, RuntimeError, OSError, ValueError):
+            return None
+
+    def _match_railways(self, railway: Railway | Sequence[int]) -> tuple[str, list[Railway]]:
+        text = self._map_text(RAILWAYS_FILE)
+        parsed = parse_railways(text or "")[0]
+        if isinstance(railway, Railway):
+            matches = [item for item in parsed if item == railway]
+        else:
+            route = tuple(int(province) for province in railway)
+            matches = [
+                item for item in parsed
+                if item.provinces == route or item.provinces == route[::-1]
+            ]
+        if text is None or not matches:
+            raise KeyError(f"No railway matches {railway!r}")
+        return text, matches
+
+    def _effective_state_provinces(self) -> tuple[dict[int, tuple[int, ...]], dict[int, str]]:
+        """Province lists and source paths of every effective, non-deleted state."""
+
+        paths = {entry["id"]: str(entry["path"]) for entry in self.state_index(include_vanilla=True)}
+        provinces: dict[int, tuple[int, ...]] = {}
+        for state_id in sorted(set(paths) | set(self._states)):
+            if state_id in self._deleted_state_ids:
+                continue
+            state = self._states.get(state_id)
+            if state is not None:
+                provinces[state_id] = tuple(state.provinces)
+                if state.path is not None:
+                    paths[state_id] = str(state.path)
+                continue
+            try:
+                provinces[state_id] = state_file_provinces(Path(paths[state_id]))
+            except OSError:
+                continue
+        return provinces, {state_id: paths[state_id] for state_id in provinces if state_id in paths}
+
+    def _plan_province_move(self, provinces: Sequence[int], target_id: int) -> dict[int, list[int]]:
+        """Validate a province move and group provinces by their source state."""
+
+        types = self._effective_province_types()
+        state_provinces = self._effective_state_provinces()[0]
+        owners: dict[int, list[int]] = {}
+        for state_id, members in state_provinces.items():
+            for province in members:
+                owners.setdefault(province, []).append(state_id)
+        plan: dict[int, list[int]] = {}
+        for province in provinces:
+            kind = types.get(province)
+            if types and kind is None:
+                raise KeyError(f"Province {province} is not in definition.csv")
+            if kind is not None and kind != "land":
+                raise ValueError(
+                    f"Province {province} is a {kind} province; only land provinces belong to states"
+                )
+            current = owners.get(province, [])
+            sources = [state_id for state_id in current if state_id != target_id]
+            if not sources:
+                if target_id in current:
+                    raise ValueError(f"Province {province} already belongs to state {target_id}")
+                if not types:
+                    raise KeyError(
+                        f"Province {province} belongs to no state and no definition.csv "
+                        "is available to confirm it exists"
+                    )
+            for state_id in sources:
+                plan.setdefault(state_id, []).append(province)
+        return plan
+
+    def _apply_province_move(
+        self,
+        plan: dict[int, list[int]],
+        provinces: Sequence[int],
+        target: State,
+        *,
+        created: bool,
+        allow_empty_source: bool,
+        delete_empty_states: bool,
+        reassign_map_buildings: bool,
+    ) -> MapEditReport:
+        emptied = sorted(
+            state_id for state_id, moving in plan.items()
+            if not set(self.get_state(state_id).provinces) - set(moving)
+        )
+        if emptied and not (allow_empty_source or delete_empty_states):
+            raise ValueError(
+                f"Moving these provinces would leave state(s) {', '.join(map(str, emptied))} "
+                "empty; pass delete_empty_states=True to delete them or "
+                "allow_empty_source=True to keep empty states"
+            )
+        report_warnings: list[str] = []
+        moved_vp_provinces: list[int] = []
+        moved_building_provinces: list[int] = []
+        moved_points: list[str] = []
+        moved_blocks: list[str] = []
+        for state_id in sorted(plan):
+            moving = set(plan[state_id])
+            source = self.get_state(state_id)
+            self._materialize_state_override(source)
+            source.provinces = [province for province in source.provinces if province not in moving]
+            kept_points, points = split_victory_points(source.victory_points, moving)
+            if points:
+                source.victory_points = kept_points
+                moved_points.append(points)
+                moved_vp_provinces.extend(int(value) for value in points.split()[::2])
+            kept_buildings, blocks = split_province_buildings(source.buildings, moving)
+            if blocks:
+                source.buildings = kept_buildings
+                moved_blocks.extend(blocks.values())
+                moved_building_provinces.extend(blocks)
+            dated = dated_history_province_references(source.history, moving)
+            if dated:
+                report_warnings.append(
+                    f"State {state_id} has dated history buildings or victory points for "
+                    f"province(s) {', '.join(map(str, sorted(dated)))}; they were left in "
+                    "place for review"
+                )
+            self._dirty_states.add(state_id)
+        target.provinces = target.provinces + [
+            province for province in provinces if province not in target.provinces
+        ]
+        if moved_points:
+            target.victory_points = join_victory_points(
+                target.victory_points, " ".join(moved_points)
+            )
+        if moved_blocks:
+            target.buildings = append_province_buildings(target.buildings, moved_blocks)
+        self._dirty_states.add(target.id)
+        self._dirty.add("states")
+
+        reassigned = 0
+        if reassign_map_buildings:
+            reassigned, building_warnings = self._reassign_map_buildings(
+                {state_id: set(moving) for state_id, moving in plan.items()},
+                target.id,
+                fully_moved=set(emptied),
+            )
+            report_warnings.extend(building_warnings)
+        deleted: list[int] = []
+        kept_empty: list[int] = []
+        for state_id in emptied:
+            if delete_empty_states:
+                report_warnings.extend(self._delete_state(state_id))
+                deleted.append(state_id)
+            else:
+                kept_empty.append(state_id)
+                report_warnings.append(f"State {state_id} now has no provinces")
+        if deleted and not reassign_map_buildings:
+            remaining = {
+                entry.state_id for entry in self.list_map_buildings()
+                if entry.state_id in deleted
+            }
+            if remaining:
+                report_warnings.append(
+                    "map/buildings.txt still references deleted state(s) "
+                    + ", ".join(map(str, sorted(remaining)))
+                )
+        return MapEditReport(
+            target_state=target.id,
+            moved_provinces=tuple(provinces),
+            source_states=tuple(sorted(plan)),
+            created_state=created,
+            deleted_states=tuple(deleted),
+            emptied_states=tuple(kept_empty),
+            moved_victory_points=tuple(moved_vp_provinces),
+            moved_province_buildings=tuple(moved_building_provinces),
+            reassigned_map_buildings=reassigned,
+            warnings=tuple(report_warnings),
+        )
+
+    def _reassign_map_buildings(
+        self,
+        moved: dict[int, set[int]],
+        target_id: int,
+        *,
+        fully_moved: set[int],
+    ) -> tuple[int, list[str]]:
+        text = self._map_text(BUILDINGS_FILE)
+        if text is None:
+            return 0, []
+        candidates = [
+            entry for entry in parse_map_buildings(text)[0] if entry.state_id in moved
+        ]
+        if not candidates:
+            return 0, []
+        problems: list[str] = []
+        grid = None
+        partial = sorted({entry.state_id for entry in candidates} - fully_moved)
+        if partial:
+            try:
+                grid = load_province_grid(self.mod_root, self._base_content_root)
+            except (FileNotFoundError, RuntimeError, OSError, ValueError) as error:
+                problems.append(
+                    "map/buildings.txt positions of state(s) "
+                    f"{', '.join(map(str, partial))} were not reassigned because the "
+                    f"province map is unavailable ({error})"
+                )
+        count = 0
+        for entry in candidates:
+            if entry.state_id in fully_moved:
+                hit = True
+            elif grid is None:
+                continue
+            else:
+                hit = grid.province_at(entry.x, entry.z) in moved[entry.state_id]
+            if hit:
+                text = set_map_building_state_text(text, entry.index, target_id)
+                count += 1
+        if count:
+            self._queue_map_text(BUILDINGS_FILE, text)
+        return count, problems
+
+    def _delete_state(self, state_id: int) -> list[str]:
+        """Queue deletion of a state's file(s); returns report warnings."""
+
+        state = self.get_state(state_id)
+        relatives: list[Path] = []
+        for candidate in (state.path, state.source_path, self._state_source_paths.get(state_id)):
+            if candidate is None:
+                continue
+            resolved = candidate.resolve(strict=False)
+            if resolved.is_relative_to(self.mod_root):
+                relatives.append(resolved.relative_to(self.mod_root))
+            elif self._base_content_root is not None and resolved.is_relative_to(
+                self._base_content_root.resolve()
+            ):
+                relatives.append(resolved.relative_to(self._base_content_root.resolve()))
+        if self._base_content_root is not None:
+            if self._inherited_state_source_paths is None:
+                inherited_paths: dict[int, Path] = {}
+                for entry in build_state_index(self._base_content_root / "history" / "states"):
+                    if self._is_shadowed_by_mod(self._base_content_root, Path(entry["path"])):
+                        continue
+                    inherited_paths.setdefault(entry["id"], Path(entry["path"]))
+                self._inherited_state_source_paths = inherited_paths
+            inherited = self._inherited_state_source_paths.get(state_id)
+            if inherited is not None:
+                relatives.append(inherited.relative_to(self._base_content_root))
+        shadow = (
+            f"# State {state_id} was removed by hoi4-agent-sdk map editing.\n"
+            "# This empty file shadows the inherited definition.\n"
+        )
+        for relative in dict.fromkeys(relatives):
+            if self._content_layers is not None:
+                inherited_file = relative in self._content_layers.lower_sources
+            else:
+                inherited_file = (
+                    self.hoi4_install is not None and (self.hoi4_install / relative).is_file()
+                )
+            target = resolve_mod_output_path(self.mod_root, relative)
+            self._deleted_state_files[target] = shadow if inherited_file else None
+        self._states.pop(state_id, None)
+        if state_id in self._state_ids:
+            self._state_ids.remove(state_id)
+        self._state_source_paths.pop(state_id, None)
+        self._dirty_states.discard(state_id)
+        self._deleted_state_ids.add(state_id)
+        self._state_index_cache.clear()
+        self._dirty.add("states")
+        remaining = self._effective_state_provinces()[0]
+        if remaining and state_id < max(remaining):
+            return [
+                f"Deleted state {state_id} leaves a gap in state IDs; HOI4 expects "
+                "contiguous state IDs, so renumber the highest state into this ID"
+            ]
+        return []
+
+    def _validate_map_editing(self) -> list[ValidationError]:
+        """Map-geometry reference checks (states, regions, supply, rails, buildings)."""
+
+        province_types = self._effective_province_types()
+        state_provinces, state_paths = self._effective_state_provinces()
+        errors: list[ValidationError] = []
+        region_files = self._strategic_region_files()
+        regions: list[StrategicRegion] | None = None
+        if region_files:
+            regions = []
+            for relative in region_files:
+                text = self._map_text(relative)
+                if text is None:
+                    continue
+                try:
+                    regions.extend(parse_strategic_regions(text, relative))
+                except ParseError as error:
+                    errors.append(
+                        ValidationError(
+                            message=f"Could not parse strategic region file {relative}: {error}",
+                            severity="error",
+                            code="strategic_region_parse_error",
+                            file_path=relative,
+                        )
+                    )
+        supply_text = self._map_text(SUPPLY_NODES_FILE)
+        railway_text = self._map_text(RAILWAYS_FILE)
+        buildings_text = self._map_text(BUILDINGS_FILE)
+        adjacency = None
+        if railway_text is not None and (
+            RAILWAYS_FILE in self._map_file_updates
+            or (self.mod_root / RAILWAYS_FILE).is_file()
+        ):
+            adjacency = self._optional_land_adjacency()
+        errors.extend(
+            validate_map_consistency(
+                province_types=province_types,
+                state_provinces=state_provinces,
+                state_paths=state_paths,
+                regions=regions,
+                supply_nodes=(
+                    None if supply_text is None
+                    else [province for _, province in parse_supply_nodes(supply_text)]
+                ),
+                railways=None if railway_text is None else parse_railways(railway_text),
+                buildings=None if buildings_text is None else parse_map_buildings(buildings_text),
+                land_adjacency=adjacency,
+                railway_path=RAILWAYS_FILE,
+                supply_path=SUPPLY_NODES_FILE,
+                buildings_path=BUILDINGS_FILE,
+            )
+        )
+        return errors
 
     # ── Events ──────────────────────────────────────────────────
 
@@ -4003,7 +4997,42 @@ class Mod:
         ai_will_do: str = "",
         path: str | Path | None = None,
         overwrite: bool = False,
+        days_mission_timeout: int | None = None,
+        activation: str = "",
+        timeout_effect: str = "",
+        cancel_trigger: str = "",
+        cancel_effect: str = "",
+        is_good: bool | None = None,
+        selectable_mission: bool | None = None,
+        target_trigger: str = "",
+        targets: Sequence[str] | str = (),
+        target_array: str = "",
+        target_root_trigger: str = "",
+        state_target: bool | None = None,
+        targets_dynamic: bool | None = None,
+        target_non_existing: bool | None = None,
+        on_map_mode: str = "",
+        allowed: str = "",
+        days_re_enable: int | None = None,
+        war_with_on_remove: str = "",
+        custom_cost_trigger: str = "",
+        custom_cost_text: str = "",
+        cancel_if_not_visible: bool | None = None,
+        modifier: str = "",
+        remove_trigger: str = "",
+        highlight_states: str = "",
+        priority: int | None = None,
     ) -> Decision:
+        """Create a decision, mission, or targeted decision.
+
+        Missions use ``days_mission_timeout`` with ``activation``,
+        ``timeout_effect``, ``cancel_trigger``/``cancel_effect``, ``is_good``,
+        and ``selectable_mission``. Targeted decisions use ``target_trigger``
+        with ``targets`` (tags, rendered ``targets = { A B }``),
+        ``target_array``, ``target_root_trigger``, ``state_target``,
+        ``targets_dynamic``, ``target_non_existing``, and ``on_map_mode``.
+        Block fields take raw Paradox script bodies without outer braces.
+        """
         category_id = require_script_id(category_id, label="decision category ID")
         decision_id = require_script_id(decision_id, label="decision ID")
         existing = self._decisions.get(decision_id)
@@ -4045,6 +5074,31 @@ class Mod:
             ai_will_do=ai_will_do,
             path=category.path,
             touched=True,
+            days_mission_timeout=days_mission_timeout,
+            activation=activation,
+            timeout_effect=timeout_effect,
+            cancel_trigger=cancel_trigger,
+            cancel_effect=cancel_effect,
+            is_good=is_good,
+            selectable_mission=selectable_mission,
+            target_trigger=target_trigger,
+            targets=_decision_targets(targets),
+            target_array=target_array,
+            target_root_trigger=target_root_trigger,
+            state_target=state_target,
+            targets_dynamic=targets_dynamic,
+            target_non_existing=target_non_existing,
+            on_map_mode=on_map_mode,
+            allowed=allowed,
+            days_re_enable=days_re_enable,
+            war_with_on_remove=war_with_on_remove,
+            custom_cost_trigger=custom_cost_trigger,
+            custom_cost_text=custom_cost_text,
+            cancel_if_not_visible=cancel_if_not_visible,
+            modifier=modifier,
+            remove_trigger=remove_trigger,
+            highlight_states=highlight_states,
+            priority=priority,
         )
         category.decisions.append(decision)
         self._decisions[decision_id] = decision
@@ -4075,6 +5129,8 @@ class Mod:
                 "Decision identity/category are immutable; recreate the decision to move it"
             )
         kwargs.pop("path", None)
+        if "targets" in kwargs:
+            kwargs["targets"] = _decision_targets(kwargs["targets"])
         _set_fields(decision, kwargs)
         decision.touched = True
         self._dirty.add("decisions")
@@ -4210,6 +5266,105 @@ class Mod:
             decisions.append(decision)
             previous_flag = flag
         return decisions
+
+    def create_mission(
+        self,
+        category_id: str,
+        decision_id: str,
+        *,
+        days_mission_timeout: int,
+        activation: str = "",
+        available: str = "",
+        complete_effect: str = "",
+        timeout_effect: str = "",
+        cancel_trigger: str = "",
+        cancel_effect: str = "",
+        is_good: bool | None = None,
+        selectable_mission: bool | None = None,
+        loc_name: str = "",
+        loc_desc: str = "",
+        **kwargs: Any,
+    ) -> Decision:
+        """Create a mission: a timed decision that starts when ``activation``
+        holds, completes with ``complete_effect`` once ``available`` holds, and
+        otherwise runs ``timeout_effect`` after ``days_mission_timeout`` days.
+
+        Missions are never paid for, so ``cost``/``custom_cost_trigger`` are
+        rejected. Other ``create_decision`` keywords pass through.
+        """
+        if isinstance(days_mission_timeout, bool) or not isinstance(days_mission_timeout, int):
+            raise TypeError("days_mission_timeout must be an int number of days")
+        if days_mission_timeout <= 0:
+            raise ValueError("days_mission_timeout must be positive")
+        if kwargs.get("cost") or kwargs.get("custom_cost_trigger"):
+            raise ValueError("Missions cannot have cost or custom_cost_trigger")
+        decision = self.create_decision(
+            category_id,
+            decision_id,
+            days_mission_timeout=days_mission_timeout,
+            activation=activation,
+            available=available,
+            complete_effect=complete_effect,
+            timeout_effect=timeout_effect,
+            cancel_trigger=cancel_trigger,
+            cancel_effect=cancel_effect,
+            is_good=is_good,
+            selectable_mission=selectable_mission,
+            **kwargs,
+        )
+        if loc_name:
+            self.set_loc(decision_id, loc_name)
+        if loc_desc:
+            self.set_loc(f"{decision_id}_desc", loc_desc)
+        return decision
+
+    def create_targeted_decision(
+        self,
+        category_id: str,
+        decision_id: str,
+        *,
+        target_trigger: str = "",
+        targets: Sequence[str] | str = (),
+        target_array: str = "",
+        target_root_trigger: str = "",
+        state_target: bool | None = None,
+        targets_dynamic: bool | None = None,
+        target_non_existing: bool | None = None,
+        on_map_mode: str = "",
+        loc_name: str = "",
+        loc_desc: str = "",
+        **kwargs: Any,
+    ) -> Decision:
+        """Create a targeted decision with one instance per country or state.
+
+        ``target_trigger`` filters candidates (``FROM`` is the target);
+        ``targets``/``target_array`` restrict the candidate list and
+        ``state_target=True`` targets states. At least one targeting field is
+        required. Other ``create_decision`` keywords pass through.
+        """
+        if not (target_trigger.strip() or targets or target_array or state_target):
+            raise ValueError(
+                "A targeted decision needs target_trigger, targets, target_array, "
+                "or state_target=True"
+            )
+        decision = self.create_decision(
+            category_id,
+            decision_id,
+            target_trigger=target_trigger,
+            targets=targets,
+            target_array=target_array,
+            target_root_trigger=target_root_trigger,
+            state_target=state_target,
+            targets_dynamic=targets_dynamic,
+            target_non_existing=target_non_existing,
+            on_map_mode=on_map_mode,
+            **kwargs,
+        )
+        if loc_name:
+            self.set_loc(decision_id, loc_name)
+        if loc_desc:
+            self.set_loc(f"{decision_id}_desc", loc_desc)
+        return decision
 
     def create_recovery_decision(
         self,
@@ -5896,61 +7051,219 @@ class Mod:
 
     # ── Localization ─────────────────────────────────────────────
 
-    def get_loc(self, key: str) -> Optional[str]:
-        return self._loc_entries.get(self._normalize_loc_key(key))
+    def get_loc(
+        self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
+    ) -> Optional[str]:
+        """Return one language's text for ``key``; no cross-language fallback."""
+        _, entries, _, _ = self._loc_tables(language)
+        return entries.get(self._normalize_loc_key(key))
 
     @staticmethod
     def _normalize_loc_key(key: str) -> str:
         return normalize_localization_key(key)
 
-    def set_loc(self, key: str, value: str, file_path: str | Path | None = None) -> None:
-        """Set an English entry; custom destinations must be English YML files."""
+    def _loc_tables(
+        self, language: str
+    ) -> tuple[str, dict[str, str], dict[str, Path], set[str]]:
+        """Return ``(language, entries, sources, dirty_keys)`` for one language.
+
+        English uses the tables loaded with the mod. Other languages are
+        indexed on first use exactly like English: inherited base layers
+        first, then the mod's own ``localisation/<language>`` files.
+        """
+        language = normalize_localisation_language(language)
+        if language == DEFAULT_LOCALISATION_LANGUAGE:
+            return language, self._loc_entries, self._loc_sources, self._dirty_loc_keys
+        if language not in self._loaded_loc_languages:
+            entries = self._foreign_loc_entries.setdefault(language, {})
+            sources = self._foreign_loc_sources.setdefault(language, {})
+            self._load_localization_language(language, entries, sources)
+            self._loaded_loc_languages.add(language)
+        return (
+            language,
+            self._foreign_loc_entries.setdefault(language, {}),
+            self._foreign_loc_sources.setdefault(language, {}),
+            self._foreign_dirty_loc_keys.setdefault(language, set()),
+        )
+
+    def set_loc(
+        self,
+        key: str,
+        value: str,
+        file_path: str | Path | None = None,
+        *,
+        language: str = DEFAULT_LOCALISATION_LANGUAGE,
+        replace: bool = False,
+    ) -> None:
+        """Set one language's entry (English by default).
+
+        Custom destinations must be ``.yml`` files under
+        ``localisation/<language>``. ``replace=True`` routes the entry to
+        ``localisation/<language>/replace/`` (``mod_replace_l_<language>.yml``
+        unless ``file_path`` names another file there), which is how a mod
+        overrides keys defined by the base game.
+        """
+        language, entries, sources, dirty_keys = self._loc_tables(language)
+        language_dir = self.mod_root / "localisation" / language
         target = None
         if file_path is not None:
             target = resolve_mod_output_path(self.mod_root, file_path)
-            if (
-                not target.is_relative_to(self.mod_root / "localisation" / "english")
-                or target.suffix != ".yml"
-            ):
+            if not target.is_relative_to(language_dir) or target.suffix != ".yml":
                 raise ValueError(
-                    "set_loc() supports only .yml files under localisation/english; "
+                    f"set_loc() supports only .yml files under localisation/{language}; "
                     "other localization destinations are not loaded and cannot be safely edited"
                 )
+            if replace and not target.is_relative_to(language_dir / "replace"):
+                raise ValueError(
+                    f"set_loc(replace=True) needs a file under localisation/{language}/replace"
+                )
+        elif replace:
+            target = self._default_loc_file_for(language, replace=True)
         key = self._normalize_loc_key(key)
-        old_source = self._loc_sources.get(key)
-        self._loc_entries[key] = value
-        if key.startswith("STATE_"):
+        old_source = sources.get(key)
+        entries[key] = value
+        if language == DEFAULT_LOCALISATION_LANGUAGE and key.startswith("STATE_"):
             self._state_index_cache.clear()
         if target is not None:
-            self._loc_sources[key] = target
-        elif key not in self._loc_sources:
-            self._loc_sources[key] = self.default_loc_file
+            sources[key] = target
+        elif key not in sources:
+            sources[key] = self._default_loc_file_for(language)
         self._dirty.add("localization")
-        self._dirty_loc_keys.add(key)
+        dirty_keys.add(key)
         if old_source is not None:
             self._dirty_loc_files.add(old_source)
-        self._dirty_loc_files.add(self._loc_sources[key])
+        self._dirty_loc_files.add(sources[key])
 
-    def delete_loc(self, key: str) -> bool:
+    def delete_loc(
+        self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
+    ) -> bool:
+        language, entries, sources, dirty_keys = self._loc_tables(language)
         key = self._normalize_loc_key(key)
-        if key in self._loc_entries:
-            source = self._loc_sources.get(key, self.default_loc_file)
-            del self._loc_entries[key]
-            self._loc_sources.pop(key, None)
-            if key.startswith("STATE_"):
+        if key in entries:
+            source = sources.get(key, self._default_loc_file_for(language))
+            del entries[key]
+            sources.pop(key, None)
+            if language == DEFAULT_LOCALISATION_LANGUAGE and key.startswith("STATE_"):
                 self._state_index_cache.clear()
             self._dirty.add("localization")
-            self._dirty_loc_keys.add(key)
+            dirty_keys.add(key)
             self._dirty_loc_files.add(source)
             return True
         return False
 
-    def search_loc(self, query: str) -> dict[str, str]:
+    def search_loc(
+        self, query: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
+    ) -> dict[str, str]:
+        _, entries, _, _ = self._loc_tables(language)
         q = query.lower()
-        return {k: v for k, v in self._loc_entries.items() if q in k.lower() or q in v.lower()}
+        return {k: v for k, v in entries.items() if q in k.lower() or q in v.lower()}
 
-    def all_loc(self) -> dict[str, str]:
-        return dict(self._loc_entries)
+    def all_loc(self, *, language: str = DEFAULT_LOCALISATION_LANGUAGE) -> dict[str, str]:
+        _, entries, _, _ = self._loc_tables(language)
+        return dict(entries)
+
+    def copy_loc_to_languages(
+        self,
+        keys: Iterable[str] | None = None,
+        languages: Iterable[str] | None = None,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, list[str]]:
+        """Fill missing translations with the English text.
+
+        ``keys`` defaults to every English key the mod itself authors
+        (inherited base-game text is never copied). ``languages`` defaults to
+        every supported non-English language. Existing translations are kept
+        unless ``overwrite=True``. New entries go to the file mirroring their
+        English source, e.g. ``localisation/english/replace/x_l_english.yml``
+        becomes ``localisation/german/replace/x_l_german.yml``. Returns the
+        keys written per language.
+        """
+        if languages is None:
+            targets = [
+                language
+                for language in LOCALISATION_LANGUAGES
+                if language != DEFAULT_LOCALISATION_LANGUAGE
+            ]
+        else:
+            targets = []
+            for raw_language in [languages] if isinstance(languages, str) else languages:
+                language = normalize_localisation_language(raw_language)
+                if language == DEFAULT_LOCALISATION_LANGUAGE:
+                    raise ValueError("copy_loc_to_languages() copies from English; omit it")
+                if language not in targets:
+                    targets.append(language)
+        if keys is None:
+            source_keys = sorted(self._authored_loc_keys(DEFAULT_LOCALISATION_LANGUAGE))
+        else:
+            source_keys = list(
+                dict.fromkeys(
+                    self._normalize_loc_key(key)
+                    for key in ([keys] if isinstance(keys, str) else keys)
+                )
+            )
+            missing = [key for key in source_keys if key not in self._loc_entries]
+            if missing:
+                raise KeyError(f"No English localization for: {', '.join(missing)}")
+        written: dict[str, list[str]] = {}
+        for language in targets:
+            _, entries, sources, _ = self._loc_tables(language)
+            written[language] = []
+            for key in source_keys:
+                value = self._loc_entries[key]
+                if key in entries and (not overwrite or entries[key] == value):
+                    continue
+                file_path = (
+                    None
+                    if key in sources
+                    else self._mirrored_loc_file(
+                        self._loc_sources.get(key, self.default_loc_file), language
+                    )
+                )
+                self.set_loc(key, value, file_path, language=language)
+                written[language].append(key)
+        return written
+
+    def _mirrored_loc_file(self, english_source: Path, language: str) -> Path:
+        english_dir = self.mod_root / "localisation" / DEFAULT_LOCALISATION_LANGUAGE
+        if not english_source.is_relative_to(english_dir):
+            return self._default_loc_file_for(language)
+        relative = english_source.relative_to(english_dir)
+        return (
+            self.mod_root
+            / "localisation"
+            / language
+            / relative.parent
+            / localisation_file_name(relative.stem, language)
+        )
+
+    def _authored_loc_keys(self, language: str) -> set[str]:
+        """Keys the mod itself defines in ``language`` (not inherited text)."""
+        language, entries, _, dirty_keys = self._loc_tables(language)
+        if self._content_layers is None:
+            return set(entries)
+        on_disk, _ = parse_localization_dir(self.mod_root / "localisation" / language)
+        return {key for key in set(on_disk) | dirty_keys if key in entries}
+
+    def _shipped_loc_languages(self) -> list[str]:
+        """Non-English languages with mod files on disk or pending entries."""
+        shipped: list[str] = []
+        for language in LOCALISATION_LANGUAGES:
+            if language == DEFAULT_LOCALISATION_LANGUAGE:
+                continue
+            folder = self.mod_root / "localisation" / language
+            has_files = folder.is_dir() and any(
+                path.is_file() for path in folder.rglob("*.yml")
+            )
+            if has_files or self._foreign_dirty_loc_keys.get(language):
+                shipped.append(language)
+        return shipped
+
+    def _delete_loc_all_languages(self, key: str) -> None:
+        """Delete ``key`` in English and every language the mod ships."""
+        self.delete_loc(key)
+        for language in self._shipped_loc_languages():
+            self.delete_loc(key, language=language)
 
     def get_country_context(self, tag: str, *, copy_states: bool = False) -> dict:
         tag = require_country_tag(tag)
@@ -6204,6 +7517,12 @@ class Mod:
                 decision.remove_effect,
                 decision.path,
             )
+            for effect_field in ("timeout_effect", "cancel_effect"):
+                add_script(
+                    f"decision {decision.id} {effect_field}",
+                    getattr(decision, effect_field),
+                    decision.path,
+                )
         for occurrences in self._on_action_occurrences.values():
             for action in occurrences:
                 add_script(
@@ -7073,6 +8392,7 @@ class Mod:
                 )
                 continue
             errors.extend(validate_state(state, known_tags))
+        errors.extend(self._validate_map_editing())
 
         if stage != "build":
             begin_phase("country_packages", "Validating complete SDK-created countries")
@@ -7123,6 +8443,9 @@ class Mod:
                     errors.extend(
                         validate_event(probe, namespace="on_action", known_tags=known_tags)
                     )
+
+        for decision in self._decisions.values():
+            errors.extend(validate_decision(decision))
 
         begin_phase("ideas", "Validating ideas and assignments")
         for idea in self._ideas.values():
@@ -7284,6 +8607,7 @@ class Mod:
         )
         errors.extend(self._validate_state_effect_assumptions())
         errors.extend(self._validate_idea_mutation_collisions())
+        errors.extend(self._validate_definitions())
         if self.hoi4_install is not None:
             begin_phase(
                 "script_vocabulary",
@@ -7298,6 +8622,7 @@ class Mod:
                     allowlist=script_token_allowlist,
                 )
             )
+        errors.extend(self._validate_localization_languages())
         if strict_localization:
             errors.extend(self._validate_localization_references())
         if stage == "release":
@@ -7397,12 +8722,14 @@ class Mod:
         """Stage an unchanged, syntax-checked support script in this mod.
 
         Supports idea/law, scripted trigger/effect, AI strategy/naval goals, and
-        source-derived technology, equipment and doctrine-folder files. Modeled
+        source-derived technology, equipment and doctrine files, plus every
+        ``DEFINITION_KINDS`` directory. Modeled
         country/state/event domains must use their facade authoring APIs. Imports
         participate in preview, transactions and atomic save, and never modify
         the source. Imported ideas are immediately available to validation and
         subsequent ``update_idea`` calls on this same instance.
         """
+        from .definitions import DEFINITION_KINDS
         from .parser import parse_pdx
 
         relative = relative_content_path(relative_path)
@@ -7419,8 +8746,13 @@ class Mod:
             Path("common/operations"), Path("common/operation_phases"),
             Path("common/intelligence_agencies"), Path("common/intelligence_agency_upgrades"),
             Path("common/military_industrial_organization/organizations"),
+            *(Path(kind.directory) for kind in DEFINITION_KINDS.values()),
+            Path("common/bop"), Path("common/continuous_focus"), Path("common/occupation_laws"),
+            Path("common/terrain"), Path("common/units/names_railway_guns"),
         }
-        support_trees = (Path("common/factions"), Path("common/peace_conference"))
+        support_trees = (
+            Path("common/factions"), Path("common/peace_conference"), Path("common/doctrines"),
+        )
         permitted = relative.parent in supported or any(relative.parent.is_relative_to(root) for root in support_trees)
         if relative.suffix != ".txt" or not permitted:
             raise ValueError("Import requires a supported common support-script *.txt path")
@@ -7567,6 +8899,367 @@ class Mod:
         self._script_file_updates[target] = updated
         self._dirty.add("scripted_triggers")
         return target
+
+    # ── Keyed common/ definitions ─────────────────────────────
+
+    def definition_kinds(self) -> dict[str, DefinitionKind]:
+        """Return the ``common/`` domains supported by the definition APIs."""
+
+        from .definitions import DEFINITION_KINDS
+        return dict(DEFINITION_KINDS)
+
+    def _definition_texts(self, kind: DefinitionKind) -> dict[str, tuple[Path, str, bool]]:
+        """Map effective relative files of ``kind`` to (source, text, pending)."""
+
+        from .definitions import in_domain
+        files: dict[str, tuple[Path, str, bool]] = {}
+        for relative, source in self.content_files(kind.directory).items():
+            if not in_domain(kind, Path(relative)):
+                continue
+            target = resolve_mod_output_path(self.mod_root, relative)
+            pending = self._script_file_updates.get(target)
+            if pending is not None:
+                files[relative] = (target, pending, True)
+                continue
+            try:
+                files[relative] = (source, source.read_bytes().decode("utf-8-sig"), False)
+            except (OSError, UnicodeDecodeError):
+                continue
+        for target, text in self._script_file_updates.items():
+            if not target.is_relative_to(self.mod_root):
+                continue
+            relative_path = target.relative_to(self.mod_root)
+            if in_domain(kind, relative_path) and str(relative_path) not in files:
+                files[str(relative_path)] = (target, text, True)
+        return dict(sorted(files.items()))
+
+    def list_definitions(self, kind: str | DefinitionKind) -> list[ScriptDefinition]:
+        """List effective definitions of one domain, including pending edits.
+
+        Inherited base-game and base-mod files are read through the configured
+        content layers; files overridden by the mod are hidden.
+        """
+
+        from .definitions import get_definition_kind, read_definitions
+        resolved = get_definition_kind(kind)
+        result: list[ScriptDefinition] = []
+        for relative, (source, text, pending) in self._definition_texts(resolved).items():
+            try:
+                result.extend(read_definitions(
+                    text, resolved, relative_path=relative, source_path=source, pending=pending,
+                ))
+            except ValueError:
+                continue
+        return result
+
+    def get_definition(self, kind: str | DefinitionKind, definition_id: str) -> ScriptDefinition | None:
+        """Return the first effective definition with ``definition_id``."""
+
+        for definition in self.list_definitions(kind):
+            if definition.id == definition_id:
+                return definition
+        return None
+
+    def _queue_definition_text(self, relative: Path, text: str, original: str) -> Path:
+        target = resolve_mod_output_path(self.mod_root, relative)
+        if text == original and target not in self._script_file_updates:
+            return target
+        self._script_file_updates[target] = text
+        self._scan_cache.clear()
+        self._equipment_unlock_cache = None
+        self._dirty.add("script_files")
+        return target
+
+    def create_definition(
+        self,
+        kind: str | DefinitionKind,
+        definition_id: str,
+        body: str,
+        *,
+        path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue one keyed definition in a supported ``common/`` domain.
+
+        ``body`` is the definition interior without its outer braces (and, for
+        entry-style domains such as scripted localisation, without the
+        identifier field). New definitions go to ``path`` or the domain's
+        generated file; container wrappers such as ``technologies = { }`` are
+        created or reused automatically. Identifiers must be unique across the
+        effective domain. With ``overwrite=True`` an existing definition is
+        patched in its current file, copying an inherited file into the mod
+        first. Unrelated bytes of every touched file are preserved.
+        """
+
+        from .definitions import (
+            check_definition_body,
+            get_definition_kind,
+            in_domain,
+            upsert_definition,
+        )
+        resolved = get_definition_kind(kind)
+        body = check_definition_body(resolved, definition_id, body)
+        existing = self.get_definition(resolved, definition_id)
+        if existing is not None:
+            if not overwrite:
+                raise ValueError(
+                    f"{resolved.name} {definition_id!r} already exists in {existing.relative_path}"
+                )
+            relative = Path(existing.relative_path)
+            if path is not None and relative_content_path(path) != relative:
+                raise ValueError(
+                    f"{resolved.name} {definition_id!r} already exists in {existing.relative_path}; "
+                    "update it there or delete it first"
+                )
+        else:
+            relative = relative_content_path(path or resolved.default_path)
+            if not in_domain(resolved, relative):
+                raise ValueError(
+                    f"{resolved.name} definitions must use a {resolved.directory}/*.txt path"
+                )
+        texts = self._definition_texts(resolved)
+        original = texts[str(relative)][1] if str(relative) in texts else ""
+        updated = upsert_definition(original, resolved, definition_id, body)
+        from .parser import parse_pdx
+        parse_pdx(updated.lstrip("﻿"))
+        return self._queue_definition_text(relative, updated, original)
+
+    def update_definition(self, kind: str | DefinitionKind, definition_id: str, body: str) -> Path:
+        """Replace an existing definition's body in its current file."""
+
+        from .definitions import get_definition_kind
+        resolved = get_definition_kind(kind)
+        if self.get_definition(resolved, definition_id) is None:
+            raise KeyError(f"Unknown {resolved.name}: {definition_id}")
+        return self.create_definition(resolved, definition_id, body, overwrite=True)
+
+    def delete_definition(self, kind: str | DefinitionKind, definition_id: str) -> Path:
+        """Remove a definition from its file, preserving every sibling."""
+
+        from .definitions import get_definition_kind, remove_definition
+        resolved = get_definition_kind(kind)
+        existing = self.get_definition(resolved, definition_id)
+        if existing is None:
+            raise KeyError(f"Unknown {resolved.name}: {definition_id}")
+        relative = Path(existing.relative_path)
+        original = self._definition_texts(resolved)[existing.relative_path][1]
+        return self._queue_definition_text(
+            relative, remove_definition(original, resolved, definition_id), original,
+        )
+
+    def _validate_definitions(self) -> list[ValidationError]:
+        """Report duplicate mod definitions and character traits nobody defines."""
+
+        from .definitions import DEFINITION_KINDS
+        issues: list[ValidationError] = []
+        for kind in DEFINITION_KINDS.values():
+            directory = self.mod_root / kind.directory
+            if not directory.is_dir() and not any(
+                path.is_relative_to(directory) for path in self._script_file_updates
+            ):
+                continue
+            seen: dict[str, str] = {}
+            for definition in self.list_definitions(kind):
+                if definition.id not in seen:
+                    seen[definition.id] = definition.relative_path
+                    continue
+                first = seen[definition.id]
+                if not (definition.source_path.is_relative_to(self.mod_root)
+                        or self.mod_root.joinpath(first).exists()):
+                    continue
+                issues.append(ValidationError(
+                    message=(f"Duplicate {kind.name} {definition.id!r} in "
+                             + (f"{first} (twice)" if first == definition.relative_path
+                                else f"{first} and {definition.relative_path}")),
+                    severity="error",
+                    code="duplicate_definition_id",
+                    file_path=str(definition.source_path),
+                    related_file_path=first,
+                ))
+        if self.hoi4_install is None:
+            return issues
+        known_traits = {
+            definition.id
+            for kind in ("country_leader_trait", "unit_leader_trait")
+            for definition in self.list_definitions(kind)
+        }
+        if not known_traits:
+            return issues
+        for character in self._characters.values():
+            path = character.path
+            if path is None or not Path(path).is_relative_to(self.mod_root):
+                continue
+            roles = list(character.roles)
+            for instance in getattr(character, "instances", []):
+                roles.extend(instance.roles)
+            for role in roles:
+                for trait in getattr(role, "traits", []):
+                    if trait not in known_traits:
+                        issues.append(ValidationError(
+                            message=(f"Character {character.id!r} uses trait {trait!r}, "
+                                     "which no country_leader or unit_leader file defines"),
+                            severity="warning",
+                            code="unknown_character_trait",
+                            file_path=str(path),
+                        ))
+        return issues
+
+    def create_scripted_effect(
+        self, effect_id: str, body: str, *, path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue a named scripted effect (``common/scripted_effects``)."""
+
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", effect_id):
+            raise ValueError("Invalid scripted effect identifier")
+        return self.create_definition(
+            "scripted_effect", effect_id, body, path=path, overwrite=overwrite,
+        )
+
+    def create_scripted_localisation(
+        self,
+        name: str,
+        entries: Sequence[tuple[str, str]],
+        *,
+        path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue a ``defined_text`` usable as ``[Root.GetName]`` or ``[GetName]``.
+
+        ``entries`` are ``(trigger_body, localisation_key)`` pairs evaluated in
+        order; an empty trigger is an unconditional fallback and belongs last.
+        """
+
+        from .definitions import render_scripted_localisation
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            raise ValueError("Invalid scripted localisation name")
+        if any(not trigger.strip() for trigger, _ in entries[:-1]):
+            raise ValueError("Only the last scripted localisation entry may omit its trigger")
+        return self.create_definition(
+            "scripted_localisation", name, render_scripted_localisation(entries),
+            path=path, overwrite=overwrite,
+        )
+
+    def create_country_leader_trait(
+        self, trait_id: str, body: str, *, path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue a country-leader or advisor trait in ``common/country_leader``."""
+
+        return self.create_definition(
+            "country_leader_trait", trait_id, body, path=path, overwrite=overwrite,
+        )
+
+    def create_unit_leader_trait(
+        self, trait_id: str, body: str, *, path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue an army/navy commander trait in ``common/unit_leader``."""
+
+        return self.create_definition(
+            "unit_leader_trait", trait_id, body, path=path, overwrite=overwrite,
+        )
+
+    def create_technology(
+        self, technology_id: str, body: str, *, path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue a technology inside a ``technologies = { }`` container.
+
+        The new identifier is immediately known to ``set_technology`` and
+        tech-bonus validation in this ``Mod`` instance.
+        """
+
+        return self.create_definition(
+            "technology", technology_id, body, path=path, overwrite=overwrite,
+        )
+
+    def create_sub_unit(
+        self, sub_unit_id: str, body: str, *, path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue a battalion/company type inside ``sub_units = { }``."""
+
+        return self.create_definition(
+            "sub_unit", sub_unit_id, body, path=path, overwrite=overwrite,
+        )
+
+    def create_ai_strategy(
+        self,
+        plan_id: str,
+        strategies: Sequence[tuple[str, str, int]],
+        *,
+        allowed: str = "",
+        enable: str = "",
+        abort: str = "",
+        extra: str = "",
+        path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue an ``ai_strategy`` plan from ``(type, id, value)`` entries.
+
+        For example ``[("antagonize", "FRA", 100), ("role_ratio", "armor", 15)]``;
+        use an empty id for strategy types that take none.
+        """
+
+        from .definitions import render_ai_strategy
+        return self.create_definition(
+            "ai_strategy", plan_id,
+            render_ai_strategy(strategies, allowed=allowed, enable=enable, abort=abort, extra=extra),
+            path=path, overwrite=overwrite,
+        )
+
+    def create_opinion_modifier(
+        self,
+        modifier_id: str,
+        *,
+        value: int | float,
+        decay: int | float | None = None,
+        trade: bool = False,
+        target: bool = False,
+        days: int | None = None,
+        months: int | None = None,
+        years: int | None = None,
+        min_trust: int | float | None = None,
+        max_trust: int | float | None = None,
+        path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue an opinion modifier for ``add_opinion_modifier``."""
+
+        from .definitions import render_scalar_mapping
+        fields: dict[str, object] = {"value": value}
+        optional: dict[str, object | None] = {
+            "decay": decay, "days": days, "months": months, "years": years,
+            "min_trust": min_trust, "max_trust": max_trust,
+        }
+        fields.update({key: item for key, item in optional.items() if item is not None})
+        if trade:
+            fields["trade"] = True
+        if target:
+            fields["target"] = True
+        return self.create_definition(
+            "opinion_modifier", modifier_id, render_scalar_mapping(fields),
+            path=path, overwrite=overwrite,
+        )
+
+    def create_static_modifier(
+        self,
+        modifier_id: str,
+        modifiers: dict[str, str | int | float | bool],
+        *,
+        path: str | Path | None = None,
+        overwrite: bool = False,
+    ) -> Path:
+        """Queue a named static modifier (``common/modifiers``)."""
+
+        from .definitions import render_scalar_mapping
+        if not modifiers:
+            raise ValueError("A static modifier needs at least one modifier")
+        return self.create_definition(
+            "static_modifier", modifier_id, render_scalar_mapping(modifiers),
+            path=path, overwrite=overwrite,
+        )
 
     # ── Transactional image assets ─────────────────────────────
 
@@ -7750,6 +9443,226 @@ class Mod:
         ).encode("utf-8")
         self._stage_asset_files({output: content}, overwrite=overwrite)
         return output
+
+    def import_focus_icon(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (100, 88),
+        resize_mode: Literal["stretch", "cover", "contain"] = "contain",
+        shine: bool = True,
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage a focus icon and return its ``GFX_<name>`` sprite for ``Focus.icon``.
+
+        Writes ``gfx/interface/goals/<name>.dds``, merges the sprite into
+        ``interface/<mod>_goals.gfx`` (or ``gfx_file``), and with ``shine=True``
+        adds the standard ``GFX_<name>_shine`` animation to the sibling
+        ``*_shine.gfx`` file. A leading ``GFX_`` in ``name`` is ignored.
+        """
+
+        return self._stage_icon_asset(
+            "focus",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            shine=shine,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_idea_icon(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (65, 67),
+        resize_mode: Literal["stretch", "cover", "contain"] = "contain",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage an idea picture and return its ``GFX_idea_<name>`` sprite.
+
+        ``Idea.icon`` accepts either the returned sprite or the bare ``name``;
+        both serialize as ``picture = <name>``.
+        """
+
+        return self._stage_icon_asset(
+            "idea",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_decision_icon(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (33, 32),
+        resize_mode: Literal["stretch", "cover", "contain"] = "contain",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage a decision icon and return its ``GFX_decision_<name>`` sprite.
+
+        ``Decision.icon`` may use either the returned sprite or the bare name.
+        """
+
+        return self._stage_icon_asset(
+            "decision",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_decision_category_icon(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (52, 40),
+        resize_mode: Literal["stretch", "cover", "contain"] = "contain",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage a ``GFX_decision_category_<name>`` icon for ``DecisionCategory.icon``."""
+
+        return self._stage_icon_asset(
+            "decision_category",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_decision_category_picture(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] = (114, 101),
+        resize_mode: Literal["stretch", "cover", "contain"] = "cover",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage a category banner and return its ``GFX_decision_cat_picture_<name>``.
+
+        The sprite is referenced by a category definition's ``picture`` field.
+        """
+
+        return self._stage_icon_asset(
+            "decision_category_picture",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def import_event_picture(
+        self,
+        name: str,
+        src_image: str | Path,
+        *,
+        news: bool = False,
+        size: tuple[int, int] | None = None,
+        resize_mode: Literal["stretch", "cover", "contain"] = "cover",
+        gfx_file: str | Path | None = None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
+        overwrite: bool = False,
+    ) -> str:
+        """Stage an event picture and return the sprite for ``Event.picture``.
+
+        Report events use a 210x176 ``GFX_report_event_<name>`` picture; news
+        events (``news=True``) use 397x153 ``GFX_news_event_<name>``.
+        """
+
+        return self._stage_icon_asset(
+            "news_event" if news else "event",
+            name,
+            src_image,
+            size=size,
+            resize_mode=resize_mode,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+        ).sprite_name
+
+    def _stage_icon_asset(
+        self,
+        kind: str,
+        name: str,
+        src_image: str | Path,
+        *,
+        size: tuple[int, int] | None,
+        resize_mode: Literal["stretch", "cover", "contain"],
+        shine: bool = False,
+        gfx_file: str | Path | None,
+        dds_compression: Literal["DXT1", "DXT3", "DXT5"],
+        overwrite: bool,
+    ) -> IconAsset:
+        """Plan an icon against staged and on-disk files, then stage the changes."""
+
+        from .assets import plan_icon_asset
+
+        def read(path: Path) -> bytes | None:
+            pending = self._pending_asset_writes.get(path)
+            if pending is not None:
+                return pending
+            return path.read_bytes() if path.is_file() else None
+
+        interface_dir = self.mod_root / "interface"
+        declared = {
+            path
+            for path in self._pending_asset_writes
+            if path.suffix.lower() == ".gfx"
+        }
+        if interface_dir.is_dir():
+            declared.update(
+                path.resolve(strict=False)
+                for path in interface_dir.rglob("*.gfx")
+                if path.is_file()
+            )
+        asset, files = plan_icon_asset(
+            self.mod_root,
+            kind,
+            name,
+            src_image,
+            read=read,
+            size=size,
+            resize_mode=resize_mode,
+            shine=shine,
+            gfx_file=gfx_file,
+            dds_compression=dds_compression,
+            overwrite=overwrite,
+            declared_gfx=sorted(declared),
+        )
+        if files:
+            self._stage_asset_files(files, overwrite=True)
+        return asset
 
     # ── Preview & Save ───────────────────────────────────────────
 
@@ -7963,6 +9876,7 @@ class Mod:
                 rendered[path] = serialize_oob(matching) if matching is not None else None
 
         if "states" in self._dirty:
+            rendered.update(self._deleted_state_files)
             for state_id in self._dirty_states:
                 state = self._states.get(state_id)
                 if state is None:
@@ -7972,6 +9886,10 @@ class Mod:
                     state.path or Path("history") / "states" / f"{state_id}-STATE.txt",
                 )
                 rendered[path] = serialize_state(state)
+
+        if "map" in self._dirty:
+            for relative, map_text in self._map_file_updates.items():
+                rendered[self.mod_root / relative] = map_text
 
         if "events" in self._dirty:
             event_files, namespaces = self._group_events_by_file(dirty_only=True)
@@ -8120,6 +10038,10 @@ class Mod:
                     serialize_localization_file(
                         entries,
                         original=self._original_files.get(path, ""),
+                        language=localisation_language_for_path(
+                            path.relative_to(self.mod_root)
+                        )
+                        or DEFAULT_LOCALISATION_LANGUAGE,
                     )
                     if entries or (
                         self._content_layers is not None
@@ -8272,6 +10194,9 @@ class Mod:
         self._dirty_oobs.clear()
         self._dirty_oob_files.clear()
         self._dirty_states.clear()
+        self._deleted_state_ids.clear()
+        self._deleted_state_files.clear()
+        self._map_file_updates.clear()
         self._dirty_events.clear()
         self._dirty_event_files.clear()
         self._event_file_namespaces.clear()
@@ -8300,6 +10225,10 @@ class Mod:
         self._loc_sources.clear()
         self._dirty_loc_keys.clear()
         self._dirty_loc_files.clear()
+        self._foreign_loc_entries.clear()
+        self._foreign_loc_sources.clear()
+        self._foreign_dirty_loc_keys.clear()
+        self._loaded_loc_languages.clear()
         self._pending_asset_writes.clear()
         self._pending_asset_baselines.clear()
         self._country_name_pool_updates.clear()
@@ -8350,6 +10279,9 @@ class Mod:
             "_inherited_state_source_paths",
             "_writable_state_directory_stamp",
             "_dirty_states",
+            "_deleted_state_ids",
+            "_deleted_state_files",
+            "_map_file_updates",
             "_events",
             "_event_namespaces",
             "_dirty_events",
@@ -8385,6 +10317,10 @@ class Mod:
             "_loc_sources",
             "_dirty_loc_keys",
             "_dirty_loc_files",
+            "_foreign_loc_entries",
+            "_foreign_loc_sources",
+            "_foreign_dirty_loc_keys",
+            "_loaded_loc_languages",
             "_original_files",
             "_pending_asset_writes",
             "_pending_asset_baselines",
@@ -8450,6 +10386,11 @@ class Mod:
                     lines.append(
                         f"state {sid}: owner={state.owner or '<none>'} cores={','.join(state.cores) or '<none>'}"
                     )
+            for sid in sorted(self._deleted_state_ids):
+                lines.append(f"state {sid}: delete")
+        if "map" in self._dirty:
+            for relative in sorted(self._map_file_updates):
+                lines.append(f"map file {relative}: update")
         if "ideas" in self._dirty:
             for iid in sorted(self._dirty_ideas):
                 idea = self._ideas.get(iid)
@@ -8505,7 +10446,12 @@ class Mod:
                         lines.extend(
                             self._effect_semantic_lines(
                                 _join_script_parts(
-                                    [decision.complete_effect, decision.remove_effect]
+                                    [
+                                        decision.complete_effect,
+                                        decision.remove_effect,
+                                        decision.timeout_effect,
+                                        decision.cancel_effect,
+                                    ]
                                 ),
                                 f"decision {decision.id}",
                             )
@@ -8556,6 +10502,9 @@ class Mod:
                     lines.append(f"{tree_id} focus {fid}: removed")
         if "localization" in self._dirty:
             lines.append(f"localization: {len(self._dirty_loc_keys)} key(s)")
+            for language, dirty_keys in sorted(self._foreign_dirty_loc_keys.items()):
+                if dirty_keys:
+                    lines.append(f"localization ({language}): {len(dirty_keys)} key(s)")
         return lines
 
     def _effect_semantic_lines(self, script: str, owner: str) -> list[str]:
@@ -8830,6 +10779,41 @@ class Mod:
                 decision.path,
                 scope="COUNTRY",
             )
+            # Mission and targeted-decision fields run in the decision
+            # owner's (country) scope; targets are reached through FROM.
+            for trigger_field in (
+                "allowed",
+                "activation",
+                "cancel_trigger",
+                "remove_trigger",
+                "target_trigger",
+                "target_root_trigger",
+                "custom_cost_trigger",
+            ):
+                add(
+                    getattr(decision, trigger_field),
+                    "trigger",
+                    "decision",
+                    decision.id,
+                    decision.path,
+                    scope="COUNTRY",
+                )
+            for effect_field in ("timeout_effect", "cancel_effect"):
+                add(
+                    getattr(decision, effect_field),
+                    "effect",
+                    "decision",
+                    decision.id,
+                    decision.path,
+                    scope="COUNTRY",
+                )
+            add(
+                decision.modifier,
+                "modifier",
+                "decision",
+                decision.id,
+                decision.path,
+            )
         for idea in self._ideas.values():
             add(
                 idea.allowed,
@@ -8996,6 +10980,15 @@ class Mod:
                             decision.visible,
                             decision.complete_effect,
                             decision.remove_effect,
+                            decision.allowed,
+                            decision.activation,
+                            decision.cancel_trigger,
+                            decision.remove_trigger,
+                            decision.target_trigger,
+                            decision.target_root_trigger,
+                            decision.custom_cost_trigger,
+                            decision.timeout_effect,
+                            decision.cancel_effect,
                         ]
                     ),
                     "decision",
@@ -9332,6 +11325,40 @@ class Mod:
     def _has_loc(self, key: str) -> bool:
         return key in self._loc_entries or f"{key}:0" in self._loc_entries
 
+    def _validate_localization_languages(self) -> list[ValidationError]:
+        """Warn about authored English keys missing from a shipped language.
+
+        Header/folder agreement is a source-tree check; see
+        ``_validate_source_tree``. Languages the mod does not ship at all are
+        not reported: HOI4 then falls back to raw keys everywhere, which is a
+        packaging choice rather than a gap.
+        """
+        errors: list[ValidationError] = []
+        shipped = self._shipped_loc_languages()
+        if not shipped:
+            return errors
+        english_keys = self._authored_loc_keys(DEFAULT_LOCALISATION_LANGUAGE)
+        for language in shipped:
+            _, entries, _, _ = self._loc_tables(language)
+            missing = sorted(key for key in english_keys if key not in entries)
+            if not missing:
+                continue
+            preview = ", ".join(missing[:10]) + (", ..." if len(missing) > 10 else "")
+            errors.append(
+                ValidationError(
+                    message=(
+                        f"{len(missing)} English localization key(s) have no {language} "
+                        f"translation: {preview}. Players see raw keys; call "
+                        f"copy_loc_to_languages(languages=['{language}']) to fill them "
+                        "from English"
+                    ),
+                    severity="warning",
+                    code="missing_translation",
+                    file_path=str(self.mod_root / "localisation" / language),
+                )
+            )
+        return errors
+
     def _validate_idea_mutation_collisions(self) -> list[ValidationError]:
         focus_mutations: dict[str, set[str]] = {}
         runtime_mutations: dict[str, set[str]] = {}
@@ -9575,20 +11602,29 @@ class Mod:
 
     def _known_focus_icons(self) -> set[str]:
         cached = self._scan_cache.get("focus_icons")
-        if cached is not None:
-            return set(cached)
-        icons: set[str] = set()
-        for base in self._data_roots():
-            interface_dir = base / "interface"
-            if not interface_dir.exists():
-                continue
-            for path in interface_dir.rglob("*.gfx"):
-                try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
+        if cached is None:
+            cached = set()
+            for base in self._data_roots():
+                interface_dir = base / "interface"
+                if not interface_dir.exists():
                     continue
-                icons.update(name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_"))
-        self._scan_cache["focus_icons"] = icons
+                for path in interface_dir.rglob("*.gfx"):
+                    try:
+                        text = path.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        continue
+                    cached.update(
+                        name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_")
+                    )
+            self._scan_cache["focus_icons"] = cached
+        icons = set(cached)
+        # Staged sprite declarations are visible before save; they are not cached.
+        for path, content in self._pending_asset_writes.items():
+            if path.suffix.lower() == ".gfx":
+                text = content.decode("utf-8", errors="ignore")
+                icons.update(
+                    name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_")
+                )
         return icons
 
     def _known_sprite_textures(self) -> dict[str, str]:
@@ -10756,20 +12792,34 @@ class Mod:
         return grouped
 
     def _group_loc_by_file(self, dirty_only: bool = False) -> dict[Path, dict[str, str]]:
+        tables: list[tuple[Path, dict[str, str], dict[str, Path], set[str]]] = [
+            (self.default_loc_file, self._loc_entries, self._loc_sources, self._dirty_loc_keys)
+        ]
+        for language in sorted(self._loaded_loc_languages):
+            tables.append(
+                (
+                    self._default_loc_file_for(language),
+                    self._foreign_loc_entries.get(language, {}),
+                    self._foreign_loc_sources.get(language, {}),
+                    self._foreign_dirty_loc_keys.get(language, set()),
+                )
+            )
         dirty_files: set[Path] = set(self._dirty_loc_files) if dirty_only else set()
         if dirty_only:
-            for key in self._dirty_loc_keys:
-                source = self._loc_sources.get(key, self.default_loc_file)
-                dirty_files.add(source)
+            for default_file, _, sources, dirty_keys in tables:
+                for key in dirty_keys:
+                    source = sources.get(key, default_file)
+                    dirty_files.add(source)
 
         file_entries: dict[Path, dict[str, str]] = {path: {} for path in dirty_files}
-        for key, value in self._loc_entries.items():
-            source = self._loc_sources.get(key, self.default_loc_file)
-            if dirty_only and source not in dirty_files:
-                continue
-            if source not in file_entries:
-                file_entries[source] = {}
-            file_entries[source][key] = value
+        for default_file, entries, sources, _ in tables:
+            for key, value in entries.items():
+                source = sources.get(key, default_file)
+                if dirty_only and source not in dirty_files:
+                    continue
+                if source not in file_entries:
+                    file_entries[source] = {}
+                file_entries[source][key] = value
         return file_entries
 
     def _group_events_by_file(

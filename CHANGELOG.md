@@ -12,11 +12,55 @@ All notable changes to this project are documented here. The format follows
   provenance, and opt-in inherited focus/event/idea/on-action editing.
 - Transactional support-script imports, source-preserving scripted-trigger
   authoring, explicit conversion color-table rebuilding, and impassable states.
+- Generic keyed `common/` definitions (`list/get/create/update/delete_definition`)
+  for 36 domains, including scripted effects and localisation, leader traits,
+  technologies, sub-units, equipment, AI strategies, opinion and static
+  modifiers, wargoals, autonomy states, game rules, scripted GUIs, unit name
+  lists, balance of power, MIOs, special projects, occupation laws and
+  doctrines, with typed helpers,
+  container-aware byte-preserving patches, duplicate-ID and unknown-trait
+  validation, and a wider `import_script_file()` allow-list.
+
+- Map editing for the existing map: `create_state`, `move_provinces`, and
+  `split_state` move provinces with their victory points and province-level
+  history buildings; strategic-region listing, moves, and creation with copied
+  weather; supply-node, railway, and `buildings.txt` position editing with
+  optional reassignment of positions inside moved provinces. Edits are
+  transactional, copy inherited files into the mod, and touch only the affected
+  lines or province IDs.
+- Validation checks that land provinces belong to exactly one state, land and
+  sea provinces to exactly one strategic region, and that supply-node, railway,
+  and building-position references resolve.
 
 - `CommonsImageClient` searches Wikimedia Commons and downloads raster sources
   with creator/license metadata, retrieval time, checksums, and verified local
   cache reuse. SVG flags use Commons raster thumbnails. Sources feed the
   existing transactional flag/portrait import APIs without a Gemini key.
+- Transactional `Mod` importers for custom focus icons (with standard shine
+  sprites), idea icons, decision and decision-category icons, decision-category
+  pictures, and report/news event pictures. Sprites are merged into mod-scoped
+  `.gfx` files by name without disturbing other entries, and staged sprites are
+  visible to icon validation before save.
+- Multi-language localisation: `get_loc`, `set_loc`, `delete_loc`,
+  `search_loc`, and `all_loc` take `language=` (default `"english"`) for all
+  ten HOI4 languages, indexing inherited and mod files per language without
+  mixing them. `set_loc(..., replace=True)` writes vanilla overrides to
+  `localisation/<language>/replace/`, and `copy_loc_to_languages()` fills
+  missing translations from English. Validation reports header/folder
+  language mismatches and English keys missing from a shipped language.
+- Decision missions and targeted decisions: `Decision` models mission fields
+  (`days_mission_timeout`, `activation`, `timeout_effect`, `cancel_trigger`,
+  `cancel_effect`, `is_good`, `selectable_mission`), targeted fields
+  (`target_trigger`, `targets`, `target_array`, `target_root_trigger`,
+  `state_target`, `targets_dynamic`, `target_non_existing`, `on_map_mode`),
+  and general fields (`allowed`, `days_re_enable`, `war_with_on_remove`,
+  `custom_cost_trigger`, `custom_cost_text`, `cancel_if_not_visible`,
+  `modifier`, `remove_trigger`, `highlight_states`, `priority`). They are
+  parsed, rendered, and patched in place by `update_decision`; edits now patch
+  only changed fields, so unmodeled spellings such as `cost = @constant`
+  survive. New `Mod.create_mission()` and `Mod.create_targeted_decision()`
+  helpers, plus `mission_with_cost` and `mission_activation_without_timeout`
+  validation.
 
 ### Changed
 
@@ -26,6 +70,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Inherited state lookups now honor same-named mod files and the mod
+  descriptor's `replace_path` when no base mods are configured, matching how
+  the game resolves files. Province-list changes to existing state files now
+  remove or append IDs in place instead of re-rendering the block.
 - Country-package validation now accepts HOI4's effective `default` name pool
   as a fallback for countries with air wings, while still rejecting packages
   that have neither a country-specific nor default pool.
