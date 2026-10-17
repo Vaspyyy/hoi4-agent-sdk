@@ -161,7 +161,7 @@ jobs:
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/hoi4-sdist-smoke/bin/python" -c "from importlib.metadata import version; import hoi4; assert hoi4.__version__ == version('hoi4-agent-sdk')"
       - run: PYTHONPATH=src python scripts/release_tools.py checksums --dist dist
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-dist
           path: dist/*
