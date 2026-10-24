@@ -28,14 +28,14 @@ Issues = "https://github.com/Vaspyyy/hoi4-agent-sdk/issues"
 
 [project.optional-dependencies]
 assets = [
-    "Pillow>=10.0,<13.0",
+    "Pillow>=10.0,<14.0",
 ]
 gemini = [
     "google-genai>=2.14,<3",
-    "Pillow>=12.3,<13",
+    "Pillow>=12.3,<14",
 ]
 map = [
-    "Pillow>=10.0,<13.0",
+    "Pillow>=10.0,<14.0",
     "numpy>=1.26",
     "scipy>=1.11",
 ]
