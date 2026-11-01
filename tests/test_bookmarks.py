@@ -233,6 +233,48 @@ def test_lua_date_patch_rejects_computed_or_unsupported_rhs(expression: str) -> 
         )
 
 
+@pytest.mark.parametrize(
+    "continuation",
+    ["== false", "~= nil", "< other", ">= other", ".. suffix", "and other"],
+)
+def test_lua_date_patch_rejects_operator_continued_on_next_line(continuation: str) -> None:
+    with pytest.raises(ValueError, match="Unsupported Lua expression for NDefines.NGame.START_DATE"):
+        patch_bookmark_dates_defines(
+            f'NDefines.NGame.START_DATE = "1936.1.1.12"\n    {continuation}\n',
+            start_date="1940.1.1.12", end_date="1960.1.1.1",
+        )
+
+
+def test_lua_date_patch_ends_line_comments_at_carriage_return() -> None:
+    original = (
+        "-- start date\r"
+        'NDefines.NGame.START_DATE = "1936.1.1.12"\r'
+        'NDefines.NGame.END_DATE = "1950.1.1.12"\r'
+    )
+
+    rendered = patch_bookmark_dates_defines(
+        original, start_date="1940.1.1.12", end_date="1960.1.1.1",
+    )
+
+    assert rendered == (
+        "-- start date\r"
+        'NDefines.NGame.START_DATE = "1940.1.1.12"\r'
+        'NDefines.NGame.END_DATE = "1960.1.1.1"\r'
+    )
+
+
+def test_lua_date_patch_appends_with_carriage_return_only_newlines() -> None:
+    rendered = patch_bookmark_dates_defines(
+        "-- only a comment\r", start_date="1940.1.1.12", end_date="1960.1.1.1",
+    )
+
+    assert rendered == (
+        "-- only a comment\r"
+        'NDefines.NGame.START_DATE = "1940.1.1.12"\r'
+        'NDefines.NGame.END_DATE = "1960.1.1.1"\r'
+    )
+
+
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
 def test_bookmark_date_patch_preview_save_and_reload_preserve_source_bytes(
     tmp_path: Path, newline: str,

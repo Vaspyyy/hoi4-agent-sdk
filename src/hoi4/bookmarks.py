@@ -359,7 +359,7 @@ def patch_bookmark_dates_defines(
         following = tokens[index + 7] if index + 7 < len(tokens) else None
         if following is not None:
             between = original[rhs[3] : following[2]]
-            if following[1] in {"..", "+", "-", "*", "/", "%", "^", "and", "or"} or (
+            if following[1] in _LUA_BINARY_OPERATOR_STARTS or (
                 "\n" not in between and "\r" not in between and following[1] != ";"
             ):
                 raise ValueError(f"Unsupported Lua expression for NDefines.NGame.{key}")
@@ -369,13 +369,26 @@ def patch_bookmark_dates_defines(
     result = original
     for start, end, value in reversed(replacements):
         result = result[:start] + value + result[end:]
-    newline = "\r\n" if "\r\n" in original else "\n"
+    if "\r\n" in original:
+        newline = "\r\n"
+    elif "\r" in original and "\n" not in original:
+        newline = "\r"
+    else:
+        newline = "\n"
     for key, value in dates.items():
         if key not in found:
             if result and not result.endswith(("\n", "\r")):
                 result += newline
             result += f"NDefines.NGame.{key} = {pdx_string(value)}{newline}"
     return result
+
+
+# Tokens that continue an expression after a string literal. Comparison and
+# bitwise operators are listed by their first character because the tokenizer
+# emits them one symbol at a time (``==`` becomes ``=`` ``=``).
+_LUA_BINARY_OPERATOR_STARTS = frozenset(
+    {"..", "+", "-", "*", "/", "%", "^", "and", "or", "=", "~", "<", ">", "&", "|"}
+)
 
 
 def _lua_tokens(source: str) -> list[tuple[str, str, int, int]]:
@@ -397,8 +410,8 @@ def _lua_tokens(source: str) -> list[tuple[str, str, int, int]]:
                 end = source.find(closing, index + len(opener.group(0)))
                 index = len(source) if end < 0 else end + len(closing)
             else:
-                end = source.find("\n", index)
-                index = len(source) if end < 0 else end
+                line_end = re.compile(r"[\r\n]").search(source, index)
+                index = len(source) if line_end is None else line_end.start()
             continue
         if char in {'"', "'"}:
             index += 1
