@@ -907,15 +907,27 @@ English. English loads with the mod; another language is indexed on its first
 use. Languages are never mixed: `get_loc(key, language="german")` returns `None`
 for an English-only key rather than falling back.
 
+The readers (`get_loc`, `search_loc`, `all_loc`) also see the game's own
+text: a key the mod does not define comes from the game's
+`localisation/<language>` files, with entries in a `replace` folder winning,
+and the mod's entry (with unsaved edits) always wins over the game's. With
+base mods, the game is one of the inherited layers above. With only
+`hoi4_install`, the game's files of a language are indexed on the first
+lookup the mod's tables miss, not at load. Files the mod hides with
+`replace_path` are left out. The game's entries are never part of the mod:
+`save()` does not write them, and `set_loc`, `delete_loc` and
+`copy_loc_to_languages` work on the mod's entries only (deleting a mod entry
+uncovers the game's text again).
+
 ### Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_loc(key, *, language="english") -> str \| None` | `str \| None` | Get one language's localized string |
+| `get_loc(key, *, language="english") -> str \| None` | `str \| None` | Get one language's localized string: the mod's entry, else the game's |
 | `set_loc(key, value, file_path=None, *, language="english", replace=False) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `replace=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `file_path` inside `replace/`), which is how a mod overrides base-game keys. |
 | `delete_loc(key, *, language="english") -> bool` | `bool` | Remove one language's entry |
-| `search_loc(query, *, language="english") -> dict[str, str]` | `dict` | Case-insensitive substring search in one language's keys and values |
-| `all_loc(*, language="english") -> dict[str, str]` | `dict` | Full copy of one language's entries |
+| `search_loc(query, *, language="english") -> dict[str, str]` | `dict` | Case-insensitive substring search in one language's keys and values, the game's included |
+| `all_loc(*, language="english") -> dict[str, str]` | `dict` | Full copy of one language's entries: the game's, with the mod's on top |
 | `copy_loc_to_languages(keys=None, languages=None, *, overwrite=False) -> dict[str, list[str]]` | `dict` | Fill missing translations with the English text so players of other languages do not see raw keys. `keys` defaults to every English key the mod authors (inherited base-game text is never copied); `languages` defaults to every non-English language. New entries go to the file mirroring their English source (`events_l_english.yml` -> `events_l_german.yml`, `replace/` kept). Existing translations are kept unless `overwrite=True`. Returns the keys written per language. |
 
 Deleting a character or country also removes its generated keys from every

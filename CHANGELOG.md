@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- A disk cache of what validation reads out of the game's own files (and
+  base mods): references, division templates, sprites, characters, states,
+  map data and localisation. A new process reads the stored results instead
+  of parsing the game again, so the first `validate()` of a process on a
+  small mod takes about 3 to 4 seconds instead of about 40. It lives in
+  `~/.cache/hoi4-sdk/file-results/` (or under `$XDG_CACHE_HOME` or
+  `$HOI4_SDK_CACHE_DIR`), holds only results for inherited files, and is
+  rebuilt for a file whose size or modification time changed and for any new
+  version of the SDK. `HOI4_SDK_DISK_CACHE=off` turns it, and the vocabulary
+  cache, off. See [docs/internals/disk_cache.md](docs/internals/disk_cache.md).
 - `hoi4.syntax`: one lossless syntax tree for Paradox script. Every node knows
   its exact position in the source, so reading is a tree query and writing is
   the replacement of one span. It understands typed blocks (`rgb { }`,
@@ -183,6 +193,13 @@ All notable changes to this project are documented here. The format follows
   diagnostic (`load_failure` in `validate()`), like any file that fails to load.
 - `transaction()` copies only the sections that are loaded; a section first
   loaded inside the transaction is unloaded again on rollback.
+- `get_loc`, `search_loc` and `all_loc` return the game's own text for a key
+  the mod does not define, also when only `hoi4_install` is set (base mods
+  already worked this way). The mod's entry wins, the game is indexed on the
+  first lookup the mod misses (once per language), and saving never writes
+  the game's entries into the mod.
+- The script vocabulary cache follows `$XDG_CACHE_HOME` when it is set and
+  `$HOI4_SDK_CACHE_DIR` is not.
 - **An edit to one field now changes only that field.** Focus trees, events,
   on-actions, ideas, ideologies, dynamic modifiers, decisions, bookmarks,
   countries, characters, country tags, states and orders of battle are read

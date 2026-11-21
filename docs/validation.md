@@ -164,6 +164,12 @@ the content checks read them the way the game does:
 - Tag aliases from `common/country_tag_aliases` count as country tags, and
   tags declared after `dynamic_tags = yes` are named at runtime.
 
+What the checks read out of the game's files (and base mods) is kept on disk,
+so the first validation of a new process does not parse the game again. The
+cache lives in `~/.cache/hoi4-sdk/file-results/`; `HOI4_SDK_CACHE_DIR` moves
+it and `HOI4_SDK_DISK_CACHE=off` turns it off. Findings are the same with or
+without it. See [internals/disk_cache.md](internals/disk_cache.md).
+
 ## All codes
 
 ### Errors
