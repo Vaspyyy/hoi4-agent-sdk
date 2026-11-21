@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import codecs
+import random
+import re
 from pathlib import Path
 
 import pytest
@@ -66,11 +68,59 @@ def test_windows_1252_stays_windows_1252() -> None:
     assert edited == "a = café\r\nb = ü\r\n".encode("cp1252")
 
 
-def test_text_that_does_not_fit_the_code_page_upgrades_to_utf8() -> None:
+def test_only_the_line_that_does_not_fit_the_code_page_becomes_utf8() -> None:
+    # The untouched legacy lines keep their bytes; only the new line is UTF-8.
+    # It still reads back as written although the legacy lines outnumber it.
+    data = "a = café\nb = déjà vu\nc = ü\n".encode("cp1252")
+    text = decode_text(data) + "d = ł\n"
+    edited = encode_text(text, like=data)
+    assert edited == data + "d = ł\n".encode()
+    assert decode_text(edited) == text
+    assert detect_format(edited).encoding == "cp1252"
+
+
+def test_edited_line_in_the_code_page_must_read_back_the_same() -> None:
+    # "ß" followed by a curly quote is 0xDF 0x93 in Windows-1252, which is
+    # also a valid UTF-8 sequence and would read back as U+07D3.
     data = "a = café\n".encode("cp1252")
-    edited = encode_text(decode_text(data) + "b = 中\n", like=data)
-    assert edited == "a = café\nb = 中\n".encode()
-    assert decode_text(edited) == "a = café\nb = 中\n"
+    text = decode_text(data) + "b = Fuß“\nc = Fuß\n"
+    edited = encode_text(text, like=data)
+    assert edited == data + "b = Fuß“\n".encode() + "c = Fuß\n".encode("cp1252")
+    assert decode_text(edited) == text
+
+
+def test_stray_bytes_do_not_turn_utf8_into_windows_1252() -> None:
+    # Repro: one stray byte made the whole file read as Windows-1252.
+    data = BOM + b'l_english:\n a:0 "M\xc3\xbcnchen \xce\x95\xce\xbb\xce\xbb\xce\xac\xce\xb4\xce\xb1"\n b:0 "caf\xe9"\n'
+    assert decode_text(data) == 'l_english:\n a:0 "München Ελλάδα"\n b:0 "café"\n'
+    assert detect_format(data) == TextFormat("utf-8", True, "\n", False, stray_bytes=1)
+    # Without a byte-order mark, more valid high bytes than stray ones decide.
+    data = b'name = "M\xc3\xbcnchen"\n# caf\xe9 \xc3\xa9t\xe9\n'
+    assert decode_text(data) == 'name = "München"\n# café été\n'
+    assert detect_format(data).stray_bytes == 2
+
+
+def test_edit_next_to_stray_bytes_keeps_untouched_lines() -> None:
+    # Repro: a new character outside the code page re-encoded every line, so
+    # "M\xc3\xbcnchen" became "M\xc3\x83\xc2\xbcnchen".
+    data = b'name = "M\xc3\xbcnchen"\r\n# caf\xe9\r\nicon = GFX_old\r\n'
+    text = decode_text(data)
+    assert text == 'name = "München"\n# café\nicon = GFX_old\n'
+    edited = encode_text(text.replace("GFX_old", "GFX_ł"), like=data)
+    assert edited == data.replace(b"GFX_old", "GFX_ł".encode())
+    # An edited line with a stray byte is written as clean UTF-8.
+    edited = encode_text(text.replace("# café", "# café!"), like=data)
+    assert edited == data.replace(b"caf\xe9", "café!".encode())
+
+
+def test_mostly_invalid_bytes_mean_a_legacy_line() -> None:
+    # "Ã©" is valid UTF-8 for "é", but next to more Windows-1252 accents the
+    # line is read as Windows-1252, like the rest of the file.
+    data = "Ã© über café naïve\n".encode("cp1252")
+    assert decode_text(data) == "Ã© über café naïve\n"
+    assert detect_format(data) == TextFormat("cp1252", False, "\n", False)
+    with_bom = BOM + data
+    assert decode_text(with_bom).startswith("é über café")
 
 
 @pytest.mark.parametrize("newline", ["\r\n", "\r", "\n"])
@@ -139,3 +189,69 @@ def test_edit_next_to_identical_lines_keeps_their_endings() -> None:
     assert encode_text("x\n\n", like=data) == b"x\r\n\n"
     data = b"}\r\n}\n}\r\n"
     assert encode_text("}\n} # c\n}\n", like=data) == b"}\r\n} # c\n}\r\n"
+
+
+# ── random round trips ───────────────────────────────────────────────
+
+_CHARS = "aZ0 ={}\"#\t\f\x85éüßÄ€“”–…łŁΕλάд中́﻿😀\U0010fffd"
+_TRUNCATED = [b"\xc3", b"\xe2\x82", b"\xf0\x9f\x98", b"\xed\xa0\x80", b"\xc0\xaf", b"\xf8"]
+
+
+def _random_chunk(rng: random.Random) -> bytes:
+    kind = rng.randrange(7)
+    if kind == 0:
+        return bytes(rng.choice(b"abc xyz={}#\"") for _ in range(rng.randrange(1, 6)))
+    if kind == 1:
+        return "".join(rng.choice(_CHARS) for _ in range(rng.randrange(1, 4))).encode()
+    if kind == 2:
+        return bytes([rng.randrange(0x80, 0x100)])
+    if kind == 3:
+        return rng.choice(_TRUNCATED)
+    if kind == 4:
+        return BOM
+    if kind == 5:
+        return rng.choice([b"\r", b"\n", b"\r\n"])
+    return "".join(rng.choice("éü€“ßÄ") for _ in range(rng.randrange(1, 3))).encode("cp1252")
+
+
+def _random_line_text(rng: random.Random) -> str:
+    pool = rng.choice(["abc =", "abc = éü€“ßÄ", _CHARS.replace("﻿", ""), "Fuß“"])
+    return "".join(rng.choice(pool) for _ in range(rng.randrange(0, 8)))
+
+
+def _raw_lines(data: bytes) -> list[bytes]:
+    payload = data[len(BOM) :] if data.startswith(BOM) else data
+    return re.findall(rb"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+", payload)
+
+
+def test_random_bytes_round_trip_and_survive_line_edits() -> None:
+    rng = random.Random(20261121)
+    for _ in range(3000):
+        data = b"".join(_random_chunk(rng) for _ in range(rng.randrange(0, 25)))
+        text = decode_text(data)
+        assert "\r" not in text
+        assert re.search("[\ud800-\udfff]", text) is None  # no lone surrogates
+        assert text.count("�") <= data.count("�".encode())
+        text.encode("utf-8")  # always printable and encodable
+        assert encode_text(text, like=data) == data
+
+        lines = re.findall(r"[^\n]*\n|[^\n]+", text)
+        if not lines:
+            continue
+        index = rng.randrange(len(lines))
+        old = lines[index]
+        terminator = "\n" if old.endswith("\n") else ""
+        # Never empty: an empty line after a line that ends in a lone CR
+        # would join it into one CR LF, which is a different file.
+        new = _random_line_text(rng) or "x"
+        if new + terminator == old:
+            continue
+        edited_text = "".join(lines[:index] + [new + terminator] + lines[index + 1 :])
+        edited = encode_text(edited_text, like=data)
+        assert edited.startswith(BOM) == data.startswith(BOM)
+        before, after = _raw_lines(data), _raw_lines(edited)
+        assert len(after) == len(before)
+        assert after[:index] == before[:index]
+        assert after[index + 1 :] == before[index + 1 :]
+        # Reading is per line, so the saved file reads back as the edited text.
+        assert decode_text(edited) == edited_text

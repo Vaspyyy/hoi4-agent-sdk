@@ -36,19 +36,40 @@ from hoi4.textio import read_text, decode_text, encode_text, detect_format, writ
 
 text = read_text(path)                    # "\n" line endings, no BOM, nothing dropped
 data = encode_text(new_text, like=path.read_bytes())
-detect_format(data)                       # TextFormat(encoding, bom, newline, mixed_newlines)
+detect_format(data)                       # TextFormat(encoding, bom, newline, mixed_newlines, stray_bytes)
 write_text(path, new_text, like=original) # encode_text, then write; returns the bytes
 ```
 
-- Decoding tries UTF-8, then Windows-1252, then Latin-1. The last one maps
-  every byte, so no byte is ever dropped.
+- Decoding works line by line, so what a line means never depends on the
+  rest of the file:
+  - a valid UTF-8 line is read as UTF-8;
+  - a line with stray bytes is read as UTF-8 when the file has a byte-order
+    mark or when at least as many of the line's high bytes belong to valid
+    UTF-8 sequences as do not. Valid sequences are read as UTF-8 and each
+    stray byte as its Windows-1252 character;
+  - any other line is a legacy line and is read as Windows-1252.
+
+  The five bytes Windows-1252 leaves undefined are read as Latin-1. Every
+  byte maps to one character and back, so no byte is dropped and text in
+  memory never holds U+FFFD or a lone surrogate. `detect_format` names the
+  file's encoding (`utf-8`, or `cp1252` / `latin-1` when most high bytes are
+  not valid UTF-8 and there is no byte-order mark) and counts the stray bytes
+  of a UTF-8 file in `stray_bytes`.
+- Why per line and not per file: the writer re-encodes only edited lines (see
+  below), so a legacy file can gain a UTF-8 line. A per-file guess would read
+  that line back as mojibake whenever the legacy lines outnumber it. Per
+  line, a saved file always reads back as the text that was saved.
 - Only CR LF, a lone CR and LF are line breaks. A form feed or a Unicode line
   separator stays inside its line.
 - `encode_text(text, like=original)` keeps the original's encoding, byte-order
-  mark and line endings. Unchanged text returns `original` itself. In a file
-  that mixes line endings, each unchanged line keeps its own.
-- New text that does not fit a legacy code page upgrades the file to UTF-8,
-  which is what the game reads.
+  mark and line endings. Unchanged text returns `original` itself. Every
+  unchanged line keeps its exact bytes: its own line ending in a file that
+  mixes styles, and its stray bytes in a UTF-8 file.
+- Only edited lines are encoded: in the file's encoding when the line fits
+  and reads back the same, otherwise as UTF-8, which is what the game reads.
+  The rest of a legacy file stays in its code page. (A Windows-1252 pair such
+  as `ß“` is also valid UTF-8, so such a line is written as UTF-8 too.) A
+  clean file with one line-ending style is still encoded in one go.
 - Localisation (`.yml`) is always written with the byte-order mark the game
   requires.
 

@@ -206,6 +206,10 @@ All notable changes to this project are documented here. The format follows
   produce exact-path load diagnostics. Non-strict loading continues with
   unaffected country data instead of reparsing and crashing; strict loading
   still fails immediately.
+- One byte that was not valid UTF-8 made a whole file read as Windows-1252
+  (`München` became `MÃ¼nchen`), and an edit that added a character outside
+  the code page then re-encoded every line. Files are now read line by line,
+  and only edited lines are re-encoded.
 
 ### Removed
 
