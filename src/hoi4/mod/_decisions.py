@@ -132,7 +132,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             else (
                 existing.definition_path
                 if existing is not None and existing.definition_path is not None
-                else _decision_category_definition_path(self.mod_root, target)
+                else _decision_category_definition_path(self.mod_root, target, self._shadows_inherited)
             )
         )
         expected_categories_dir = self.mod_root / "common" / "decisions" / "categories"
@@ -186,7 +186,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             )
         elif "path" in kwargs and category.definition_path is None:
             category.definition_path = _decision_category_definition_path(
-                self.mod_root, cast(Path, kwargs["path"])
+                self.mod_root, cast(Path, kwargs["path"]), self._shadows_inherited
             )
         if (
             category.definition_path is not None

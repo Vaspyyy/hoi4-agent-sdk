@@ -319,7 +319,7 @@ class SourcesLayer(LocalisationLayer):
                     / "mod_decisions.txt"
                 )
                 path = _decision_category_definition_path(
-                    self.mod_root, decision_path
+                    self.mod_root, decision_path, self._shadows_inherited
                 )
             if dirty_only and path not in dirty_files:
                 continue

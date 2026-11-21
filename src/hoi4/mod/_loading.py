@@ -479,7 +479,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                         )
                     else:
                         category.definition_path = _decision_category_definition_path(
-                            self.mod_root, category.path or f
+                            self.mod_root, category.path or f, self._shadows_inherited
                         )
                     self._decision_categories[category.id] = category
                 self._original_files[f] = read_text(f)

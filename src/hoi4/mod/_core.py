@@ -312,6 +312,21 @@ class CoreLayer:
     def _read_current_text(path: Path) -> str:
         return read_text(path) if path.exists() else ""
 
+    def _shadows_inherited(self, path: Path) -> bool:
+        """Whether a NEW mod file at ``path`` would replace a game or base-mod file.
+
+        The game loads a mod file instead of the inherited file of the same
+        name, so a generated file must not pick such a name by accident.
+        """
+
+        if path.exists():
+            return False
+        try:
+            source = self.content_source(path.relative_to(self.mod_root))
+        except ValueError:
+            return False
+        return source is not None and source != path
+
     @staticmethod
     def _require_well_formed(path: Path) -> None:
         """Refuse a malformed script file in the mod's own folder.
