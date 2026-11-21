@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import re
 from pathlib import Path
 
@@ -349,15 +350,14 @@ class CatalogsLayer(SourcesLayer):
                 break
         province_types: dict[int, str] = {}
         if path is not None:
-            with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
-                for row in csv.reader(handle, delimiter=";"):
-                    if len(row) < 5:
-                        continue
-                    try:
-                        numeric_id = int(row[0].strip())
-                    except ValueError:
-                        continue
-                    province_types[numeric_id] = row[4].strip().lower()
+            for row in csv.reader(io.StringIO(read_text(path)), delimiter=";"):
+                if len(row) < 5:
+                    continue
+                try:
+                    numeric_id = int(row[0].strip())
+                except ValueError:
+                    continue
+                province_types[numeric_id] = row[4].strip().lower()
         self._scan_cache["province_type_rows"] = {
             f"{province_id}:{province_type}"
             for province_id, province_type in province_types.items()
