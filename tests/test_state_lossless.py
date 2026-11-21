@@ -329,3 +329,90 @@ def test_render_strategic_region_recognises_a_weather_assignment() -> None:
     assert rendered.count("weather = {") == 1
     wrapped = render_strategic_region(1, "REGION_1", [1], "period = { }")
     assert "\tweather = {\n\t\tperiod = { }\n\t}\n" in wrapped
+
+
+# ── Edits change only the value the caller changed ─────────────────────
+
+COMBINED_POINTS = """state = {
+\tid = 7
+\tname = "STATE_7"
+\tmanpower = 1234
+\tstate_category = town
+\tbuildings_max_level_factor = 1.000
+\tresources = {
+\t\tsteel = 12.000
+\t}
+\tprovinces = { 1 2 }
+\thistory = {
+\t\towner = FRA
+\t\tadd_core_of = GER
+\t\tvictory_points = { 1 5 2 10 } # two cities
+\t}
+}
+"""
+
+
+def _state_mod(tmp_path: Path) -> tuple[Mod, Path]:
+    path = _write(tmp_path / "history/states/7-Test.txt", COMBINED_POINTS)
+    return Mod(tmp_path), path
+
+
+def test_owner_edit_keeps_a_combined_victory_points_block(tmp_path: Path) -> None:
+    mod, path = _state_mod(tmp_path)
+    mod.set_state_owner(7, "GER")
+    mod.save()
+    assert path.read_text(encoding="utf-8") == COMBINED_POINTS.replace("owner = FRA", "owner = GER")
+    assert Mod(tmp_path).get_state(7).victory_points == "1 5 2 10"
+
+
+def test_changed_victory_points_are_still_written(tmp_path: Path) -> None:
+    mod, path = _state_mod(tmp_path)
+    mod.set_state_properties(7, victory_points="1 5 2 20")
+    mod.save()
+    assert Mod(tmp_path).get_state(7).victory_points == "1 5 2 20"
+
+
+def test_integer_manpower_is_written_as_that_number(tmp_path: Path) -> None:
+    mod, path = _state_mod(tmp_path)
+    mod.set_state_properties(7, manpower=2000)
+    mod.save()
+    assert path.read_text(encoding="utf-8") == COMBINED_POINTS.replace(
+        "manpower = 1234", "manpower = 2000"
+    )
+    assert Mod(tmp_path).get_state(7).manpower == "2000"
+
+
+def test_numeric_state_properties_accept_int_and_float(tmp_path: Path) -> None:
+    mod, path = _state_mod(tmp_path)
+    mod.set_state_properties(
+        7, manpower=2500.5, buildings_max_level_factor=1.25, local_supplies=2,
+        resources={"steel": 14, "oil": 0.5},
+    )
+    mod.save()
+    assert path.read_text(encoding="utf-8") == (
+        COMBINED_POINTS.replace("manpower = 1234", "manpower = 2500.5")
+        .replace("state_category = town", "state_category = town\n\tlocal_supplies = 2")
+        .replace("buildings_max_level_factor = 1.000", "buildings_max_level_factor = 1.25")
+        .replace("steel = 12.000\n", "steel = 14\n\t\toil = 0.5\n")
+    )
+
+
+def test_numbers_equal_to_the_file_keep_its_spelling(tmp_path: Path) -> None:
+    mod, path = _state_mod(tmp_path)
+    mod.set_state_properties(
+        7, manpower=1234, buildings_max_level_factor=1.0, resources={"steel": 12},
+    )
+    mod.save()
+    assert path.read_bytes() == COMBINED_POINTS.encode("utf-8")
+
+
+def test_new_state_renders_numeric_properties() -> None:
+    from hoi4.states import serialize_state
+    from hoi4.types import State
+
+    text = serialize_state(
+        State(id=9, manpower=500, buildings_max_level_factor=1.0, local_supplies=1.5, provinces=[3])
+    )
+    state = read_state(Path("9.txt"), text)
+    assert (state.manpower, state.local_supplies) == ("500", "1.5")
+    assert "buildings_max_level_factor" not in text

@@ -6,7 +6,7 @@ import copy
 from pathlib import Path
 
 from hoi4 import Mod
-from hoi4.oob import serialize_oob
+from hoi4.oob import DivisionUnit, Ship, ShipEquipment, serialize_oob
 from hoi4.syntax import parse
 
 
@@ -161,3 +161,212 @@ def test_new_field_in_a_one_line_ship_stays_on_that_line(tmp_path: Path) -> None
     assert path.read_text(encoding="utf-8") == SHIPS.replace(
         "owner = ABC } } }\n\t\t}", "owner = ABC } } pride_of_the_fleet = yes }\n\t\t}"
     )
+
+
+# Edits are found by comparing each item with its source block, so copies and
+# plain attribute assignments are written without any ``touched_fields``.
+LAND = """division_template = {
+\tname = "Infantry"
+\tregiments = {
+\t\tinfantry = { x = 0 y = 0 }
+\t}
+\tpriority = 1
+}
+division_template = {
+\tname = "Cavalry"
+\tregiments = { cavalry = { x = 0 y = 0 } }
+}
+
+units = {
+\tdivision = {
+\t\tname = "First"
+\t\tlocation = 100
+\t\tdivision_template = "Infantry"
+\t\tstart_experience_factor = 0.30 # veterans
+\t\tfuture_field = keep
+\t}
+\tdivision = { division_name = { is_name_ordered = yes name_order = 2 } location = 101 division_template = "Cavalry" }
+}
+"""
+
+
+def _land_mod(tmp_path: Path) -> tuple[Mod, Path]:
+    path = _write(tmp_path / "history/units/TST_1936.txt", LAND)
+    return Mod(tmp_path), path
+
+
+def test_edits_on_copied_divisions_are_written(tmp_path: Path) -> None:
+    mod, path = _land_mod(tmp_path)
+    divisions = copy.deepcopy(mod.get_oob("TST_1936").divisions)
+    divisions[0].start_experience_factor = 0.9
+    divisions[1].location = 555
+    assert mod.update_oob("TST_1936", divisions=divisions)
+    mod.save()
+    assert path.read_text(encoding="utf-8") == LAND.replace(
+        "start_experience_factor = 0.30", "start_experience_factor = 0.9"
+    ).replace("location = 101", "location = 555")
+    reloaded = Mod(tmp_path).get_oob("TST_1936").divisions
+    assert reloaded[0].start_experience_factor == 0.9
+    assert reloaded[1].location == 555
+
+
+def test_plain_attribute_edits_on_loaded_objects_are_written(tmp_path: Path) -> None:
+    mod, path = _land_mod(tmp_path)
+    oob = mod.get_oob("TST_1936")
+    oob.divisions[1].name_order = 7
+    oob.templates[0].priority = 2
+    oob.templates[1].name = "Horse"
+    assert mod.update_oob("TST_1936", templates=oob.templates, divisions=oob.divisions)
+    mod.save()
+    assert path.read_text(encoding="utf-8") == (
+        LAND.replace("priority = 1", "priority = 2")
+        .replace('name = "Cavalry"', 'name = "Horse"')
+        .replace("name_order = 2", "name_order = 7")
+    )
+
+
+def test_a_new_field_on_a_copied_division_is_added_once(tmp_path: Path) -> None:
+    mod, path = _land_mod(tmp_path)
+    divisions = copy.deepcopy(mod.get_oob("TST_1936").divisions)
+    divisions[1].start_equipment_factor = 0.5
+    assert mod.update_oob("TST_1936", divisions=divisions)
+    mod.save()
+    assert path.read_text(encoding="utf-8") == LAND.replace(
+        'division_template = "Cavalry" }',
+        'division_template = "Cavalry" start_equipment_factor = 0.5 }',
+    )
+
+
+def test_reordered_divisions_keep_their_blocks_and_edits(tmp_path: Path) -> None:
+    mod, path = _land_mod(tmp_path)
+    divisions = copy.deepcopy(mod.get_oob("TST_1936").divisions)
+    divisions.reverse()
+    divisions[0].location = 555  # the second division of the file
+    templates = copy.deepcopy(mod.get_oob("TST_1936").templates)
+    templates.reverse()
+    assert mod.update_oob("TST_1936", templates=templates, divisions=divisions)
+    mod.save()
+    assert path.read_text(encoding="utf-8") == LAND.replace("location = 101", "location = 555")
+
+
+def test_unedited_oob_passed_back_stays_byte_identical(tmp_path: Path) -> None:
+    mod, path = _land_mod(tmp_path)
+    oob = copy.deepcopy(mod.get_oob("TST_1936"))
+    assert mod.update_oob("TST_1936", templates=oob.templates, divisions=oob.divisions)
+    mod.save()
+    assert path.read_bytes() == LAND.encode("utf-8")
+
+
+def test_removing_one_division_and_adding_another_keeps_the_rest(tmp_path: Path) -> None:
+    mod, path = _land_mod(tmp_path)
+    loaded = copy.deepcopy(mod.get_oob("TST_1936").divisions)
+    kept = loaded[1]
+    kept.location = 555
+    new = DivisionUnit("Infantry", 300, name="Third")
+    assert mod.update_oob("TST_1936", divisions=[kept, new])
+    mod.save()
+    written = path.read_text(encoding="utf-8")
+    # The first division is gone, the kept one changed only its location, and
+    # the new one was added after it instead of overwriting it.
+    kept_line = LAND.splitlines(keepends=True)[-2].replace("location = 101", "location = 555")
+    assert written.startswith(LAND[: LAND.index("\tdivision = {\n")] + kept_line)
+    reloaded = Mod(tmp_path).get_oob("TST_1936").divisions
+    assert [(d.name, d.name_order, d.location) for d in reloaded] == [
+        ("", 2, 555),
+        ("Third", None, 300),
+    ]
+
+
+NAVAL_AIR = """units = {
+\tfleet = {
+\t\tname = "Home Fleet"
+\t\tnaval_base = 200
+\t\ttask_force = {
+\t\t\tname = "Battle Group"
+\t\t\tlocation = 200
+\t\t\tship = { name = "Alpha" definition = battleship equipment = { ship_hull_heavy_1 = { amount = 1 owner = TST version_name = "Old Class" } } }
+\t\t\tship = {
+\t\t\t\tname = "Beta"
+\t\t\t\tdefinition = destroyer
+\t\t\t\tequipment = {
+\t\t\t\t\tship_hull_light_1 = { amount = 1 owner = TST }
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t}
+}
+"""
+
+AIR = """air_wings = {
+\t200 = {
+\t\tfighter_equipment_0 = { owner = "TST" amount = 24 } # keep
+\t\tCAS_equipment_1 = { owner = "TST" amount = 12 }
+\t}
+}
+"""
+
+
+def test_edits_on_copied_fleets_task_forces_and_ships_are_written(tmp_path: Path) -> None:
+    path = _write(tmp_path / "history/units/TST_naval.txt", NAVAL_AIR)
+    mod = Mod(tmp_path)
+    fleets = copy.deepcopy(mod.get_oob("TST_naval").fleets)
+    fleets[0].naval_base = 201
+    task_force = fleets[0].task_forces[0]
+    task_force.location = 202
+    task_force.ships[0].equipment[0].version_name = "New Class"
+    task_force.ships[1].name = "Gamma"
+    task_force.ships[1].equipment[0].amount = 2
+    assert mod.update_oob("TST_naval", fleets=fleets)
+    mod.save()
+    assert path.read_text(encoding="utf-8") == (
+        NAVAL_AIR.replace("naval_base = 200", "naval_base = 201")
+        .replace("location = 200", "location = 202")
+        .replace('"Old Class"', '"New Class"')
+        .replace('name = "Beta"', 'name = "Gamma"')
+        .replace("ship_hull_light_1 = { amount = 1", "ship_hull_light_1 = { amount = 2")
+    )
+
+
+def test_reordered_ships_keep_their_blocks_and_edits(tmp_path: Path) -> None:
+    path = _write(tmp_path / "history/units/TST_naval.txt", NAVAL_AIR)
+    mod = Mod(tmp_path)
+    fleets = copy.deepcopy(mod.get_oob("TST_naval").fleets)
+    ships = fleets[0].task_forces[0].ships
+    ships.reverse()
+    ships[0].definition = "light_cruiser"  # Beta
+    assert mod.update_oob("TST_naval", fleets=fleets)
+    mod.save()
+    assert path.read_text(encoding="utf-8") == NAVAL_AIR.replace(
+        "definition = destroyer", "definition = light_cruiser"
+    )
+
+
+def test_edits_on_copied_air_wings_are_written(tmp_path: Path) -> None:
+    path = _write(tmp_path / "history/units/TST_air.txt", AIR)
+    mod = Mod(tmp_path)
+    oob = mod.get_oob("TST_air")
+    oob.air_wings[1].amount = 36
+    assert mod.update_oob("TST_air", air_wings=oob.air_wings)
+    mod.save()
+    assert path.read_text(encoding="utf-8") == AIR.replace("amount = 12", "amount = 36")
+
+
+def test_removing_one_ship_and_adding_another_keeps_the_rest(tmp_path: Path) -> None:
+    path = _write(tmp_path / "history/units/TST_naval.txt", NAVAL_AIR)
+    mod = Mod(tmp_path)
+    fleets = copy.deepcopy(mod.get_oob("TST_naval").fleets)
+    ships = fleets[0].task_forces[0].ships
+    new = Ship("Delta", "submarine", [ShipEquipment("ship_hull_submarine_1", owner="TST")])
+    fleets[0].task_forces[0].ships = [ships[1], new]
+    assert mod.update_oob("TST_naval", fleets=fleets)
+    mod.save()
+    written = path.read_text(encoding="utf-8")
+    alpha = NAVAL_AIR.splitlines(keepends=True)[7]
+    assert alpha.lstrip().startswith('ship = { name = "Alpha"')
+    beta_end = NAVAL_AIR.index("\t\t\t}\n\t\t}\n") + len("\t\t\t}\n")
+    assert written.startswith(NAVAL_AIR[:beta_end].replace(alpha, ""))
+    reloaded = Mod(tmp_path).get_oob("TST_naval").fleets[0].task_forces[0].ships
+    assert [(s.name, s.definition) for s in reloaded] == [
+        ("Beta", "destroyer"),
+        ("Delta", "submarine"),
+    ]

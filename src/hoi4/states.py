@@ -20,6 +20,7 @@ from .patching import (
     AssignmentSpan,
     block_bodies_equivalent,
     replace_assignment,
+    scalar_values_equivalent,
     top_level_assignments,
 )
 from .syntax import Assignment, Block, parse
@@ -367,6 +368,21 @@ def _replace_body(text: str, span: AssignmentSpan, body: str) -> str:
     return text[: span.body_start] + body + text[span.body_end :]
 
 
+def _scalar_text(value: str | int | float) -> str:
+    """Spell a state property for script; numbers may be ``int`` or ``float``."""
+
+    if isinstance(value, bool):
+        raise TypeError(f"Expected a number or text, got {value!r}")
+    if isinstance(value, float):
+        # ``repr`` is the shortest exact spelling; avoid exponents like 1e-05.
+        text = repr(value)
+        if "e" in text or "E" in text:
+            text = format(value, "f").rstrip("0")
+            text = text + "0" if text.endswith(".") else text
+        return text
+    return str(value).strip()
+
+
 def _quote_like(existing: str, value: str) -> str:
     if existing.startswith('"') and existing.endswith('"'):
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
@@ -539,13 +555,15 @@ def _set_resources(
         if key not in updated:
             body = _set_direct_scalar(body, key, None, child)
     for key, value in updated.items():
-        if key not in original or str(original[key]) != str(value):
-            body = _set_direct_scalar(body, key, str(value), child)
+        if key not in original or not scalar_values_equivalent(
+            _scalar_text(original[key]), _scalar_text(value)
+        ):
+            body = _set_direct_scalar(body, key, _scalar_text(value), child)
     return _replace_body(text, span, body)
 
 
 def _render_resources(resources: dict[str, str | int | float]) -> str:
-    return "\n".join(f"{key} = {value}" for key, value in resources.items())
+    return "\n".join(f"{key} = {_scalar_text(value)}" for key, value in resources.items())
 
 
 def _render_new_state(state: State) -> str:
@@ -560,7 +578,9 @@ def _render_new_state(state: State) -> str:
     if state.name:
         state_block.children.append(PdxNode(key="name", value=state.name))
 
-    state_block.children.append(PdxNode(key="manpower", value=state.manpower or "0"))
+    state_block.children.append(
+        PdxNode(key="manpower", value=_scalar_text(state.manpower) or "0")
+    )
     state_block.children.append(PdxNode(key="state_category", value=state.state_category))
 
     if state.impassable:
@@ -569,12 +589,12 @@ def _render_new_state(state: State) -> str:
     if state.is_demilitarized_zone:
         state_block.children.append(PdxNode(key="is_demilitarized_zone", value="yes"))
 
-    if state.buildings_max_level_factor and state.buildings_max_level_factor != "1.0":
-        state_block.children.append(
-            PdxNode(key="buildings_max_level_factor", value=state.buildings_max_level_factor)
-        )
-    if state.local_supplies:
-        state_block.children.append(PdxNode(key="local_supplies", value=state.local_supplies))
+    factor = _scalar_text(state.buildings_max_level_factor)
+    if factor and not scalar_values_equivalent(factor, "1.0"):
+        state_block.children.append(PdxNode(key="buildings_max_level_factor", value=factor))
+    local_supplies = _scalar_text(state.local_supplies)
+    if local_supplies:
+        state_block.children.append(PdxNode(key="local_supplies", value=local_supplies))
     if state.resources:
         _replace_resources(state_block, state.resources)
 
@@ -621,18 +641,18 @@ def _patch_existing_state(state: State) -> str:
     scalar_fields = {
         "id": str(state.id),
         "name": state.name,
-        "manpower": state.manpower or "0",
+        "manpower": _scalar_text(state.manpower) or "0",
         "state_category": state.state_category,
-        "local_supplies": state.local_supplies,
-        "buildings_max_level_factor": state.buildings_max_level_factor,
+        "local_supplies": _scalar_text(state.local_supplies),
+        "buildings_max_level_factor": _scalar_text(state.buildings_max_level_factor),
     }
     original_scalars = {
         "id": str(original.id),
         "name": original.name,
-        "manpower": original.manpower or "0",
+        "manpower": _scalar_text(original.manpower) or "0",
         "state_category": original.state_category,
-        "local_supplies": original.local_supplies,
-        "buildings_max_level_factor": original.buildings_max_level_factor,
+        "local_supplies": _scalar_text(original.local_supplies),
+        "buildings_max_level_factor": _scalar_text(original.buildings_max_level_factor),
     }
     placement: dict[str, tuple[str, ...]] = {
         "id": (),
@@ -641,7 +661,11 @@ def _patch_existing_state(state: State) -> str:
         "state_category": ("manpower", "name", "id"),
     }
     for key, value in scalar_fields.items():
-        if value == original_scalars[key]:
+        # Compare by meaning: ``2000`` given for a file's ``2000.0`` is no change.
+        if value == original_scalars[key] or (
+            value and original_scalars[key]
+            and scalar_values_equivalent(value, original_scalars[key])
+        ):
             continue
         rendered_value: str | None = value
         if key in {"local_supplies", "buildings_max_level_factor"} and not value:
@@ -675,12 +699,18 @@ def _patch_existing_state(state: State) -> str:
         state_body = _set_direct_block(state_body, "history", state.history or None, layout)
 
     history_span = _find_direct_assignment(state_body, "history", block=True)
-    repair_victory_points = _has_non_pair_victory_points(_assignment_body(state_body, history_span))
-    history_changed = history_replaced or repair_victory_points or any(
+    # Victory points are rewritten only when their value changed, or when the
+    # caller passed them explicitly and the file combines several pairs in one
+    # block. An edit of another field keeps the file's spelling.
+    victory_points_changed = state.victory_points.split() != original.victory_points.split()
+    rewrite_victory_points = victory_points_changed or (
+        state._victory_points_requested
+        and _has_non_pair_victory_points(_assignment_body(state_body, history_span))
+    )
+    history_changed = history_replaced or rewrite_victory_points or any(
         (
             state.owner != original.owner,
             state.cores != original.cores,
-            state.victory_points != original.victory_points,
             state.buildings.strip() != original.buildings.strip(),
         )
     )
@@ -698,7 +728,7 @@ def _patch_existing_state(state: State) -> str:
             history_body = _set_repeated_scalars(
                 history_body, "add_core_of", state.cores, history_layout, after_keys=("owner",),
             )
-        if history_replaced or repair_victory_points or state.victory_points != original.victory_points:
+        if history_replaced or rewrite_victory_points:
             history_body = _set_victory_point_pairs(
                 history_body, state.victory_points, history_layout,
             )

@@ -80,7 +80,9 @@ class DivisionTemplate:
     division_names_group: str = ""
     priority: int | None = None
     raw_block: str = ""
-    touched_fields: set[str] = field(default_factory=set, repr=False)
+    # No longer read: saving compares each item with its source block. Kept so
+    # code that still adds field names here keeps working.
+    touched_fields: set[str] = field(default_factory=set, repr=False, compare=False)
     source_index: int = -1
 
 
@@ -93,7 +95,9 @@ class DivisionUnit:
     start_experience_factor: float | None = None
     start_equipment_factor: float | None = None
     raw_block: str = ""
-    touched_fields: set[str] = field(default_factory=set, repr=False)
+    # No longer read: saving compares each item with its source block. Kept so
+    # code that still adds field names here keeps working.
+    touched_fields: set[str] = field(default_factory=set, repr=False, compare=False)
     source_index: int = -1
 
 
@@ -105,7 +109,9 @@ class ShipEquipment:
     creator: str = ""
     version_name: str = ""
     raw_block: str = ""
-    touched_fields: set[str] = field(default_factory=set, repr=False)
+    # No longer read: saving compares each item with its source block. Kept so
+    # code that still adds field names here keeps working.
+    touched_fields: set[str] = field(default_factory=set, repr=False, compare=False)
     source_index: int = -1
 
 
@@ -116,7 +122,9 @@ class Ship:
     equipment: list[ShipEquipment] = field(default_factory=list)
     pride_of_the_fleet: bool = False
     raw_block: str = ""
-    touched_fields: set[str] = field(default_factory=set, repr=False)
+    # No longer read: saving compares each item with its source block. Kept so
+    # code that still adds field names here keeps working.
+    touched_fields: set[str] = field(default_factory=set, repr=False, compare=False)
     source_index: int = -1
 
 
@@ -126,7 +134,9 @@ class TaskForce:
     location: int
     ships: list[Ship] = field(default_factory=list)
     raw_block: str = ""
-    touched_fields: set[str] = field(default_factory=set, repr=False)
+    # No longer read: saving compares each item with its source block. Kept so
+    # code that still adds field names here keeps working.
+    touched_fields: set[str] = field(default_factory=set, repr=False, compare=False)
     source_index: int = -1
 
 
@@ -136,7 +146,9 @@ class Fleet:
     naval_base: int
     task_forces: list[TaskForce] = field(default_factory=list)
     raw_block: str = ""
-    touched_fields: set[str] = field(default_factory=set, repr=False)
+    # No longer read: saving compares each item with its source block. Kept so
+    # code that still adds field names here keeps working.
+    touched_fields: set[str] = field(default_factory=set, repr=False, compare=False)
     source_index: int = -1
 
 
@@ -149,7 +161,9 @@ class AirWing:
     creator: str = ""
     version_name: str = ""
     raw_block: str = ""
-    touched_fields: set[str] = field(default_factory=set, repr=False)
+    # No longer read: saving compares each item with its source block. Kept so
+    # code that still adds field names here keeps working.
+    touched_fields: set[str] = field(default_factory=set, repr=False, compare=False)
     source_index: int = -1
     source_location_index: int = -1
 
@@ -948,13 +962,14 @@ def _parse_ship(body: str, source_index: int) -> Ship:
         if not span.is_block or span.body_start is None or span.body_end is None:
             continue
         child = equipment_body[span.body_start : span.body_end]
+        values = _parse_equipment_fields(child)
         equipment.append(
             ShipEquipment(
                 equipment_type=span.key,
-                amount=_optional_int(child, "amount") or 0,
-                owner=_scalar_value(child, "owner"),
-                creator=_scalar_value(child, "creator"),
-                version_name=_scalar_value(child, "version_name"),
+                amount=values.amount,
+                owner=values.owner,
+                creator=values.creator,
+                version_name=values.version_name,
                 raw_block=child,
                 source_index=len(equipment),
             )
@@ -996,14 +1011,15 @@ def _parse_air_wings(text: str) -> list[AirWing]:
             equipment_body = location_body[
                 equipment_span.body_start : equipment_span.body_end
             ]
+            values = _parse_equipment_fields(equipment_body)
             result.append(
                 AirWing(
                     location=location,
                     equipment_type=equipment_span.key,
-                    amount=_optional_int(equipment_body, "amount") or 0,
-                    owner=_scalar_value(equipment_body, "owner"),
-                    creator=_scalar_value(equipment_body, "creator"),
-                    version_name=_scalar_value(equipment_body, "version_name"),
+                    amount=values.amount,
+                    owner=values.owner,
+                    creator=values.creator,
+                    version_name=values.version_name,
                     raw_block=equipment_body,
                     source_index=len(result),
                     source_location_index=location_index,
@@ -1011,6 +1027,18 @@ def _parse_air_wings(text: str) -> list[AirWing]:
             )
         location_index += 1
     return result
+
+
+def _parse_equipment_fields(body: str) -> ShipEquipment:
+    """Read the fields a ship equipment entry and an air wing share."""
+
+    return ShipEquipment(
+        equipment_type="",
+        amount=_optional_int(body, "amount") or 0,
+        owner=_scalar_value(body, "owner"),
+        creator=_scalar_value(body, "creator"),
+        version_name=_scalar_value(body, "version_name"),
+    )
 
 
 def _parse_battalions(body: str) -> list[Battalion]:
@@ -1049,16 +1077,44 @@ def _set_block(body: str, key: str, value: str | None) -> str:
     return set_block(body, key, value)
 
 
+_TEMPLATE_FIELDS = ("name", "battalions", "support", "division_names_group", "priority")
+_DIVISION_FIELDS = (
+    "name",
+    "name_order",
+    "location",
+    "division_template",
+    "start_experience_factor",
+    "start_equipment_factor",
+)
+_EQUIPMENT_FIELDS = ("amount", "owner", "creator", "version_name")
+
+
+def _changed_fields(
+    item: object,
+    baseline: object,
+    names: tuple[str, ...],
+    all_fields: bool,
+) -> set[str]:
+    """The fields of ``item`` whose value differs from ``baseline``.
+
+    ``baseline`` is the same kind of item read back from the source body, so a
+    field the caller left alone, or one the model cannot represent (it reads
+    back as the default on both sides), is never rewritten.
+    """
+
+    if all_fields:
+        return set(names)
+    return {name for name in names if getattr(item, name) != getattr(baseline, name)}
+
+
 def _patch_template_body(
     body: str,
     template: DivisionTemplate,
     *,
     all_fields: bool = False,
 ) -> str:
-    fields = (
-        {"name", "battalions", "support", "division_names_group", "priority"}
-        if all_fields
-        else template.touched_fields
+    fields = _changed_fields(
+        template, _parse_template(body, -1), _TEMPLATE_FIELDS, all_fields
     )
     if "name" in fields:
         body = _set_scalar(body, "name", pdx_string(template.name))
@@ -1086,15 +1142,6 @@ def _patch_template_body(
             "priority",
             str(template.priority) if template.priority is not None else None,
         )
-    unknown = fields - {
-        "name",
-        "battalions",
-        "support",
-        "division_names_group",
-        "priority",
-    }
-    if unknown:
-        raise ValueError(f"Unknown division template fields: {sorted(unknown)}")
     return body
 
 
@@ -1104,17 +1151,8 @@ def _patch_division_body(
     *,
     all_fields: bool = False,
 ) -> str:
-    fields = (
-        {
-            "name",
-            "name_order",
-            "location",
-            "division_template",
-            "start_experience_factor",
-            "start_equipment_factor",
-        }
-        if all_fields
-        else division.touched_fields
+    fields = _changed_fields(
+        division, _parse_division(body, -1), _DIVISION_FIELDS, all_fields
     )
     if "name" in fields:
         body = _set_scalar(body, "name", pdx_string(division.name) if division.name else None)
@@ -1142,16 +1180,33 @@ def _patch_division_body(
                 field_name,
                 pdx_value(value) if value is not None else None,
             )
-    unknown = fields - {
-        "name",
-        "name_order",
-        "location",
-        "division_template",
-        "start_experience_factor",
-        "start_equipment_factor",
-    }
-    if unknown:
-        raise ValueError(f"Unknown division unit fields: {sorted(unknown)}")
+    return body
+
+
+def _patch_equipment_fields(
+    body: str,
+    item: ShipEquipment | AirWing,
+    *,
+    all_fields: bool = False,
+) -> str:
+    """Patch ``amount``, ``owner``, ``creator`` and ``version_name`` of a ship
+    equipment entry or an air wing."""
+
+    fields = _changed_fields(
+        item, _parse_equipment_fields(body), _EQUIPMENT_FIELDS, all_fields
+    )
+    if "amount" in fields:
+        body = _set_scalar(body, "amount", str(item.amount))
+    for field_name in ("owner", "creator"):
+        if field_name in fields:
+            value = getattr(item, field_name)
+            body = _set_scalar(body, field_name, pdx_value(value) if value else None)
+    if "version_name" in fields:
+        body = _set_scalar(
+            body,
+            "version_name",
+            pdx_string(item.version_name) if item.version_name else None,
+        )
     return body
 
 
@@ -1161,27 +1216,7 @@ def _patch_ship_equipment_body(
     *,
     all_fields: bool = False,
 ) -> str:
-    fields = (
-        {"amount", "owner", "creator", "version_name"}
-        if all_fields
-        else equipment.touched_fields
-    )
-    if "amount" in fields:
-        body = _set_scalar(body, "amount", str(equipment.amount))
-    for field_name in ("owner", "creator"):
-        if field_name in fields:
-            value = getattr(equipment, field_name)
-            body = _set_scalar(body, field_name, pdx_value(value) if value else None)
-    if "version_name" in fields:
-        body = _set_scalar(
-            body,
-            "version_name",
-            pdx_string(equipment.version_name) if equipment.version_name else None,
-        )
-    unknown = fields - {"amount", "owner", "creator", "version_name"}
-    if unknown:
-        raise ValueError(f"Unknown ship equipment fields: {sorted(unknown)}")
-    return body
+    return _patch_equipment_fields(body, equipment, all_fields=all_fields)
 
 
 def _patch_ship_body(
@@ -1190,10 +1225,11 @@ def _patch_ship_body(
     *,
     all_fields: bool = False,
 ) -> str:
-    fields = (
-        {"name", "definition", "equipment", "pride_of_the_fleet"}
-        if all_fields
-        else ship.touched_fields
+    fields = _changed_fields(
+        ship,
+        _parse_ship(body, -1),
+        ("name", "definition", "pride_of_the_fleet"),
+        all_fields,
     )
     if "name" in fields:
         # Ships may be named by ``ordered_name`` instead; an empty name stays out.
@@ -1206,24 +1242,21 @@ def _patch_ship_body(
             "pride_of_the_fleet",
             "yes" if ship.pride_of_the_fleet else None,
         )
-    if "equipment" in fields:
-        current = _block_value(body, "equipment")
-        current = _patch_repeated_blocks(
-            current,
-            ship.equipment,
-            key=lambda item: item.equipment_type,
-            render=lambda item: serialize_ship_equipment(item),
-            patch=lambda child, item: _patch_ship_equipment_body(child, item),
-            existing_keys={
-                span.key
-                for span in top_level_assignments(current)
-                if span.is_block
-            },
-        )
-        body = _set_block(body, "equipment", current or None)
-    unknown = fields - {"name", "definition", "equipment", "pride_of_the_fleet"}
-    if unknown:
-        raise ValueError(f"Unknown ship fields: {sorted(unknown)}")
+    current = _block_value(body, "equipment")
+    patched = _patch_repeated_blocks(
+        current,
+        ship.equipment,
+        key=lambda item: item.equipment_type,
+        render=lambda item: serialize_ship_equipment(item),
+        patch=lambda child, item: _patch_ship_equipment_body(child, item),
+        existing_keys={
+            span.key
+            for span in top_level_assignments(current)
+            if span.is_block
+        },
+    )
+    if all_fields or patched != current:
+        body = _set_block(body, "equipment", patched or None)
     return body
 
 
@@ -1233,26 +1266,21 @@ def _patch_task_force_body(
     *,
     all_fields: bool = False,
 ) -> str:
-    fields = (
-        {"name", "location", "ships"} if all_fields else task_force.touched_fields
+    fields = _changed_fields(
+        task_force, _parse_task_force(body, -1), ("name", "location"), all_fields
     )
     if "name" in fields:
         body = _set_scalar(body, "name", pdx_string(task_force.name))
     if "location" in fields:
         body = _set_scalar(body, "location", str(task_force.location))
-    if "ships" in fields:
-        body = _patch_repeated_blocks(
-            body,
-            task_force.ships,
-            key=lambda _item: "ship",
-            render=lambda item: serialize_ship(item),
-            patch=lambda child, item: _patch_ship_body(child, item),
-            existing_keys={"ship"},
-        )
-    unknown = fields - {"name", "location", "ships"}
-    if unknown:
-        raise ValueError(f"Unknown task force fields: {sorted(unknown)}")
-    return body
+    return _patch_repeated_blocks(
+        body,
+        task_force.ships,
+        key=lambda _item: "ship",
+        render=lambda item: serialize_ship(item),
+        patch=lambda child, item: _patch_ship_body(child, item),
+        existing_keys={"ship"},
+    )
 
 
 def _patch_fleet_body(
@@ -1261,28 +1289,21 @@ def _patch_fleet_body(
     *,
     all_fields: bool = False,
 ) -> str:
-    fields = (
-        {"name", "naval_base", "task_forces"}
-        if all_fields
-        else fleet.touched_fields
+    fields = _changed_fields(
+        fleet, _parse_fleet(body, -1), ("name", "naval_base"), all_fields
     )
     if "name" in fields:
         body = _set_scalar(body, "name", pdx_string(fleet.name))
     if "naval_base" in fields:
         body = _set_scalar(body, "naval_base", str(fleet.naval_base))
-    if "task_forces" in fields:
-        body = _patch_repeated_blocks(
-            body,
-            fleet.task_forces,
-            key=lambda _item: "task_force",
-            render=lambda item: serialize_task_force(item),
-            patch=lambda child, item: _patch_task_force_body(child, item),
-            existing_keys={"task_force"},
-        )
-    unknown = fields - {"name", "naval_base", "task_forces"}
-    if unknown:
-        raise ValueError(f"Unknown fleet fields: {sorted(unknown)}")
-    return body
+    return _patch_repeated_blocks(
+        body,
+        fleet.task_forces,
+        key=lambda _item: "task_force",
+        render=lambda item: serialize_task_force(item),
+        patch=lambda child, item: _patch_task_force_body(child, item),
+        existing_keys={"task_force"},
+    )
 
 
 def _patch_air_wing_body(
@@ -1291,27 +1312,7 @@ def _patch_air_wing_body(
     *,
     all_fields: bool = False,
 ) -> str:
-    fields = (
-        {"amount", "owner", "creator", "version_name"}
-        if all_fields
-        else wing.touched_fields
-    )
-    if "amount" in fields:
-        body = _set_scalar(body, "amount", str(wing.amount))
-    for field_name in ("owner", "creator"):
-        if field_name in fields:
-            value = getattr(wing, field_name)
-            body = _set_scalar(body, field_name, pdx_value(value) if value else None)
-    if "version_name" in fields:
-        body = _set_scalar(
-            body,
-            "version_name",
-            pdx_string(wing.version_name) if wing.version_name else None,
-        )
-    unknown = fields - {"amount", "owner", "creator", "version_name"}
-    if unknown:
-        raise ValueError(f"Unknown air wing fields: {sorted(unknown)}")
-    return body
+    return _patch_equipment_fields(body, wing, all_fields=all_fields)
 
 
 def _patch_templates(

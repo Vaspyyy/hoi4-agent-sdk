@@ -183,6 +183,18 @@ All notable changes to this project are documented here. The format follows
 - A state was found by any `id = N` in its file, including one in a comment.
   A state file with a byte-order mark loaded empty. A one-field state edit
   could produce broken indentation.
+- `update_oob` ignored edits made to copies of loaded divisions, templates and
+  air wings (and to the objects `get_oob` returned) and saved the file
+  unchanged. Each item is now compared with its source block and every field
+  that differs is written, and only those fields. Removing one division or ship
+  and adding another in the same call could overwrite a kept one.
+- Changing a state's owner split a `victory_points = { 1 5 2 10 }` block into
+  one block per pair. Victory points are now rewritten only when their value
+  changed or the caller passed them explicitly.
+- `set_state_properties(..., manpower=2000)` crashed at save with an integer or
+  float. `manpower`, `local_supplies`, `buildings_max_level_factor` and resource
+  amounts now accept `int` and `float`, and a number equal to the file's value
+  (`1.0` for `1.000`) keeps the file's spelling.
 - `validate()` crashed with `ValueError: Unbalanced braces` once a vanilla
   country with an unbalanced order of battle was in the mod.
 - Saving rewrote Windows line endings as Unix ones in every line of the file,

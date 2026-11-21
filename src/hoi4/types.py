@@ -278,11 +278,13 @@ class State:
     cores: list[str] = field(default_factory=list)
     resources: dict[str, str | int | float] = field(default_factory=dict)
     buildings: str = ""
-    local_supplies: str = ""
-    manpower: str = "0"
+    # Numeric properties may be given as numbers or as their script spelling.
+    # Loaded states keep the spelling of the file.
+    local_supplies: str | int | float = ""
+    manpower: str | int | float = "0"
     state_category: str = "large_city"
     victory_points: str = ""
-    buildings_max_level_factor: str = "1.0"
+    buildings_max_level_factor: str | int | float = "1.0"
     is_demilitarized_zone: bool = False
     provinces: list[int] = field(default_factory=list)
     history: str = ""
@@ -291,6 +293,10 @@ class State:
     source_path: Optional[Path] = None
 
     impassable: bool = False
+    # Set when a caller passes ``victory_points`` explicitly: the points are
+    # then written one province/value pair per block even when the value equals
+    # what the file says. Other edits leave the file's spelling alone.
+    _victory_points_requested: bool = field(default=False, repr=False, compare=False)
 
 @dataclass
 class Decision:

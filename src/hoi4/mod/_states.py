@@ -262,6 +262,8 @@ class StatesLayer(CoreLayer):
             if list_key in kwargs and isinstance(kwargs[list_key], list):
                 kwargs[list_key] = _append_unique(getattr(state, list_key), kwargs[list_key])
         _set_fields(state, kwargs)
+        if "victory_points" in kwargs:
+            state._victory_points_requested = True
         self._dirty.add("states")
         self._dirty_states.add(state_id)
         return True
