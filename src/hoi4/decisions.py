@@ -488,11 +488,14 @@ def _patch_category_body(
 
     if pool is None:
         pool = list(category.decisions)
-    # Migrate invalid pre-0.4.2 output by removing presentation metadata from
-    # the decision-content file. It is rendered through the category file.
-    body = set_scalar(body, "icon", None)
-    body = set_block(body, "allowed", None)
-    body = set_block(body, "visible", None)
+    if category.touched:
+        # The game reads a category's presentation only from
+        # ``common/decisions/categories``. When the category itself is edited,
+        # presentation keys that sit in the decision-content file move there.
+        # An edit to one of its decisions leaves them where they are.
+        body = set_scalar(body, "icon", None)
+        body = set_block(body, "allowed", None)
+        body = set_block(body, "visible", None)
     placed: list[tuple[AssignmentSpan, Decision | None]] = []
     for span in _decision_spans(body):
         index = next(

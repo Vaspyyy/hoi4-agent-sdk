@@ -36,22 +36,6 @@ def _decision_targets(value: object) -> list[str]:
     return targets
 
 
-def _has_metadata_to_migrate(category: DecisionCategory) -> bool:
-    """Whether a category's presentation still lives only in its decisions file.
-
-    Pre-0.4.2 output put ``icon``/``allowed``/``visible`` into the
-    ``common/decisions`` block. Rewriting that file moves them out, so the
-    category definition file must be written too. A category with no
-    definition in the mod is otherwise left alone: its definition usually
-    comes from the game or a base mod, and an empty one written here would
-    replace it.
-    """
-
-    return not category.definition_raw_block and bool(
-        category.icon or category.allowed or category.visible
-    )
-
-
 class DecisionsLayer(LocalisationLayer, EffectsLayer):
     """Decision and decision-category authoring."""
 
@@ -336,9 +320,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         self._dirty_decision_categories.add(category_id)
         if category.path is not None:
             self._dirty_decision_files.add(category.path)
-        if category.definition_path is not None and (
-            category.touched or _has_metadata_to_migrate(category)
-        ):
+        if category.definition_path is not None and category.touched:
             self._dirty_decision_category_files.add(category.definition_path)
         return decision
 
@@ -371,10 +353,6 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         if category is not None:
             if category.path is not None:
                 self._dirty_decision_files.add(category.path)
-            if category.definition_path is not None and _has_metadata_to_migrate(
-                category
-            ):
-                self._dirty_decision_category_files.add(category.definition_path)
         return True
 
     def delete_decision(self, decision_id: str) -> bool:
