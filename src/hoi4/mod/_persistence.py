@@ -700,13 +700,10 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
 
         Only sections that had edits or whose files changed on disk (and the
         sections built from them) are unloaded; they load again on next use.
-        Everything else stays in memory. With base mods, everything is
-        unloaded, like ``reload()``: the base mods can change on disk too.
+        Everything else stays in memory. When a base mod's text file changed,
+        everything is unloaded, like ``reload()``.
         """
 
-        if self._content_layers is not None:
-            self.reload()
-            return
         self._discard_changes(())
 
     def reload(self) -> None:
@@ -738,9 +735,9 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         fingerprints, digests = self._scan_fingerprints()
         changed = _changed_files(self._fingerprints, self._read_digests, fingerprints, digests)
         names, mapped = self._sections_to_unload([*written, *staged, *changed])
-        if not mapped:
-            # A descriptor or a path outside the mod changes what every
-            # section sees, including the inherited layers.
+        if not mapped or self._base_mods_changed():
+            # A descriptor, a path outside the mod or a changed base mod
+            # changes what every section sees, including the inherited layers.
             self.reload()
             return
         self._reset_pending_edits()

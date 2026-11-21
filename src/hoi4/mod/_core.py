@@ -492,6 +492,10 @@ class CoreLayer:
         # read from a file while it still had that fingerprint.
         self._fingerprints: dict[Path, _Fingerprint] = {}
         self._read_digests: dict[Path, bytes] = {}
+        # The same for the base mods' text files, so discard() can tell
+        # whether the inherited content changed (the game is not watched).
+        self._base_fingerprints: dict[Path, _Fingerprint] = {}
+        self._base_digests: dict[Path, bytes] = {}
         self._vanilla_tags: set[str] = (
             load_vanilla_tags(self._base_content) if self._base_content is not None else set()
         )
@@ -687,9 +691,22 @@ class CoreLayer:
         """Take the current state of every text file of the mod as the baseline."""
 
         self._fingerprints, self._read_digests = self._scan_fingerprints()
+        self._base_fingerprints, self._base_digests = self._scan_fingerprints(self.base_mod_paths)
 
-    def _scan_fingerprints(self) -> tuple[dict[Path, _Fingerprint], dict[Path, bytes]]:
-        """Fingerprints of the mod's text files, and digests of the racy ones.
+    def _base_mods_changed(self) -> bool:
+        """Whether a base mod's text file changed, appeared or went away."""
+
+        if not self.base_mod_paths:
+            return False
+        fingerprints, digests = self._scan_fingerprints(self.base_mod_paths)
+        return bool(
+            _changed_files(self._base_fingerprints, self._base_digests, fingerprints, digests)
+        )
+
+    def _scan_fingerprints(
+        self, roots: Sequence[Path] | None = None
+    ) -> tuple[dict[Path, _Fingerprint], dict[Path, bytes]]:
+        """Fingerprints of the text files below ``roots`` (the mod), and digests of the racy ones.
 
         Only files changed in the last moments are read (see ``_RACY_NS``);
         the rest is known from ``stat`` alone.
@@ -698,7 +715,8 @@ class CoreLayer:
         start = time.time_ns()
         fingerprints: dict[Path, _Fingerprint] = {}
         digests: dict[Path, bytes] = {}
-        stack = [str(self.mod_root)] if self.mod_root.is_dir() else []
+        folders = (self.mod_root,) if roots is None else roots
+        stack = [str(root) for root in folders if root.is_dir()]
         while stack:
             try:
                 entries = list(os.scandir(stack.pop()))
