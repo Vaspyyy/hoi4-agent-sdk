@@ -74,13 +74,15 @@ or bookmark field.
 ```python
 mod.validate(suppress=["visual_overlap"])
 mod.validate(suppress=["missing_localization:TAG_secret_focus"])
-mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
+mod.validate_effect("add_core_of = SCL", suppress=["country_scope_core_effect"])
 ```
 
 - Errors cannot be suppressed: an error code in `suppress=` raises `ValueError`.
 - An unknown code raises `ValueError`, so a typo does not silently hide
   nothing. Suppressing by message text is no longer supported.
 - `suppress_warnings=` is the older name of the same list and means the same.
+- One mistake gives one finding: a core effect in a country scope is
+  `country_scope_core_effect`, not also `unsupported_effect_scope`.
 
 ## How the checks read the game
 
@@ -96,7 +98,25 @@ the content checks read them the way the game does:
   its id.
 - An event namespace may be declared by an `add_namespace` in any event file
   of the game, a base mod or the mod, compared without regard to case. A
-  file may declare several.
+  file may declare several. Wherever an event id is looked up (references,
+  `unfired_event`), its namespace (the text before the last dot) is compared
+  without regard to case too, as the game does: `PER_SSB_events.8` fires
+  `PER_ssb_events.8`. The number behind the dot is compared as it is.
+- The token check, the reference check and the liveness checks all read the
+  mod's own script files as `save()` will write them, split the same way
+  (`hoi4._script_corpus`) and walked by the same scope walker
+  (`hoi4.script_scopes`). Findings carry file lines. A definition made with
+  `create_definition()` (a building, an ideology...) counts before `save()`.
+- A block holds statements of its own kind: `OR`, `NOT`, `AND`,
+  `hidden_trigger` and `any_of` are triggers, `hidden_effect`, `random_list`
+  and the loops are effects (as the game's documentation lists them), and a
+  scripted trigger is not an effect. A statement like `GER = 5` does nothing
+  among effects and is reported; among triggers it compares scopes.
+- A localisation key of the mod is used (not `unused_localization`) when
+  the game or a base mod defines the same key (the mod overrides a text the
+  game already shows, as in `localisation/english/replace`), when something
+  the SDK models shows it, or when it (or the name before `_desc`) is a key
+  or value anywhere in the mod's own script files or interface `.gui` files.
 - A focus search filter is known when a sprite named `GFX_<filter>` is
   declared in an `interface/*.gfx` file of the game, a base mod or the mod.
 - Two focuses may share a position only when the game never draws both

@@ -1,9 +1,9 @@
 # How the SDK checks effect, trigger and modifier names
 
 This page is for people changing the SDK. It covers the script vocabulary
-(`hoi4.script_vocabulary`), the scope-tracking walker (`hoi4.script_scopes`)
-and the corpus reader used to test them against a real install
-(`hoi4._script_corpus`). Read [parser.md](parser.md) first: everything here
+(`hoi4.script_vocabulary`), the scope-tracking walker (`hoi4.script_scopes`),
+the reference reader that rides on it (`hoi4.script_references`) and the file
+splitter all of them share (`hoi4._script_corpus`). Read [parser.md](parser.md) first: everything here
 reads the lossless syntax tree, never raw text with a regular expression.
 
 The rule that shapes all of it: **the game's own script is valid by
@@ -15,10 +15,14 @@ listed in `tests/test_corpus_script_tokens.py`.
 
 | Module | Job |
 | --- | --- |
+| `hoi4._script_corpus` | Split one file into owners (a focus, an event, a decision...) and their effect, trigger, modifier and weight blocks, by where the file sits. The only splitter. |
 | `hoi4.script_scopes` | Walk one block through the tree; say what each statement is and which scope it runs in. |
-| `hoi4.script_vocabulary` | Know every name the game and the mod define; check the walker's statements; cache what comes from the install. |
-| `hoi4._script_corpus` | Find every checkable block in the files of a content root (used by the corpus test). |
-| `Mod._semantic_script_sources` | Turn the loaded models into `ScriptSource`s with entry scope and file lines. |
+| `hoi4.script_vocabulary` | Know every name the game and the mod define; check the walker's statements; cache what comes from the install. `script_sources()` turns a parsed file into `ScriptSource`s. |
+| `hoi4.script_references` | Read the ideas, events, flags and statements each owner names, from the walker's `visit` callback. |
+| `Mod._semantic_script_sources` | `script_sources()` of every own script file, as `save()` will write it. |
+
+So the token check, the reference check, the liveness graph and the corpus
+test read the same blocks with the same walker.
 
 ## The walker
 
@@ -39,7 +43,8 @@ Every statement of an effect or trigger block is one of four things:
    entry says what its block holds, which keys are its arguments, which of
    them are triggers (`limit`) and whether the block runs in a new scope.
 2. **An iterator** (`ITERATOR_SCOPES`, or any known name starting with
-   `every_`, `random_`, `any_`, `all_`, `ordered_`): its own arguments
+   `every_`, `random_`, `any_` or `all_`; HOI4 has no `ordered_` iterators):
+   its own arguments
    (`ITERATOR_ARGUMENTS`: `limit`, `random_select_amount`,
    `display_individual_scopes`, `tooltip`, `prioritize`,
    `original_tag_to_check`, ...) are data, its body runs in the scope the
@@ -50,12 +55,32 @@ Every statement of an effect or trigger block is one of four things:
    (`FROM.owner`, `ROOT.OVERLORD`, `PREV.PREV`), scope links (`SCOPE_LINKS`:
    `owner`, `controller`, `capital_scope`, `overlord`, `faction_leader`,
    `character`, `opponent`, ...), prefixed scopes (`SCOPE_PREFIXES`: `var:`,
-   `event_target:`, `global_event_target:`, `mio:`, `sp:`, ...; the rest of
-   such a key names the variable, so `var:ETH.host_nation` is one
-   reference), country tags, state ids and character ids.
+   `event_target:`, `global_event_target:`, `mio:`, `sp:`, ...), country
+   tags, state ids and character ids. Behind `var:`, `event_target:` and the
+   like the rest of the key names the variable (`var:ETH.host_nation` is one
+   reference, its scope unknown); behind a typed prefix the links still
+   count (`state:123.owner` is a country, `country:GER.capital_scope` a
+   state), and a word that is no link gives an unknown scope.
 4. **A command**, everything else. Its block, if it has one, holds
    **arguments**: `country_event = { id = x days = 3 }` is data and is never
    read as commands.
+
+A control structure works only in the kind of block the game documents it
+for: one whose block holds triggers (`AND`, `OR`, `NOT`, `hidden_trigger`,
+`count_triggers`, `any_of`, ...) is a trigger, one whose block holds effects
+(`hidden_effect`, `random`, `random_list`, the loops, ...) an effect; `if`,
+`else_if`, `else` and `custom_override_tooltip` work in both. In the wrong
+kind it is a command the game does not know there, reported once, with its
+block as data. A scalar statement whose key is a scope (`GER = 5`) compares
+scopes among triggers and is skipped; among effects it is a command.
+
+`walk_script(..., visit=callback)` also passes every assignment it walks to
+`callback(item, role, kind, scope, state)`: the role (`command`, `control`,
+`iterator`, `scope` or `argument`), the kind of block, the scope and a
+`WalkState` with the key that made the scope, the enclosing iterator and
+whether the statement is hidden or guarded. Arguments are passed as data.
+`walk_data()` passes the parts of a file that hold no script (a focus's
+`prerequisite`, a scripted GUI). The reference reader is built on these two.
 
 Keywords are compared in lower case, as the game does: `IF`, `Else_If`,
 `ROOT`, `OVERLORD` all work. `NOR` is not a keyword (HOI4 documents `AND`,
@@ -136,18 +161,22 @@ token documented for `any`, or with no scopes, is never a scope finding.
 - **family triggers** (`TRIGGER_FAMILIES`): every building is a state trigger
   (`infrastructure > 3`), every ideology a popularity trigger
   (`fascism > 0.3`), every resource a state trigger (`steel > 10`);
-- scripted effects and triggers, which work in any scope;
+- scripted effects and triggers, which work in any scope, each only among
+  statements of its own kind;
 - character ids (in lower case), which may stand as scopes;
 - usage counts: every statement key of `common`, `events` and `history`,
   in lower case, in total and per folder.
 
 Names are looked up without regard to case (`GameScriptVocabulary.lookup`).
 
-`GameScriptVocabulary.extended(roots, ...)` adds what mods define: their
-family definitions and `common/modifier_definitions` (read from the mod
-folders), plus names the caller passes (scripted effects and triggers,
-ideologies, characters, including pending edits). `Mod.game_script_vocabulary()`
-caches the install's vocabulary per `Mod` and extends it on every call.
+`GameScriptVocabulary.extended(roots, ..., pending=...)` adds what mods
+define: their family definitions and `common/modifier_definitions` (read
+from the mod folders, with the `pending` texts of files `save()` will write
+in place of the disk), plus names the caller passes (scripted effects and
+triggers, ideologies, characters, including pending edits).
+`Mod.game_script_vocabulary()` caches the install's vocabulary per `Mod` and
+extends it on every call, so a building made with `create_definition()`
+counts before `save()`.
 
 ### The disk cache
 
@@ -177,13 +206,14 @@ checks each statement (`check_statement`):
 | `unsupported_effect_scope`, `unsupported_trigger_scope` | warning | A documented name in a certain scope its documentation does not list. |
 | `unseen_effect_token`, `unseen_trigger_token`, `unseen_modifier_token` | info | A documented name the game's own script never uses: legal, but untried. |
 
-Every finding has a file and a line. `Mod._semantic_script_sources` finds each
-model field's text in its file with `SourceLocator`: it looks inside the
-owner's `raw_block`, line by line, allowing skipped lines (an event option's
-effect leaves out `name`, `trigger` and `ai_chance`) and a first line that
-ends a file line (`name = x #note`, `ai_will_do = { factor = 1 }`). When the
-text was edited after loading, findings point at the owner's first line.
-A source without a file (`validate_effect`) reports lines of its own text.
+Every finding has a file and a line. `Mod._semantic_script_sources` parses
+each own script file (its pending text when `save()` would change it) and
+hands the walker the parsed blocks, so lines are file lines. A source
+without a file (`validate_effect`) reports lines of its own text.
+
+`add_core_of` and `remove_core_of` in a certain country scope are left to
+the reference check, which reports them once as `country_scope_core_effect`
+with the state-scoped fix.
 
 ## Testing
 
@@ -191,8 +221,9 @@ A source without a file (`validate_effect`) reports lines of its own text.
   generated install, including the true alarms (a misspelled effect, trigger
   and modifier, and a state effect in a certain country scope).
 - `tests/test_corpus_script_tokens.py` (marker `corpus`, needs
-  `HOI4_INSTALL_DIR`): every block of the real install, about 118,000, walks
-  without a finding outside `KNOWN_GAME_MISTAKES`.
+  `HOI4_INSTALL_DIR`): every block of the real install walks without a
+  finding outside `KNOWN_GAME_MISTAKES`. It runs `script_sources()` and
+  `validate_script_sources()`, the path `validate()` uses on a mod's files.
 
 When the corpus test reports a new name after a game update, decide which of
 the four kinds the statement is and teach the table that covers it; do not

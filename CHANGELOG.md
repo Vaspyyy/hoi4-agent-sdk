@@ -141,8 +141,11 @@ All notable changes to this project are documented here. The format follows
   and which scope it runs in. See
   [`docs/internals/script_scopes.md`](docs/internals/script_scopes.md).
 - `hoi4.script_references` reads every idea, event, flag, technology,
-  equipment, focus tree, country tag and state that script names, with its
-  line and scope, from the syntax tree.
+  equipment, focus tree and country tag that script names, with its line and
+  scope. It rides on the scope walker of `hoi4.script_scopes` (through
+  `walk_script(..., visit=...)`), so the reference check and the token check
+  agree on what every statement is and where it runs.
+- `validate_effect(..., suppress=[...])`, like `validate()`.
 - `validate_oob(oob, known_templates=...)` accepts division templates that
   the country defines in another OOB file or in script.
 
@@ -353,6 +356,33 @@ All notable changes to this project are documented here. The format follows
 - `validate(suppress="code")` with one string instead of a list raises
   "takes a list of codes, not one string" instead of complaining about the
   code `'v'`.
+- Validation reads each script file through one splitter
+  (`hoi4._script_corpus`) and one scope walker. The token check reads the
+  mod's own files as `save()` will write them, with exact file lines; the
+  corpus test checks the same path. Fixed on the way: `NOR` is Norway, not a
+  keyword; `PREV`, `THIS` and `FROM` scope references; a bare top-level
+  `focus` is a focus; an iterator's scope comes from the table, not from
+  words in its name; event `after`, title and option-name triggers, idea
+  `on_add` and focus `cancel` are checked.
+- `state:123.owner`, `country:GER.capital_scope` and other links behind a
+  typed prefix lead where they say instead of to the prefix's scope.
+- A block holds statements of its own kind: `OR`, `NOT`, `hidden_trigger` or
+  `any_of` among effects, `hidden_effect` or `for_each_loop` among triggers,
+  `GER = 5` among effects, and a scripted trigger used as an effect (or the
+  other way round) are reported.
+- An event's namespace is matched without regard to case in the reference
+  check and in `unfired_event`, as the game does (`PER_SSB_events.8` fires
+  `PER_ssb_events.8`).
+- A definition made with `create_definition()` counts for the token check
+  before `save()`, and a deleted one stops counting.
+- `unused_localization` no longer reports keys the game or a base mod
+  defines too (overrides in `localisation/english/replace`), nor keys the
+  mod's own script files or interface files name.
+- A core effect in a country scope is one finding
+  (`country_scope_core_effect`), not also `unsupported_effect_scope`.
+- `ordered_*` names are not iterators: HOI4 has none.
+- Project flags (`set_project_flag`, `has_project_flag`, ...) are tracked by
+  the flag liveness checks.
 - Adding an event to an on-action merged its repeated `events` blocks into
   one and dropped the comments inside them. Event lists are now edited entry
   by entry.
