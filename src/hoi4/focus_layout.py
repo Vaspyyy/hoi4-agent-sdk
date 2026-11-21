@@ -64,62 +64,115 @@ def resolve_focus_positions(tree: FocusTree) -> FocusPositions:
 class FocusBranches:
     """Which focuses of one tree the game can show at the same time.
 
-    A focus is hidden with its whole branch when an ``allow_branch`` on it or
-    on any focus it depends on fails. Two focuses are never taken together
-    when a focus they depend on (or they themselves) is mutually exclusive
-    with a focus the other depends on.
+    The game draws every focus of a tree, both sides of a mutually exclusive
+    choice included: the player sees both and picks one. Only two things keep
+    a focus off the spot where its ``x``, ``y`` and ``relative_position_id``
+    put it:
+
+    - ``allow_branch``: when it fails, the focus is hidden, and so is every
+      focus that can only be reached through hidden focuses.
+    - An ``offset = { x = ... y = ... trigger = { ... } }`` block moves the
+      focus while its trigger holds.
+
+    So two focuses may share a spot when one of them has an ``offset`` block,
+    or when each of them is hidden behind an ``allow_branch`` condition the
+    other does not depend on. The game's own trees use the second form for
+    variants such as "with this DLC" and "without it". Two focuses behind the
+    same condition are shown together when it holds.
     """
 
     def __init__(self, tree: FocusTree) -> None:
         self._by_id = {focus.id: focus for focus in tree.focuses if focus.id}
-        self._ancestors: dict[str, frozenset[str]] = {}
+        self._gates: dict[str, frozenset[str]] = {}
+        self._hidden: dict[str, bool] = {}
+        self._moves: dict[str, bool] = {}
 
-    def ancestors(self, focus_id: str) -> frozenset[str]:
-        """Return ``focus_id`` and every focus it depends on through prerequisites."""
+    def _parents(self, focus_id: str) -> list[str]:
+        focus = self._by_id.get(focus_id)
+        if focus is None:
+            return []
+        return [ref for group in focus.prerequisites for ref in group]
 
-        cached = self._ancestors.get(focus_id)
-        if cached is not None:
-            return cached
-        found: set[str] = set()
-        pending = [focus_id]
-        while pending:
-            current = pending.pop()
-            if current in found:
+    def _has_gate(self, focus_id: str) -> bool:
+        focus = self._by_id.get(focus_id)
+        return focus is not None and bool(focus.allow_branch.strip())
+
+    def _post_order(self, focus_id: str) -> list[str]:
+        """``focus_id`` and every focus it depends on, each after its prerequisites.
+
+        Iterative, so a long chain does not hit the recursion limit. A cycle
+        is cut where it closes.
+        """
+
+        order: list[str] = []
+        state: dict[str, bool] = {}
+        stack: list[tuple[str, bool]] = [(focus_id, False)]
+        while stack:
+            current, expanded = stack.pop()
+            if expanded:
+                state[current] = True
+                order.append(current)
                 continue
-            found.add(current)
-            done = self._ancestors.get(current)
-            if done is not None:
-                found |= done
+            if current in state:
                 continue
-            focus = self._by_id.get(current)
-            if focus is not None:
-                pending.extend(ref for group in focus.prerequisites for ref in group)
-        result = frozenset(found)
-        self._ancestors[focus_id] = result
-        return result
+            state[current] = False
+            stack.append((current, True))
+            stack.extend((ref, False) for ref in self._parents(current) if ref not in state)
+        return order
+
+    def gates(self, focus_id: str) -> frozenset[str]:
+        """The focuses with ``allow_branch`` that ``focus_id`` depends on, itself included.
+
+        Every prerequisite counts, also each focus of an "either" group.
+        """
+
+        for current in self._post_order(focus_id):
+            if current in self._gates:
+                continue
+            found: set[str] = {current} if self._has_gate(current) else set()
+            for ref in self._parents(current):
+                found |= self._gates.get(ref, frozenset())
+            self._gates[current] = frozenset(found)
+        return self._gates[focus_id]
 
     def conditional(self, focus_id: str) -> bool:
-        return any(
-            self._by_id[ref].allow_branch.strip()
-            for ref in self.ancestors(focus_id)
-            if ref in self._by_id
-        )
+        """Whether ``allow_branch`` can hide ``focus_id``.
 
-    def exclusive(self, first: str, second: str) -> bool:
-        first_branch, second_branch = self.ancestors(first), self.ancestors(second)
-        for branch, other in ((first_branch, second_branch), (second_branch, first_branch)):
-            for ref in branch:
-                focus = self._by_id.get(ref)
-                if focus is not None and any(
-                    not other.isdisjoint(group) for group in focus.mutually_exclusive
-                ):
-                    return True
-        return False
+        That is when it has ``allow_branch`` itself, or when every chain of
+        prerequisites from it up to a focus without prerequisites passes a
+        focus with ``allow_branch``.
+        """
+
+        for current in self._post_order(focus_id):
+            if current in self._hidden:
+                continue
+            parents = self._parents(current)
+            self._hidden[current] = self._has_gate(current) or (
+                bool(parents) and all(self._hidden.get(ref, False) for ref in parents)
+            )
+        return self._hidden[focus_id]
+
+    def moves(self, focus_id: str) -> bool:
+        """Whether ``focus_id`` has an ``offset`` block that moves it on a trigger."""
+
+        cached = self._moves.get(focus_id)
+        if cached is None:
+            focus = self._by_id.get(focus_id)
+            cached = False
+            if focus is not None and "offset" in focus.raw_block:
+                cached = bool(parse(focus.raw_block).root.blocks("offset"))
+            self._moves[focus_id] = cached
+        return cached
 
     def never_shown_together(self, first: str, second: str) -> bool:
-        return self.exclusive(first, second) or (
-            self.conditional(first) and self.conditional(second)
-        )
+        """Whether two focuses on one spot are never drawn there at the same time."""
+
+        if self.moves(first) or self.moves(second):
+            return True
+        if not (self.conditional(first) and self.conditional(second)):
+            return False
+        first_gates, second_gates = self.gates(first), self.gates(second)
+        return bool(first_gates - second_gates) and bool(second_gates - first_gates)
 
 
 def continuous_focus_position_issue(
@@ -145,8 +198,8 @@ def visual_overlap_issues(
 ) -> list[str]:
     """Check known positions; continuous bounds require a complete layout.
 
-    Two focuses may share a position when the game never shows both (see
-    :class:`FocusBranches`), which is how alternative branches are drawn.
+    Two focuses may share a position when the game never draws both there
+    (see :class:`FocusBranches`), which is how variant branches are drawn.
     """
     occupied: dict[tuple[int, int], list[str]] = {}
     issues: list[str] = []

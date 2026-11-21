@@ -234,14 +234,7 @@ def test_two_visible_focuses_on_one_position_warn():
     assert [(f.code, f.focus_id) for f in findings] == [("visual_overlap", "B")]
 
 
-def test_exclusive_or_conditional_branches_may_share_a_position():
-    exclusive = tree(
-        Focus(id="A", x=0, y=0, mutually_exclusive=[["B"]]),
-        Focus(id="B", x=2, y=0, mutually_exclusive=[["A"]]),
-        Focus(id="A2", x=1, y=1, prerequisites=[["A"]]),
-        Focus(id="B2", x=1, y=1, prerequisites=[["B"]]),
-    )
-    assert not codes(validate_focus_tree(exclusive), "visual_overlap")
+def test_variant_branches_behind_their_own_allow_branch_may_share_a_position():
     conditional = tree(
         Focus(id="A", x=0, y=0, allow_branch="has_dlc = x"),
         Focus(id="B", x=0, y=0, allow_branch="NOT = { has_dlc = x }"),
@@ -251,11 +244,83 @@ def test_exclusive_or_conditional_branches_may_share_a_position():
     assert not codes(validate_focus_tree(conditional), "visual_overlap")
 
 
-def test_a_conditional_focus_still_clashes_with_an_always_shown_one():
-    findings = validate_focus_tree(
-        tree(Focus(id="A", x=0, y=0, allow_branch="has_dlc = x"), Focus(id="B", x=0, y=0))
+def test_mutually_exclusive_branches_are_both_drawn_so_they_clash():
+    """The game draws both sides of an exclusive choice; the player picks one."""
+
+    exclusive = tree(
+        Focus(id="A", x=0, y=0, mutually_exclusive=[["B"]]),
+        Focus(id="B", x=2, y=0, mutually_exclusive=[["A"]]),
+        Focus(id="A2", x=1, y=1, prerequisites=[["A"]]),
+        Focus(id="B2", x=1, y=1, prerequisites=[["B"]]),
     )
-    assert codes(findings, "visual_overlap")
+    findings = codes(validate_focus_tree(exclusive), "visual_overlap")
+    assert [f.focus_id for f in findings] == ["B2"]
+
+
+def test_two_children_of_one_allow_branch_root_clash():
+    """Both hang on the same condition, so they are shown together."""
+
+    findings = validate_focus_tree(
+        tree(
+            Focus(id="plt_ab_root", x=4, y=0, allow_branch="always = yes"),
+            Focus(id="plt_ab_x", x=4, y=1, prerequisites=[["plt_ab_root"]]),
+            Focus(id="plt_ab_y", x=4, y=1, prerequisites=[["plt_ab_root"]]),
+        )
+    )
+    assert [f.focus_id for f in codes(findings, "visual_overlap")] == ["plt_ab_y"]
+
+
+def test_children_of_a_join_after_an_exclusive_choice_clash():
+    """An "either" prerequisite over an exclusive pair does not hide anything."""
+
+    findings = validate_focus_tree(
+        tree(
+            Focus(id="plt_me_a", x=7, y=0, mutually_exclusive=[["plt_me_b"]]),
+            Focus(id="plt_me_b", x=9, y=0, mutually_exclusive=[["plt_me_a"]]),
+            Focus(id="plt_join", x=8, y=1, prerequisites=[["plt_me_a", "plt_me_b"]]),
+            Focus(id="plt_jx", x=8, y=2, prerequisites=[["plt_join"]]),
+            Focus(id="plt_jy", x=8, y=2, prerequisites=[["plt_join"]]),
+        )
+    )
+    assert [f.focus_id for f in codes(findings, "visual_overlap")] == ["plt_jy"]
+
+
+def test_a_focus_behind_one_more_condition_still_clashes():
+    """When both conditions hold, both focuses are shown."""
+
+    findings = validate_focus_tree(
+        tree(
+            Focus(id="R", x=0, y=0, allow_branch="has_dlc = x"),
+            Focus(id="A", x=2, y=0, prerequisites=[["R"]], allow_branch="has_country_flag = a"),
+            Focus(id="X", x=1, y=1, prerequisites=[["R"]]),
+            Focus(id="Y", x=1, y=1, prerequisites=[["A"]]),
+        )
+    )
+    assert [f.focus_id for f in codes(findings, "visual_overlap")] == ["Y"]
+
+
+def test_either_prerequisites_that_are_all_conditional_keep_a_focus_conditional():
+    """Like the game's Sinkiang branch: every way in passes ``tag = SIK``."""
+
+    findings = validate_focus_tree(
+        tree(
+            Focus(id="S1", x=0, y=0, allow_branch="tag = SIK"),
+            Focus(id="S2", x=2, y=0, allow_branch="tag = SIK"),
+            Focus(id="S3", x=1, y=1, prerequisites=[["S1", "S2"]]),
+            Focus(id="X1", x=5, y=0, allow_branch="tag = XSM"),
+            Focus(id="X2", x=1, y=1, prerequisites=[["X1"]]),
+        )
+    )
+    assert not codes(findings, "visual_overlap")
+
+
+def test_a_focus_with_an_offset_block_may_share_its_base_position():
+    moved = Focus(id="B", x=0, y=0, prerequisites=[["A"]])
+    moved.raw_block = "id = B\nx = 0\ny = 0\noffset = { x = 0 y = 1 trigger = { has_idea = i } }\n"
+    findings = validate_focus_tree(
+        tree(Focus(id="A", x=0, y=0, allow_branch="has_idea = i"), moved)
+    )
+    assert not codes(findings, "visual_overlap")
 
 
 def test_search_filter_needs_a_sprite(tmp_path):

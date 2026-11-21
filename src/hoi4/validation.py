@@ -106,8 +106,8 @@ VALIDATION_CODES: dict[str, str] = {
     "idea_mutation_collision": "Focuses and delayed/runtime events mutate the same idea IDs.",
     "unresolved_focus_position": "A focus position has a missing or cyclic local anchor.",
     "visual_overlap": (
-        "Two focuses share a position and the game can show both (they are not on "
-        "mutually exclusive or allow_branch branches)."
+        "Two focuses share a position and the game can show both (mutually exclusive "
+        "focuses are both drawn; only allow_branch or an offset block keeps one away)."
     ),
     "faction_scope_footgun": "Faction effect direction depends on current scope.",
     "civil_war_scope_footgun": "Civil war effects need careful target/capital scope.",
@@ -463,7 +463,6 @@ _ERROR_CODES = {
     "capital_not_cored",
     "missing_country_name_pool",
     "missing_character_small_portrait",
-    "runtime_recruit_character",
     "invalid_country_tag",
     "invalid_ruling_party",
     "invalid_country_color",
@@ -1078,8 +1077,9 @@ def validate_focus_tree(
 
         # The top-level blocks of one file are placed into different trees,
         # so their positions do not share one canvas. Two focuses may share a
-        # position when the game never shows both: their branches are
-        # mutually exclusive, or both hang on an allow_branch condition.
+        # position only when the game never draws both there (see
+        # FocusBranches): an offset block moves one, or each hangs on an
+        # allow_branch condition the other does not depend on.
         pos = layout.positions.get(focus.id) if tree.kind != "file" else None
         if pos is not None:
             sharing = seen_positions.setdefault(pos, [])

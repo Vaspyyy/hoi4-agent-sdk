@@ -307,8 +307,10 @@ All notable changes to this project are documented here. The format follows
   `Mod.validate()`, which know the scope. `validate_event` takes
   `namespaces=` and `validate_focus_tree` takes `known_search_filters=`.
 - `assert_no_visual_overlap` and `validate()` use the same rule: two focuses
-  may share a position when the game never shows both, because they are on
-  mutually exclusive branches or both hang on an `allow_branch` condition.
+  may share a position only when the game never draws both there, because
+  one has an `offset` block or each hangs on an `allow_branch` focus the
+  other does not depend on. Mutually exclusive focuses are both drawn, so
+  they must not share a position.
 - `validate()` and `validate_effect()` load a catalog of the game (ideas,
   events, technologies, equipment) only when a name is not among the mod's
   own objects, and then only once.

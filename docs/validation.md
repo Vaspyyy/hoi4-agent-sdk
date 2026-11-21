@@ -84,9 +84,15 @@ the content checks read them the way the game does:
   file may declare several.
 - A focus search filter is known when a sprite named `GFX_<filter>` is
   declared in an `interface/*.gfx` file of the game, a base mod or the mod.
-- Two focuses may share a position when the game never shows both: one
-  depends on a focus that is mutually exclusive with one the other depends
-  on, or both hang on an `allow_branch` condition.
+- Two focuses may share a position only when the game never draws both
+  there. The game draws every focus of a tree, both sides of a mutually
+  exclusive choice included, so exclusivity is no reason. A pair may share
+  a position when one of them has an `offset` block (it moves while the
+  block's trigger holds), or when `allow_branch` can hide each of them
+  (it has `allow_branch`, or every chain of prerequisites from it up to a
+  focus without prerequisites passes one that has) and each depends on a
+  focus with `allow_branch` that the other does not depend on. Two
+  focuses behind the same `allow_branch` focuses are shown together.
 - Hidden events (`hidden = yes`) need no title, description or option.
 - Tag aliases from `common/country_tag_aliases` count as country tags, and
   tags declared after `dynamic_tags = yes` are named at runtime.
@@ -292,7 +298,7 @@ the content checks read them the way the game does:
 | `unsupported_modifier_scope` | warning | Modifier token is used outside its documented scope. |
 | `unsupported_trigger_scope` | warning | Trigger token is used outside its documented scope. |
 | `unused_localization` | warning | A localization key is not referenced by modeled content. Release stage only. |
-| `visual_overlap` | warning | Two focuses share a position and the game can show both (they are not on mutually exclusive or allow_branch branches). |
+| `visual_overlap` | warning | Two focuses share a position and the game can show both (mutually exclusive focuses are both drawn; only allow_branch or an offset block keeps one away). |
 
 ### Advice
 
