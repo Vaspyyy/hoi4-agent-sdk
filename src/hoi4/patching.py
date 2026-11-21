@@ -183,15 +183,22 @@ def replace_assignment(text: str, span: AssignmentSpan, replacement: str | None)
 
     line_start = text.rfind("\n", 0, span.start) + 1
     prefix = text[line_start : span.start]
-    if prefix.strip():
-        # The statement shares its line with earlier script (``a = 1 b = 2``):
-        # only its own span changes.
+    line_end = text.find("\n", span.end)
+    suffix = text[span.end : len(text) if line_end < 0 else line_end]
+    if prefix.strip() or suffix.strip():
+        # The statement shares its line with other script or a comment
+        # (``a = 1 b = 2``, ``b = 2 # note``): only its own span changes.
         if replacement is not None:
             return text[: span.start] + replacement.rstrip() + text[span.end :]
+        start = span.start
         end = span.end
         while end < len(text) and text[end] in " \t":
             end += 1
-        return text[: span.start] + text[end:]
+        if end == len(text) or text[end] in "\r\n":
+            # Last statement of the line: drop the spaces before it too.
+            while start > line_start and text[start - 1] in " \t":
+                start -= 1
+        return text[:start] + text[end:]
     end = span.end
     if end < len(text) and text[end] == "\r":
         end += 1

@@ -158,16 +158,43 @@ def _merge_line_endings(raw: str, original: str, text: str, newline: str) -> str
     new_lines = _split_lines(text)
     if len(raw_lines) != len(old_lines):  # pragma: no cover - defensive
         return text.replace("\n", newline)
-    out: list[str] = []
-    matcher = SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    # Unchanged lines at the start and the end are matched first. The diff
+    # below would otherwise be free to pair an edited line's neighbours with
+    # identical lines elsewhere (blank lines, repeated braces), which moves
+    # their line endings around.
+    shortest = min(len(old_lines), len(new_lines))
+    head = 0
+    while head < shortest and old_lines[head] == new_lines[head]:
+        head += 1
+    tail = 0
+    while tail < shortest - head and old_lines[-1 - tail] == new_lines[-1 - tail]:
+        tail += 1
+    out: list[str] = raw_lines[:head]
+    matcher = SequenceMatcher(
+        None,
+        old_lines[head : len(old_lines) - tail],
+        new_lines[head : len(new_lines) - tail],
+        autojunk=False,
+    )
     for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
+        old_start += head
+        old_end += head
+        new_start += head
+        new_end += head
         if tag == "equal":
             out.extend(raw_lines[old_start:old_end])
-        else:
-            out.extend(
-                line[:-1] + newline if line.endswith("\n") else line
-                for line in new_lines[new_start:new_end]
-            )
+            continue
+        for index, line in enumerate(new_lines[new_start:new_end]):
+            if not line.endswith("\n"):
+                out.append(line)
+                continue
+            # An edited line keeps the ending of the line it replaces.
+            ending = newline
+            if old_start + index < old_end:
+                old = raw_lines[old_start + index]
+                ending = old[len(old.rstrip("\r\n")) :] or newline
+            out.append(line[:-1] + ending)
+    out.extend(raw_lines[len(raw_lines) - tail :])
     return "".join(out)
 
 

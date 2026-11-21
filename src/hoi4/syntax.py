@@ -49,21 +49,27 @@ __all__ = [
 ]
 
 # One token per match, with any leading whitespace skipped in the same step.
+# Whitespace is what the game's byte-level reader treats as such: ASCII space,
+# tab, line breaks, form feed and vertical tab, plus a stray byte-order mark.
+# Every other character (a no-break space, a Unicode line separator) is part
+# of a word, so every character of any text belongs to some token and the
+# parser can never stop early.
 # A lone "!" or "?" belongs to a word ("foo?0" is a variable with a default);
 # only "!=" and "?=" are operators.
 _TOKEN_RE = re.compile(
-    r"""[ \t\r\n﻿]*(?:
+    r"""[ \t\r\n\f\v\ufeff]*(?:
         (\#[^\n]*)                                   # 1 comment
       | (\{)                                         # 2 open
       | (\})                                         # 3 close
       | ([<>]=?|[!?=]=|=)                            # 4 operator
       | ("(?:[^"\\]|\\.)*"?)                         # 5 string (maybe unterminated)
       | (@\[[^\]\n]*\]                               # 6 word: inline maths @[ 1 + 2 ]
-        |(?:[^\s{}=<>\#"!?﻿]|[!?](?!=))+)       #   or a plain word
+        |(?:[^ \t\r\n\f\v\ufeff{}=<>\#"!?]|[!?](?!=))+)   #   or a plain word
     )""",
     re.VERBOSE | re.DOTALL,
 )
 _COMMENT, _OPEN, _CLOSE, _OP, _STRING, _WORD = 1, 2, 3, 4, 5, 6
+_SPACES = frozenset(" \t\r\n\f\v﻿")
 
 # A scalar followed by a block is one value for these typed constructors.
 _TAGS = frozenset({"rgb", "hsv", "hsv360"})
@@ -229,25 +235,30 @@ class Block:
         return [item for item in self.items if type(item) is Scalar]
 
     def walk(self) -> Iterator[tuple[Assignment, tuple[Assignment, ...]]]:
-        """Yield every assignment at any depth with the chain of assignments around it."""
+        """Yield every assignment at any depth with the chain of assignments around it.
 
-        stack: list[tuple[Block, tuple[Assignment, ...]]] = [(self, ())]
+        Assignments come in source order: an assignment, then everything
+        inside its block, then the next one.
+        """
+
+        stack: list[tuple[Iterator[Item], tuple[Assignment, ...]]] = [(iter(self.items), ())]
         while stack:
-            block, parents = stack.pop()
-            nested: list[tuple[Block, tuple[Assignment, ...]]] = []
-            for item in block.items:
-                if type(item) is Assignment:
-                    yield item, parents
-                    value = item.value
-                    if type(value) is Block:
-                        nested.append((value, (*parents, item)))
-                    elif type(value) is Tagged:
-                        nested.append((value.block, (*parents, item)))
-                elif type(item) is Block:
-                    nested.append((item, parents))
-                elif type(item) is Tagged:
-                    nested.append((item.block, parents))
-            stack.extend(reversed(nested))
+            pending, parents = stack[-1]
+            item = next(pending, None)
+            if item is None:
+                stack.pop()
+                continue
+            if type(item) is Assignment:
+                yield item, parents
+                value = item.value
+                if type(value) is Block:
+                    stack.append((iter(value.items), (*parents, item)))
+                elif type(value) is Tagged:
+                    stack.append((iter(value.block.items), (*parents, item)))
+            elif type(item) is Block:
+                stack.append((iter(item.items), parents))
+            elif type(item) is Tagged:
+                stack.append((iter(item.block.items), parents))
 
     def __repr__(self) -> str:
         return f"Block({len(self.items)} items)"
@@ -410,8 +421,43 @@ def _parse_into(doc: Document) -> None:
     # open block: (key, op_start, op_end) or None.
     pending_stack: list[tuple[Scalar, int, int] | None] = [None]
     pending: tuple[Scalar, int, int] | None = None
-
     position = 0
+
+    def peek(after: int, wanted: int) -> re.Match[str] | None:
+        """Return the next token after ``after`` if it is of kind ``wanted``.
+
+        Comments in between are skipped, the way the game's reader drops them
+        (``key # note`` then ``= value`` on the next line is one statement).
+        They are recorded only if the token is taken.
+        """
+
+        skipped: list[tuple[int, int]] = []
+        following = match(text, after)
+        while following is not None and following.lastindex == _COMMENT:
+            skipped.append(following.span(_COMMENT))
+            following = match(text, following.end(_COMMENT))
+        if following is None or following.lastindex != wanted:
+            return None
+        comments.extend(skipped)
+        return following
+
+    def open_tagged(scalar: Scalar, after: int) -> Tagged | None:
+        """Start ``rgb { ... }`` if ``scalar`` is a type tag followed by a block."""
+
+        nonlocal position, block, items
+        if text[scalar.start : scalar.end].lower() not in _TAGS:
+            return None
+        following = peek(after, _OPEN)
+        if following is None:
+            return None
+        tagged_block = Block(doc, following.start(_OPEN), following.end(_OPEN))
+        position = following.end(_OPEN)
+        stack.append(tagged_block)
+        pending_stack.append(None)
+        block = tagged_block
+        items = tagged_block.items
+        return Tagged(doc, scalar, tagged_block)
+
     while position < length:
         found = match(text, position)
         if found is None:
@@ -433,26 +479,20 @@ def _parse_into(doc: Document) -> None:
             if pending is not None:
                 key, op_start, op_end = pending
                 pending = None
-                if not quoted and text[start:end].lower() in _TAGS:
-                    following = match(text, end)
-                    if following is not None and following.lastindex == _OPEN:
-                        # ``key = rgb {``: the block that follows is the value.
-                        tagged_block = Block(doc, following.start(_OPEN), following.end(_OPEN))
-                        items.append(Assignment(doc, key, op_start, op_end, Tagged(doc, scalar, tagged_block)))
-                        position = following.end(_OPEN)
-                        stack.append(tagged_block)
-                        pending_stack.append(None)
-                        block = tagged_block
-                        items = tagged_block.items
-                        continue
-                items.append(Assignment(doc, key, op_start, op_end, scalar))
+                # ``key = rgb {``: the block that follows is the value.
+                owner = items
+                tagged = None if quoted else open_tagged(scalar, end)
+                owner.append(Assignment(doc, key, op_start, op_end, tagged or scalar))
                 continue
-            following = match(text, end)
-            if following is not None and following.lastindex == _OP:
+            following = peek(end, _OP)
+            if following is not None:
                 pending = (scalar, following.start(_OP), following.end(_OP))
                 position = following.end(_OP)
                 continue
-            items.append(scalar)
+            # A bare ``rgb { ... }`` in a list is one value too.
+            owner = items
+            tagged = None if quoted else open_tagged(scalar, end)
+            owner.append(tagged or scalar)
             continue
 
         if kind == _OPEN:
@@ -563,6 +603,10 @@ def repair(text: str) -> str:
     for offset in stray:
         parts.append(text[position:offset])
         position = offset + 1
+        # ``1}b`` must not become the single word ``1b``.
+        if 0 < offset and position < len(text):
+            if text[offset - 1] not in _SPACES and text[position] not in _SPACES:
+                parts.append(" ")
     parts.append(text[position:])
     repaired = "".join(parts)
     if unclosed:

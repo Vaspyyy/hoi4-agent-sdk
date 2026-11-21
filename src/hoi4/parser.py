@@ -66,6 +66,7 @@ class Token:
 
 
 _NUMBER_RE = re.compile(r"-?\d+(\.\d+)?")
+_INLINE_MATHS_RE = re.compile(r"@\[[^\]\n]*\]")
 _COMMENT_OR_STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"?|#[^\n]*', re.DOTALL)
 
 
@@ -281,7 +282,7 @@ class _TreeBuilder:
             else:
                 nested = item.block if isinstance(item, Tagged) else item
                 self._take_comments(nested.start, nodes)
-                node = PdxNode(block=True)
+                node = PdxNode(block=True, tag=item.tag.raw if isinstance(item, Tagged) else None)
                 node.children = self._children(nested)
                 self._take_comments(nested.end, node.children)
                 nodes.append(node)
@@ -355,7 +356,8 @@ def iter_assignment_blocks(text: str, key: str) -> list[tuple[str, int, int]]:
 
 
 def _scalar_text(value: str, quoted: bool) -> str:
-    if quoted or needs_quotes(value):
+    # Inline maths (``@[ 1 + 2 ]``) is one bare word: quoted, it is a string.
+    if quoted or (needs_quotes(value) and not _INLINE_MATHS_RE.fullmatch(value)):
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return value
 
@@ -384,7 +386,8 @@ def _serialize(node: PdxNode, indent: int, parts: list[str]) -> None:
                 _serialize(child, indent + 1, parts)
             parts.append(f"{tab}}}\n")
         elif node.block:
-            parts.append(f"{tab}{{\n")
+            tag = f"{node.tag} " if node.tag else ""
+            parts.append(f"{tab}{tag}{{\n")
             for child in node.children:
                 _serialize(child, indent + 1, parts)
             parts.append(f"{tab}}}\n")

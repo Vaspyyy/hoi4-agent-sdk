@@ -63,6 +63,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "corpus: opt-in checks against a real game install (needs HOI4_INSTALL_DIR)",
+]
 
 [tool.ruff]
 target-version = "py311"
