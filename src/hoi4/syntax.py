@@ -445,11 +445,13 @@ def _parse_into(doc: Document) -> None:
         return following
 
     def open_tagged(scalar: Scalar, after: int) -> Tagged | None:
-        """Start ``rgb { ... }`` if ``scalar`` is a type tag followed by a block."""
+        """Start ``rgb { ... }`` if ``scalar`` is a type tag followed by a block.
+
+        The caller has already checked that the scalar is a bare word whose
+        spelling is one of ``_TAGS``.
+        """
 
         nonlocal position, block, items
-        if text[scalar.start : scalar.end].lower() not in _TAGS:
-            return None
         following = peek(after, _OPEN)
         if following is None:
             return None
@@ -460,8 +462,16 @@ def _parse_into(doc: Document) -> None:
         items = tagged_block.items
         return Tagged(doc, scalar, tagged_block)
 
+    # The token after a word is matched to see whether it is an operator.
+    # When it is not, it is kept here so the loop does not match it again.
+    lookahead: re.Match[str] | None = None
+    found: re.Match[str] | None
     while position < length:
-        found = match(text, position)
+        if lookahead is not None:
+            found = lookahead
+            lookahead = None
+        else:
+            found = match(text, position)
         if found is None:
             # Only trailing whitespace is left.
             break
@@ -478,22 +488,37 @@ def _parse_into(doc: Document) -> None:
             if quoted and (end - start < 2 or text[end - 1] != '"' or _escaped(text, end - 1)):
                 problems.append(Problem(start, "unterminated_string", "Unterminated quoted string"))
             scalar = Scalar(doc, start, end, quoted)
+            # Only a short bare word can be a type tag (``hsv360`` is the longest).
+            maybe_tag = not quoted and end - start <= 6 and text[start:end].lower() in _TAGS
             if pending is not None:
                 key, op_start, op_end = pending
                 pending = None
                 # ``key = rgb {``: the block that follows is the value.
                 owner = items
-                tagged = None if quoted else open_tagged(scalar, end)
+                tagged = open_tagged(scalar, end) if maybe_tag else None
                 owner.append(Assignment(doc, key, op_start, op_end, tagged or scalar))
                 continue
-            following = peek(end, _OP)
-            if following is not None:
-                pending = (scalar, following.start(_OP), following.end(_OP))
-                position = following.end(_OP)
+            following = match(text, end)
+            if following is not None and following.lastindex == _COMMENT:
+                # Rare: a comment between a key and its operator.
+                following = peek(end, _OP)
+                if following is not None:
+                    pending = (scalar, *following.span(_OP))
+                    position = following.end(_OP)
+                    continue
+            elif following is not None and following.lastindex == _OP:
+                op_start, op_end = following.span(_OP)
+                pending = (scalar, op_start, op_end)
+                position = op_end
                 continue
+            else:
+                lookahead = following
             # A bare ``rgb { ... }`` in a list is one value too.
             owner = items
-            tagged = None if quoted else open_tagged(scalar, end)
+            tagged = open_tagged(scalar, end) if maybe_tag else None
+            if tagged is not None:
+                # The tag's block was opened past the kept token.
+                lookahead = None
             owner.append(tagged or scalar)
             continue
 
