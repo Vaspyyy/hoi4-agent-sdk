@@ -932,10 +932,13 @@ class TestAgentFacingApis:
         mod.create_event(
             "scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_advisor")]
         )
-        errors = mod.validate(strict_localization=True)
+        errors = mod.validate(strict_localization=True, advice=True)
         codes = {error.code for error in errors}
         assert "idea_not_addable" in codes
         assert "missing_localization" in codes
+        assert "idea_not_addable" not in {
+            error.code for error in mod.validate(strict_localization=True)
+        }
 
         mod.set_loc("scl.1.t", "Title")
         mod.set_loc("scl.1.d", "Description")
@@ -983,8 +986,9 @@ class TestAgentFacingApis:
         assert any(error.code == "revolt_state_already_owned" for error in no_op_transfer_errors)
 
         mod.create_event("slo.1", options=[EventOption(name="slo.1.a")])
-        errors = mod.validate()
+        errors = mod.validate(advice=True)
         assert any(error.code == "event_option_no_effect" for error in errors)
+        assert not any(error.code == "event_option_no_effect" for error in mod.validate())
 
     def test_patch_state_history_preserves_victory_points_text(self, tmp_mod):
         state_dir = tmp_mod.root / "history" / "states"
@@ -1056,7 +1060,7 @@ class TestAgentFacingApis:
         mod.add_focus(
             "scl_focus", Focus(id="SCL_bad_fallback_icon", icon="GFX_goal_generic_navy", x=1)
         )
-        errors = mod.validate(validate_icons=True)
+        errors = mod.validate(validate_icons=True, advice=True)
         codes = {error.code for error in errors}
         assert "unknown_focus_icon" in codes
         assert any("GFX_goal_generic_navy" in error.message for error in errors)
@@ -1779,11 +1783,13 @@ class TestModEvents:
             immediate="declare_war_on = { type = annex_everything target = FRA }",
             mean_time_to_happen="days = 1",
         )
-        messages = [e.message for e in mod.validate()]
-        assert any(
-            "is_triggered_only but also has mean_time_to_happen" in message for message in messages
-        )
-        assert any("declares war in immediate" in message for message in messages)
+        findings = mod.validate(advice=True)
+        codes = {e.code: e.severity for e in findings}
+        assert codes["triggered_only_with_mtth"] == "info"
+        assert codes["war_declaration_in_immediate"] == "info"
+        assert not {"triggered_only_with_mtth", "war_declaration_in_immediate"} & {
+            e.code for e in mod.validate()
+        }
 
     def test_validate_effect_catches_braces_and_declare_war_shape(self, tmp_mod):
         mod = tmp_mod.mod
@@ -2113,7 +2119,7 @@ class TestIdeaValidation:
         assert issue.file_path == str(path)
         assert not any(error.code == "unknown_idea_icon" for error in errors)
 
-    def test_prefixed_picture_is_error_even_when_resolved_sprite_exists(self, tmp_path):
+    def test_prefixed_picture_is_advice_and_resolves(self, tmp_path):
         path = tmp_path / "common" / "ideas" / "ideas.txt"
         path.parent.mkdir(parents=True)
         path.write_text(
@@ -2127,12 +2133,13 @@ class TestIdeaValidation:
             encoding="utf-8",
         )
 
-        errors = Mod(tmp_path).validate(validate_icons=True)
+        errors = Mod(tmp_path).validate(validate_icons=True, advice=True)
 
+        # The game's own files use the full sprite name, and it resolves.
         issue = next(
             error for error in errors if error.code == "invalid_idea_picture_prefix"
         )
-        assert issue.severity == "error"
+        assert issue.severity == "info"
         assert issue.idea_id == "t"
         assert not any(error.code == "unknown_idea_icon" for error in errors)
 

@@ -84,26 +84,6 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     tags.add(item.name)
         return tags
 
-    def _hidden_idea_categories(self) -> set[str]:
-        """Idea categories declared ``hidden = yes`` in ``common/idea_tags``.
-
-        Hidden ideas exist to be added by script and history, like the
-        game's own ``hidden_ideas``.
-        """
-
-        categories = {"hidden_ideas"}
-        for _, text in self._effective_script_texts("common/idea_tags"):
-            for container in parse(text).root.assignments("idea_categories"):
-                if container.block is None:
-                    continue
-                for category in container.block.assignments():
-                    if (
-                        category.block is not None
-                        and category.block.scalar("hidden") == "yes"
-                    ):
-                        categories.add(category.name)
-        return categories
-
     def _recruited_leader_ideologies(self, country: Country) -> list[str] | None:
         """Ideologies of the recruited characters that can lead the country.
 

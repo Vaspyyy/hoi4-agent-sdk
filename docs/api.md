@@ -1032,7 +1032,10 @@ mod.assert_no_visual_overlap("west_focus")
 
 `mod.validate(validate_icons=False, strict_localization=False, stage="package")`
 runs all validators and returns `list[ValidationError]`. It does **not** raise
-for content issues. Stages are:
+for content issues. Every finding has a registered `code` and that code's
+severity: `error` (the game rejects it or behaves wrongly), `warning`
+(probably a mistake) or `info` (advice, returned only with `advice=True`).
+[validation.md](validation.md) lists every code. Stages are:
 
 - `build`: syntax, references, OOBs, and installed-game vocabulary, while
   deferring complete-country checks during a multi-step build;
@@ -1098,10 +1101,11 @@ except OperationCancelled:
 | **Geography** | Significant capital-disconnected owned components and fully enclosed foreign land components warn unless explicitly allowlisted |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
 | **Map** | Land provinces belong to exactly one state (missing: warning `province_missing_state`; duplicate: error `province_in_multiple_states`); state provinces exist and are not sea provinces (vanilla states include lakes); land and sea provinces belong to exactly one strategic region (an empty region is a warning, as vanilla ships three); supply nodes, railways (levels, land provinces, adjacency when the mod overrides `railways.txt` and the province map is readable), and `buildings.txt` references resolve: the last field is a sea province, except for `floating_harbor`, which names its coastal land province. The whole check was run against the HOI4 1.19.3 map with no findings |
-| **Event** | Has ID, has title, has description, has options, option gameplay effects, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
-| **Idea** | Has ID, has modifiers |
-| **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, no prerequisite cycles, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, continuous focus overlap risk, optional focus icon existence |
-| **Cross-cut** | Every focus has localization, optional strict localization, effect references, installed-game effect/trigger/modifier vocabulary, tooltip and scope footguns, and release-stage content liveness |
+| **Event** | Has ID; a visible (not `hidden = yes`) event has a title, a description and an option; valid event_type; the dotted ID's namespace is declared by an `add_namespace` anywhere in the game, base mods or mod; core effects at country scope; invalid tech categories. Advice: options that only close the event, triggered-only MTTH, war declarations in immediate |
+| **Idea** | Has ID. Advice: no modifier or other effect, `GFX_idea_` prefix in `picture` |
+| **Decision** | Non-selectable missions with a cost. Advice: `activation` without `days_mission_timeout` |
+| **Focus tree** | No duplicate IDs, two focuses on one position only when the game never shows both (mutually exclusive or `allow_branch` branches), prerequisite and mutually_exclusive references exist, no prerequisite cycles, search filters have a `GFX_<filter>` sprite, core effects at country scope, invalid tech categories, optional focus icon existence. Advice: continuous focus panel above the last row |
+| **Cross-cut** | Every focus has name and description localization (in the mod, base mods or game), optional strict localization, effect references, installed-game effect/trigger/modifier vocabulary, tooltip and scope hints, and release-stage content liveness |
 
 ### ValidationError Fields
 
@@ -1109,8 +1113,8 @@ except OperationCancelled:
 @dataclass
 class ValidationError:
     message: str            # Human-readable description
-    severity: str = "error" # "error" or "warning"
-    code: str = ""          # Stable suppression/matching code when available
+    severity: str = "error" # "error", "warning" or "info" (advice)
+    code: str = ""          # Stable registered code, see validation.md
     file_path: str | None   # Source file if known
     focus_id: str | None    # Focus ID if relevant
     country_tag: str | None # Country tag if relevant
@@ -1119,19 +1123,26 @@ class ValidationError:
     idea_id: str | None     # Idea ID if relevant
 ```
 
-**Errors** mean the mod will crash or behave incorrectly. **Warnings** mean potential issues (missing localization, etc.).
+**Errors** mean the game rejects the content or behaves wrongly. **Warnings**
+mean a probable mistake (missing localization, etc.). **Advice** (`info`) is a
+style hint about valid content and is returned only with
+`mod.validate(advice=True)`.
 
-Discover and suppress known false-positive warnings by stable code:
+Hide known false-positive warnings or advice by stable code, for every
+object or for one (`code:ID`). Errors cannot be suppressed, and an unknown
+code raises `ValueError`:
 
 ```python
 from hoi4 import VALIDATION_WARNING_CODES
+from hoi4.validation import VALIDATION_SEVERITIES
 
 print(VALIDATION_WARNING_CODES)
-errors = mod.validate(suppress_warnings=["country_scope_core_effect"])
+errors = mod.validate(suppress=["country_scope_core_effect"])
+errors = mod.validate(suppress=["missing_localization:TAG_secret_focus"])
 errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
 ```
 
-Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `faction_scope_footgun`, `civil_war_scope_footgun`, `civil_war_focus_tree_missing`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_focus_tree_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `bad_idea_tooltip_pattern`, `idea_mutation_collision`, `idea_not_addable`, `resistance_on_core_state`, `revolt_state_already_owned`, `event_option_no_effect`, `missing_localization`, `visual_overlap`, and `script_syntax`.
+Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `unknown_tech_bonus_category`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_focus_tree_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `idea_mutation_collision`, `resistance_on_core_state`, `revolt_state_already_owned`, `missing_localization` and `visual_overlap`; `missing_effect_target` and `script_syntax` are errors. Advice codes include `faction_scope_footgun`, `civil_war_scope_footgun`, `civil_war_focus_tree_missing`, `bad_idea_tooltip_pattern`, `idea_not_addable` and `event_option_no_effect`.
 
 Vocabulary and liveness warning codes are `unknown_effect_token`,
 `unknown_trigger_token`, `unknown_modifier_token`, the corresponding

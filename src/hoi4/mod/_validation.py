@@ -16,7 +16,6 @@ from ..content_validation import (
 from ..countries import (
     country_color_tags,
 )
-from ..focus_layout import resolve_focus_positions, visual_overlap_issues
 from ..idea_icons import (
     resolve_idea_sprite,
 )
@@ -40,22 +39,29 @@ from ..script_vocabulary import (
 from ..tags import (
     load_all_tags,
 )
-from ..syntax import require_well_formed
+from ..syntax import parse, require_well_formed
 from ..textio import read_text
 from ..types import (
     Event,
     EventOption,
-    Idea,
+    Focus,
+    FocusTree,
     ValidationError,
 )
 from ..validation import (
+    DEFAULT_FOCUS_SEARCH_FILTERS,
+    DEFAULT_IDEA_CATEGORIES,
+    focus_search_filters_from_sprites,
+    idea_categories_from_script,
     validate_country_history_references,
     validate_decision,
     validate_event,
     validate_focus_tree,
     validate_idea,
+    validate_idea_category,
     validate_state,
     validate_tag_definition_targets,
+    validation_suppressions,
 )
 from ..validation_stages import ValidationStage, require_validation_stage
 from ._country_package import CountryPackageLayer
@@ -72,6 +78,10 @@ from ._shared import (
 )
 
 _ISSUE_LOCATION_RE = re.compile(r"line (\d+), column (\d+)")
+
+# ``_scan_cache`` entries of the localisation key indexes ``_has_loc`` builds;
+# they are rebuilt for every ``validate()`` run.
+_LOC_KEY_INDEXES = ("validation_loc_keys", "validation_mod_loc_keys")
 
 
 _LOCALIZATION_HEADER_RE = re.compile(r"^l_[A-Za-z_]+\s*:")
@@ -371,6 +381,124 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
     # ── Validation ───────────────────────────────────────────────
 
+    def _known_idea_categories(self) -> set[str]:
+        """Idea categories and slots of the base game and every ``common/idea_tags`` file."""
+
+        categories = set(DEFAULT_IDEA_CATEGORIES)
+        for path in self.content_files("common/idea_tags").values():
+            if path.suffix.lower() != ".txt":
+                continue
+            try:
+                categories |= idea_categories_from_script(read_text(path))
+            except (OSError, ValueError):
+                continue
+        return categories
+
+    def _country_tag_aliases(self) -> set[str]:
+        """Alias tags of ``common/country_tag_aliases``, usable wherever a tag is."""
+
+        aliases: set[str] = set()
+        for path in self.content_files("common/country_tag_aliases").values():
+            if path.suffix.lower() != ".txt":
+                continue
+            try:
+                document = parse(read_text(path))
+            except (OSError, ValueError):
+                continue
+            aliases.update(item.name for item in document.root.assignments() if item.block)
+        return aliases
+
+    def _declared_event_namespaces(self) -> set[str]:
+        """Every namespace an ``add_namespace`` declares, as the game sees them.
+
+        A namespace declared in any event file of the game, a base mod or the
+        mod can be used by every event, and a file may declare several. The
+        files are read only when an event uses a namespace the loaded models
+        do not already name.
+        """
+
+        names = {name for name in self._event_namespaces.values() if name}
+        names.update(name for name in self._event_file_namespaces.values() if name)
+        used = {event_id.split(".", 1)[0].lower() for event_id in self._events if "." in event_id}
+        if used <= {name.lower() for name in names}:
+            return names
+        for path in self.content_files("events").values():
+            if path.suffix.lower() != ".txt":
+                continue
+            try:
+                document = parse(read_text(path))
+            except (OSError, ValueError):
+                continue
+            for item in document.root.assignments("add_namespace", fold=True):
+                if item.scalar:
+                    names.add(item.scalar)
+        return names
+
+    def _known_focus_search_filters(self) -> set[str] | None:
+        """Search filters that have a ``GFX_<filter>`` sprite, or ``None`` for the defaults.
+
+        The sprites are scanned only when a focus uses a filter the base game
+        list does not have.
+        """
+
+        used = {
+            name
+            for tree in self._focus_trees.values()
+            for focus in tree.focuses
+            for name in focus.search_filters
+        }
+        if used <= DEFAULT_FOCUS_SEARCH_FILTERS:
+            return None
+        return set(DEFAULT_FOCUS_SEARCH_FILTERS) | focus_search_filters_from_sprites(
+            self._known_focus_icons()
+        )
+
+    def _focus_localization_findings(
+        self, tree: FocusTree, focus: Focus
+    ) -> list[ValidationError]:
+        """Report a focus whose name or description key exists nowhere.
+
+        The game names a focus by its ``text = KEY`` when it has one, else by
+        its id, and describes it with that key plus ``_desc``.
+        """
+
+        if not focus.id:
+            return []
+        text_key = ""
+        if focus.raw_block:
+            text_key = parse(focus.raw_block).root.scalar("text", fold=True) or ""
+        name_keys = [key for key in (text_key, focus.id) if key]
+        file_path = str(tree.path) if tree.path else None
+        findings: list[ValidationError] = []
+        if not any(self._has_loc(key) for key in name_keys):
+            findings.append(
+                ValidationError(
+                    message=(
+                        f"No localization found for focus '{focus.id}' "
+                        f"(looked for {' or '.join(repr(key) for key in name_keys)})"
+                    ),
+                    severity="warning",
+                    code="missing_localization",
+                    focus_id=focus.id,
+                    file_path=file_path,
+                )
+            )
+        desc_keys = [f"{key}_desc" for key in name_keys]
+        if not any(self._has_loc(key) for key in desc_keys):
+            findings.append(
+                ValidationError(
+                    message=(
+                        f"No description localization found for focus '{focus.id}' "
+                        f"(looked for {' or '.join(repr(key) for key in desc_keys)})"
+                    ),
+                    severity="warning",
+                    code="missing_localization",
+                    focus_id=focus.id,
+                    file_path=file_path,
+                )
+            )
+        return findings
+
     def validate(
         self,
         suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
@@ -382,8 +510,30 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         liveness_localization_allowlist: Sequence[str] = (),
         progress: ProgressCallback | None = None,
         cancelled: CancelCallback | None = None,
+        *,
+        advice: bool = False,
+        suppress: Sequence[str] = (),
     ) -> list[ValidationError]:
+        """Check the mod and return its findings.
+
+        Each finding has a registered ``code`` and the severity of that code
+        (see ``VALIDATION_SEVERITIES``): ``"error"`` means the game rejects
+        the content or behaves wrongly, ``"warning"`` that it is probably a
+        mistake, ``"info"`` is advice. Advice is returned only with
+        ``advice=True``.
+
+        ``suppress`` hides warnings and advice by code, either every finding
+        of a code (``"visual_overlap"``) or only those about one object
+        (``"missing_localization:TAG_my_focus"``). Errors cannot be
+        suppressed, and an unknown code raises ``ValueError``.
+        ``suppress_warnings`` is the older name of the same list.
+        """
+
         stage = require_validation_stage(stage)
+        # Fail on a bad suppression before the long run, not after it.
+        validation_suppressions([*(suppress_warnings or ()), *suppress])
+        for name in _LOC_KEY_INDEXES:
+            self._scan_cache.pop(name, None)
         errors: list[ValidationError] = []
         phase_total = 12 + (1 if self.hoi4_install is not None else 0)
         if stage == "build":
@@ -503,6 +653,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         begin_phase("catalogs", "Resolving referenced game and mod catalogs")
         known_tags = set(load_all_tags(self._base_content_root, self.mod_root))
         known_tags.update(self._countries.keys())
+        known_tags.update(self._country_tag_aliases())
         script_entries = self._script_entries()
         scripts = "\n".join(entry[0] for entry in script_entries)
         need_ideas = any(country.ideas for country in self._countries.values()) or bool(
@@ -592,11 +743,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                     existing_findings.add(identity)
 
         begin_phase("events", "Validating events and on-actions")
-        for event_id, event in self._events.items():
+        declared_namespaces = self._declared_event_namespaces()
+        for event in self._events.values():
             errors.extend(
-                validate_event(
-                    event, namespace=self._event_namespaces.get(event_id), known_tags=known_tags
-                )
+                validate_event(event, known_tags=known_tags, namespaces=declared_namespaces)
             )
 
         for occurrences in self._on_action_occurrences.values():
@@ -618,8 +768,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             errors.extend(validate_decision(decision))
 
         begin_phase("ideas", "Validating ideas and assignments")
+        idea_categories = self._known_idea_categories() if self._ideas else set()
         for idea in self._ideas.values():
             errors.extend(validate_idea(idea))
+            errors.extend(validate_idea_category(idea, idea_categories))
             if (
                 validate_icons
                 and known_focus_icons
@@ -652,23 +804,11 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         for bookmark in self._bookmarks:
             errors.extend(validate_bookmark(bookmark))
 
-        law_category_cache: dict[tuple[str, str], bool] = {}
-
-        def is_declared_law(idea: Idea) -> bool:
-            key = (idea.category, idea.category_raw_block)
-            if key not in law_category_cache:
-                law_category_cache[key] = any(
-                    span.key == "law" and not span.is_block
-                    and idea.category_raw_block[span.value_start:span.value_end].strip().strip('"') == "yes"
-                    for span in top_level_assignments(idea.category_raw_block)
-                )
-            return law_category_cache[key]
-
-        hidden_categories = self._hidden_idea_categories()
+        # Country history may add ideas of any category (laws, advisors,
+        # hidden ideas...), so only an unknown id is reported.
         for country in self._countries.values():
             for idea_id in country.ideas:
-                assigned_idea = self._ideas.get(idea_id)
-                if assigned_idea is None and idea_id not in known_ideas:
+                if idea_id not in self._ideas and idea_id not in known_ideas:
                     errors.append(
                         ValidationError(
                             message=f"Country '{country.tag}' assigns unknown idea '{idea_id}'",
@@ -676,27 +816,6 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                             code="unknown_assigned_idea",
                             country_tag=country.tag,
                             idea_id=idea_id,
-                        )
-                    )
-                elif (assigned_idea is not None and assigned_idea.category != "country"
-                      and assigned_idea.category not in hidden_categories
-                      and not is_declared_law(assigned_idea)):
-                    errors.append(
-                        ValidationError(
-                            message=(
-                                f"Country '{country.tag}' assigns idea '{idea_id}', but that idea is in category "
-                                f"'{assigned_idea.category or '<none>'}', not 'country', a hidden "
-                                "category or a declared law category."
-                            ),
-                            severity="warning",
-                            code="assigned_idea_not_country_category",
-                            country_tag=country.tag,
-                            idea_id=idea_id,
-                            file_path=(
-                                str(country.history_path)
-                                if country.history_path is not None
-                                else None
-                            ),
                         )
                     )
 
@@ -717,50 +836,20 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             }:
                 icon_suggestions[icon] = self.suggest_focus_icon(icon)
 
+        search_filters = self._known_focus_search_filters()
         for tree in self._focus_trees.values():
             tree_errors = validate_focus_tree(
                 tree,
                 known_focus_ids=all_focus_ids,
                 known_state_ids=known_state_ids if known_state_ids else None,
                 known_tags=known_tags,
+                known_search_filters=search_filters,
             )
             errors.extend(tree_errors)
-            overlap_issues = visual_overlap_issues(tree, resolve_focus_positions(tree))
-            if overlap_issues:
-                errors.append(
-                    ValidationError(
-                        message=f"Focus tree '{tree.id}' visual overlap risk: {'; '.join(overlap_issues)}",
-                        severity="warning",
-                        code="visual_overlap",
-                        file_path=str(tree.path) if tree.path else None,
-                    )
-                )
 
         for tree in self._focus_trees.values():
             for focus in tree.focuses:
-                loc_key = f"{focus.id}:0"
-                if loc_key not in self._loc_entries and focus.id not in self._loc_entries:
-                    errors.append(
-                        ValidationError(
-                            message=f"No localization found for focus '{focus.id}'",
-                            severity="warning",
-                            code="missing_localization",
-                            focus_id=focus.id,
-                            file_path=str(tree.path) if tree.path else None,
-                        )
-                    )
-                desc_key = f"{focus.id}_desc"
-                desc_colon_key = f"{focus.id}_desc:0"
-                if desc_key not in self._loc_entries and desc_colon_key not in self._loc_entries:
-                    errors.append(
-                        ValidationError(
-                            message=f"No description localization found for focus '{focus.id}'",
-                            severity="warning",
-                            code="missing_localization",
-                            focus_id=focus.id,
-                            file_path=str(tree.path) if tree.path else None,
-                        )
-                    )
+                errors.extend(self._focus_localization_findings(tree, focus))
                 if validate_icons and known_focus_icons and focus.icon not in known_focus_icons:
                     suggestion = icon_suggestions[focus.icon]
                     errors.append(
@@ -813,15 +902,20 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             )
 
         check_cancelled(cancelled, operation="validation")
+        findings = _filter_validation_errors(
+            errors, suppress_warnings=suppress_warnings, suppress=suppress, advice=advice
+        )
+        for name in _LOC_KEY_INDEXES:
+            self._scan_cache.pop(name, None)
         report_progress(
             progress,
             operation="validation",
             phase="done",
             current=phase_total,
             total=phase_total,
-            message=f"Validation complete with {len(errors)} issue(s)",
+            message=f"Validation complete with {len(findings)} issue(s)",
         )
-        return _filter_validation_errors(errors, suppress_warnings=suppress_warnings)
+        return findings
 
     def analyze_content_liveness(
         self,

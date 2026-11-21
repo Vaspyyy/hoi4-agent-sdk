@@ -1,0 +1,304 @@
+# Validation codes and severities
+
+`Mod.validate()` returns a list of `ValidationError` findings. Every finding
+has a stable `code` and the `severity` of that code. This page describes the
+severity model, how to hide findings, and every code the SDK can produce.
+
+## Severities
+
+| Severity | Meaning | Returned by default |
+| --- | --- | --- |
+| `error` | The game rejects the content or behaves wrongly. | yes |
+| `warning` | Probably a mistake: the game loads it, but the result is unlikely to be what was meant. | yes |
+| `info` | Advice and style hints. The content is valid. | only with `advice=True` |
+
+Each code has exactly one severity. The registry is
+`hoi4.validation.VALIDATION_SEVERITIES` (`code -> severity`); the tables
+`VALIDATION_ERROR_CODES`, `VALIDATION_WARNING_CODES` and
+`VALIDATION_INFO_CODES` map the codes of one severity to a one-line
+description, and `VALIDATION_CODES` holds all of them. `Mod.validate()`
+gives every finding the severity of its code.
+
+```python
+issues = mod.validate()                 # errors and warnings
+issues = mod.validate(advice=True)      # also the advice
+blocking = [i for i in issues if i.severity == "error"]
+```
+
+The release gate (`run_release_gate`) and `mod.validate_country_package(tag)`
+work as before: advice never fails them. `mod.validate_effect(script)` checks
+one snippet and returns its advice together with errors and warnings.
+
+## Hiding findings
+
+`suppress=` hides warnings and advice by code. An entry is either a code,
+which hides every finding with that code, or `code:ID`, which hides only the
+findings about one object. `ID` is compared with the finding's focus, event,
+idea, decision, country tag, state id, focus tree, ideology, dynamic modifier
+or bookmark field.
+
+```python
+mod.validate(suppress=["visual_overlap"])
+mod.validate(suppress=["missing_localization:TAG_secret_focus"])
+mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
+```
+
+- Errors cannot be suppressed.
+- An unknown code raises `ValueError`, so a typo does not silently hide
+  nothing. Suppressing by message text is no longer supported.
+- `suppress_warnings=` is the older name of the same list and means the same.
+
+## How the checks read the game
+
+The SDK inherits the files of the configured game install and base mods, and
+the content checks read them the way the game does:
+
+- Localisation keys are looked up in the mod (with unsaved edits), the base
+  mods and the game. A key counts as present when a line of a
+  `localisation/english` file starts with `KEY:` and a quote, like the game
+  reads it, so text with inner quotes (`KEY: "The "Plan" X"`) counts too. A
+  focus is named by its `text = KEY` when it has one; a country by `TAG` or
+  an ideology variant such as `TAG_fascism`; an idea by its `name = KEY` or
+  its id.
+- An event namespace may be declared by an `add_namespace` in any event file
+  of the game, a base mod or the mod, compared without regard to case. A
+  file may declare several.
+- A focus search filter is known when a sprite named `GFX_<filter>` is
+  declared in an `interface/*.gfx` file of the game, a base mod or the mod.
+- Two focuses may share a position when the game never shows both: one
+  depends on a focus that is mutually exclusive with one the other depends
+  on, or both hang on an `allow_branch` condition.
+- Hidden events (`hidden = yes`) need no title, description or option.
+- Tag aliases from `common/country_tag_aliases` count as country tags, and
+  tags declared after `dynamic_tags = yes` are named at runtime.
+
+## All codes
+
+### Errors
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `bookmark_randomize_weather_missing` | error | A bookmark is missing its obligatory randomize_weather effect. |
+| `capital_not_cored` | error | A country's capital state is not cored by that country. |
+| `capital_not_owned` | error | A country's capital state is not owned by that country. |
+| `capital_ref` | error | A country history capital points to a missing state. |
+| `country_colors_parse` | error | A country colors table changed after loading and could not be parsed during validation. |
+| `duplicate_bookmark_name` | error | A bookmark name is defined more than once. |
+| `duplicate_character_id` | error | A character ID is defined more than once. |
+| `duplicate_country_tag` | error | A country tag is declared in more than one mod file. |
+| `duplicate_decision_category_id` | error | A decision category repeats within one file. |
+| `duplicate_decision_id` | error | A decision ID is defined more than once. |
+| `duplicate_definition_id` | error | A scripted effect, trigger or other definition is defined twice. |
+| `duplicate_dynamic_modifier_id` | error | A dynamic modifier ID is defined more than once. |
+| `duplicate_event_id` | error | An event ID is defined more than once. |
+| `duplicate_focus_id` | error | A focus ID is defined more than once in one tree. |
+| `duplicate_focus_tree_id` | error | A focus tree ID is defined more than once. |
+| `duplicate_idea_id` | error | An idea ID is defined more than once. |
+| `duplicate_identifier` | error | A loaded object id is defined more than once. |
+| `duplicate_ideology_id` | error | An ideology ID is defined more than once. |
+| `duplicate_oob_air_wing` | error | An OOB repeats an air wing at one location. |
+| `duplicate_oob_fleet` | error | An OOB repeats a fleet name. |
+| `duplicate_oob_grid_position` | error | A division template repeats a battalion grid position. |
+| `duplicate_oob_ship` | error | An OOB repeats a ship name. |
+| `duplicate_oob_ship_equipment` | error | A ship repeats an equipment type. |
+| `duplicate_oob_task_force` | error | A fleet repeats a task-force name. |
+| `duplicate_oob_template` | error | An OOB repeats a division-template name. |
+| `duplicate_state_id` | error | A state ID is defined in more than one state file. |
+| `duplicate_strategic_region_id` | error | A strategic region id is defined more than once. |
+| `duplicate_subideology_id` | error | A subtype is repeated within an ideology. |
+| `empty_land_oob` | error | An assigned land OOB has no template or no starting division. |
+| `equipment_variant_chassis_not_unlocked` | error | Country history creates an equipment variant before its chassis technology. |
+| `focus_cycle` | error | A focus tree contains a prerequisite cycle. |
+| `game_log_error` | error | HOI4 reported an engine error for a file owned by this mod. |
+| `insufficient_military_commanders` | error | A complete country needs at least two recruited army commanders. |
+| `insufficient_political_advisors` | error | A complete country needs at least two recruited political advisors. |
+| `invalid_bookmark_available` | error | A bookmark availability block is malformed. |
+| `invalid_bookmark_country_tag` | error | A bookmark country tag is invalid. |
+| `invalid_bookmark_date` | error | A bookmark date is invalid. |
+| `invalid_bookmark_effect` | error | A bookmark effect block is malformed. |
+| `invalid_bookmark_required_dlc` | error | A bookmark required DLC list is invalid. |
+| `invalid_character_roles_key` | error | Characters declare roles through role blocks, not a top-level roles assignment. |
+| `invalid_country_color` | error | A country color is malformed or has a channel outside 0..255. |
+| `invalid_country_tag` | error | A country tag is not three letters or digits. |
+| `invalid_decision_category_layout` | error | Decision-category metadata belongs in common/decisions/categories. |
+| `invalid_dynamic_modifier_id` | error | A dynamic modifier ID is invalid. |
+| `invalid_dynamic_modifier_script` | error | A dynamic modifier contains malformed script. |
+| `invalid_event_type` | error | An event block type is not one HOI4 knows. |
+| `invalid_focus_kind` | error | A focus block kind (focus, shared_focus, joint_focus) is not allowed where it is. |
+| `invalid_idea_desc_key` | error | Idea descriptions use the fixed <idea_id>_desc localization key, not a desc assignment. |
+| `invalid_ideology_ai_behavior` | error | An ideology AI behavior is unknown. |
+| `invalid_ideology_color` | error | An ideology color channel is outside 0..255. |
+| `invalid_ideology_id` | error | An ideology ID is not valid Paradox Script syntax. |
+| `invalid_oob_air_equipment` | error | An air wing has invalid equipment. |
+| `invalid_oob_air_location` | error | An air wing has an invalid location. |
+| `invalid_oob_battalion` | error | A division template contains an empty battalion type. |
+| `invalid_oob_factor` | error | An OOB experience or equipment factor is outside 0..1. |
+| `invalid_oob_grid_position` | error | A battalion grid position is outside the supported range. |
+| `invalid_oob_location` | error | A starting division has an invalid province location. |
+| `invalid_oob_naval_base` | error | A fleet has an invalid naval-base location. |
+| `invalid_oob_naval_location` | error | A naval OOB entry has an invalid location. |
+| `invalid_oob_ship_definition` | error | A ship has no unit definition. |
+| `invalid_oob_ship_equipment` | error | A ship has invalid equipment. |
+| `invalid_railway` | error | A railway has an invalid level, province or connection. |
+| `invalid_ruling_party` | error | A country's ruling party is not a known ideology group. |
+| `invalid_set_politics_field` | error | The set_politics effect contains a field unsupported by the installed game grammar. |
+| `invalid_subideology_id` | error | An ideology subtype ID is invalid. |
+| `invalid_supply_node` | error | A supply node is not on a known land province. |
+| `legacy_naval_oob_without_dlc_fallback` | error | Legacy naval equipment is active when Man the Guns may be enabled. |
+| `load_failure` | error | A discovered file could not be loaded by its structured reader. |
+| `localization_bom` | error | A localization file is missing the UTF-8 byte-order mark HOI4 expects. |
+| `localization_encoding` | error | A localization file is not valid UTF-8. |
+| `localization_header` | error | A localization file has no valid l_<language>: header. |
+| `localization_language_mismatch` | error | A localization file's l_<language>: header does not match its language folder. |
+| `malformed_map_building` | error | A buildings.txt line is malformed. |
+| `malformed_railway` | error | A railway line is malformed. |
+| `map_building_unknown_province` | error | A buildings.txt line names a province that does not exist. |
+| `map_building_unknown_state` | error | A buildings.txt line names a state that does not exist. |
+| `missing_bba_air_variant_name` | error | An airframe-based air wing has no equipment variant name. |
+| `missing_bba_equipment_variant` | error | An airframe-based air wing refers to no compatible country-history variant. |
+| `missing_character_localization` | error | A visible character is missing name localization. |
+| `missing_character_portrait` | error | A visible character has no portrait reference. |
+| `missing_character_portrait_gfx` | error | A character portrait has no interface sprite declaration. |
+| `missing_character_portrait_texture` | error | A character portrait sprite points to a missing texture. |
+| `missing_character_small_portrait` | error | An advisor character has no civilian small portrait. |
+| `missing_country_activation` | error | A generated country has neither scenario-start territory nor a runtime release/setup path. |
+| `missing_country_flag` | error | An SDK-created country is missing one or more required flag sizes. |
+| `missing_country_leader` | error | A country has no recruited character with a country-leader role. |
+| `missing_country_name_pool` | error | A country that needs generated names has no common/names entry. |
+| `missing_effect_target` | error | War goal or war declaration block is missing target = TAG. |
+| `missing_event_id` | error | An event has no id. |
+| `missing_event_options` | error | A visible event has no option, so its window cannot be closed. |
+| `missing_focus_id` | error | A focus has no id. |
+| `missing_focus_mutually_exclusive` | error | A focus mutually_exclusive entry names a focus that does not exist. |
+| `missing_focus_prerequisite` | error | A focus prerequisite names a focus that does not exist. |
+| `missing_idea_id` | error | An idea has no id. |
+| `missing_land_oob` | error | A complete country has no unambiguous land order of battle. |
+| `missing_mtg_equipment_variant` | error | A hull-based ship refers to no compatible country-history variant. |
+| `missing_mtg_ship_variant_name` | error | A hull-based ship has no equipment variant name. |
+| `missing_oob_reference` | error | Country history refers to an OOB file that does not exist. |
+| `missing_oob_ship_equipment` | error | A ship has no equipment. |
+| `missing_state_id` | error | A state has no id. |
+| `mtg_naval_oob_uses_legacy_equipment` | error | A Man the Guns naval OOB uses legacy equipment types. |
+| `no_owned_territory` | error | A complete country owns no states. |
+| `non_land_state_province` | error | A state lists a sea province. |
+| `oob_air_location_not_owned` | error | An air OOB entry is outside its country's territory. |
+| `oob_fleet_name` | error | A fleet has no name. |
+| `oob_kind_mismatch` | error | An OOB assignment kind does not match its file content. |
+| `oob_load_error` | error | An order of battle referenced by a country could not be read. |
+| `oob_location_not_owned` | error | A starting division is placed outside its country's territory. |
+| `oob_naval_location_not_owned` | error | A naval OOB entry is outside its country's territory. |
+| `oob_ship_name` | error | A ship has no name. |
+| `oob_task_force_name` | error | A task force has no name. |
+| `oob_template_name` | error | A division template has no name. |
+| `oob_water_location` | error | A starting land division is placed in a water province. |
+| `province_in_multiple_states` | error | A land province belongs to more than one state. |
+| `province_in_multiple_strategic_regions` | error | A province belongs to more than one strategic region. |
+| `runtime_capital_not_assigned` | error | A runtime-created country does not receive its declared capital. |
+| `runtime_capital_not_cored` | error | A runtime-created country receives its capital without a matching core. |
+| `runtime_recruit_character` | error | recruit_character runs outside country history, where the game ignores it. |
+| `script_syntax` | error | Raw Paradox script has mismatched braces or quotes. |
+| `stale_game_log` | error | The supplied HOI4 error log predates the audited mod files. |
+| `state_buildings_outside_history` | error | State buildings must be declared inside the history block. |
+| `state_load_error` | error | A state file could not be read during validation. |
+| `strategic_region_parse_error` | error | A strategic region file could not be read. |
+| `tag_definition` | error | A country tag points to a missing country definition file. |
+| `undeclared_event_namespace` | error | A dotted event id uses a namespace that no add_namespace in the game, a base mod or the mod declares. |
+| `undefined_recruited_character` | error | Country history recruits a character that is not defined. |
+| `ungated_bba_air_oob` | error | An airframe-based air OOB is not gated behind By Blood Alone. |
+| `ungated_mtg_naval_oob` | error | A hull-based naval OOB is not gated behind Man the Guns. |
+| `unknown_idea_category` | error | An idea's category is not a category, slot or character_slot declared in common/idea_tags of the game, a base mod or the mod. |
+| `unknown_oob_air_location` | error | An air OOB entry references an unknown state or province. |
+| `unknown_oob_equipment` | error | A naval or air OOB entry uses unknown equipment. |
+| `unknown_oob_equipment_owner` | error | A naval or air equipment entry uses an unknown country tag. |
+| `unknown_oob_naval_location` | error | A naval OOB entry references an unknown province. |
+| `unknown_oob_province` | error | A starting division references an unknown province. |
+| `unknown_oob_ship_definition` | error | A ship uses an unknown unit definition. |
+| `unknown_oob_template` | error | A starting division refers to an undefined template. |
+| `unknown_oob_unit_type` | error | A division template uses an unknown sub-unit type. |
+| `unknown_state_province` | error | A state lists a province that does not exist. |
+| `unknown_strategic_region_province` | error | A strategic region lists a province that does not exist. |
+| `unrecruited_character` | error | A character created for immediate recruitment is not recruited. |
+| `unsupported_dynamic_country_ideas` | error | dynamic_country_ideas is not a supported HOI4 construct. |
+
+### Warnings
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `bookmark_default_country_missing` | warning | The default country has no bookmark entry. |
+| `character_ref` | warning | A recruited character is not defined in mod or vanilla data. |
+| `civil_war_capital_ref` | warning | A civil-war capital is not a known state ID. |
+| `country_colors_shadow_vanilla` | warning | A mod colors.txt shadows vanilla country color entries that it does not repeat. |
+| `country_scope_core_effect` | warning | Core add/remove effect appears outside an explicit state scope. |
+| `disconnected_country_territory` | warning | Owned territory is significantly disconnected from the capital. |
+| `duplicate_bookmark_country_variant` | warning | A bookmark repeats an indistinguishable country variant. |
+| `empty_strategic_region` | warning | A strategic region has no provinces. |
+| `enclosed_foreign_territory` | warning | A foreign land component is completely enclosed by the target country. |
+| `event_conditional_text_missing` | warning | A conditional event title, description or option name has no text key. |
+| `flag_read_never_set` | warning | A scripted flag is read but never written by the mod. |
+| `flag_set_never_read` | warning | A scripted flag is written but never read. |
+| `history_set_owner_in_effect` | warning | State history owner directive appears in runtime effect script. |
+| `idea_mutation_collision` | warning | Focuses and delayed/runtime events mutate the same idea IDs. |
+| `invalid_idea_icon_key` | warning | Idea definitions must use a bare picture stem, not an icon assignment. |
+| `country_popularity_sum` | warning | A country's party popularities do not add up to 100. |
+| `leader_party_mismatch` | warning | Country ruling party group does not match leader sub-ideology. |
+| `missing_country_name` | warning | A country has no name. |
+| `missing_event_description` | warning | A visible event has no description. |
+| `missing_event_title` | warning | A visible event has no title. |
+| `missing_localization` | warning | Shown text (a focus, event, idea, country or leader name) has a localization key that exists nowhere: not in the mod, a base mod or the game. |
+| `missing_state_owner` | warning | A state has no owner. |
+| `missing_translation` | warning | English localization keys are missing from another language the mod ships. |
+| `missing_wargoal_type` | warning | War goal or war declaration block is missing type = <wargoal_type>. |
+| `mission_with_cost` | warning | A mission (days_mission_timeout) also declares a cost. |
+| `mixed_oob_kinds` | warning | One OOB file mixes land, naval, or air content instead of using the engine's separate assignment effects. |
+| `province_missing_state` | warning | A land province belongs to no state. |
+| `province_missing_strategic_region` | warning | A province belongs to no strategic region. |
+| `resistance_on_core_state` | warning | Resistance effects target a state that is already a core of its owner. |
+| `revolt_state_already_owned` | warning | Revolt script transfers a state already owned by the target country. |
+| `unfired_event` | warning | A triggered-only event has no modeled incoming reference. |
+| `ungranted_idea` | warning | A country idea is never granted by modeled content. |
+| `unknown_assigned_idea` | warning | Country history assigns an idea ID not loaded by the SDK. |
+| `unknown_character_trait` | warning | A character uses a trait no trait file defines. |
+| `unknown_country_scope` | warning | Script scopes into a tag that no country tag, tag alias or dynamic tag of the game, a base mod or the mod declares. |
+| `unknown_effect_token` | warning | Effect token is absent from installed-game documentation. |
+| `unknown_equipment_reference` | warning | Effect script references an equipment ID not found in configured data. |
+| `unknown_event_reference` | warning | Effect script references an event ID not loaded from the mod or configured HOI4 install. |
+| `unknown_focus_icon` | warning | Focus icon GFX key was not found in interface files. |
+| `unknown_focus_search_filter` | warning | A focus search filter has no GFX_<filter> sprite in the game, a base mod or the mod. |
+| `unknown_focus_tree_reference` | warning | Effect script references a focus tree ID not loaded by the SDK. |
+| `unknown_idea_icon` | warning | Idea picture stem did not resolve to a GFX_idea_ sprite. |
+| `unknown_idea_reference` | warning | Effect script references an idea ID not loaded from the mod or configured HOI4 install. |
+| `unknown_modifier_token` | warning | Modifier token is absent from installed-game documentation. |
+| `unknown_state_core` | warning | A state core is not a known country tag. |
+| `unknown_state_owner` | warning | A state owner is not a known country tag. |
+| `unknown_state_reference` | warning | Focus effect script scopes into a state id that does not exist. |
+| `unknown_tech_bonus_category` | warning | add_tech_bonus category is not in the technology category catalog. |
+| `unknown_technology_reference` | warning | Effect script references a technology ID not found in configured data. |
+| `unknown_trigger_token` | warning | Trigger token is absent from installed-game documentation. |
+| `unreachable_focus` | warning | A focus cannot be reached from any root focus. |
+| `unresolved_focus_position` | warning | A focus position has a missing or cyclic local anchor. |
+| `unseen_effect_token` | warning | A documented effect has zero installed-game uses. |
+| `unseen_modifier_token` | warning | A documented modifier has zero installed-game uses. |
+| `unseen_trigger_token` | warning | A documented trigger has zero installed-game uses. |
+| `unsupported_effect_scope` | warning | Effect token is used outside its documented scope. |
+| `unsupported_modifier_scope` | warning | Modifier token is used outside its documented scope. |
+| `unsupported_trigger_scope` | warning | Trigger token is used outside its documented scope. |
+| `unused_localization` | warning | A localization key is not referenced by modeled content. |
+| `visual_overlap` | warning | Two focuses share a position and the game can show both (they are not on mutually exclusive or allow_branch branches). |
+
+### Advice
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `bad_idea_tooltip_pattern` | info | An effect removes several ideas and adds one; swap_ideas usually gives a cleaner tooltip. |
+| `civil_war_focus_tree_missing` | info | Civil war script starts a revolt without loading a focus tree. |
+| `civil_war_scope_footgun` | info | Civil war effects need careful target/capital scope. |
+| `continuous_focus_position_high` | info | The continuous focus panel starts above the bottom row of the focus tree. |
+| `event_option_no_effect` | info | An event option only closes the event. That is normal for flavour events. |
+| `faction_scope_footgun` | info | Faction effect direction depends on current scope. |
+| `idea_not_addable` | info | An effect adds an idea whose category is not 'country'. The game accepts ideas of any category. |
+| `idea_without_effect` | info | An idea has no modifier, bonus, rule or effect block. |
+| `invalid_idea_picture_prefix` | info | An idea picture repeats the GFX_idea_ prefix. The game accepts it; the bare stem is the convention. |
+| `missing_optional_localization` | info | An optional localization key (an idea description, a country's _DEF name) is missing; the game falls back to other text. |
+| `mission_activation_without_timeout` | info | A decision without days_mission_timeout has an activation trigger, which the game ignores. |
+| `triggered_only_with_mtth` | info | A triggered-only event also has mean_time_to_happen, which the game ignores. |
+| `war_declaration_in_immediate` | info | An event declares war in immediate, before the player picks an option. |

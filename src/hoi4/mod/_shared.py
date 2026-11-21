@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Sequence, cast
 
@@ -109,16 +109,61 @@ def _decision_category_definition_path(
 
 def _filter_validation_errors(
     errors: list[ValidationError],
-    suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
+    suppress_warnings: Iterable[str] | None = None,
+    *,
+    suppress: Iterable[str] | None = None,
+    advice: bool = True,
 ) -> list[ValidationError]:
-    if not suppress_warnings:
-        return errors
-    suppress = set(suppress_warnings)
-    return [
-        error
-        for error in errors
-        if not (
-            error.severity == "warning"
-            and (error.code in suppress or any(token in error.message for token in suppress))
-        )
-    ]
+    """Apply the severity model and the caller's suppressions to findings.
+
+    * Every finding gets the severity its code is registered with.
+    * ``"info"`` findings (advice) are kept only when ``advice`` is true.
+      ``Mod.validate()`` passes its own ``advice`` (default false);
+      ``validate_effect`` keeps the default and returns advice with the rest.
+    * ``suppress`` (and the older ``suppress_warnings``, which now means the
+      same) hides warnings and advice by code: ``"code"`` hides every
+      finding with that code, ``"code:ID"`` only those about the object
+      ``ID`` (a focus, event, idea, decision, country tag, state id, focus
+      tree, ideology, dynamic modifier or bookmark). Errors cannot be
+      suppressed. An entry with an unknown code raises ``ValueError``, so a
+      typo or an old message-text entry does not silently hide nothing.
+    """
+
+    from ..validation import validation_suppressions
+
+    rules = validation_suppressions([*(suppress_warnings or ()), *(suppress or ())])
+    kept: list[ValidationError] = []
+    for error in errors:
+        error = _with_registered_severity(error)
+        if error.severity == "info" and not advice:
+            continue
+        ids = rules.get(error.code)
+        if ids is not None and (not ids or not ids.isdisjoint(_finding_ids(error))):
+            continue
+        kept.append(error)
+    return kept
+
+
+def _with_registered_severity(error: ValidationError) -> ValidationError:
+    from ..validation import VALIDATION_SEVERITIES
+
+    severity = VALIDATION_SEVERITIES.get(error.code)
+    if severity is None or severity == error.severity:
+        return error
+    return dataclasses.replace(error, severity=severity)
+
+
+def _finding_ids(error: ValidationError) -> set[str]:
+    values = (
+        error.focus_id,
+        error.event_id,
+        error.idea_id,
+        error.decision_id,
+        error.country_tag,
+        error.state_id,
+        error.focus_tree_id,
+        error.ideology_id,
+        error.dynamic_modifier_id,
+        error.bookmark_name,
+    )
+    return {str(value) for value in values if value is not None and value != ""}

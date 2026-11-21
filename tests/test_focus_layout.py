@@ -112,7 +112,7 @@ def test_unresolved_layout_diagnostics(tmp_path, focuses, diagnostic):
     assert any(e.code == "unresolved_focus_position" for e in errors)
     overlaps = [e for e in errors if e.code == "visual_overlap"]
     assert len(overlaps) == 1
-    assert "Y overlaps X" in overlaps[0].message
+    assert "Focus 'Y' shares position (9, 9) with 'X'" in overlaps[0].message
     assert "unresolved" not in overlaps[0].message
     assert "relative_position_id" not in overlaps[0].message
 

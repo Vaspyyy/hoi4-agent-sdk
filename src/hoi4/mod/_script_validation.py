@@ -907,11 +907,35 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         return None
 
     def _validate_localization_references(self) -> list[ValidationError]:
+        """Report shown text whose localisation key exists nowhere.
+
+        Keys are looked up the way the game resolves them, in the mod, its
+        base mods and the game (see ``_has_loc``):
+
+        * events: title, description and option names, also the conditional
+          ones; a hidden event shows no window and is skipped;
+        * ideas: the ``name = KEY`` override or the idea id; hidden ideas
+          and legacy advisor ideas (named through their traits) are skipped.
+          A missing ``_desc`` is advice: the game then shows only the effects;
+        * countries: ``TAG``, ``TAG_ADJ`` and ``TAG_DEF``, each also as an
+          ideology variant (``TAG_fascism``, ``TAG_fascism_ADJ``...). Dynamic
+          civil-war tags are named at runtime and skipped. ``TAG_DEF`` is
+          advice: the game falls back to the plain name;
+        * the country leader: a character whose ``name`` is plain text needs
+          no key; otherwise its name key (or its id) must exist.
+        """
+
+        from ..characters import CountryLeaderRole
+        from ..politics import RULING_PARTIES
+        from ..syntax import parse
+        from ..validation import event_is_hidden
+
         errors: list[ValidationError] = []
 
         def add_missing(
             message: str,
             *,
+            optional: bool = False,
             focus_id: str | None = None,
             event_id: str | None = None,
             idea_id: str | None = None,
@@ -921,8 +945,8 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             errors.append(
                 ValidationError(
                     message=message,
-                    severity="warning",
-                    code="missing_localization",
+                    severity="info" if optional else "warning",
+                    code="missing_optional_localization" if optional else "missing_localization",
                     focus_id=focus_id,
                     event_id=event_id,
                     idea_id=idea_id,
@@ -932,6 +956,8 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             )
 
         for event in self._events.values():
+            if event_is_hidden(event):
+                continue
             event_keys = [
                 ("title", key)
                 for key in (event.title, *(e.text for e in event.conditional_titles))
@@ -952,39 +978,129 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                     )
 
         for idea in self._ideas.values():
-            if not self._has_loc(idea.id):
+            root = parse(idea.raw_block).root if idea.raw_block else None
+            if idea.category == "hidden_ideas" or idea.traits or (
+                root is not None and root.first("traits", fold=True) is not None
+            ):
+                continue
+            name_key = (root.scalar("name", fold=True) if root is not None else None) or ""
+            name_keys = [key for key in (name_key, idea.id) if key]
+            file_path = str(idea.path) if idea.path else None
+            if not any(self._has_loc(key) for key in name_keys):
                 add_missing(
-                    f"Idea '{idea.id}' localization not found",
+                    f"Idea '{idea.id}' localization not found "
+                    f"(looked for {' or '.join(repr(key) for key in name_keys)})",
                     idea_id=idea.id,
-                    file_path=str(idea.path) if idea.path else None,
+                    file_path=file_path,
                 )
-            if not self._has_loc(f"{idea.id}_desc"):
+            desc_keys = [f"{key}_desc" for key in name_keys]
+            if not any(self._has_loc(key) for key in desc_keys):
                 add_missing(
                     f"Idea '{idea.id}' description localization '{idea.id}_desc' not found",
+                    optional=True,
                     idea_id=idea.id,
-                    file_path=str(idea.path) if idea.path else None,
+                    file_path=file_path,
                 )
 
+        ideologies = set(RULING_PARTIES) | set(self._vanilla_ideologies) | set(self._ideologies)
+        # Tags declared after ``dynamic_tags = yes`` in a country_tags file
+        # are civil-war tags the game names at runtime.
+        dynamic_tags: set[str] = set()
+        for path in self.content_files("common/country_tags").values():
+            if path.suffix.lower() != ".txt":
+                continue
+            try:
+                tag_root = parse(read_text(path)).root
+            except (OSError, ValueError):
+                continue
+            dynamic = False
+            for item in tag_root.assignments():
+                if item.name.lower() == "dynamic_tags":
+                    dynamic = (item.scalar or "").lower() == "yes"
+                elif dynamic:
+                    dynamic_tags.add(item.name)
         for country in self._countries.values():
-            for key in (country.tag, f"{country.tag}_DEF", f"{country.tag}_ADJ"):
-                if not self._has_loc(key):
+            if country.tag in dynamic_tags:
+                continue
+            for suffix, optional in (("", False), ("_ADJ", False), ("_DEF", True)):
+                keys = [f"{country.tag}{suffix}"] + [
+                    f"{country.tag}_{ideology}{suffix}" for ideology in sorted(ideologies)
+                ]
+                if not any(self._has_loc(key) for key in keys):
                     add_missing(
-                        f"Country '{country.tag}' localization '{key}' not found",
+                        f"Country '{country.tag}' localization '{country.tag}{suffix}' not found "
+                        "(nor an ideology variant)",
+                        optional=optional,
                         country_tag=country.tag,
                     )
+            leader = country.leader
+            character = (
+                self._characters.get(leader.character_id)
+                if leader and leader.character_id
+                else None
+            )
+            # Only a loaded character with a country-leader role is checked:
+            # ``country.leader`` can name the first recruited advisor.
             if (
-                country.leader
-                and country.leader.character_id
-                and not self._has_loc(country.leader.character_id)
+                leader is not None
+                and character is not None
+                and any(isinstance(role, CountryLeaderRole) for role in character.roles)
             ):
-                add_missing(
-                    f"Country '{country.tag}' leader localization '{country.leader.character_id}' not found",
-                    country_tag=country.tag,
-                )
+                name = character.name
+                if name == leader.character_id:
+                    name = ""
+                # A name with spaces or other text is shown as written when
+                # no key of that name exists; only key-like names are checked.
+                key_like = bool(name) and "_" in name and re.fullmatch(r"[\w.\-]+", name)
+                needed = name if key_like else ("" if name else leader.character_id)
+                if needed and not self._has_loc(needed):
+                    add_missing(
+                        f"Country '{country.tag}' leader localization '{needed}' not found",
+                        country_tag=country.tag,
+                    )
         return errors
 
     def _has_loc(self, key: str) -> bool:
-        return key in self._loc_entries or f"{key}:0" in self._loc_entries
+        """Return whether an English localisation key exists anywhere the game looks.
+
+        That is the mod's loaded table (with unsaved edits) and the key lines
+        of every effective ``localisation/english`` file of the game, the base
+        mods and the mod. The key index reads only ``KEY:0 "`` at the start of
+        a line, the way the game finds keys, so a line whose text the strict
+        reader rejects (such as inner quotes) still counts. For a key changed
+        in memory, the mod's own files on disk no longer count; the game's
+        and base mods' files still do.
+        """
+
+        from ..localisation import YML_ENTRY_RE, normalize_localization_key
+
+        key = normalize_localization_key(key)
+        if not key:
+            return False
+        if key in self._loc_entries:
+            return True
+        inherited = self._scan_cache.get("validation_loc_keys")
+        own = self._scan_cache.get("validation_mod_loc_keys")
+        if inherited is None or own is None:
+            inherited, own = set(), set()
+            folder = Path("localisation") / DEFAULT_LOCALISATION_LANGUAGE
+            for path in self.content_files(folder).values():
+                if path.suffix.lower() != ".yml":
+                    continue
+                try:
+                    text = read_text(path)
+                except (OSError, ValueError):
+                    continue
+                index = own if path.is_relative_to(self.mod_root) else inherited
+                for line in text.splitlines():
+                    match = YML_ENTRY_RE.match(line)
+                    if match is not None:
+                        index.add(normalize_localization_key(match.group(1)))
+            self._scan_cache["validation_loc_keys"] = inherited
+            self._scan_cache["validation_mod_loc_keys"] = own
+        if key in inherited:
+            return True
+        return key in own and key not in self._dirty_loc_keys
 
     def _validate_localization_languages(self) -> list[ValidationError]:
         """Warn about authored English keys missing from a shipped language.

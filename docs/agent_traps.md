@@ -375,7 +375,8 @@ Good:
 EventOption(name="slv.1.a", effect="set_country_flag = SLV_cells_organized")
 ```
 
-Validation warning: `event_option_no_effect`.
+Validation advice (`info`, shown with `validate(advice=True)`):
+`event_option_no_effect`. An option that only closes the event is valid.
 
 ## Focus Layout
 
@@ -399,6 +400,6 @@ Before final save:
 errors = mod.validate(validate_icons=True, strict_localization=True)
 ```
 
-Strict localization checks events, options, ideas, countries, and leaders. Focus name/description localization is always checked.
+Strict localization checks events, options, ideas, countries, and leaders. Focus name/description localization is always checked. Keys are looked up in the mod, its base mods and the configured game install.
 
 Validation warning: `missing_localization`.

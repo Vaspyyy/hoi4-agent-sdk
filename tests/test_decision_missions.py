@@ -319,15 +319,26 @@ def test_mission_validation(tmp_path: Path) -> None:
         "cat", "custom_paid_mission", days_mission_timeout=30, custom_cost_trigger="always = yes"
     )
     mod.create_decision("cat", "free_mission", days_mission_timeout=30, cost=0)
+    # A selectable mission is started by the player, who pays its cost.
+    mod.create_decision(
+        "cat", "selectable_paid_mission", days_mission_timeout=30, cost=10,
+        selectable_mission=True,
+    )
     mod.create_decision("cat", "orphan_activation", activation="has_war = yes")
     mod.create_decision("cat", "plain", cost=50, targets=["GER"])
-    issues = [issue for issue in mod.validate() if issue.code.startswith("mission_")]
+    issues = [
+        issue for issue in mod.validate(advice=True) if issue.code.startswith("mission_")
+    ]
     by_decision = {(issue.decision_id, issue.code, issue.severity) for issue in issues}
     assert by_decision == {
         ("paid_mission", "mission_with_cost", "warning"),
         ("custom_paid_mission", "mission_with_cost", "warning"),
-        ("orphan_activation", "mission_activation_without_timeout", "error"),
+        # The game ignores activation outside missions: advice, not an error.
+        ("orphan_activation", "mission_activation_without_timeout", "info"),
     }
+    assert not any(
+        issue.code == "mission_activation_without_timeout" for issue in mod.validate()
+    )
     assert "mission_with_cost" in VALIDATION_WARNING_CODES
     assert "mission_activation_without_timeout" in VALIDATION_CODES
     assert "mission_activation_without_timeout" not in VALIDATION_WARNING_CODES

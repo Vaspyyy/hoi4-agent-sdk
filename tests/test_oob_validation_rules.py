@@ -511,23 +511,3 @@ def test_every_country_finding_has_a_code() -> None:
         "invalid_ruling_party",
         "invalid_country_color",
     }
-
-
-def test_hidden_ideas_may_be_assigned_in_history(tmp_path: Path) -> None:
-    _write(
-        tmp_path / "common/ideas/hidden.txt",
-        "ideas = {\n"
-        "    hidden_ideas = { ABC_hidden = { } }\n"
-        "    army_spirit = { ABC_army = { } }\n"
-        "}\n",
-    )
-    mod = Mod(tmp_path)
-    mod.create_country("ABC", "Test", ideas=["ABC_hidden", "ABC_army"])
-
-    flagged = {
-        finding.idea_id
-        for finding in mod.validate(stage="build")
-        if finding.code == "assigned_idea_not_country_category"
-    }
-
-    assert flagged == {"ABC_army"}
