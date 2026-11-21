@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 
 from .syntax import parse
-from .types import FocusTree
+from .types import Focus, FocusTree
 
 
 @dataclass
@@ -81,10 +81,34 @@ _OPERATOR_RE = re.compile(r"\s*([={}<>])\s*")
 
 
 def _condition(text: str) -> str:
-    """An ``allow_branch`` body as one line: no comments, one space between tokens."""
+    """An ``allow_branch`` body as one line, or ``""`` when it always holds.
+
+    No comments, one space between tokens, and names in front of ``=``,
+    ``<`` and ``>`` in lower case (the game reads them without regard to
+    case). An empty body and ``always = yes`` hide nothing.
+    """
 
     text = _COMMENT_RE.sub(lambda match: match.group(1) or "", text)
-    return " ".join(_OPERATOR_RE.sub(r" \1 ", text).split())
+    tokens = _OPERATOR_RE.sub(r" \1 ", text).split()
+    for index in range(len(tokens) - 1):
+        if tokens[index + 1] in ("=", "<", ">") and not tokens[index].startswith('"'):
+            tokens[index] = tokens[index].lower()
+    condition = " ".join(tokens)
+    return "" if condition == "always = yes" else condition
+
+
+def _has_allow_branch(focus: Focus) -> bool:
+    """Whether a focus has an ``allow_branch`` block, an empty one included.
+
+    An empty block still counts: with it the focus checks only itself, so it
+    stays visible when its prerequisites are hidden.
+    """
+
+    if focus.allow_branch.strip():
+        return True
+    if "allow_branch" not in focus.raw_block.lower():
+        return False
+    return bool(parse(focus.raw_block).root.blocks("allow_branch", fold=True))
 
 
 class FocusBranches:
@@ -95,8 +119,14 @@ class FocusBranches:
     a focus off the spot where its ``x``, ``y`` and ``relative_position_id``
     put it:
 
-    - ``allow_branch``: when it fails, the focus is hidden, and so is every
-      focus that can only be reached through hidden focuses.
+    - ``allow_branch``. The HOI4 wiki (National focus modding) puts it this
+      way: "By default, a focus will also be disallowed if either of the
+      parent focuses (as set by prerequisites) is disallowed. However, a
+      focus containing allow_branch within its definition will only check
+      its own allowed status, still showing up if it has disallowed
+      parents." So a focus with ``allow_branch`` is drawn exactly when its
+      own condition holds, and a focus without one is drawn when all of its
+      prerequisite focuses are.
     - An ``offset = { x = ... y = ... trigger = { ... } }`` block moves the
       focus while its trigger holds, and with it every focus that is placed
       relative to it (``relative_position_id``, directly or through others).
@@ -106,18 +136,17 @@ class FocusBranches:
     them, or when each of them needs an ``allow_branch`` condition the other
     does not need (see :meth:`needs`; a condition is its text, so two focuses
     that each write ``allow_branch = { has_dlc = "X" }`` appear together).
-    The game's own trees use both forms for
-    variant branches: Ethiopia's Italian branch steps aside by an ``offset``
-    on its first focus when the exile branch appears. Two focuses behind the
-    same condition are shown together when it holds, two focuses moved by
-    the same ``offset`` blocks move together, and two focuses that are both
-    always drawn meet whenever the trigger of the offset does not hold.
+    The game's own trees use both forms for variant branches: Ethiopia's
+    Italian branch steps aside by an ``offset`` on its first focus when the
+    exile branch appears. Two focuses behind the same condition are shown
+    together when it holds, two focuses moved by the same ``offset`` blocks
+    move together, and two focuses that are both always drawn meet whenever
+    the trigger of the offset does not hold.
     """
 
     def __init__(self, tree: FocusTree) -> None:
         self._by_id = {focus.id: focus for focus in tree.focuses if focus.id}
         self._needs: dict[str, frozenset[str]] = {}
-        self._hidden: dict[str, bool] = {}
         self._offsets: dict[str, bool] = {}
         self._movers: dict[str, frozenset[str]] = {}
 
@@ -126,10 +155,6 @@ class FocusBranches:
         if focus is None:
             return []
         return [ref for group in focus.prerequisites for ref in group]
-
-    def _has_gate(self, focus_id: str) -> bool:
-        focus = self._by_id.get(focus_id)
-        return focus is not None and bool(focus.allow_branch.strip())
 
     def _post_order(self, focus_id: str) -> list[str]:
         """``focus_id`` and every focus it depends on, each after its prerequisites.
@@ -157,11 +182,13 @@ class FocusBranches:
     def needs(self, focus_id: str) -> frozenset[str]:
         """The ``allow_branch`` conditions that all have to hold for ``focus_id`` to be drawn.
 
-        Its own, and those of what it depends on. A focus needs every one of
-        its ``prerequisite`` blocks, so their conditions add up. Within one
-        block any focus is enough, so only a condition that all of them need
-        counts. A condition is its text without comments and spacing, so the
-        same condition on two focuses is one condition.
+        A focus with ``allow_branch`` needs its own condition and nothing
+        else: the game shows it also when its prerequisites are hidden. A
+        focus without one needs what each of its prerequisite focuses needs,
+        whichever ``prerequisite`` block names them: it is hidden as soon as
+        one of them is. The focus is drawn exactly when all of these hold. A
+        condition is its text without comments and spacing, so the same
+        condition on two focuses is one condition.
         """
 
         for current in self._post_order(focus_id):
@@ -170,31 +197,20 @@ class FocusBranches:
             focus = self._by_id.get(current)
             found: set[str] = set()
             if focus is not None:
-                if focus.allow_branch.strip():
-                    found.add(_condition(focus.allow_branch))
-                for group in focus.prerequisites:
-                    shared = [self._needs.get(ref, frozenset()) for ref in group]
-                    if shared:
-                        found |= frozenset.intersection(*shared)
+                if _has_allow_branch(focus):
+                    own = _condition(focus.allow_branch)
+                    if own:
+                        found.add(own)
+                else:
+                    for ref in self._parents(current):
+                        found |= self._needs.get(ref, frozenset())
             self._needs[current] = frozenset(found)
         return self._needs[focus_id]
 
     def conditional(self, focus_id: str) -> bool:
-        """Whether ``allow_branch`` can hide ``focus_id``.
+        """Whether ``allow_branch`` can hide ``focus_id``: it needs a condition."""
 
-        That is when it has ``allow_branch`` itself, or when every chain of
-        prerequisites from it up to a focus without prerequisites passes a
-        focus with ``allow_branch``.
-        """
-
-        for current in self._post_order(focus_id):
-            if current in self._hidden:
-                continue
-            parents = self._parents(current)
-            self._hidden[current] = self._has_gate(current) or (
-                bool(parents) and all(self._hidden.get(ref, False) for ref in parents)
-            )
-        return self._hidden[focus_id]
+        return bool(self.needs(focus_id))
 
     def _has_offset(self, focus_id: str) -> bool:
         """Whether an ``offset`` block of ``focus_id`` moves it at all."""

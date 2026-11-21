@@ -328,8 +328,10 @@ All notable changes to this project are documented here. The format follows
   them, or each needs an `allow_branch` condition the other does not need
   (two focuses with the same `allow_branch` text appear together, and a
   focus whose conditions the other needs as well is drawn whenever the
-  other is). Mutually exclusive focuses are both drawn, so they must not
-  share a position.
+  other is). What a focus needs follows the HOI4 wiki: a focus with
+  `allow_branch` checks only its own condition, a focus without one is
+  hidden as soon as one of its prerequisite focuses is. Mutually exclusive
+  focuses are both drawn, so they must not share a position.
 - `validate()` and `validate_effect()` load a catalog of the game (ideas,
   events, technologies, equipment) only when a name is not among the mod's
   own objects, and then only once.
@@ -384,10 +386,15 @@ All notable changes to this project are documented here. The format follows
   `available` block of a bookmark country are checked like other script.
 - `unused_localization` no longer reports a key that another text of the
   mod pulls in as `$KEY$` or `$KEY|H$`.
-- An event id with several dots (`my_mod.news.1`) is declared when
-  `add_namespace` names `my_mod.news` or `my_mod`. Before, only the text
-  before the first dot counted, so `undeclared_event_namespace` was
-  reported for a declared `my_mod.news`.
+- The namespace of an event id is everything before its last dot, as the
+  HOI4 wiki describes it: `my_mod.news.1` needs
+  `add_namespace = my_mod.news`. Before, only the text before the first dot
+  counted, so `undeclared_event_namespace` was reported for a declared
+  `my_mod.news` and stayed quiet when only `my_mod` was declared.
+  `create_event("my_mod.news.1")` now declares `my_mod.news` (it declared
+  `my_mod`), and `set_event_namespace` takes a namespace with dots.
+- A character of a base mod used as a scope (`BAS_hero = { ... }`) is known
+  to the token check, as it already was to the reference check.
 - Validation reads each script file through one splitter
   (`hoi4._script_corpus`) and one scope walker. The token check reads the
   mod's own files as `save()` will write them, with exact file lines; the

@@ -151,9 +151,11 @@ def test_undeclared_namespace_is_an_error_and_any_declaration_counts(tmp_path, g
         "country_event = { id = second.1 hidden = yes }\n"
         "country_event = { id = GAME_NS.2 hidden = yes }\n"
         "country_event = { id = nowhere.3 hidden = yes }\n"
-        # Like the game's MUN_slovakia.news.1: the id is declared by its
-        # namespace up to the last dot, or by a shorter one.
+        # Like the game's MUN_slovakia.news.1: the namespace of an id is
+        # everything before its last dot, so "first" does not declare
+        # "first.more.5" (HOI4 wiki, Event modding).
         "country_event = { id = dotted.news.4 hidden = yes }\n"
+        "country_event = { id = DOTTED.News.7 hidden = yes }\n"
         "country_event = { id = first.more.5 hidden = yes }\n"
         "country_event = { id = nowhere.news.6 hidden = yes }\n",
     )
@@ -162,9 +164,28 @@ def test_undeclared_namespace_is_an_error_and_any_declaration_counts(tmp_path, g
     )
     assert [(f.event_id, f.severity) for f in findings] == [
         ("nowhere.3", "error"),
+        ("first.more.5", "error"),
         ("nowhere.news.6", "error"),
     ]
-    assert "'nowhere.news'" in findings[1].message
+    assert "'first.more'" in findings[1].message
+    assert "'nowhere.news'" in findings[2].message
+
+
+def test_a_new_event_declares_the_namespace_up_to_its_last_dot(tmp_path, game):
+    mod = Mod(mod_root(tmp_path), hoi4_install=game)
+    mod.create_event("my_mod.news.1", title="t", description="d")
+    mod.create_event("my_mod.2", title="t", description="d")
+    assert not codes(mod.validate(stage="build"), "undeclared_event_namespace")
+    mod.save()
+    saved = (mod.mod_root / "events" / "my_mod.news_events.txt").read_text()
+    assert "add_namespace = my_mod.news\n" in saved
+    assert "add_namespace = my_mod\n" in (mod.mod_root / "events" / "my_mod_events.txt").read_text()
+    reloaded = Mod(mod.mod_root, hoi4_install=game)
+    assert sorted(reloaded.list_events()) == ["my_mod.2", "my_mod.news.1"]
+    assert not codes(reloaded.validate(stage="build"), "undeclared_event_namespace")
+    reloaded.set_event_namespace("my_mod.2", "other.topic")
+    with pytest.raises(ValueError, match="Invalid event namespace"):
+        reloaded.set_event_namespace("my_mod.2", "other..topic")
 
 
 def test_war_declaration_in_immediate_is_advice_read_from_the_tree():
@@ -294,18 +315,62 @@ def test_children_of_a_join_after_an_exclusive_choice_clash():
     assert [f.focus_id for f in codes(findings, "visual_overlap")] == ["plt_jy"]
 
 
-def test_a_focus_behind_one_more_condition_still_clashes():
-    """When both conditions hold, both focuses are shown."""
+def test_a_focus_behind_the_condition_of_another_clashes_with_it():
+    """Whenever Y is drawn, so is X: both hang on ``has_dlc = x``."""
 
     findings = validate_focus_tree(
         tree(
             Focus(id="R", x=0, y=0, allow_branch="has_dlc = x"),
-            Focus(id="A", x=2, y=0, prerequisites=[["R"]], allow_branch="has_country_flag = a"),
+            Focus(id="A", x=2, y=0, prerequisites=[["R"]]),
             Focus(id="X", x=1, y=1, prerequisites=[["R"]]),
             Focus(id="Y", x=1, y=1, prerequisites=[["A"]]),
         )
     )
     assert [f.focus_id for f in codes(findings, "visual_overlap")] == ["Y"]
+
+
+def _gate(focus_id: str, gate: str, **fields) -> Focus:
+    """A focus whose ``allow_branch`` block is written as ``gate`` in its file."""
+
+    focus = Focus(id=focus_id, **fields)
+    focus.raw_block = f"id = {focus_id}\n{gate}\n"
+    return focus
+
+
+def test_a_focus_with_allow_branch_checks_only_its_own_condition():
+    """The wiki: such a focus is "still showing up if it has disallowed parents"."""
+
+    def overlaps(middle: Focus) -> list[str]:
+        findings = validate_focus_tree(
+            tree(
+                Focus(id="R", x=0, y=0, allow_branch="has_dlc = x"),
+                middle,
+                Focus(id="Y", x=1, y=2, prerequisites=[["A"]]),
+                Focus(id="Z", x=1, y=2, allow_branch="has_country_flag = z"),
+            )
+        )
+        return [f.focus_id for f in codes(findings, "visual_overlap")]
+
+    # Without allow_branch, A and Y are hidden with R: Y and Z are variants.
+    assert overlaps(Focus(id="A", x=0, y=1, prerequisites=[["R"]])) == []
+    # With one, A does not take R's condition. An empty block, a block with
+    # only a comment and "always = yes" hold always, so Y is always drawn
+    # and meets Z whenever Z appears.
+    for gate in (
+        "allow_branch = { }",
+        "ALLOW_BRANCH = { # nothing yet\n }",
+        "allow_branch = { always = yes }",
+    ):
+        middle = _gate("A", gate, x=0, y=1, prerequisites=[["R"]])
+        if "always" in gate:
+            middle.allow_branch = "always = yes"
+        elif "#" in gate:
+            middle.allow_branch = "# nothing yet"
+        assert overlaps(middle) == ["Z"], gate
+    # Its own condition is the only one that counts: with Z's condition, A
+    # and Y appear exactly when Z does.
+    same = Focus(id="A", x=0, y=1, prerequisites=[["R"]], allow_branch="has_country_flag = z")
+    assert overlaps(same) == ["Z"]
 
 
 def test_either_prerequisites_that_are_all_conditional_keep_a_focus_conditional():
@@ -389,20 +454,29 @@ def test_a_branch_whose_conditions_the_other_needs_too_is_shown_with_it():
     def overlaps(*focuses: Focus) -> list[str]:
         return [f.focus_id for f in codes(validate_focus_tree(tree(*focuses)), "visual_overlap")]
 
-    # B needs X and Y, C needs only X: whenever B is drawn, so is C.
+    # B is hidden with A, C writes A's condition again: both need only X.
     assert overlaps(
         Focus(id="A", x=0, y=0, allow_branch='has_dlc = "X"'),
-        Focus(id="B", x=0, y=1, prerequisites=[["A"]], allow_branch='has_dlc = "Y"'),
-        Focus(id="C", x=0, y=1, prerequisites=[["A"]], allow_branch='has_dlc="X" # again'),
+        Focus(id="B", x=0, y=1, prerequisites=[["A"]]),
+        Focus(id="C", x=0, y=1, prerequisites=[["A"]], allow_branch='HAS_DLC="X" # again'),
     ) == ["C"]
-    # One focus of a prerequisite block is enough, so C needs neither a nor b.
+    # A focus is hidden as soon as one of its prerequisite focuses is, also
+    # inside one "either" block: C needs a and b, D only a. Whenever C is
+    # drawn, so is D.
     assert overlaps(
         Focus(id="G1", x=0, y=0, allow_branch="has_country_flag = a"),
         Focus(id="G2", x=4, y=0, allow_branch="has_country_flag = b"),
         Focus(id="C", x=2, y=1, prerequisites=[["G1", "G2"]]),
-        Focus(id="D", x=2, y=1, prerequisites=[["G1"]], allow_branch="has_country_flag = c"),
+        Focus(id="D", x=2, y=1, prerequisites=[["G1"]]),
     ) == ["D"]
-    # Two prerequisite blocks are both needed, so their conditions add up.
+    # The same with two prerequisite blocks.
+    assert overlaps(
+        Focus(id="G1", x=0, y=0, allow_branch="has_country_flag = a"),
+        Focus(id="G2", x=4, y=0, allow_branch="has_country_flag = b"),
+        Focus(id="C", x=2, y=1, prerequisites=[["G1"], ["G2"]]),
+        Focus(id="D", x=2, y=1, prerequisites=[["G2"]]),
+    ) == ["D"]
+    # Each of the two needs a condition the other does not need.
     assert overlaps(
         Focus(id="G1", x=0, y=0, allow_branch="has_country_flag = a"),
         Focus(id="G2", x=4, y=0, allow_branch="has_country_flag = b"),

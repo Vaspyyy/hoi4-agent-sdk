@@ -11,7 +11,7 @@ from typing import Callable, Sequence
 
 from .decisions import decision_has_cost, decision_has_mission_timeout
 from .effects_catalog import TECHNOLOGY_CATEGORIES
-from .events import VALID_EVENT_TYPES, event_namespace_candidates
+from .events import VALID_EVENT_TYPES, event_namespace
 from .focus_layout import (
     FocusBranches,
     continuous_focus_position_issue,
@@ -1587,12 +1587,11 @@ def validate_event(
     declared: Collection[str] | None = namespaces
     if declared is None and namespace is not _UNSET:
         declared = [namespace] if isinstance(namespace, str) and namespace else []
-    # ``a.b.1`` may be declared as ``a.b`` or as ``a``.
-    candidates = tuple(name for name in event_namespace_candidates(event.id) if name)
-    if declared is not None and candidates:
-        prefix = candidates[0]
-        known = {name.lower() for name in declared}
-        if not any(candidate.lower() in known for candidate in candidates):
+    # The namespace is everything before the last dot: ``a.b.1`` needs
+    # ``add_namespace = a.b``.
+    prefix = event_namespace(event.id)
+    if declared is not None and prefix:
+        if prefix.lower() not in {name.lower() for name in declared}:
             errors.append(
                 ValidationError(
                     message=(

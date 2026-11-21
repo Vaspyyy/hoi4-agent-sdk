@@ -53,16 +53,16 @@ from .syntax import (
 from .textio import read_text, write_text
 from .types import Event, EventOption, EventText
 
-def event_namespace_candidates(event_id: str) -> tuple[str, ...]:
-    """The namespaces an event id may belong to, longest first.
+def event_namespace(event_id: str) -> str:
+    """The namespace of an event id: everything before the last dot.
 
-    ``MUN_slovakia.news.1`` gives ``("MUN_slovakia.news", "MUN_slovakia")``:
-    the game's own files declare both for such ids, so a declaration of
-    either one is taken.
+    The HOI4 wiki (Event modding): a namespace may hold dots
+    (``add_namespace = my_event.subtopic`` for ``id = my_event.subtopic.1``),
+    and "the numeric ID will be taken to be everything after the last dot".
+    An id without a dot has no namespace (``""``).
     """
 
-    parts = event_id.split(".")
-    return tuple(".".join(parts[:count]) for count in range(len(parts) - 1, 0, -1))
+    return event_id.rpartition(".")[0]
 
 
 VALID_EVENT_TYPES = frozenset(

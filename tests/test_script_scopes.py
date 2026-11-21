@@ -636,6 +636,41 @@ def test_references_inside_a_character_scope_keep_their_scope(
     ] == ["country_scope_core_effect"]
 
 
+def test_a_character_of_a_base_mod_opens_a_scope_in_the_token_check(
+    game: Path, tmp_path: Path
+) -> None:
+    base = tmp_path / "base"
+    characters = base / "common/characters/BAS.txt"
+    characters.parent.mkdir(parents=True)
+    # The game reads keys without regard to case.
+    characters.write_text(
+        "CHARACTERS = {\n\tBAS_hero = { name = x }\n}\n", encoding="utf-8"
+    )
+    mod_root = tmp_path / "mod"
+    event_file = mod_root / "events/bas.txt"
+    event_file.parent.mkdir(parents=True)
+    event_file.write_text(
+        "add_namespace = bas\n"
+        "country_event = {\n"
+        "\tid = bas.1\n"
+        "\tis_triggered_only = yes\n"
+        "\thidden = yes\n"
+        "\timmediate = {\n"
+        "\t\tBAS_hero = { add_skill_level = 1 }\n"
+        "\t\tBAS_hero = { add_political_power = 5 }\n"
+        "\t\tBAS_nobody = { add_skill_level = 1 }\n"
+        "\t}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    mod = Mod(mod_root, hoi4_install=game, base_mod_paths=[base])
+    findings = [item for item in mod.validate_script_vocabulary() if item.severity != "info"]
+    assert sorted((item.code, item.line) for item in findings) == [
+        ("unknown_effect_token", 9),
+        ("unsupported_effect_scope", 8),
+    ]
+
+
 def test_a_definition_counts_before_it_is_saved(game: Path, tmp_path: Path) -> None:
     mod_root = tmp_path / "mod"
     ideas = mod_root / "common/ideas/test.txt"

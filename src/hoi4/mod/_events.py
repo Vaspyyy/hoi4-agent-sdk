@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from ..events import event_namespace
 from ..paths import (
+    EVENT_NAMESPACE_RE,
     require_event_namespace,
     require_script_id,
     resolve_mod_output_path,
@@ -22,12 +24,13 @@ from ._shared import (
 
 
 def _infer_event_namespace(event_id: str) -> str | None:
-    if "." not in event_id:
-        return None
-    namespace = event_id.split(".", 1)[0]
-    if namespace.replace("_", "").isalnum() and not namespace[0].isdigit():
-        return namespace
-    return None
+    """The namespace an event id needs: everything before its last dot.
+
+    ``my_mod.news.1`` needs ``add_namespace = my_mod.news``.
+    """
+
+    namespace = event_namespace(event_id)
+    return namespace if EVENT_NAMESPACE_RE.fullmatch(namespace) else None
 
 
 def _normalize_event_option(option: EventOption) -> EventOption:

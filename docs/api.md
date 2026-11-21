@@ -424,7 +424,7 @@ with mod.transaction():
 ```
 ## Events
 
-Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`.
+Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically, which is everything before the last dot: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`, and `create_event("sic.news.1")` writes `add_namespace = sic.news` to `events/sic.news_events.txt`.
 
 Block fields are body strings. The SDK adds the outer braces:
 
@@ -439,7 +439,7 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 |--------|---------|-------------|
 | `list_events() -> list[str]` | Sorted event IDs | All loaded events |
 | `get_event(event_id: str) -> Event` | `Event` | Raises `KeyError` with available IDs if not found |
-| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer namespace from the ID prefix. Conditional titles and descriptions are written before the plain fallback. |
+| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer the namespace: the text before the last dot. Conditional titles and descriptions are written before the plain fallback. |
 | `ensure_event(event_id: str, **kwargs) -> Event` | `Event` | Idempotent create-or-update wrapper |
 | `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
 | `update_event_option(event_id: str, option: int \| str, **kwargs) -> bool` | `bool` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |

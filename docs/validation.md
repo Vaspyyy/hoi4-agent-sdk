@@ -109,10 +109,14 @@ the content checks read them the way the game does:
   file may declare several. Wherever an event id is looked up (references,
   `unfired_event`), its namespace (the text before the last dot) is compared
   without regard to case too, as the game does: `PER_SSB_events.8` fires
-  `PER_ssb_events.8`. The number behind the dot is compared as it is. An id
-  with more dots, such as `MUN_slovakia.news.1`, is declared when
-  `add_namespace` names `MUN_slovakia.news` or `MUN_slovakia`: the game's
-  own files declare both.
+  `PER_ssb_events.8`. The number behind the dot is compared as it is. A
+  namespace may hold dots itself: `MUN_slovakia.news.1` needs
+  `add_namespace = MUN_slovakia.news`, and `add_namespace = MUN_slovakia`
+  does not cover it. The HOI4 wiki (Event modding) says so
+  ("`add_namespace = my_event.subtopic` can be used for events of the type
+  of `id = my_event.subtopic.1`. The numeric ID will be taken to be
+  everything after the last dot"), and every event of the game follows it.
+  `create_event("my_mod.news.1")` declares `my_mod.news` on its own.
 - The token check, the reference check and the liveness checks all read the
   mod's own script files as `save()` will write them, split the same way
   (`hoi4._script_corpus`) and walked by the same scope walker
@@ -133,20 +137,25 @@ the content checks read them the way the game does:
 - Two focuses may share a position only when the script gives the game a
   way to keep one of them off it. The game draws every focus of a tree,
   both sides of a mutually exclusive choice included, so exclusivity is no
-  reason. `allow_branch` can hide a focus: it has `allow_branch`, or every
-  chain of prerequisites from it up to a focus without prerequisites passes
-  one that has. A pair may share a position in two cases. One: an `offset`
-  block moves one of them and not the other (a focus moves while the
-  trigger of its own `offset` block holds, or of one on a focus it is
-  placed relative to; an offset of 0 0 moves nothing), and `allow_branch`
-  can hide at least one of them. Two: each of them needs an `allow_branch`
-  condition that the other does not need. A focus needs its own condition
-  and the conditions of what it depends on: those of every `prerequisite`
-  block, and within one block (where one focus is enough) only a condition
-  that all of its focuses need. A condition is its text without comments
-  and spacing, so two focuses that write the same `allow_branch` are behind
-  one condition and appear together. The SDK does not work out whether two
-  different conditions can hold at the same time.
+  reason. `allow_branch` can hide a focus, by the rule of the HOI4 wiki
+  (National focus modding): "By default, a focus will also be disallowed if
+  either of the parent focuses (as set by prerequisites) is disallowed.
+  However, a focus containing allow_branch within its definition will only
+  check its own allowed status, still showing up if it has disallowed
+  parents." So a focus with `allow_branch` needs its own condition and
+  nothing else (an empty block and `always = yes` hide nothing), and a
+  focus without one needs every condition that one of its prerequisite
+  focuses needs, whichever `prerequisite` block names them. A pair may
+  share a position in two cases. One: an `offset` block moves one of them
+  and not the other (a focus moves while the trigger of its own `offset`
+  block holds, or of one on a focus it is placed relative to; an offset of
+  0 0 moves nothing), and `allow_branch` can hide at least one of them.
+  Two: each of them needs an `allow_branch` condition that the other does
+  not need. A condition is its text without comments and spacing, so two
+  focuses that write the same `allow_branch` are behind one condition and
+  appear together. The SDK does not work out whether two different
+  conditions can hold at the same time, or whether the trigger of an
+  `offset` block holds exactly when the other focus appears.
 - Hidden events (`hidden = yes`) need no title, description or option.
 - Tag aliases from `common/country_tag_aliases` count as country tags, and
   tags declared after `dynamic_tags = yes` are named at runtime.

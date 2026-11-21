@@ -162,7 +162,7 @@ def _character_ids(text: str) -> frozenset[str]:
 
     return frozenset(
         character.name
-        for container in parse(text).root.blocks("characters")
+        for container in parse(text).root.blocks("characters", fold=True)
         for character in container.assignments()
         if character.block is not None
     )
