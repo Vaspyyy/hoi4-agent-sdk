@@ -9,10 +9,9 @@ from ..characters import (
 )
 from ..focus import load_focus_tree
 from ._core import CoreLayer
-from ._shared import (
-    _LOAD_FOCUS_TREE_RE,
-    _join_script_parts,
-)
+from ._shared import _join_script_parts
+
+_LOAD_FOCUS_TREE_RE = re.compile(r"\bload_focus_tree\s*=\s*\{[^{}]*\btree\s*=\s*([A-Za-z0-9_.:-]+)")
 
 
 class PreviewLayer(CoreLayer):

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Sequence, cast
@@ -18,27 +17,6 @@ from ..types import (
 
 class ExternalModificationError(RuntimeError):
     """A source file changed on disk after this ``Mod`` instance loaded it."""
-
-
-_IDEA_EFFECT_RE = re.compile(r"\b(?:add_ideas|remove_ideas)\s*=\s*([A-Za-z0-9_.:-]+)")
-
-
-_HAS_IDEA_RE = re.compile(r"\bhas_idea\s*=\s*([A-Za-z0-9_.:-]+)")
-
-
-_EVENT_REF_RE = re.compile(
-    r"\b(?:country_event|state_event|news_event|unit_leader_event|operative_leader_event)"
-    r"\s*=\s*\{[^{}]*\bid\s*=\s*([A-Za-z0-9_.:-]+)"
-)
-
-
-_EQUIPMENT_STOCKPILE_RE = re.compile(r"\badd_equipment_to_stockpile\s*=\s*\{([^{}]*)\}")
-
-
-_TECH_BLOCK_RE = re.compile(r"\bset_technology\s*=\s*\{([^{}]*)\}")
-
-
-_LOAD_FOCUS_TREE_RE = re.compile(r"\bload_focus_tree\s*=\s*\{[^{}]*\btree\s*=\s*([A-Za-z0-9_.:-]+)")
 
 
 def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False) -> None:
@@ -119,7 +97,7 @@ def _filter_validation_errors(
     * Every finding gets the severity its code is registered with.
     * ``"info"`` findings (advice) are kept only when ``advice`` is true.
       ``Mod.validate()`` passes its own ``advice`` (default false);
-      ``validate_effect`` keeps the default and returns advice with the rest.
+      ``Mod.validate_effect()`` passes its own (default true).
     * ``suppress`` (and the older ``suppress_warnings``, which now means the
       same) hides warnings and advice by code: ``"code"`` hides every
       finding with that code, ``"code:ID"`` only those about the object

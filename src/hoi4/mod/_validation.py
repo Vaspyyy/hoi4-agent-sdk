@@ -68,14 +68,7 @@ from ._country_package import CountryPackageLayer
 from ._definitions import DefinitionsLayer
 from ._map import MapLayer
 from ._script_validation import ScriptValidationLayer
-from ._shared import (
-    _EQUIPMENT_STOCKPILE_RE,
-    _EVENT_REF_RE,
-    _HAS_IDEA_RE,
-    _IDEA_EFFECT_RE,
-    _TECH_BLOCK_RE,
-    _filter_validation_errors,
-)
+from ._shared import _filter_validation_errors
 
 _ISSUE_LOCATION_RE = re.compile(r"line (\d+), column (\d+)")
 
@@ -654,22 +647,15 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         known_tags = set(load_all_tags(self._base_content_root, self.mod_root))
         known_tags.update(self._countries.keys())
         known_tags.update(self._country_tag_aliases())
-        script_entries = self._script_entries()
-        scripts = "\n".join(entry[0] for entry in script_entries)
-        need_ideas = any(country.ideas for country in self._countries.values()) or bool(
-            _IDEA_EFFECT_RE.search(scripts) or _HAS_IDEA_RE.search(scripts)
+        # Country history may name an idea the mod does not define; the
+        # reference checks load their catalogs themselves when a name is
+        # not among the mod's own objects.
+        need_ideas = any(
+            idea_id not in self._ideas
+            for country in self._countries.values()
+            for idea_id in country.ideas
         )
         known_ideas = self._known_idea_ids() if need_ideas else set(self._ideas)
-        known_events = (
-            self._known_event_ids() if _EVENT_REF_RE.search(scripts) else set(self._events)
-        )
-        known_technologies = (
-            self._known_technology_ids() if _TECH_BLOCK_RE.search(scripts) else set()
-        )
-        known_equipment = (
-            self._known_equipment_ids() if _EQUIPMENT_STOCKPILE_RE.search(scripts) else set()
-        )
-        known_focus_trees = set(self._focus_trees)
         known_focus_icons = (
             self._known_focus_icons()
             if validate_icons and (self._focus_trees or self._ideas)
@@ -865,10 +851,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         errors.extend(
             self._validate_script_references(
                 known_ideas=known_ideas,
-                known_events=known_events,
-                known_technologies=known_technologies,
-                known_equipment=known_equipment,
-                known_focus_trees=known_focus_trees,
+                known_events=set(self._events),
+                known_technologies=set(),
+                known_equipment=set(),
+                known_focus_trees=set(self._focus_trees),
             )
         )
         errors.extend(self._validate_state_effect_assumptions())

@@ -46,14 +46,7 @@ from ..validation import (
     validate_event,
 )
 from ._catalogs import CatalogsLayer
-from ._shared import (
-    _EQUIPMENT_STOCKPILE_RE,
-    _EVENT_REF_RE,
-    _HAS_IDEA_RE,
-    _IDEA_EFFECT_RE,
-    _TECH_BLOCK_RE,
-    _filter_validation_errors,
-)
+from ._shared import _filter_validation_errors
 from ._states import StatesLayer
 
 Severity = Literal["error", "warning", "info"]
@@ -258,22 +251,24 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         *,
         script_token_allowlist: Sequence[str] = (),
         scope: str | None = "COUNTRY",
+        advice: bool = True,
     ) -> list[ValidationError]:
-        known_ideas = (
-            self._known_idea_ids()
-            if (_IDEA_EFFECT_RE.search(script) or _HAS_IDEA_RE.search(script))
-            else set(self._ideas)
-        )
-        known_events = (
-            self._known_event_ids() if _EVENT_REF_RE.search(script) else set(self._events)
-        )
-        known_technologies = (
-            self._known_technology_ids() if _TECH_BLOCK_RE.search(script) else set()
-        )
-        known_equipment = (
-            self._known_equipment_ids() if _EQUIPMENT_STOCKPILE_RE.search(script) else set()
-        )
-        known_focus_trees = set(self._focus_trees)
+        """Check one piece of effect script and return what is wrong with it.
+
+        The script is read as an event option's effect that starts in
+        ``scope`` (``None`` for a scope that is not known). It gets the event
+        checks, the reference checks (ideas, events, technologies, equipment,
+        focus trees, country tags, states) and, with ``hoi4_install`` set, the
+        script token check.
+
+        ``advice`` (default ``True``) keeps the ``"info"`` findings, because
+        one script is being looked at; pass ``False`` to get only errors and
+        warnings, like ``validate()``. ``suppress_warnings`` hides warnings
+        and advice by code (``"code"`` or ``"code:ID"``); errors cannot be
+        hidden. Every finding has the severity its code is registered with
+        (see ``docs/validation.md``).
+        """
+
         probe = Event(
             id="effect_probe.1",
             title="Effect Probe",
@@ -286,13 +281,15 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         entries: list[tuple[str, str, str | None, str | None]] = [
             (script, "effect", "effect_probe", None)
         ]
+        # The reference check loads a full catalog only when a name is not
+        # among the mod's own objects.
         errors.extend(
             self._validate_script_references(
-                known_ideas=known_ideas,
-                known_events=known_events,
-                known_technologies=known_technologies,
-                known_equipment=known_equipment,
-                known_focus_trees=known_focus_trees,
+                known_ideas=set(self._ideas),
+                known_events=set(self._events),
+                known_technologies=set(),
+                known_equipment=set(),
+                known_focus_trees=set(self._focus_trees),
                 entries=entries,
                 entry_scope=(scope or UNKNOWN).upper(),
             )
@@ -319,6 +316,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         return _filter_validation_errors(
             errors,
             suppress_warnings=suppress_warnings,
+            advice=advice,
         )
 
     def game_script_vocabulary(self) -> GameScriptVocabulary:

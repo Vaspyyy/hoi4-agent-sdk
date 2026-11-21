@@ -361,6 +361,14 @@ def test_advice_is_hidden_by_default(tmp_path):
     assert codes(mod.validate(stage="build", advice=True), "event_option_no_effect")
 
 
+def test_validate_effect_shows_advice_unless_turned_off(tmp_path):
+    mod = Mod(mod_root(tmp_path))
+    script = "every_country = { add_to_faction = ROOT }"
+    shown = codes(mod.validate_effect(script), "faction_scope_footgun")
+    assert [finding.severity for finding in shown] == ["info"]
+    assert not codes(mod.validate_effect(script, advice=False), "faction_scope_footgun")
+
+
 def test_suppression_by_code_and_by_object(tmp_path):
     root = mod_root(tmp_path)
     write(
