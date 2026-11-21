@@ -65,7 +65,7 @@ class LocalisationLayer(CoreLayer):
         # from an empty baseline and silently discard its existing content.
         for path in loc_dir.rglob("*.yml"):
             if path.is_file():
-                self._original_files[path] = read_text(path)
+                self._original_files[path] = self._read_source(path)
 
     @property
     def default_loc_file(self) -> Path:

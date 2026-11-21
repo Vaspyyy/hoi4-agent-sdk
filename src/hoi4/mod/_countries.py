@@ -129,13 +129,9 @@ class CountriesLayer(CoreLayer):
         self._countries[tag] = country
         for path in country_file_paths(self.mod_root, country):
             if path.exists():
-                self._original_files.setdefault(
-                    path, read_text(path)
-                )
-                if path.resolve(strict=False).is_relative_to(self.mod_root):
-                    self._source_baseline.setdefault(
-                        path.resolve(strict=False), path.read_bytes()
-                    )
+                text = read_text(path)
+                self._original_files.setdefault(path, text)
+                self._note_read(path, text, adopt=True)
         return country
 
     def set_country_name_pool(

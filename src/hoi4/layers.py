@@ -43,6 +43,12 @@ def replace_paths(root: Path) -> tuple[Path, ...]:
     )
 
 
+def _files_below(root: Path):
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            yield path.relative_to(root), path
+
+
 def _files(root: Path):
     for name in CONTENT_DIRS:
         directory = root / name
@@ -118,6 +124,45 @@ class ContentLayers:
 
     def close(self) -> None:
         self._temp.cleanup()
+
+    def is_current(self) -> bool:
+        """Whether ``sources`` and the snapshot match the top layer on disk now.
+
+        The lower layers are a snapshot, so only the top's files are listed again.
+        """
+
+        sources = {**self.lower_sources, **dict(_files(self.top))}
+        snapshot = {path.relative_to(self.root) for _, path in _files_below(self.root)}
+        expected = {
+            relative for relative, source in sources.items() if not source.is_relative_to(self.top)
+        }
+        return sources == self.sources and snapshot == expected
+
+    def refresh_top(self, paths: Iterable[Path]) -> None:
+        """Update ``sources`` after files of the top layer were written or deleted.
+
+        The snapshot leaves out lower files the top overrides: a new top file
+        removes its lower copy, and a deleted one brings it back.
+        """
+
+        for path in paths:
+            try:
+                relative = path.relative_to(self.top)
+            except ValueError:
+                continue
+            if not relative.parts or relative.parts[0] not in CONTENT_DIRS:
+                continue
+            copy = self.root / relative
+            if path.is_file():
+                self.sources[relative] = path
+                copy.unlink(missing_ok=True)
+            elif relative in self.lower_sources:
+                source = self.lower_sources[relative]
+                self.sources[relative] = source
+                if not copy.exists():
+                    _clone(source, copy)
+            else:
+                self.sources.pop(relative, None)
 
 
 def expand_replace_paths(

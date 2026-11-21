@@ -26,6 +26,10 @@ settings.register_profile(
 )
 settings.load_profile(os.environ.get("HOI4_HYPOTHESIS_PROFILE", "ci"))
 
+# Every save() and discard() checks that reloading only what changed gives the
+# same data as a full reload (see docs/internals/mod_sections.md).
+os.environ.setdefault("HOI4_VERIFY_RELOAD", "1")
+
 
 @pytest.fixture(autouse=True, scope="session")
 def private_vocabulary_cache(tmp_path_factory: pytest.TempPathFactory) -> None:

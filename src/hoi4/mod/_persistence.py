@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import tempfile
 import warnings
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -51,7 +53,6 @@ from ..states import (
 )
 from ..syntax import parse, repair
 from ..tags import (
-    _parse_tag_file_mapping,
     country_tag_entries,
     load_vanilla_tags,
     remove_country_tag_entries,
@@ -60,6 +61,13 @@ from ..tags import (
 from ..textio import encode_text, read_text
 from ..types import (
     SaveResult,
+)
+from ._core import (
+    STAGED_FILE_DIRTY_NAMES,
+    CoreLayer,
+    _Fingerprint,
+    _same_file_state,
+    _text_digest,
 )
 from ._loading import LoadingLayer
 from ._preview import PreviewLayer
@@ -135,7 +143,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             return SaveResult(dirty_sections=dirty_sections, no_changes=True, message=message)
         self._commit_rendered_files(changed, changed_assets)
         written_files = sorted((*changed, *changed_assets))
-        self.discard()
+        self._note_written(written_files)
+        self._discard_changes(written_files)
         result = SaveResult(
             written_files=written_files,
             dirty_sections=dirty_sections,
@@ -457,29 +466,14 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         self._refuse_new_syntax_problems(resolved)
         return resolved
 
-    def _capture_source_baseline(self) -> None:
-        """Fingerprint text sources so legacy writers cannot be overwritten silently."""
-
-        suffixes = {".txt", ".yml", ".gfx", ".lua", ".mod"}
-        self._source_baseline = {
-            path.resolve(strict=False): path.read_bytes()
-            for path in self.mod_root.rglob("*")
-            if path.is_file() and path.suffix.lower() in suffixes
-        }
-
     def _assert_no_external_modifications(
         self, rendered: dict[Path, str | None]
     ) -> None:
-        conflicts: list[Path] = []
-        for raw_path in rendered:
-            path = raw_path.resolve(strict=False)
-            baseline = self._source_baseline.get(path)
-            if baseline is None:
-                if path.exists():
-                    conflicts.append(path)
-                continue
-            if not path.is_file() or path.read_bytes() != baseline:
-                conflicts.append(path)
+        conflicts = [
+            path.resolve(strict=False)
+            for path in rendered
+            if self._changed_behind_our_back(path)
+        ]
         for path, baseline in self._pending_asset_baselines.items():
             current = path.read_bytes() if path.is_file() else None
             if current != baseline:
@@ -580,9 +574,11 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         that as a new override file would give the mod the same content twice.
         """
 
+        # Only sections that own a folder written to can have a failed file there.
+        self._load_sections_for_paths(rendered)
         failed = {
             diagnostic.path.resolve(strict=False): diagnostic
-            for diagnostic in self._load_diagnostics
+            for diagnostic in self._loaded_diagnostics()
             if diagnostic.error_type != "DuplicateIdentifierError"
         }
         if not failed:
@@ -703,76 +699,111 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             raise
 
     def discard(self) -> None:
+        """Drop every unsaved edit and pick up files changed on disk.
+
+        Only sections that had edits or whose files changed on disk (and the
+        sections built from them) are unloaded; they load again on next use.
+        Everything else stays in memory. With base mods, the inherited layers
+        are rebuilt and everything is unloaded, like ``reload()``.
+        """
+
+        if self._content_layers is not None:
+            self.reload()
+            return
+        self._discard_changes(())
+
+    def reload(self) -> None:
+        """Discard queued changes and reload current files from disk."""
+
         self._refresh_content_layers()
         self._vanilla_tags = load_vanilla_tags(self._base_content_root) if self._base_content_root else set()
-        self._load_diagnostics.clear()
-        self._countries.clear()
-        self._characters.clear()
-        self._oobs.clear()
-        self._states.clear()
-        self._state_ids.clear()
-        self._state_source_paths.clear()
-        self._inherited_state_source_paths = None
-        self._events.clear()
-        self._event_namespaces.clear()
-        self._on_actions.clear()
-        self._on_action_occurrences.clear()
-        self._decisions.clear()
-        self._decision_categories.clear()
-        self._ideas.clear()
-        self._focus_trees.clear()
-        self._dirty_focus_trees.clear()
-        self._dirty_focus_files.clear()
-        self._dirty_countries.clear()
-        self._deleted_countries.clear()
-        self._created_country_tags.clear()
-        self._dirty_characters.clear()
-        self._dirty_character_files.clear()
-        self._dirty_oobs.clear()
-        self._dirty_oob_files.clear()
-        self._dirty_states.clear()
-        self._deleted_state_ids.clear()
-        self._deleted_state_files.clear()
-        self._map_file_updates.clear()
-        self._dirty_events.clear()
-        self._dirty_event_files.clear()
-        self._event_file_namespaces.clear()
-        self._dirty_on_actions.clear()
-        self._dirty_on_action_files.clear()
-        self._dirty_decision_categories.clear()
-        self._dirty_decision_files.clear()
-        self._dirty_decision_category_files.clear()
-        self._dirty_ideas.clear()
-        self._dirty_idea_files.clear()
-        self._idea_file_containers.clear()
-        self._cached_idea_file.clear()
-        self._ideologies.clear()
-        self._vanilla_ideologies.clear()
-        self._dirty_ideologies.clear()
-        self._dirty_ideology_files.clear()
-        self._dynamic_modifiers.clear()
-        self._dynamic_modifier_sources.clear()
-        self._dirty_dynamic_modifiers.clear()
-        self._dirty_dynamic_modifier_files.clear()
-        self._bookmarks.clear()
-        self._dirty_bookmarks.clear()
-        self._dirty_bookmark_files.clear()
-        self._bookmark_date_defines = None
-        self._loc_entries.clear()
-        self._loc_sources.clear()
-        self._dirty_loc_keys.clear()
-        self._dirty_loc_files.clear()
-        self._foreign_loc_entries.clear()
-        self._foreign_loc_sources.clear()
-        self._foreign_dirty_loc_keys.clear()
-        self._loaded_loc_languages.clear()
-        self._pending_asset_writes.clear()
-        self._pending_asset_baselines.clear()
-        self._country_name_pool_updates.clear()
-        self._script_file_updates.clear()
-        self._format_donors.clear()
+        self._vanilla_state_loc_entries = None
+        self._reset_pending_edits()
+        self._unload_sections([section.name for section in self._sections.sections])
         self._original_files.clear()
-        self._dirty.clear()
+        self._clear_derived_caches()
+        self._capture_source_baseline()
+        self._after_reload()
+
+    def _discard_changes(self, written: Sequence[Path]) -> None:
+        """Drop unsaved edits; unload what they touched and what changed on disk.
+
+        ``written`` are the files a save has just written or deleted. Sections
+        with unsaved edits, sections whose files were written or changed on
+        disk (found by fingerprint, without reading files), and the sections
+        built from those are unloaded; the rest stays loaded and matches the
+        files on disk.
+        """
+
+        staged = [*self._script_file_updates, *self._pending_asset_writes]
+        fingerprints, digests = self._scan_fingerprints()
+        changed = self._changed_on_disk(fingerprints, digests)
+        names, mapped = self._sections_to_unload([*written, *staged, *changed])
+        if not mapped:
+            # A descriptor or a path outside the mod changes what every
+            # section sees, including the inherited layers.
+            self.reload()
+            return
+        self._reset_pending_edits()
+        if self._content_layers is not None:
+            self._content_layers.refresh_top([*written, *changed])
+        self._unload_sections(names, dropped_files={*written, *staged, *changed})
+        self._clear_derived_caches()
+        self._fingerprints = fingerprints
+        for path in changed:
+            self._read_digests.pop(path, None)
+        self._read_digests.update(digests)
+        self._after_reload()
+
+    def _changed_on_disk(
+        self, fingerprints: dict[Path, _Fingerprint], digests: dict[Path, bytes]
+    ) -> list[Path]:
+        """Mod text files created, deleted or changed since their baseline.
+
+        ``fingerprints`` and ``digests`` are a scan taken now. A file whose
+        fingerprint changed but whose text did not (a ``touch``) does not count.
+        """
+
+        changed = []
+        for path in self._fingerprints.keys() | fingerprints.keys():
+            recorded = self._fingerprints.get(path)
+            current = fingerprints.get(path)
+            if recorded is not None and _same_file_state(recorded, current):
+                continue
+            known = self._read_digests.get(path)
+            if recorded is not None and current is not None and known is not None:
+                try:
+                    now = digests.get(path) or _text_digest(read_text(path))
+                except OSError:
+                    now = None
+                if now == known:
+                    continue
+            changed.append(path)
+        return sorted(changed)
+
+    def _sections_to_unload(self, paths: Sequence[Path]) -> tuple[set[str], bool]:
+        """The sections to unload, and False when a path cannot be mapped."""
+
+        registry = self._sections
+        every = {section.name for section in registry.sections}
+        names: set[str] = set(self._reload_on_discard)
+        for dirty_name in self._dirty:
+            if dirty_name in STAGED_FILE_DIRTY_NAMES:
+                continue  # mapped through the staged paths below
+            sections = registry.by_dirty_name.get(dirty_name)
+            if sections is None:
+                return every, True
+            names |= sections
+        for path in paths:
+            readers = self._sections_reading(path)
+            if readers is None:
+                return every, False
+            names |= readers
+        return registry.with_dependents(names), True
+
+    def _clear_derived_caches(self) -> None:
+        """Clear what is built from files or loaded data and rebuilt on demand."""
+
         self._scan_cache.clear()
         self._own_reference_cache.clear()
         self._equipment_unlock_cache = None
@@ -781,18 +812,189 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         self._runtime_activation_parse_cache.clear()
         self._script_trigger_index_cache.clear()
         self._state_index_cache.clear()
-        self._vanilla_state_loc_entries = None
         self._country_context_cache.clear()
-        self._country_color_sources.clear()
-        self._country_tag_mappings = {
-            base: _parse_tag_file_mapping(base / "common" / "country_tags")
-            for base in (self.mod_root, self._base_content_root)
-            if base is not None
-        }
-        self._load()
-        self._capture_source_baseline()
 
-    def reload(self) -> None:
-        """Discard queued changes and reload current files from disk."""
+    def _after_reload(self) -> None:
+        if self.strict_loading:
+            # A broken file still fails at save() or discard(), as before
+            # sections loaded lazily.
+            self._load_all_sections()
+        if os.environ.get("HOI4_VERIFY_RELOAD") == "1":
+            self._verify_reload()
 
-        self.discard()
+    def _verify_reload(self) -> None:
+        """Check the partial reload against a full one (``HOI4_VERIFY_RELOAD=1``).
+
+        A fresh ``Mod`` is built on the same folders and every section of
+        both is compared by value. Sections this check loads are unloaded
+        again afterwards, so the check does not change what is loaded.
+        """
+
+        fresh = object.__new__(type(self))
+        CoreLayer.__init__(fresh, self.mod_root, self.hoi4_install)
+        # Share the inherited layers: a partial reload keeps them by design.
+        fresh.base_mod_paths = self.base_mod_paths
+        fresh._content_layers = self._content_layers
+        fresh._base_content_root = self._base_content_root
+        fresh._vanilla_tags = set(self._vanilla_tags)
+        if self._content_layers is not None:
+            if not self._content_layers.is_current():
+                raise AssertionError(
+                    "Partial reload left the content layers' list of mod files out of date"
+                )
+        before = set(self._section_loaded)
+        try:
+            self._load_all_sections()
+            fresh._load_all_sections()
+            skipped = {
+                attribute: self._fill_cache_for_check(fresh, attribute, lookup)
+                for section in self._sections.sections
+                for attribute, lookup in section.caches
+            }
+            for section in self._sections.sections:
+                for attribute, _ in section.data:
+                    live_value = self.__dict__[attribute]
+                    fresh_value = fresh.__dict__[attribute]
+                    if skipped.get(attribute):
+                        assert isinstance(live_value, dict)
+                        live_value = {
+                            key: value for key, value in live_value.items()
+                            if key not in skipped[attribute]
+                        }
+                    if attribute == "_inherited_state_source_paths" and (
+                        live_value is None or fresh_value is None
+                    ):
+                        continue  # built on demand by a lookup
+                    difference = _first_difference(live_value, fresh_value, self.mod_root)
+                    if difference is not None:
+                        raise AssertionError(
+                            f"Partial reload differs from a full reload in section "
+                            f"{section.name!r}, {attribute}: first difference at {difference}"
+                        )
+                difference = _first_difference(
+                    self._section_diagnostics.get(section.name, []),
+                    fresh._section_diagnostics.get(section.name, []),
+                    self.mod_root,
+                )
+                if difference is not None:
+                    raise AssertionError(
+                        f"Partial reload differs from a full reload in section "
+                        f"{section.name!r}, load diagnostics: first difference at {difference}"
+                    )
+            # Lookups read game and base-mod files on demand; those layers are shared.
+            live_originals = {
+                path: text for path, text in self._original_files.items()
+                if path in fresh._original_files or path.is_relative_to(self.mod_root)
+            }
+            difference = _first_difference(live_originals, fresh._original_files, self.mod_root)
+            if difference is not None:
+                raise AssertionError(
+                    f"Partial reload differs from a full reload in the original file texts: "
+                    f"first difference at {difference}"
+                )
+        finally:
+            fresh._content_layers = None
+            self._unload_sections(self._section_loaded - before)
+
+    def _fill_cache_for_check(
+        self, fresh: PersistenceLayer, attribute: str, lookup: str
+    ) -> set[object]:
+        """Let ``fresh`` look up what lookups added to a cache of this mod.
+
+        Returns the keys to leave out of the comparison: entries read from the
+        game or a base mod. Those layers are shared and cannot differ, and the
+        same entry may be read in more than one way.
+        """
+
+        live = self.__dict__[attribute]
+        known = fresh.__dict__[attribute]
+        skipped: set[object] = set()
+        for key in list(live):
+            if key in known:
+                continue
+            value = live[key] if isinstance(live, dict) else None
+            if value is not None and not _comes_from(value, self.mod_root):
+                skipped.add(key)
+                continue
+            try:
+                getattr(fresh, lookup)(key)
+            except KeyError:
+                pass
+        return skipped
+
+
+def _comes_from(value: object, root: Path) -> bool:
+    """Whether a model (or a path) was read from a file below ``root``.
+
+    A value without any path counts as coming from ``root``.
+    """
+
+    if isinstance(value, Path):
+        return value.is_relative_to(root)
+    paths = [
+        path
+        for name in ("path", "source_path", "definition_path", "history_path", "character_path")
+        if isinstance(path := getattr(value, name, None), Path)
+    ]
+    return not paths or any(path.is_relative_to(root) for path in paths)
+
+
+def _first_difference(live: object, fresh: object, root: Path, where: str = "") -> str | None:
+    """Where two loaded values first differ, or None when they are equal.
+
+    Models are compared field by field, so the message names the first id
+    and field that differ.
+    """
+
+    seen: set[tuple[int, int]] = set()
+
+    def walk(left: object, right: object, where: str) -> str | None:
+        if left is right:
+            return None
+        if type(left) is not type(right):
+            return f"{where or 'value'}: {left!r} != {right!r}"
+        if isinstance(left, (str, bytes, int, float, bool, Path, type(None))):
+            return None if left == right else f"{where or 'value'}: {left!r} != {right!r}"
+        pair = (id(left), id(right))
+        if pair in seen:
+            return None
+        seen.add(pair)
+        if isinstance(left, dict):
+            assert isinstance(right, dict)
+            for key in left:
+                if key not in right:
+                    return f"{where}[{key!r}]: only in the partially reloaded mod"
+            for key in right:
+                if key not in left:
+                    return f"{where}[{key!r}]: only in the fully reloaded mod"
+            for key in left:
+                found = walk(left[key], right[key], f"{where}[{key!r}]")
+                if found is not None:
+                    return found
+            return None
+        if isinstance(left, (list, tuple)):
+            assert isinstance(right, (list, tuple))
+            for index, (a, b) in enumerate(zip(left, right)):
+                found = walk(a, b, f"{where}[{index}]")
+                if found is not None:
+                    return found
+            if len(left) != len(right):
+                return f"{where}: {len(left)} items != {len(right)} items"
+            return None
+        if isinstance(left, (set, frozenset)):
+            assert isinstance(right, (set, frozenset))
+            if left != right:
+                extra = sorted(map(repr, left ^ right))[:3]
+                return f"{where}: sets differ in {', '.join(extra)}"
+            return None
+        if dataclasses.is_dataclass(left) and not isinstance(left, type):
+            for field in dataclasses.fields(left):
+                found = walk(getattr(left, field.name), getattr(right, field.name), f"{where}.{field.name}")
+                if found is not None:
+                    return found
+            return None
+        if hasattr(left, "__dict__"):
+            return walk(vars(left), vars(right), where)
+        return None if left == right else f"{where or 'value'}: {left!r} != {right!r}"
+
+    return walk(live, fresh, where)
