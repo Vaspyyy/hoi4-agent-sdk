@@ -9,6 +9,7 @@ callers can edit them without flattening or discarding unmodeled source.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal, TypeAlias, TypedDict, cast
 
@@ -22,6 +23,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_string
+from .syntax import Block, Scalar, parse, quote
 from .textio import read_text
 
 PortraitChannel = Literal["civilian", "army", "navy"]
@@ -392,7 +394,7 @@ def _patch_character_body(
 ) -> str:
     fields = {"name", "portraits", "roles", "instances"} if all_fields else character.touched_fields
     if "name" in fields:
-        body = set_scalar(body, "name", pdx_string(character.name) if character.name else None)
+        body = set_scalar(body, "name", _string_like(body, "name", character.name))
     if "portraits" in fields:
         body = _patch_portraits(body, character.portraits)
     if "roles" in fields:
@@ -413,9 +415,9 @@ def _patch_instance_body(
 ) -> str:
     fields = {"allowed", "name", "portraits", "roles"} if all_fields else instance.touched_fields
     if "allowed" in fields:
-        body = set_block(body, "allowed", instance.allowed or None)
+        body = _set_optional_block(body, "allowed", instance.allowed)
     if "name" in fields:
-        body = set_scalar(body, "name", pdx_string(instance.name) if instance.name else None)
+        body = set_scalar(body, "name", _string_like(body, "name", instance.name))
     if "portraits" in fields:
         body = _patch_portraits(body, instance.portraits)
     if "roles" in fields:
@@ -521,9 +523,9 @@ def _patch_role_body(
         if "ideology" in fields:
             body = set_scalar(body, "ideology", role.ideology or None)
         if "expire" in fields:
-            body = set_scalar(body, "expire", pdx_string(role.expire) if role.expire else None)
+            body = set_scalar(body, "expire", _string_like(body, "expire", role.expire))
         if "traits" in fields:
-            body = set_block(body, "traits", " ".join(role.traits) or None)
+            body = _set_list_block(body, "traits", role.traits)
         if "id" in fields:
             body = set_scalar(body, "id", str(role.id))
         _raise_unknown(fields, {"ideology", "expire", "traits", "id"}, "country leader")
@@ -549,12 +551,12 @@ def _patch_role_body(
                 value = str(getattr(role, key))
                 body = set_scalar(body, key, value or None)
         if "traits" in fields:
-            body = set_block(body, "traits", " ".join(role.traits) or None)
+            body = _set_list_block(body, "traits", role.traits)
         if "cost" in fields:
             body = set_scalar(body, "cost", str(role.cost))
         for key in ("allowed", "visible", "available", "ai_will_do"):
             if key in fields:
-                body = set_block(body, key, str(getattr(role, key)) or None)
+                body = _set_optional_block(body, key, str(getattr(role, key)))
         _raise_unknown(
             fields,
             {
@@ -597,9 +599,9 @@ def _patch_role_body(
             if key in fields:
                 body = set_scalar(body, key, str(getattr(role, key)))
         if "traits" in fields:
-            body = set_block(body, "traits", " ".join(role.traits) or None)
+            body = _set_list_block(body, "traits", role.traits)
         if "visible" in fields:
-            body = set_block(body, "visible", role.visible or None)
+            body = _set_optional_block(body, "visible", role.visible)
         _raise_unknown(
             fields,
             {
@@ -640,9 +642,9 @@ def _patch_role_body(
         if key in fields:
             body = set_scalar(body, key, str(getattr(role, key)))
     if "traits" in fields:
-        body = set_block(body, "traits", " ".join(role.traits) or None)
+        body = _set_list_block(body, "traits", role.traits)
     if "visible" in fields:
-        body = set_block(body, "visible", role.visible or None)
+        body = _set_optional_block(body, "visible", role.visible)
     _raise_unknown(
         fields,
         {
@@ -661,41 +663,68 @@ def _patch_role_body(
 
 
 def _patch_portraits(body: str, portraits: list[CharacterPortrait]) -> str:
-    existing = _block_value(body, "portraits")
+    """Patch ``portraits`` channel by channel.
+
+    A channel may repeat (``army = { large = ... } army = { small = ... }``);
+    the n-th source block of a channel is matched with the n-th model
+    portrait of that channel, so nothing is merged or dropped.
+    """
+
     if not portraits:
         return set_block(body, "portraits", None)
+    wrapper = next(
+        (
+            span
+            for span in top_level_assignments(body)
+            if span.key == "portraits" and span.is_block and span.tag is None
+        ),
+        None,
+    )
+    existing = (
+        body[wrapper.body_start : wrapper.body_end]
+        if wrapper is not None and wrapper.body_start is not None and wrapper.body_end is not None
+        else ""
+    )
+    wanted: dict[str, list[CharacterPortrait]] = {}
+    for portrait in portraits:
+        wanted.setdefault(portrait.channel, []).append(portrait)
+    seen: dict[str, int] = {}
+    pairs: list[tuple[AssignmentSpan, CharacterPortrait | None]] = []
+    for span in top_level_assignments(existing):
+        if (
+            span.key not in {"civilian", "army", "navy"}
+            or not span.is_block
+            or span.body_start is None
+            or span.body_end is None
+        ):
+            continue
+        occurrence = seen.get(span.key, 0)
+        seen[span.key] = occurrence + 1
+        candidates = wanted.get(span.key, [])
+        pairs.append((span, candidates[occurrence] if occurrence < len(candidates) else None))
     patched = existing
-    by_channel: dict[str, CharacterPortrait] = {
-        portrait.channel: portrait for portrait in portraits
-    }
-    existing_channels = [
-        span
-        for span in top_level_assignments(existing)
-        if span.key in {"civilian", "army", "navy"}
-        and span.is_block
-        and span.body_start is not None
-        and span.body_end is not None
-    ]
-    for span in reversed(existing_channels):
-        portrait = by_channel.pop(span.key, None)
-        if portrait is None:
+    for span, model in reversed(pairs):
+        if model is None:
             patched = replace_assignment(patched, span, None)
             continue
         assert span.body_start is not None
         assert span.body_end is not None
         channel_body = patched[span.body_start : span.body_end]
-        channel_body = set_scalar(channel_body, "large", portrait.large or None)
-        channel_body = set_scalar(channel_body, "small", portrait.small or None)
+        channel_body = set_scalar(channel_body, "large", model.large or None)
+        channel_body = set_scalar(channel_body, "small", model.small or None)
         patched = replace_assignment_body(patched, span, channel_body)
-    for portrait in by_channel.values():
-        channel_body = ""
-        channel_body = set_scalar(channel_body, "large", portrait.large or None)
-        channel_body = set_scalar(channel_body, "small", portrait.small or None)
-        patched = append_assignment(
-            patched,
-            _wrap_block(portrait.channel, channel_body, 0),
-        )
-    return set_block(body, "portraits", patched or None)
+    for channel, candidates in wanted.items():
+        for portrait in candidates[seen.get(channel, 0) :]:
+            channel_body = ""
+            channel_body = set_scalar(channel_body, "large", portrait.large or None)
+            channel_body = set_scalar(channel_body, "small", portrait.small or None)
+            patched = append_assignment(
+                patched,
+                _wrap_block(portrait.channel, channel_body, 0),
+            )
+    if wrapper is None:
+        return set_block(body, "portraits", patched or None)
+    return replace_assignment_body(body, wrapper, patched)
 
 
 def _patch_characters_body(characters: list[Character], body: str) -> str:
@@ -730,38 +759,85 @@ def _patch_characters_body(characters: list[Character], body: str) -> str:
 
 
 def _scalar_value(body: str, key: str) -> str:
-    for span in top_level_assignments(body):
-        if span.key == key and not span.is_block:
-            return _unquote(body[span.value_start : span.value_end])
-    return ""
+    return parse(body).root.scalar(key) or ""
+
+
+def _string_like(body: str, key: str, value: str) -> str | None:
+    """Spell a string value the way the source spells ``key``.
+
+    A bare source value (``name = BEL_florine``, a localisation key) stays
+    bare when the new value needs no quotes; otherwise the value is quoted.
+    ``None`` for an empty value removes the statement.
+    """
+
+    if not value:
+        return None
+    for assignment in parse(body).root.assignments(key):
+        if assignment.op == "=" and type(assignment.value) is Scalar:
+            if not assignment.value.quoted:
+                return quote(value)
+            break
+    return pdx_string(value)
 
 
 def _int_value(body: str, key: str, default: int) -> int:
+    """Read an integer field; ``150.000`` is the integer 150 the game reads."""
+
+    value = _scalar_value(body, key)
     try:
-        return int(_scalar_value(body, key))
+        return int(value)
     except ValueError:
+        pass
+    try:
+        number = Decimal(value)
+    except InvalidOperation:
         return default
+    return int(number) if number == number.to_integral_value() else default
 
 
 def _block_value(body: str, key: str) -> str:
-    for span in top_level_assignments(body):
-        if (
-            span.key == key
-            and span.is_block
-            and span.body_start is not None
-            and span.body_end is not None
-        ):
-            return body[span.body_start : span.body_end]
-    return ""
+    block = _direct_block(parse(body).root, key)
+    return block.body if block is not None else ""
+
+
+def _direct_block(root: Block, key: str) -> Block | None:
+    for assignment in root.assignments(key):
+        if assignment.op == "=" and type(assignment.value) is Block:
+            return assignment.value
+    return None
 
 
 def _block_tokens(body: str, key: str) -> list[str]:
-    value = _block_value(body, key)
-    return [
-        token
-        for token in value.replace("\r", " ").replace("\n", " ").split()
-        if not token.startswith("#")
-    ]
+    """Return the bare values of a list block such as ``traits = { a b }``.
+
+    Comments are never values: ``traits = { # desert fox\\n armor_officer }``
+    holds one trait.
+    """
+
+    block = _direct_block(parse(body).root, key)
+    if block is None:
+        return []
+    return [item.value for item in block.items if type(item) is Scalar]
+
+
+def _has_block(body: str, key: str) -> bool:
+    return _direct_block(parse(body).root, key) is not None
+
+
+def _set_list_block(body: str, key: str, values: list[str]) -> str:
+    """Write a list block; an empty list keeps an existing (empty) block."""
+
+    if values:
+        return set_block(body, key, " ".join(values))
+    return set_block(body, key, "" if _has_block(body, key) else None)
+
+
+def _set_optional_block(body: str, key: str, value: str) -> str:
+    """Write a script block; an empty value keeps an existing block such as ``allowed = {}``."""
+
+    if value.strip():
+        return set_block(body, key, value)
+    return set_block(body, key, "" if _has_block(body, key) else None)
 
 
 def _unquote(value: str) -> str:

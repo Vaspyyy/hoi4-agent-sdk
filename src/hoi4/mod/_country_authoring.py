@@ -192,6 +192,9 @@ class CountryAuthoringLayer(CharactersLayer):
                 other_kwargs[key] = value
         if other_kwargs:
             _set_fields(country, other_kwargs)
+            if "color" in other_kwargs and "color_ui" not in other_kwargs:
+                # A new map colour without its own UI colour: the UI follows it.
+                country.color_ui = None
         if leader_kwargs:
             if country.leader is None:
                 country.leader = Leader(name="Leader", character_id=f"{tag}_leader_1")

@@ -145,7 +145,8 @@ def test_character_scalar_edit_preserves_unknown_fields(tmp_path: Path) -> None:
 
     rendered = serialize_characters_file(characters, CHARACTERS)
 
-    assert 'name = "ABC_NEW_LEADER"' in rendered
+    # The source spells the name as a bare localisation key; the edit keeps that.
+    assert "name = ABC_NEW_LEADER\n" in rendered
     assert "custom_character_key = keep" in rendered
     assert "GFX_portrait_ABC_leader" in rendered
 

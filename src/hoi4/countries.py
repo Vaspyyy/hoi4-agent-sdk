@@ -11,12 +11,15 @@ A Country in HOI4 spans multiple files:
 
 from __future__ import annotations
 
+import colorsys
 import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
-from .parser import find_assignment_block
+from .characters import _string_like
 from .patching import (
+    AssignmentSpan,
     append_assignment,
     replace_assignment,
     replace_assignment_body,
@@ -27,6 +30,7 @@ from .patching import (
 from .paths import require_country_tag, safe_file_stem
 from .script import pdx_string, pdx_value
 from .structured_patching import patch_scalar_mapping
+from .syntax import Assignment, Block, Scalar, Tagged, Value, parse
 from .tags import (
     add_country_tag,
     resolve_country_filename,
@@ -37,15 +41,130 @@ from .tags import (
 from .textio import decode_text, read_text
 from .types import Country, Leader
 
-COLOR_RE = re.compile(
-    r"\bcolor\s*=\s*(?:rgb\s*)?\{\s*(\d+)\s+(\d+)\s+(\d+)\s*\}"
-)
-COLOR_FIELD_RE = re.compile(
-    r"(\bcolor(?:_ui)?\s*=\s*(?:rgb\s*)?\{\s*)\d+\s+\d+\s+\d+(\s*\})"
-)
-CAPITAL_RE = re.compile(r"\bcapital\s*=\s*(\d+)")
-RESEARCH_SLOTS_RE = re.compile(r"\bset_research_slots\s*=\s*(\d+)")
 STANDARD_IDEOLOGY_GROUPS = ("democratic", "fascism", "communism", "neutrality")
+_COUNTRY_TAG_KEY_RE = re.compile(r"[A-Z0-9]{3}")
+
+RGB = tuple[int, int, int]
+
+
+# ── Colours ─────────────────────────────────────────────────────
+#
+# HOI4 spells a colour three ways: ``{ 57 113 228 }``, ``rgb { 57 113 228 }``
+# and ``hsv { 0.6 0.75 0.9 }`` (any case; ``hsv360`` takes degrees and
+# percentages). The model always holds RGB channels from 0 to 255.
+
+
+def _number(scalar: Scalar) -> float | None:
+    try:
+        return float(Decimal(scalar.value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def color_from_value(value: Value) -> RGB | None:
+    """Return the RGB channels of a colour value, or ``None`` if it is not one."""
+
+    tag = ""
+    if type(value) is Tagged:
+        tag = value.tag.value.lower()
+        block = value.block
+    elif type(value) is Block:
+        block = value
+    else:
+        return None
+    if any(type(item) is not Scalar for item in block.items):
+        return None
+    numbers = [_number(item) for item in block.values()]
+    if len(numbers) != 3 or any(number is None for number in numbers):
+        return None
+    first, second, third = (float(number) for number in numbers if number is not None)
+    if tag in {"hsv", "hsv360"}:
+        if tag == "hsv360":
+            first, second, third = first / 360, second / 100, third / 100
+        channels = colorsys.hsv_to_rgb(
+            first % 1.0 if first > 1.0 else max(first, 0.0),
+            min(max(second, 0.0), 1.0),
+            min(max(third, 0.0), 1.0),
+        )
+        return tuple(round(channel * 255) for channel in channels)  # type: ignore[return-value]
+    return tuple(min(max(round(channel), 0), 255) for channel in (first, second, third))  # type: ignore[return-value]
+
+
+def read_color(block: Block, key: str = "color") -> RGB | None:
+    """Return the colour of the first direct ``key = ...`` of ``block``."""
+
+    for assignment in block.assignments(key):
+        if assignment.op == "=":
+            return color_from_value(assignment.value)
+    return None
+
+
+def set_color(text: str, key: str, color: RGB, *, default_tag: str = "") -> str:
+    """Set the direct ``key`` colour of ``text`` and keep its spelling.
+
+    A value that already means ``color`` is left byte for byte, even when it
+    is written as ``hsv``. Otherwise only the three channel numbers change, so
+    ``rgb``/plain style, spacing and comments stay. An ``hsv`` value becomes
+    ``rgb``, because the model holds RGB. A missing key is appended as
+    ``key = <default_tag> { r g b }``.
+    """
+
+    for channel in color:
+        if not isinstance(channel, int) or isinstance(channel, bool) or not 0 <= channel <= 255:
+            raise ValueError(f"Colour {color!r} must use integer channels from 0 to 255")
+    r, g, b = color
+    doc = parse(text)
+    assignment = next(
+        (item for item in doc.root.assignments(key) if item.op == "="), None
+    )
+    prefix = f"{default_tag} " if default_tag else ""
+    if assignment is None:
+        return append_assignment(text, f"{key} = {prefix}{{ {r} {g} {b} }}")
+    value = assignment.value
+    if color_from_value(value) == tuple(color):
+        return text
+    block = value.block if type(value) is Tagged else value if type(value) is Block else None
+    if block is None or len(block.items) != 3 or len(block.values()) != 3:
+        replacement = f"{prefix}{{ {r} {g} {b} }}"
+        return text[: value.start] + replacement + text[value.end :]
+    result = text
+    for scalar, channel in reversed(list(zip(block.values(), (r, g, b)))):
+        result = result[: scalar.start] + str(channel) + result[scalar.end :]
+    if type(value) is Tagged and value.tag.value.lower() != "rgb":
+        result = result[: value.tag.start] + "rgb" + result[value.tag.end :]
+    return result
+
+
+def _root(text: str) -> Block:
+    return parse(text).root
+
+
+def _first_block(block: Block, key: str) -> Block | None:
+    for assignment in block.assignments(key):
+        if assignment.op == "=" and type(assignment.value) is Block:
+            return assignment.value
+    return None
+
+
+def _last_scalar(block: Block, key: str) -> str | None:
+    found: str | None = None
+    for assignment in block.assignments(key):
+        if assignment.op == "=" and type(assignment.value) is Scalar:
+            found = assignment.value.value
+    return found
+
+
+def _int_or_none(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        try:
+            number = Decimal(value)
+        except InvalidOperation:
+            return None
+        return int(number) if number == number.to_integral_value() else None
 
 
 def read_country(
@@ -91,9 +210,14 @@ def _read_definition(
             txt = read_text(p)
             country.definition_path = p.resolve()
             country.raw_definition = txt
-            m = COLOR_RE.search(txt)
-            if m:
-                country.color = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            root = _root(txt)
+            color = read_color(root)
+            if color is not None:
+                country.color = color
+            for key in ("graphical_culture", "graphical_culture_2d"):
+                value = root.scalar(key)
+                if value:
+                    setattr(country, key, value)
             return
 
 
@@ -106,15 +230,16 @@ def _read_color(
 ) -> None:
     """Resolve country colour using the same vanilla-then-mod precedence as HOI4."""
 
-    resolved: tuple[int, int, int] | None = None
+    resolved: RGB | None = None
+    resolved_ui: RGB | None = None
     for base in (hoi4_install, mod_root):
         if base is None:
             continue
         definition = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
         if definition is not None and definition.is_file():
-            match = COLOR_RE.search(read_text(definition))
-            if match:
-                resolved = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
+            color = read_color(_root(read_text(definition)))
+            if color is not None:
+                resolved = color
         colors_path = base / "common" / "countries" / "colors.txt"
         if not colors_path.is_file():
             continue
@@ -124,14 +249,16 @@ def _read_color(
                 continue
         else:
             text = read_text(colors_path)
-        span = next((item for item in top_level_assignments(text) if item.key == country.tag), None)
-        if span is None or not span.is_block or span.body_start is None or span.body_end is None:
+        entry = _first_block(_root(text), country.tag)
+        if entry is None:
             continue
-        match = COLOR_RE.search(text[span.body_start : span.body_end])
-        if match:
-            resolved = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
+        color = read_color(entry)
+        if color is not None:
+            resolved = color
+            resolved_ui = read_color(entry, "color_ui")
     if resolved is not None:
         country.color = resolved
+    country.color_ui = resolved_ui
 
 
 def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
@@ -147,51 +274,36 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
         txt = read_text(f)
         country.history_path = f.resolve()
         country.raw_history = txt
+        root = _root(txt)
 
-        cap = CAPITAL_RE.search(txt)
-        if cap:
-            country.capital = int(cap.group(1))
+        # Only direct statements are modeled: a value inside an ``if`` or a
+        # date block is conditional, and edits patch the direct statement.
+        capital = _int_or_none(root.scalar("capital"))
+        if capital is not None:
+            country.capital = capital
 
-        research_slots = RESEARCH_SLOTS_RE.search(txt)
-        if research_slots:
-            country.research_slots = int(research_slots.group(1))
+        research_slots = _int_or_none(root.scalar("set_research_slots"))
+        if research_slots is not None:
+            country.research_slots = research_slots
 
-        assignments = {span.key: span for span in top_level_assignments(txt)}
         for key, field_name in (
             ("set_stability", "stability"),
             ("set_war_support", "war_support"),
         ):
-            span = assignments.get(key)
-            if span is not None and not span.is_block:
-                setattr(
-                    country,
-                    field_name,
-                    _coerce_history_scalar(txt[span.value_start : span.value_end]),
-                )
-        oob_span = assignments.get("set_oob") or assignments.get("oob")
-        if oob_span is not None and not oob_span.is_block:
-            country.oob = _unquote_history_scalar(
-                txt[oob_span.value_start : oob_span.value_end]
-            )
-        technology_span = assignments.get("set_technology")
-        if (
-            technology_span is not None
-            and technology_span.is_block
-            and technology_span.body_start is not None
-            and technology_span.body_end is not None
-        ):
-            technology_body = txt[
-                technology_span.body_start : technology_span.body_end
-            ]
+            value = _last_assignment(root, key)
+            if value is not None and type(value.value) is Scalar:
+                setattr(country, field_name, _coerce_history_scalar(value.value.raw))
+        oob = _last_assignment(root, "set_oob") or _last_assignment(root, "oob")
+        if oob is not None and type(oob.value) is Scalar:
+            country.oob = oob.value.value
+        technology = _last_assignment(root, "set_technology")
+        if technology is not None and type(technology.value) is Block:
             country.technologies = {
-                span.key: int(value)
-                for span in top_level_assignments(technology_body)
-                if not span.is_block
-                and (
-                    value := technology_body[
-                        span.value_start : span.value_end
-                    ].strip()
-                ).lstrip("-").isdigit()
+                item.name: int(level)
+                for item in technology.value.assignments()
+                if item.op == "="
+                and (level := item.scalar) is not None
+                and level.lstrip("-").isdigit()
             }
 
         pops = _read_popularities(txt)
@@ -310,7 +422,7 @@ def _read_character(country: Country, mod_root: Path, hoi4_install: Optional[Pat
         leader_ids = [
             character_id
             for character_id, body in definitions
-            if find_assignment_block(body, "country_leader") is not None
+            if _leader_role(body) is not None
         ]
         selected_id = next((item for item in recruited if item in leader_ids), "")
         if not selected_id and country.leader and country.leader.character_id in by_id:
@@ -323,17 +435,22 @@ def _read_character(country: Country, mod_root: Path, hoi4_install: Optional[Pat
             return
 
         character_body = by_id[selected_id]
-        role = find_assignment_block(character_body, "country_leader")
-        role_body = role[0] if role is not None else ""
-        name = _direct_scalar(character_body, "name")
-        ideology = _direct_scalar(role_body, "ideology") or "liberalism"
-        portrait_match = re.search(
-            rf"\blarge\s*=\s*GFX_portrait_{re.escape(country.tag)}_([A-Za-z0-9_.:-]+)",
-            character_body,
+        role = _leader_role(character_body)
+        name = character_body.scalar("name") or ""
+        ideology = (role.scalar("ideology") if role is not None else None) or "liberalism"
+        portrait_prefix = f"GFX_portrait_{country.tag}_"
+        portraits = sorted(
+            (
+                item
+                for item, _ in character_body.walk()
+                if item.name == "large"
+                and (item.scalar or "").startswith(portrait_prefix)
+            ),
+            key=lambda item: item.start,
         )
         portrait_slug = (
-            portrait_match.group(1)
-            if portrait_match
+            (portraits[0].scalar or "").removeprefix(portrait_prefix)
+            if portraits
             else selected_id.removeprefix(f"{country.tag}_")
         )
         country.leader = Leader(
@@ -348,55 +465,70 @@ def _read_character(country: Country, mod_root: Path, hoi4_install: Optional[Pat
 def _read_assigned_ideas(history: str) -> list[str]:
     assigned: list[str] = []
     removed: set[str] = set()
-    identifier = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]*")
-    for span in top_level_assignments(history):
-        if span.key not in {"add_ideas", "remove_ideas"}:
+    for assignment in _root(history).assignments():
+        if assignment.name not in {"add_ideas", "remove_ideas"} or assignment.op != "=":
             continue
-        if span.is_block and span.body_start is not None and span.body_end is not None:
-            value = history[span.body_start : span.body_end]
+        value = assignment.value
+        if type(value) is Block:
+            values = [item.value for item in value.values()]
+        elif type(value) is Scalar:
+            values = [value.value]
         else:
-            value = history[span.value_start : span.value_end]
-        values = identifier.findall(re.sub(r"#.*", "", value))
-        if span.key == "add_ideas":
+            continue
+        if assignment.name == "add_ideas":
             assigned.extend(values)
         else:
             removed.update(values)
     return [idea for idea in dict.fromkeys(assigned) if idea not in removed]
 
 
+def _last_assignment(block: Block, key: str) -> Assignment | None:
+    found: Assignment | None = None
+    for assignment in block.assignments(key):
+        if assignment.op == "=":
+            found = assignment
+    return found
+
+
+def _leader_role(character: Block) -> Block | None:
+    """Return the character's ``country_leader`` block, directly or in an ``instance``."""
+
+    role = _first_block(character, "country_leader")
+    if role is not None:
+        return role
+    for instance in character.blocks("instance"):
+        role = _first_block(instance, "country_leader")
+        if role is not None:
+            return role
+    return None
+
+
 def _direct_scalar(text: str, key: str) -> str:
-    for span in top_level_assignments(text):
-        if span.key == key and not span.is_block:
-            return text[span.value_start : span.value_end].strip().strip('"')
-    return ""
+    return _root(text).scalar(key) or ""
 
 
 def _read_recruited_character_ids(history: str) -> list[str]:
     character_ids: list[str] = []
-    for span in top_level_assignments(history):
-        if span.key == "recruit_character" and not span.is_block:
-            value = history[span.value_start : span.value_end].strip().strip('"')
-            if value and value not in character_ids:
-                character_ids.append(value)
-        elif (
-            span.key == "set_country_leader"
-            and span.is_block
-            and span.body_start is not None
-            and span.body_end is not None
-        ):
-            value = _direct_scalar(history[span.body_start : span.body_end], "character")
-            if value and value not in character_ids:
-                character_ids.append(value)
+    for assignment in _root(history).assignments():
+        if assignment.op != "=":
+            continue
+        value: str | None = None
+        if assignment.name == "recruit_character":
+            value = assignment.scalar
+        elif assignment.name == "set_country_leader" and type(assignment.value) is Block:
+            value = assignment.value.scalar("character")
+        if value and value not in character_ids:
+            character_ids.append(value)
     return character_ids
 
 
-def _character_definitions(text: str) -> list[tuple[str, str]]:
-    wrapper = find_assignment_block(text, "characters")
-    body = wrapper[0] if wrapper is not None else text
+def _character_definitions(text: str) -> list[tuple[str, Block]]:
+    root = _root(text)
+    wrapper = _first_block(root, "characters") or root
     return [
-        (span.key, body[span.body_start : span.body_end])
-        for span in top_level_assignments(body)
-        if span.is_block and span.body_start is not None and span.body_end is not None
+        (item.name, item.value)
+        for item in wrapper.assignments()
+        if item.op == "=" and type(item.value) is Block
     ]
 
 
@@ -408,57 +540,26 @@ def _read_popularities(history: str) -> dict[str, int]:
     country is edited and saved.
     """
 
-    popularity = next(
-        (
-            span
-            for span in top_level_assignments(history)
-            if span.key == "set_popularities"
-            and span.is_block
-            and span.body_start is not None
-            and span.body_end is not None
-        ),
-        None,
-    )
-    if popularity is None or popularity.body_start is None or popularity.body_end is None:
+    popularity = _first_block(_root(history), "set_popularities")
+    if popularity is None:
         return {}
-    body = history[popularity.body_start : popularity.body_end]
     values: dict[str, int] = {}
-    for assignment in top_level_assignments(body):
-        if assignment.is_block:
-            continue
-        raw_value = body[assignment.value_start : assignment.value_end].strip().strip('"')
-        try:
-            values[assignment.key] = int(raw_value)
-        except ValueError:
-            continue
+    for assignment in popularity.assignments():
+        number = _int_or_none(assignment.scalar) if assignment.op == "=" else None
+        if number is not None:
+            values[assignment.name] = number
     return values
 
 
 def _read_politics(history: str) -> tuple[str, bool | None]:
-    politics = next(
-        (
-            span
-            for span in top_level_assignments(history)
-            if span.key == "set_politics"
-            and span.is_block
-            and span.body_start is not None
-            and span.body_end is not None
-        ),
-        None,
-    )
-    if politics is None or politics.body_start is None or politics.body_end is None:
+    politics = _first_block(_root(history), "set_politics")
+    if politics is None:
         return "", None
-    body = history[politics.body_start : politics.body_end]
-    assignments = {
-        assignment.key: body[assignment.value_start : assignment.value_end]
-        for assignment in top_level_assignments(body)
-        if not assignment.is_block
-    }
-    ruling_party = assignments.get("ruling_party", "").strip().strip('"')
-    election_value = assignments.get("elections_allowed")
+    ruling_party = _last_scalar(politics, "ruling_party") or ""
+    election_value = _last_scalar(politics, "elections_allowed")
     if election_value is None:
         return ruling_party, None
-    return ruling_party, election_value.strip().strip('"').lower() in {"yes", "true", "1"}
+    return ruling_party, election_value.lower() in {"yes", "true", "1"}
 
 
 def _popularity_body(popularities: dict[str, int]) -> str:
@@ -480,74 +581,83 @@ def serialize_country_colors_file(
     colors: dict[str, tuple[int, int, int]],
     *,
     deleted_tags: set[str] | None = None,
+    ui_colors: dict[str, tuple[int, int, int] | None] | None = None,
 ) -> str:
-    """Patch country map/UI colours while retaining unrelated source text."""
+    """Patch country map/UI colours while retaining unrelated source text.
+
+    ``color_ui`` follows the map colour unless ``ui_colors`` names one for the
+    tag. Channels that already hold the wanted colour are left byte for byte,
+    whatever their spelling (``rgb``, ``hsv`` or a plain block).
+    """
 
     text = original
     for tag in sorted(deleted_tags or set()):
-        span = next((item for item in top_level_assignments(text) if item.key == tag), None)
+        span = _country_entry_span(text, tag)
         if span is not None:
             text = replace_assignment(text, span, None)
     for tag, color in sorted(colors.items()):
-        r, g, b = color
         if any(channel < 0 or channel > 255 for channel in color):
             raise ValueError(f"Country color for {tag} must use channels from 0 to 255")
-        span = next((item for item in top_level_assignments(text) if item.key == tag), None)
-        if span is None:
-            text = text.rstrip() + ("\n" if text.strip() else "")
-            text += (
+        ui = (ui_colors or {}).get(tag) or color
+        span = _country_entry_span(text, tag)
+        if span is None or not span.is_block or span.tag is not None:
+            r, g, b = color
+            ur, ug, ub = ui
+            entry = (
                 f"{tag} = {{\n"
-                f"    color = rgb {{ {r} {g} {b} }}\n"
-                f"    color_ui = rgb {{ {r} {g} {b} }}\n"
-                "}\n"
-            )
-            continue
-        if not span.is_block or span.body_start is None or span.body_end is None:
-            replacement = (
-                f"{tag} = {{\n"
-                f"    color = rgb {{ {r} {g} {b} }}\n"
-                f"    color_ui = rgb {{ {r} {g} {b} }}\n"
+                f"\tcolor = rgb {{ {r} {g} {b} }}\n"
+                f"\tcolor_ui = rgb {{ {ur} {ug} {ub} }}\n"
                 "}"
             )
-            text = replace_assignment(text, span, replacement)
+            if span is None:
+                text = append_assignment(text, entry)
+                if not text.endswith("\n"):
+                    text += "\n"
+            else:
+                text = replace_assignment(text, span, entry)
             continue
+        assert span.body_start is not None and span.body_end is not None
         body = text[span.body_start : span.body_end]
-        seen: set[str] = set()
-
-        def replace_color(match: re.Match[str]) -> str:
-            key_match = re.search(r"color(?:_ui)?", match.group(1))
-            if key_match is not None:
-                seen.add(key_match.group(0))
-            return f"{match.group(1)}{r} {g} {b}{match.group(2)}"
-
-        body = COLOR_FIELD_RE.sub(replace_color, body)
-        for key in ("color", "color_ui"):
-            if key not in seen:
-                body = body.rstrip() + f"\n    {key} = rgb {{ {r} {g} {b} }}\n"
-        text = text[: span.body_start] + body + text[span.body_end :]
+        patched = set_color(body, "color", color, default_tag="rgb")
+        patched = set_color(patched, "color_ui", ui, default_tag="rgb")
+        if patched != body and "\n" not in body and "\n" in patched:
+            # ``ABC = { color = rgb { 1 2 3 } }`` grew a line: close it on its own.
+            patched = patched.rstrip(" \t") + "\n"
+        text = replace_assignment_body(text, span, patched)
     return text
+
+
+def _country_entry_span(text: str, tag: str) -> AssignmentSpan | None:
+    return next((item for item in top_level_assignments(text) if item.key == tag), None)
 
 
 def country_color_tags(text: str) -> set[str]:
     """Return country tags defined by a ``common/countries/colors.txt`` source."""
 
     return {
-        span.key
-        for span in top_level_assignments(text)
-        if span.is_block and re.fullmatch(r"[A-Z0-9]{3}", span.key)
+        item.name
+        for item in _root(text).assignments()
+        if type(item.value) is Block and _COUNTRY_TAG_KEY_RE.fullmatch(item.name)
     }
 
 
 def seed_country_colors_file(original: str, vanilla: str) -> str:
-    """Append every vanilla country color entry missing from a mod file."""
+    """Append every vanilla country color entry missing from a mod file.
 
+    A mod without its own table starts from the vanilla file verbatim, so the
+    override differs from it only where a colour really changed.
+    """
+
+    if not original.strip():
+        return vanilla
     text = original
     existing = country_color_tags(text)
     for span in top_level_assignments(vanilla):
         if (
             not span.is_block
+            or span.tag is not None
             or span.key in existing
-            or not re.fullmatch(r"[A-Z0-9]{3}", span.key)
+            or not _COUNTRY_TAG_KEY_RE.fullmatch(span.key)
         ):
             continue
         assignment = vanilla[span.start : span.end].strip()
@@ -565,13 +675,21 @@ def _find_history_file(history_dir: Path, tag: str) -> Optional[Path]:
 
 
 def _extract_leader_name(txt: str) -> Optional[str]:
-    lines = txt.splitlines()
-    for idx, line in enumerate(lines):
-        if "create_country_leader" in line or "recruit_character" in line:
-            for j in range(idx + 1, min(idx + 12, len(lines))):
-                name_match = re.search(r'name\s*=\s*"([^"]*)"', lines[j])
-                if name_match:
-                    return name_match.group(1)
+    """Return the name of the first legacy ``create_country_leader`` block."""
+
+    leaders = sorted(
+        (
+            item
+            for item, _ in _root(txt).walk()
+            if item.name == "create_country_leader" and type(item.value) is Block
+        ),
+        key=lambda item: item.start,
+    )
+    for leader in leaders:
+        assert type(leader.value) is Block
+        name = leader.value.scalar("name")
+        if name:
+            return name
     return None
 
 
@@ -665,7 +783,19 @@ def country_file_paths(mod_root: Path, country: Country) -> list[Path]:
     return paths
 
 
-def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]:
+def serialize_country_files(
+    mod_root: Path,
+    country: Country,
+    *,
+    keep_history_path: bool = False,
+) -> dict[Path, str]:
+    """Render the country's definition, history and leader files.
+
+    A name change renames the history file to ``TAG - Name.txt`` unless
+    ``keep_history_path`` is true. Pass it when the history file overrides an
+    inherited one: the game would otherwise load both files.
+    """
+
     tag = require_country_tag(country.tag)
     files: dict[Path, str] = {}
 
@@ -689,13 +819,14 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
                 definition, "graphical_culture_2d", country.graphical_culture_2d
             )
         if "*" in country.touched_fields or "color" in country.touched_fields:
-            definition = set_block(definition, "color", f"{r} {g} {b}")
+            definition = set_color(definition, "color", (r, g, b))
     files[def_path] = definition
 
     safe_name = safe_file_stem(country.name or tag, fallback=tag)
     hist_path = (
         mod_root / f"history/countries/{tag} - {safe_name}.txt"
-        if {"*", "name"} & country.touched_fields or country.history_path is None
+        if country.history_path is None
+        or ({"*", "name"} & country.touched_fields and not keep_history_path)
         else country.history_path
     )
     leader = country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1")
@@ -813,14 +944,7 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         if "*" in touched or "popularities" in touched:
             history = set_block(history, "set_popularities", _popularity_body(pops))
         if "*" in touched or {"ruling_party", "elections_allowed"} & touched:
-            politics_body = "\n".join(
-                [
-                    f"ruling_party = {country.ruling_party}",
-                    'last_election = "1936.1.1"',
-                    f"elections_allowed = {elections}",
-                ]
-            )
-            history = set_block(history, "set_politics", politics_body)
+            history = _patch_politics(history, country.ruling_party, elections)
         if "*" in touched or "ideas" in touched:
             history = set_block(
                 history, "add_ideas", "\n".join(country.ideas) if country.ideas else None
@@ -862,6 +986,42 @@ def serialize_country_files(mod_root: Path, country: Country) -> dict[Path, str]
         files[char_path] = character or generated_character
 
     return files
+
+
+def _patch_politics(history: str, ruling_party: str, elections: str) -> str:
+    """Set the party and elections of ``set_politics`` and keep its other fields.
+
+    ``last_election`` and any unknown key in an existing block stay as written.
+    """
+
+    span = next(
+        (
+            item
+            for item in top_level_assignments(history)
+            if item.key == "set_politics" and item.is_block and item.tag is None
+        ),
+        None,
+    )
+    if span is None or span.body_start is None or span.body_end is None:
+        return set_block(
+            history,
+            "set_politics",
+            "\n".join(
+                [
+                    f"ruling_party = {ruling_party}",
+                    'last_election = "1936.1.1"',
+                    f"elections_allowed = {elections}",
+                ]
+            ),
+        )
+    body = history[span.body_start : span.body_end]
+    patched = set_scalar(body, "ruling_party", ruling_party)
+    patched = set_scalar(patched, "elections_allowed", elections)
+    if patched == body:
+        return history
+    if "\n" not in body and "\n" in patched:
+        patched = patched.rstrip(" \t") + "\n"
+    return replace_assignment_body(history, span, patched)
 
 
 def _patch_repeated_scalars(text: str, key: str, values: list[str]) -> str:
@@ -932,8 +1092,19 @@ def _patch_character(
     touched_fields: set[str],
     tag: str,
 ) -> str:
-    root = find_assignment_block(text, "characters")
-    body = root[0] if root is not None else text
+    root = next(
+        (
+            span
+            for span in top_level_assignments(text)
+            if span.key == "characters" and span.is_block and span.tag is None
+        ),
+        None,
+    )
+    body = (
+        text[root.body_start : root.body_end]
+        if root is not None and root.body_start is not None and root.body_end is not None
+        else text
+    )
     leader_span = next(
         (
             span
@@ -954,7 +1125,9 @@ def _patch_character(
     # derives roles from the direct country_leader/advisor/commander blocks.
     leader_body = set_block(leader_body, "roles", None)
     if "*" in touched_fields or "leader_name" in touched_fields:
-        leader_body = set_scalar(leader_body, "name", pdx_string(leader.name))
+        leader_body = set_scalar(
+            leader_body, "name", _string_like(leader_body, "name", leader.name)
+        )
     role = next(
         (
             span
@@ -980,10 +1153,7 @@ def _patch_character(
     body = replace_assignment_body(body, leader_span, leader_body)
     if root is None:
         return body
-    open_brace = text.find("{", root[1], root[2])
-    if open_brace < 0:
-        raise ValueError("Malformed characters block")
-    return text[: open_brace + 1] + body + text[root[2] - 1 :]
+    return replace_assignment_body(text, root, body)
 
 
 def _patch_character_portrait(body: str, tag: str, portrait_slug: str) -> str:

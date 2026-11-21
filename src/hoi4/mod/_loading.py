@@ -38,7 +38,7 @@ from ..states import (
 )
 from ..syntax import require_well_formed
 from ..tags import (
-    _parse_country_tag_line,
+    country_tag_entries,
 )
 from ..textio import read_text
 from ..types import (
@@ -153,12 +153,11 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         if not tags_dir.is_dir():
             return mapping
         for path in sorted(tags_dir.glob("*.txt")):
-            text = read_text(path)
-            for line in text.splitlines():
-                entry = _parse_country_tag_line(line)
-                if entry is None:
-                    continue
-                tag, target = entry
+            try:
+                self._require_well_formed(path)
+            except Exception as error:
+                self._record_load_error("country_tags", path, error)
+            for tag, target in country_tag_entries(read_text(path)):
                 if tag in sources:
                     self._record_duplicate_identifier(
                         "country_tag", tag, sources[tag], path
@@ -205,9 +204,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         )
         if generated_tags.is_file():
             self._created_country_tags.update(
-                entry[0]
-                for line in read_text(generated_tags).splitlines()
-                if (entry := _parse_country_tag_line(line)) is not None
+                tag for tag, _ in country_tag_entries(read_text(generated_tags))
             )
         override_tags = set(mod_mapping)
         history_dir = self.mod_root / "history" / "countries"
@@ -240,6 +237,15 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                 self._record_load_error("country", self.mod_root, error)
                 self._countries[tag] = Country(tag=tag)
             for path in country_file_paths(self.mod_root, self._countries[tag]):
+                if path.exists() and path.resolve(strict=False).is_relative_to(
+                    self.mod_root.resolve(strict=False)
+                ):
+                    # The country is still read the forgiving way, so it can be
+                    # inspected, but saving refuses to rewrite the broken file.
+                    try:
+                        self._require_well_formed(path)
+                    except Exception as error:
+                        self._record_load_error("country", path, error)
                 if path.exists():
                     self._original_files.setdefault(
                         path, read_text(path)

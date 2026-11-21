@@ -132,6 +132,8 @@ class Country:
     history_path: Optional[Path] = None
     character_path: Optional[Path] = None
     touched_fields: set[str] = field(default_factory=set)
+    # UI colour from ``common/countries/colors.txt``; ``None`` means "same as color".
+    color_ui: tuple[int, int, int] | None = None
 
     def __post_init__(self):
         if not self.popularities:

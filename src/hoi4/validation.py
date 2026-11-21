@@ -21,13 +21,6 @@ from .textio import read_text
 from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationError
 
 TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
-_TAG_DEFINITION_RE = re.compile(
-    r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"(?:\s*#.*)?\s*$'
-)
-_CAPITAL_RE = re.compile(r"\bcapital\s*=\s*(\d+)\b")
-_RECRUIT_CHARACTER_RE = re.compile(
-    r'\brecruit_character\s*=\s*"?([A-Za-z0-9_.:%-]+)"?'
-)
 _UNSET = object()
 
 VALIDATION_CODES: dict[str, str] = {
@@ -375,12 +368,13 @@ def validate_tag_definition_targets(mod_root: Path) -> list[ValidationError]:
     if not tags_dir.is_dir():
         return issues
     for path in sorted(tags_dir.glob("*.txt")):
-        text = read_text(path)
-        for line_number, line in enumerate(text.splitlines(), 1):
-            match = _TAG_DEFINITION_RE.match(line)
-            if match is None:
+        doc = parse(read_text(path))
+        for item in doc.root.assignments():
+            declared_path = item.scalar
+            if item.op != "=" or declared_path is None or not TAG_RE.match(item.name):
                 continue
-            tag, declared_path = match.groups()
+            tag = item.name
+            line_number = doc.line_col(item.start)[0]
             target = countries_dir / Path(declared_path).name
             if target.is_file():
                 continue
@@ -439,60 +433,44 @@ def validate_country_history_references(
     if not histories_dir.is_dir():
         return issues
     for path in sorted(histories_dir.glob("*.txt")):
-        text = read_text(path)
-        source = _mask_script_comments(text)
-        for match in _CAPITAL_RE.finditer(source):
-            state_id = int(match.group(1))
-            if state_id in known_state_ids:
+        doc = parse(read_text(path))
+        # Every depth: a capital or recruitment inside a date or ``if`` block
+        # is still a reference. Comments and strings are never statements.
+        statements = sorted(
+            (item for item, _ in doc.root.walk() if item.op == "="),
+            key=lambda item: item.start,
+        )
+        for item in statements:
+            value = item.scalar
+            if value is None:
                 continue
-            issues.append(
-                ValidationError(
-                    message=f"Capital state {state_id} does not exist",
-                    severity="error",
-                    code="capital_ref",
-                    file_path=str(path),
-                    state_id=state_id,
-                    line=source.count("\n", 0, match.start()) + 1,
+            if item.name == "capital" and value.isdigit():
+                state_id = int(value)
+                if state_id in known_state_ids:
+                    continue
+                issues.append(
+                    ValidationError(
+                        message=f"Capital state {state_id} does not exist",
+                        severity="error",
+                        code="capital_ref",
+                        file_path=str(path),
+                        state_id=state_id,
+                        line=doc.line_col(item.start)[0],
+                    )
                 )
-            )
-        for match in _RECRUIT_CHARACTER_RE.finditer(source):
-            character_id = match.group(1)
-            if character_id in known_character_ids:
-                continue
-            issues.append(
-                ValidationError(
-                    message=f"Character {character_id} is not defined",
-                    severity="warning",
-                    code="character_ref",
-                    file_path=str(path),
-                    line=source.count("\n", 0, match.start()) + 1,
+            elif item.name == "recruit_character" and value:
+                if value in known_character_ids:
+                    continue
+                issues.append(
+                    ValidationError(
+                        message=f"Character {value} is not defined",
+                        severity="warning",
+                        code="character_ref",
+                        file_path=str(path),
+                        line=doc.line_col(item.start)[0],
+                    )
                 )
-            )
     return issues
-
-
-def _mask_script_comments(text: str) -> str:
-    """Replace comment bytes with spaces while preserving offsets and newlines."""
-
-    chars = list(text)
-    in_quote = False
-    index = 0
-    while index < len(chars):
-        char = chars[index]
-        if char == "\\" and in_quote:
-            index += 2
-            continue
-        if char == '"':
-            in_quote = not in_quote
-            index += 1
-            continue
-        if char == "#" and not in_quote:
-            while index < len(chars) and chars[index] != "\n":
-                chars[index] = " "
-                index += 1
-            continue
-        index += 1
-    return "".join(chars)
 
 
 def _script_warnings(
