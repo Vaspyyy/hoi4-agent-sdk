@@ -161,7 +161,11 @@ class _Store:
     def get(self, key: str, size: int, mtime_ns: int) -> Any:
         if self.loaded is None:
             self.loaded = self._read()
-        entry = self.added.get(key) or self.loaded.get(key)
+        entry = self.added.get(key)
+        if entry is None:
+            # A result read once lives on decoded in the caller's memory
+            # cache; the raw copy is not kept twice.
+            entry = self.loaded.pop(key, None)
         if (
             isinstance(entry, list)
             and len(entry) == 3
@@ -183,7 +187,8 @@ class _Store:
         entries.update(self.added)
         self.added = {}
         entries = {key: entry for key, entry in entries.items() if _entry_current(key, entry)}
-        self.loaded = entries
+        # Read the file again on the next lookup instead of keeping it all.
+        self.loaded = None
         target = self.path()
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
