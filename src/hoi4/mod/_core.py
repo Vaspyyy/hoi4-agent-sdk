@@ -320,6 +320,11 @@ SECTIONS = SectionRegistry((
             ("_foreign_loc_entries", dict),
             ("_foreign_loc_sources", dict),
             ("_loaded_loc_languages", set),
+            # The game's own entries per language, read on the first lookup
+            # the mod's tables miss (only without base mods; see ``_game_loc``).
+            # A mod file of the same name hides a game file, so they belong
+            # to this section.
+            ("_game_loc_entries", dict),
         ),
         pending=(
             ("_dirty_loc_keys", set),
@@ -328,7 +333,7 @@ SECTIONS = SectionRegistry((
         ),
         dirty_names=("localization",),
         folders=("localisation",),
-        caches=(("_loaded_loc_languages", "_loc_tables"),),
+        caches=(("_loaded_loc_languages", "_loc_tables"), ("_game_loc_entries", "_game_loc")),
     ),
 ))
 
@@ -440,6 +445,7 @@ class CoreLayer:
     _foreign_loc_entries: dict[str, dict[str, str]]
     _foreign_loc_sources: dict[str, dict[str, Path]]
     _loaded_loc_languages: set[str]
+    _game_loc_entries: dict[str, dict[str, str]]
 
     # Edit buffers: set in ``__init__`` from ``SECTIONS`` and ``_GLOBAL_PENDING``.
     _dirty_countries: set[str]

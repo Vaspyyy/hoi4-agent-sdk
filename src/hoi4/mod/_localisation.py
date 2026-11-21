@@ -88,9 +88,50 @@ class LocalisationLayer(CoreLayer):
     def get_loc(
         self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
     ) -> Optional[str]:
-        """Return one language's text for ``key``; no cross-language fallback."""
-        _, entries, _, _ = self._loc_tables(language)
-        return entries.get(self._normalize_loc_key(key))
+        """Return one language's text for ``key``; no cross-language fallback.
+
+        The mod's entry (with unsaved edits) wins; a key the mod does not
+        define comes from the game's own files of that language.
+        """
+        language, entries, _, _ = self._loc_tables(language)
+        key = self._normalize_loc_key(key)
+        value = entries.get(key)
+        if value is None:
+            value = self._game_loc(language).get(key)
+        return value
+
+    def _game_loc(self, language: str) -> dict[str, str]:
+        """The game's own entries of one language, read on first use.
+
+        Only for a mod without base mods: with base mods, the inherited
+        layers (the game among them) are already part of the mod's tables.
+        Files the mod hides with ``replace_path`` are left out, and entries in
+        a ``replace`` folder win over the others, as in the game. The entries
+        never become the mod's: saving does not write them.
+        """
+
+        if self._content_layers is not None or self.hoi4_install is None:
+            return {}
+        language = normalize_localisation_language(language)
+        cached = self._game_loc_entries.get(language)
+        if cached is not None:
+            return cached
+        files = [
+            (relative, path)
+            for relative, path in self.content_files(Path("localisation") / language).items()
+            if path.suffix.lower() == ".yml" and not self._in_mod_root(path)
+        ]
+        files.sort(
+            key=lambda item: "replace" in (part.lower() for part in Path(item[0]).parts[2:-1])
+        )
+        cached = {}
+        for _, path in files:
+            try:
+                cached.update(self._localisation_file_entries(path))
+            except (OSError, ValueError):
+                continue
+        self._game_loc_entries[language] = cached
+        return cached
 
     def _has_loc(self, key: str) -> bool:
         """Return whether an English localisation key exists anywhere the game looks.
@@ -235,13 +276,19 @@ class LocalisationLayer(CoreLayer):
     def search_loc(
         self, query: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
     ) -> dict[str, str]:
-        _, entries, _, _ = self._loc_tables(language)
         q = query.lower()
-        return {k: v for k, v in entries.items() if q in k.lower() or q in v.lower()}
+        return {
+            k: v
+            for k, v in self.all_loc(language=language).items()
+            if q in k.lower() or q in v.lower()
+        }
 
     def all_loc(self, *, language: str = DEFAULT_LOCALISATION_LANGUAGE) -> dict[str, str]:
-        _, entries, _, _ = self._loc_tables(language)
-        return dict(entries)
+        """Every entry of one language: the game's, with the mod's on top."""
+        language, entries, _, _ = self._loc_tables(language)
+        merged = dict(self._game_loc(language))
+        merged.update(entries)
+        return merged
 
     def copy_loc_to_languages(
         self,
