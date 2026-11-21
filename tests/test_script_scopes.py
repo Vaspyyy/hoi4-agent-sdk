@@ -143,6 +143,17 @@ def test_misspelled_trigger_is_reported(game: Path) -> None:
     assert [(item.code, item.line) for item in findings] == [("unknown_trigger_token", 2)]
 
 
+def test_a_trigger_where_an_effect_belongs_is_named_as_such(game: Path) -> None:
+    (finding,) = check(game, "has_country_flag = x")
+    assert finding.code == "unknown_effect_token"
+    assert "'has_country_flag' is a trigger" in finding.message
+    assert "Did you mean" not in finding.message
+
+    (finding,) = check(game, "if = {\n  limit = { add_stability = 0.1 }\n  add_stability = 0.1\n}")
+    assert (finding.code, finding.line) == ("unknown_trigger_token", 2)
+    assert "'add_stability' is an effect" in finding.message
+
+
 def test_misspelled_modifier_is_reported(game: Path) -> None:
     findings = check(game, "stabilty_factor = 0.1\nstability_factor = 0.1", kind="modifier")
     assert [(item.code, item.line) for item in findings] == [("unknown_modifier_token", 1)]

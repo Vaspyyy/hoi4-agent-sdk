@@ -244,12 +244,22 @@ VALIDATION_CODES: dict[str, str] = {
     "enclosed_foreign_territory": (
         "A foreign land component is completely enclosed by the target country."
     ),
-    "unreachable_focus": "A focus cannot be reached from any root focus.",
-    "unfired_event": "A triggered-only event has no modeled incoming reference.",
-    "ungranted_idea": "A country idea is never granted by modeled content.",
-    "flag_set_never_read": "A scripted flag is written but never read.",
-    "flag_read_never_set": "A scripted flag is read but never written by the mod.",
-    "unused_localization": "A localization key is not referenced by modeled content.",
+    "unreachable_focus": (
+        "A focus cannot be reached from any root focus. Release stage only."
+    ),
+    "unfired_event": (
+        "A triggered-only event is fired by nothing in the mod or the game. Release stage only."
+    ),
+    "ungranted_idea": (
+        "A country idea is granted by nothing in the mod or the game. Release stage only."
+    ),
+    "flag_set_never_read": "A scripted flag is written but never read. Release stage only.",
+    "flag_read_never_set": (
+        "A scripted flag is read but never written by the mod or the game. Release stage only."
+    ),
+    "unused_localization": (
+        "A localization key is not referenced by modeled content. Release stage only."
+    ),
     "focus_cycle": "A focus tree contains a prerequisite cycle.",
     "invalid_ideology_id": "An ideology ID is not valid Paradox Script syntax.",
     "invalid_ideology_color": "An ideology color channel is outside 0..255.",

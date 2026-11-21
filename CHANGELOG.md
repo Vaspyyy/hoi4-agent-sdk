@@ -276,6 +276,11 @@ All notable changes to this project are documented here. The format follows
   of the game's own files it went from about 13,000 false alarms to the 17
   real mistakes in the game. What it reads from the install is cached under
   `~/.cache/hoi4-sdk/script-vocabulary`.
+- A trigger used where an effect belongs (or the other way round) is named
+  as such, instead of being answered with a look-alike name.
+- `docs/validation.md` says what each stage checks. The "is this ever
+  used?" findings (`unfired_event`, `flag_set_never_read` and the like)
+  belong to `stage="release"`, as before.
 - A strategic region without provinces is reported only when the mod's own
   file holds it. The game ships three such regions, and every mod used to
   get three warnings for them.

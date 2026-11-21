@@ -31,6 +31,23 @@ work as before: advice never fails them. `mod.validate_effect(script)` checks
 one snippet and returns its advice together with errors and warnings; pass
 `advice=False` to leave the advice out.
 
+## Stages
+
+`validate(stage=...)` chooses how much is checked. Each stage runs
+everything of the stage before it.
+
+| Stage | When | What it adds |
+| --- | --- | --- |
+| `"build"` | While you are still building. | Syntax, references, scopes, orders of battle, states, events, ideas, focus trees. |
+| `"package"` (the default) | Before you hand the mod to someone. | The completeness checks for countries the SDK created (flag, portraits, starting forces). |
+| `"release"` | Before you publish. | The "is this ever used?" checks: `unfired_event`, `ungranted_idea`, `unreachable_focus`, `flag_set_never_read`, `flag_read_never_set` and `unused_localization`. |
+
+The release checks read every file of the mod and the game, and they are
+only meaningful once the content is complete: half-built content always has
+events that nothing fires yet. So a flag that is read and never set is not
+reported by `validate()` or `validate(stage="build")`; call
+`validate(stage="release")`.
+
 ## Hiding findings
 
 `suppress=` hides warnings and advice by code. An entry is either a code,
@@ -232,8 +249,8 @@ the content checks read them the way the game does:
 | `empty_strategic_region` | warning | A strategic region has no provinces. |
 | `enclosed_foreign_territory` | warning | A foreign land component is completely enclosed by the target country. |
 | `event_conditional_text_missing` | warning | A conditional event title, description or option name has no text key. |
-| `flag_read_never_set` | warning | A scripted flag is read but never written by the mod. |
-| `flag_set_never_read` | warning | A scripted flag is written but never read. |
+| `flag_read_never_set` | warning | A scripted flag is read but never written by the mod or the game. Release stage only. |
+| `flag_set_never_read` | warning | A scripted flag is written but never read. Release stage only. |
 | `history_set_owner_in_effect` | warning | State history owner directive appears in runtime effect script. |
 | `invalid_idea_icon_key` | warning | Idea definitions must use a bare picture stem, not an icon assignment. |
 | `missing_country_name` | warning | No name localisation exists for a country, in any ideology variant. |
@@ -248,8 +265,8 @@ the content checks read them the way the game does:
 | `oob_ship_name` | warning | A ship has neither a name nor an ordered_name. |
 | `province_missing_state` | warning | A land province belongs to no state. |
 | `province_missing_strategic_region` | warning | A province belongs to no strategic region. |
-| `unfired_event` | warning | A triggered-only event has no modeled incoming reference. |
-| `ungranted_idea` | warning | A country idea is never granted by modeled content. |
+| `unfired_event` | warning | A triggered-only event is fired by nothing in the mod or the game. Release stage only. |
+| `ungranted_idea` | warning | A country idea is granted by nothing in the mod or the game. Release stage only. |
 | `unknown_assigned_idea` | warning | Country history assigns an idea ID not loaded by the SDK. |
 | `unknown_character_trait` | warning | A character uses a trait no trait file defines. |
 | `unknown_country_scope` | warning | Script scopes into a tag that no country tag, tag alias or dynamic tag of the game, a base mod or the mod declares. |
@@ -269,12 +286,12 @@ the content checks read them the way the game does:
 | `unknown_technology_reference` | warning | Effect script references a technology ID not found in configured data. |
 | `unknown_trigger_token` | warning | Trigger token is absent from installed-game documentation. |
 | `unloaded_missing_oob_reference` | warning | A country that owns no state at the start refers to an OOB file that does not exist. |
-| `unreachable_focus` | warning | A focus cannot be reached from any root focus. |
+| `unreachable_focus` | warning | A focus cannot be reached from any root focus. Release stage only. |
 | `unresolved_focus_position` | warning | A focus position has a missing or cyclic local anchor. |
 | `unsupported_effect_scope` | warning | Effect token is used outside its documented scope. |
 | `unsupported_modifier_scope` | warning | Modifier token is used outside its documented scope. |
 | `unsupported_trigger_scope` | warning | Trigger token is used outside its documented scope. |
-| `unused_localization` | warning | A localization key is not referenced by modeled content. |
+| `unused_localization` | warning | A localization key is not referenced by modeled content. Release stage only. |
 | `visual_overlap` | warning | Two focuses share a position and the game can show both (they are not on mutually exclusive or allow_branch branches). |
 
 ### Advice

@@ -964,7 +964,16 @@ def check_statement(
             return None
         suggestion = _nearest(name, vocabulary.tokens(kind))
         hint = ""
-        if suggestion is not None:
+        other = {"effect": "trigger", "trigger": "effect"}.get(kind)
+        if other is not None and vocabulary.lookup(cast(ScriptTokenKind, other), name) is not None:
+            # The most common mix-up: a condition where an action belongs, or
+            # the other way round. A look-alike name would only mislead.
+            hint = (
+                f" '{name}' is a trigger: it tests something and changes nothing."
+                if kind == "effect"
+                else f" '{name}' is an effect: it changes something and cannot be a condition."
+            )
+        elif suggestion is not None:
             hint = (
                 f" Did you mean '{suggestion}' "
                 f"({vocabulary.tokens(kind)[suggestion].usage_count} installed-game uses)?"
