@@ -162,8 +162,6 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 }:
                     tag_text = tag_text.rstrip() + ("\n" if tag_text.strip() else "") + line + "\n"
             tag_text = sort_generated_country_tags(tag_text)
-            if tag_text != self._read_current_text(tag_path):
-                self._refuse_failed_load(tag_path, "country_tags")
             rendered[tag_path] = tag_text or None
             tags_dir = self.mod_root / "common" / "country_tags"
             if self._deleted_countries and tags_dir.is_dir():
@@ -175,7 +173,6 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                         source_text, set(self._deleted_countries)
                     )
                     if updated_text != source_text:
-                        self._refuse_failed_load(source_path, "country_tags")
                         rendered[source_path] = updated_text or None
             for deleted_country in self._deleted_countries.values():
                 for path in country_file_paths(self.mod_root, deleted_country):
@@ -197,7 +194,6 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                         # files; one the edit did not change stays inherited
                         # instead of becoming a stale copy in the mod.
                         continue
-                    self._refuse_failed_load(path, "country")
                     rendered[path] = content
                 if (
                     dirty_country.history_path is not None
@@ -252,7 +248,6 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     path,
                     sections=frozenset({"character"}),
                 )
-                self._refuse_failed_load(path, "character")
                 rendered[path] = serialize_characters_file(
                     characters,
                     self._original_files.get(path, ""),
@@ -446,10 +441,12 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     else None
                 )
 
-        return {
+        resolved = {
             resolve_mod_output_path(self.mod_root, path): content
             for path, content in rendered.items()
         }
+        self._refuse_failed_loads(resolved)
+        return resolved
 
     def _capture_source_baseline(self) -> None:
         """Fingerprint text sources so legacy writers cannot be overwritten silently."""
@@ -510,25 +507,31 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         inherited = read_text(shadowed)
         return content == inherited or content == repair(inherited)
 
-    def _refuse_failed_load(self, path: Path, section: str) -> None:
+    def _refuse_failed_loads(self, rendered: dict[Path, str | None]) -> None:
         """Refuse to overwrite a mod file that could not be loaded.
 
         Its content was never fully modeled, so writing it from the model
         would silently drop what the author wrote.
         """
 
-        target = path.resolve(strict=False)
-        for diagnostic in self._load_diagnostics:
-            if (
-                diagnostic.section == section
-                and diagnostic.error_type != "DuplicateIdentifierError"
-                and diagnostic.path.resolve(strict=False) == target
-            ):
-                raise RuntimeError(
-                    f"Refusing to rewrite {path}: it failed to load "
-                    f"({diagnostic.error_type}: {diagnostic.message}). Fix the file "
-                    "and call reload() before editing it."
-                )
+        failed = {
+            diagnostic.path.resolve(strict=False): diagnostic
+            for diagnostic in self._load_diagnostics
+            if diagnostic.error_type != "DuplicateIdentifierError"
+        }
+        if not failed:
+            return
+        for path, content in rendered.items():
+            diagnostic = failed.get(path.resolve(strict=False))
+            if diagnostic is None or not path.is_file():
+                continue
+            if content is not None and content == self._read_current_text(path):
+                continue
+            raise RuntimeError(
+                f"Refusing to rewrite {path}: it failed to load "
+                f"({diagnostic.error_type}: {diagnostic.message}). Fix the file "
+                "and call reload() before editing it."
+            )
 
     def _encode_like_source(self, path: Path, content: str, current: bytes | None) -> bytes:
         """Encode ``content`` for ``path`` the way its source file is stored.
