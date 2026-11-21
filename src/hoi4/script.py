@@ -75,12 +75,21 @@ def scope_block(scope: str | int, *effects: str) -> str:
     """
     scope = require_key(str(scope).strip(), "a scope")
     parts = [effect.strip() for effect in effects if effect and effect.strip()]
-    body = ""
+    pieces: list[str] = []
+    after_comment = False
     for part in parts:
-        require_well_formed(part, f"an effect in the scope '{scope}'")
-        # A comment runs to the end of its line: the next effect goes below it.
-        body += ("\n" if _ends_in_comment(body) else " " if body else "") + part
-    return f"{scope} = {braced(body)}"
+        document = require_well_formed(part, f"an effect in the scope '{scope}'")
+        # A comment runs to the end of its line: what follows goes below it.
+        if pieces:
+            pieces.append("\n" if after_comment else " ")
+        pieces.append(part)
+        # Each part is well formed on its own, so the body built so far ends
+        # in a comment exactly when its last part does: no need to read the
+        # whole body again for every part.
+        comments = document.comments
+        after_comment = bool(comments) and comments[-1][1] == len(part)
+    closing = "\n}" if after_comment else " }"
+    return f"{scope} = {{ {''.join(pieces)}{closing}"
 
 
 def braced(body: str) -> str:
