@@ -509,7 +509,8 @@ def test_unused_localization_spares_overrides_and_named_definitions(tmp_path):
         ' compliance_15:0 "Ours"\n brilliant_strategist:0 "Ours"\n infantry_equipment_1:0 "Ours"\n'
         ' my_leftover:0 "Nobody shows this"\n'
         # Another text pulls this one in as $my_part$.
-        ' my_part:0 "a part"\n my_orphan_tooltip:0 "With $my_part$ and $NOT_A_KEY$"\n',
+        ' my_part:0 "a part"\n my_bold_part:0 "a bold part"\n'
+        ' my_orphan_tooltip:0 "With $my_part$, $my_bold_part|H$ and $NOT_A_KEY$"\n',
     )
     found = liveness(Mod(mod_root, hoi4_install=game), "unused_localization")
     assert [finding.message.split("'")[1] for finding in found] == [

@@ -103,8 +103,10 @@ def test_every_block_of_the_game_walks_cleanly(install: Path, vocabulary: GameSc
             blocks += len(sources)
             for finding in validate_script_sources(sources, vocabulary, custom_tokens={}):
                 if finding.severity != "info":
-                    # Every token message names the token as "... token 'name' ...".
-                    name = finding.message.split("token '", 1)[1].split("'", 1)[0]
+                    # A token message names the token as "... token 'name' ..."
+                    # or, for a trigger among effects, as "... uses 'name' ...".
+                    marker = "token '" if "token '" in finding.message else "uses '"
+                    name = finding.message.split(marker, 1)[1].split("'", 1)[0]
                     findings.add((finding.file_path, finding.line, finding.code, name))
     assert blocks > 50_000
     unexpected = sorted(findings - KNOWN_GAME_MISTAKES)

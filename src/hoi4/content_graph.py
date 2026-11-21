@@ -102,14 +102,14 @@ def _script_tokens(fragments: Iterable[str]) -> set[str]:
     return tokens
 
 
-_NESTED_KEY_RE = re.compile(r"\$([A-Za-z0-9_.\-]+)\$")
+_NESTED_KEY_RE = re.compile(r"\$([A-Za-z0-9_.\-]+)(?:\|[^$\n]*)?\$")
 
 
 def _keys_in_localization_values(values: Iterable[str]) -> set[str]:
-    """The names a localisation text pulls in as ``$NAME$``.
+    """The names a localisation text pulls in as ``$NAME$`` or ``$NAME|H$``.
 
-    The game puts the text of the key ``NAME`` there, so a key that is used
-    only this way is used.
+    The game puts the text of the key ``NAME`` there (``|H`` and the like
+    only format it), so a key that is used only this way is used.
     """
 
     found: set[str] = set()

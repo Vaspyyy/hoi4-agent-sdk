@@ -61,6 +61,20 @@ def resolve_focus_positions(tree: FocusTree) -> FocusPositions:
     return result
 
 
+def _moves(value: str | None) -> bool:
+    """Whether an ``x`` or ``y`` of an ``offset`` block is a real step.
+
+    A value that is not a plain number (a variable) may be one.
+    """
+
+    if value is None:
+        return False
+    try:
+        return float(value) != 0
+    except ValueError:
+        return True
+
+
 class FocusBranches:
     """Which focuses of one tree the game can show at the same time.
 
@@ -76,12 +90,14 @@ class FocusBranches:
       relative to it (``relative_position_id``, directly or through others).
 
     So two focuses may share a spot when an ``offset`` block moves one of
-    them and not the other, or when each of them is hidden behind an
-    ``allow_branch`` condition the other does not depend on. The game's own
-    trees use both forms for variant branches: Ethiopia's Italian branch
-    steps aside by an ``offset`` on its first focus when the exile branch
-    appears. Two focuses behind the same condition are shown together when it
-    holds, and two focuses moved by the same ``offset`` blocks move together.
+    them and not the other and ``allow_branch`` can hide at least one of
+    them, or when each of them is hidden behind an ``allow_branch`` condition
+    the other does not depend on. The game's own trees use both forms for
+    variant branches: Ethiopia's Italian branch steps aside by an ``offset``
+    on its first focus when the exile branch appears. Two focuses behind the
+    same condition are shown together when it holds, two focuses moved by
+    the same ``offset`` blocks move together, and two focuses that are both
+    always drawn meet whenever the trigger of the offset does not hold.
     """
 
     def __init__(self, tree: FocusTree) -> None:
@@ -157,12 +173,17 @@ class FocusBranches:
         return self._hidden[focus_id]
 
     def _has_offset(self, focus_id: str) -> bool:
+        """Whether an ``offset`` block of ``focus_id`` moves it at all."""
+
         cached = self._offsets.get(focus_id)
         if cached is None:
             focus = self._by_id.get(focus_id)
             cached = False
-            if focus is not None and "offset" in focus.raw_block:
-                cached = bool(parse(focus.raw_block).root.blocks("offset"))
+            if focus is not None and "offset" in focus.raw_block.lower():
+                cached = any(
+                    _moves(block.scalar("x", fold=True)) or _moves(block.scalar("y", fold=True))
+                    for block in parse(focus.raw_block).root.blocks("offset", fold=True)
+                )
             self._offsets[focus_id] = cached
         return cached
 
@@ -191,7 +212,12 @@ class FocusBranches:
     def never_shown_together(self, first: str, second: str) -> bool:
         """Whether two focuses on one spot are never drawn there at the same time."""
 
-        if self.movers(first) != self.movers(second):
+        # An offset steps aside for something that is not always there. Two
+        # focuses that are both always drawn meet whenever the trigger of
+        # the offset does not hold.
+        if self.movers(first) != self.movers(second) and (
+            self.conditional(first) or self.conditional(second)
+        ):
             return True
         if not (self.conditional(first) and self.conditional(second)):
             return False

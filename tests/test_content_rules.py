@@ -147,15 +147,24 @@ def test_undeclared_namespace_is_an_error_and_any_declaration_counts(tmp_path, g
     write(
         root,
         "events/t.txt",
-        "add_namespace = first\nadd_namespace = second\n"
+        "add_namespace = first\nadd_namespace = second\nadd_namespace = dotted.news\n"
         "country_event = { id = second.1 hidden = yes }\n"
         "country_event = { id = GAME_NS.2 hidden = yes }\n"
-        "country_event = { id = nowhere.3 hidden = yes }\n",
+        "country_event = { id = nowhere.3 hidden = yes }\n"
+        # Like the game's MUN_slovakia.news.1: the id is declared by its
+        # namespace up to the last dot, or by a shorter one.
+        "country_event = { id = dotted.news.4 hidden = yes }\n"
+        "country_event = { id = first.more.5 hidden = yes }\n"
+        "country_event = { id = nowhere.news.6 hidden = yes }\n",
     )
     findings = codes(
         Mod(root, hoi4_install=game).validate(stage="build"), "undeclared_event_namespace"
     )
-    assert [(f.event_id, f.severity) for f in findings] == [("nowhere.3", "error")]
+    assert [(f.event_id, f.severity) for f in findings] == [
+        ("nowhere.3", "error"),
+        ("nowhere.news.6", "error"),
+    ]
+    assert "'nowhere.news'" in findings[1].message
 
 
 def test_war_declaration_in_immediate_is_advice_read_from_the_tree():
@@ -323,17 +332,31 @@ def test_a_focus_with_an_offset_block_may_share_its_base_position():
     assert not codes(findings, "visual_overlap")
 
 
-def _stepping_aside(focus_id: str) -> Focus:
+def _stepping_aside(focus_id: str, offset: str = "offset = { x = 4 y = 0") -> Focus:
     focus = Focus(id=focus_id, x=5, y=0)
     focus.raw_block = (
-        f"id = {focus_id}\nx = 5\ny = 0\noffset = {{ x = 4 y = 0 trigger = {{ has_idea = i }} }}\n"
+        f"id = {focus_id}\nx = 5\ny = 0\n{offset} trigger = {{ has_idea = i }} }}\n"
     )
     return focus
 
 
 def test_an_offset_block_moves_the_focuses_placed_relative_to_it():
     # Ethiopia's Italian branch: its first focus steps aside on a trigger, and
-    # the focuses anchored to it move with it.
+    # the focuses anchored to it move with it, away from a branch that only
+    # appears then.
+    for offset in ("offset = { x = 4 y = 0", "OFFSET = { X = 4"):
+        findings = validate_focus_tree(
+            tree(
+                _stepping_aside("R", offset),
+                Focus(id="C", x=0, y=1, relative_position_id="R"),
+                Focus(id="D", x=5, y=1, allow_branch="has_idea = i"),
+            )
+        )
+        assert not codes(findings, "visual_overlap")
+
+
+def test_an_offset_block_does_not_excuse_two_focuses_that_are_always_drawn():
+    # While the trigger of the offset does not hold, both sit on one spot.
     findings = validate_focus_tree(
         tree(
             _stepping_aside("R"),
@@ -341,7 +364,18 @@ def test_an_offset_block_moves_the_focuses_placed_relative_to_it():
             Focus(id="D", x=5, y=1),
         )
     )
-    assert not codes(findings, "visual_overlap")
+    assert [f.focus_id for f in codes(findings, "visual_overlap")] == ["D"]
+
+
+def test_an_offset_block_that_moves_nothing_excuses_nothing():
+    findings = validate_focus_tree(
+        tree(
+            _stepping_aside("R", "offset = { x = 0 y = 0"),
+            Focus(id="C", x=0, y=1, relative_position_id="R"),
+            Focus(id="D", x=5, y=1, allow_branch="has_idea = i"),
+        )
+    )
+    assert [f.focus_id for f in codes(findings, "visual_overlap")] == ["D"]
 
 
 def test_two_focuses_moved_by_the_same_offset_block_still_overlap():

@@ -324,9 +324,10 @@ All notable changes to this project are documented here. The format follows
 - `assert_no_visual_overlap` and `validate()` use the same rule: two focuses
   may share a position only when the game never draws both there, because
   an `offset` block moves one and not the other (its own, or one on a focus
-  it is placed relative to) or each hangs on an `allow_branch` focus the
-  other does not depend on. Mutually exclusive focuses are both drawn, so
-  they must not share a position.
+  it is placed relative to) while `allow_branch` can hide at least one of
+  them, or each hangs on an `allow_branch` focus the other does not depend
+  on. Mutually exclusive focuses are both drawn, so they must not share a
+  position.
 - `validate()` and `validate_effect()` load a catalog of the game (ideas,
   events, technologies, equipment) only when a name is not among the mod's
   own objects, and then only once.
@@ -375,7 +376,11 @@ All notable changes to this project are documented here. The format follows
 - The roles inside a character's `instance = { ... }` blocks and the
   `available` block of a bookmark country are checked like other script.
 - `unused_localization` no longer reports a key that another text of the
-  mod pulls in as `$KEY$`.
+  mod pulls in as `$KEY$` or `$KEY|H$`.
+- An event id with several dots (`my_mod.news.1`) is declared when
+  `add_namespace` names `my_mod.news` or `my_mod`. Before, only the text
+  before the first dot counted, so `undeclared_event_namespace` was
+  reported for a declared `my_mod.news`.
 - Validation reads each script file through one splitter
   (`hoi4._script_corpus`) and one scope walker. The token check reads the
   mod's own files as `save()` will write them, with exact file lines; the

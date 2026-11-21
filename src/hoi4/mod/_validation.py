@@ -19,6 +19,7 @@ from ..content_validation import (
 from ..countries import (
     country_color_tags,
 )
+from ..events import event_namespace_candidates
 from ..idea_icons import (
     resolve_idea_sprite,
 )
@@ -442,8 +443,12 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
         names = {name for name in self._event_namespaces.values() if name}
         names.update(name for name in self._event_file_namespaces.values() if name)
-        used = {event_id.split(".", 1)[0].lower() for event_id in self._events if "." in event_id}
-        if used <= {name.lower() for name in names}:
+        known = {name.lower() for name in names}
+        if all(
+            any(candidate.lower() in known for candidate in event_namespace_candidates(event_id))
+            for event_id in self._events
+            if "." in event_id
+        ):
             return names
         for path in self.content_files("events").values():
             if path.suffix.lower() != ".txt":

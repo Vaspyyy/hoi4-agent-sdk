@@ -53,6 +53,18 @@ from .syntax import (
 from .textio import read_text, write_text
 from .types import Event, EventOption, EventText
 
+def event_namespace_candidates(event_id: str) -> tuple[str, ...]:
+    """The namespaces an event id may belong to, longest first.
+
+    ``MUN_slovakia.news.1`` gives ``("MUN_slovakia.news", "MUN_slovakia")``:
+    the game's own files declare both for such ids, so a declaration of
+    either one is taken.
+    """
+
+    parts = event_id.split(".")
+    return tuple(".".join(parts[:count]) for count in range(len(parts) - 1, 0, -1))
+
+
 VALID_EVENT_TYPES = frozenset(
     {
         "country_event",

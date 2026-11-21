@@ -109,7 +109,10 @@ the content checks read them the way the game does:
   file may declare several. Wherever an event id is looked up (references,
   `unfired_event`), its namespace (the text before the last dot) is compared
   without regard to case too, as the game does: `PER_SSB_events.8` fires
-  `PER_ssb_events.8`. The number behind the dot is compared as it is.
+  `PER_ssb_events.8`. The number behind the dot is compared as it is. An id
+  with more dots, such as `MUN_slovakia.news.1`, is declared when
+  `add_namespace` names `MUN_slovakia.news` or `MUN_slovakia`: the game's
+  own files declare both.
 - The token check, the reference check and the liveness checks all read the
   mod's own script files as `save()` will write them, split the same way
   (`hoi4._script_corpus`) and walked by the same scope walker
@@ -132,8 +135,8 @@ the content checks read them the way the game does:
   exclusive choice included, so exclusivity is no reason. A pair may share
   a position when an `offset` block moves one of them and not the other
   (a focus moves while the trigger of its own `offset` block holds, or of
-  one on a focus it is placed relative to), or when `allow_branch` can hide
-  each of them
+  one on a focus it is placed relative to) and `allow_branch` can hide at
+  least one of them, or when `allow_branch` can hide each of them
   (it has `allow_branch`, or every chain of prerequisites from it up to a
   focus without prerequisites passes one that has) and each depends on a
   focus with `allow_branch` that the other does not depend on. Two
