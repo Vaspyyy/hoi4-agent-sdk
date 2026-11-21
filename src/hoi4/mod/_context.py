@@ -15,9 +15,11 @@ from ..idea_icons import (
 )
 from ..ideas import read_ideas_file
 from ..map_topology import (
+    ProvinceOwnership,
     TerritoryComponent,
     find_country_territory_components,
     find_enclosed_foreign_components,
+    province_ownership,
 )
 from ..paths import (
     require_country_tag,
@@ -217,14 +219,16 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
         if not self._is_known_country_tag(tag):
             raise KeyError(f"Country '{tag}' is not defined")
         country = self.get_country(tag)
+        states, ownership = self._territory_map()
         return find_country_territory_components(
             self.mod_root,
             self._base_content,
-            self._effective_states(),
+            states,
             country_tag=tag,
             capital_state_id=country.capital,
             minimum_land_provinces=minimum_land_provinces,
             allowed_state_ids=allowed_state_ids,
+            ownership=ownership,
         )
 
     def find_enclosed_foreign_states(
@@ -239,11 +243,27 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
         tag = require_country_tag(tag)
         if not self._is_known_country_tag(tag):
             raise KeyError(f"Country '{tag}' is not defined")
+        states, ownership = self._territory_map()
         return find_enclosed_foreign_components(
             self.mod_root,
             self._base_content,
-            self._effective_states(),
+            states,
             country_tag=tag,
             minimum_land_provinces=minimum_land_provinces,
             allowed_state_ids=allowed_state_ids,
+            ownership=ownership,
         )
+
+    def _territory_map(self) -> tuple[list[State], ProvinceOwnership]:
+        """The effective states and the owner of every province of the map.
+
+        Built once per validate() run, where the country package check asks
+        for every country; outside a run, on every call. Raises like
+        ``find_disconnected_states()`` when the map cannot be read.
+        """
+
+        def build() -> tuple[list[State], ProvinceOwnership]:
+            states = self._effective_states()
+            return states, province_ownership(self.mod_root, self._base_content, states)
+
+        return self._run_cached("territory_map", build)
