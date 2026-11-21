@@ -12,7 +12,11 @@ from typing import Callable, Sequence
 from .decisions import decision_has_cost, decision_has_mission_timeout
 from .effects_catalog import TECHNOLOGY_CATEGORIES
 from .events import VALID_EVENT_TYPES
-from .focus_layout import FocusPositions, resolve_focus_positions
+from .focus_layout import (
+    FocusBranches,
+    continuous_focus_position_issue,
+    resolve_focus_positions,
+)
 from .parser import iter_assignment_blocks
 from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
@@ -1104,85 +1108,6 @@ def focus_search_filters_from_sprites(sprite_names: Collection[str]) -> set[str]
     return {name[4:] for name in sprite_names if name.startswith("GFX_") and len(name) > 4}
 
 
-class _FocusBranches:
-    """Which focuses of one tree the game can show at the same time.
-
-    A focus is hidden with its whole branch when an ``allow_branch`` on it or
-    on any focus it depends on fails. Two focuses are never taken together
-    when a focus they depend on (or they themselves) is mutually exclusive
-    with a focus the other depends on.
-    """
-
-    def __init__(self, tree: FocusTree) -> None:
-        self._by_id = {focus.id: focus for focus in tree.focuses if focus.id}
-        self._ancestors: dict[str, frozenset[str]] = {}
-
-    def ancestors(self, focus_id: str) -> frozenset[str]:
-        """Return ``focus_id`` and every focus it depends on through prerequisites."""
-
-        cached = self._ancestors.get(focus_id)
-        if cached is not None:
-            return cached
-        found: set[str] = set()
-        pending = [focus_id]
-        while pending:
-            current = pending.pop()
-            if current in found:
-                continue
-            found.add(current)
-            done = self._ancestors.get(current)
-            if done is not None:
-                found |= done
-                continue
-            focus = self._by_id.get(current)
-            if focus is not None:
-                pending.extend(ref for group in focus.prerequisites for ref in group)
-        result = frozenset(found)
-        self._ancestors[focus_id] = result
-        return result
-
-    def conditional(self, focus_id: str) -> bool:
-        return any(
-            self._by_id[ref].allow_branch.strip()
-            for ref in self.ancestors(focus_id)
-            if ref in self._by_id
-        )
-
-    def exclusive(self, first: str, second: str) -> bool:
-        first_branch, second_branch = self.ancestors(first), self.ancestors(second)
-        for branch, other in ((first_branch, second_branch), (second_branch, first_branch)):
-            for ref in branch:
-                focus = self._by_id.get(ref)
-                if focus is not None and any(
-                    not other.isdisjoint(group) for group in focus.mutually_exclusive
-                ):
-                    return True
-        return False
-
-    def never_shown_together(self, first: str, second: str) -> bool:
-        return self.exclusive(first, second) or (
-            self.conditional(first) and self.conditional(second)
-        )
-
-
-def _continuous_focus_position_issue(
-    tree: FocusTree, layout: FocusPositions, *, padding: int = 100
-) -> str:
-    """Return advice when the continuous focus panel starts above the tree's last row."""
-
-    if tree.kind == "file" or not tree.continuous_focus_position or layout.unresolved:
-        return ""
-    raw_y = parse(tree.continuous_focus_position).root.scalar("y", fold=True)
-    if raw_y is None or not raw_y.lstrip("-").isdigit():
-        return ""
-    max_y = max((pos[1] for pos in layout.positions.values()), default=0)
-    min_y = (max_y + 1) * 100 + padding
-    y = int(raw_y)
-    if y >= min_y:
-        return ""
-    return f"continuous_focus_position y={y} is above the recommended minimum y={min_y}"
-
-
 def validate_focus_tree(
     tree: FocusTree,
     known_focus_ids: set[str] | None = None,
@@ -1228,7 +1153,7 @@ def validate_focus_tree(
     valid_filters = (
         DEFAULT_FOCUS_SEARCH_FILTERS if known_search_filters is None else known_search_filters
     )
-    branches = _FocusBranches(tree)
+    branches = FocusBranches(tree)
 
     for focus in tree.focuses:
         if not focus.id:
@@ -1381,7 +1306,7 @@ def validate_focus_tree(
             )
         )
 
-    continuous = _continuous_focus_position_issue(tree, layout)
+    continuous = continuous_focus_position_issue(tree, layout)
     if continuous:
         errors.append(
             ValidationError(

@@ -144,3 +144,24 @@ def test_long_chain_does_not_hit_python_recursion_limit():
     layout = resolve_focus_positions(FocusTree(id="long", focuses=list(reversed(focuses))))
     assert not layout.unresolved
     assert layout.positions["F1499"] == (1497, 1498)
+
+
+def test_assert_no_visual_overlap_allows_mutually_exclusive_branches(tmp_path):
+    """Alternative branches are drawn on the same spot on purpose: the game
+    never shows both, so the assert helper agrees with ``validate()``."""
+
+    from hoi4 import Focus, Mod
+
+    mod = Mod(tmp_path)
+    mod.create_focus_tree("alt", "ALT")
+    mod.add_focus("alt", Focus(id="ALT_left", x=0, y=0, mutually_exclusive=[["ALT_right"]]))
+    mod.add_focus("alt", Focus(id="ALT_right", x=2, y=0, mutually_exclusive=[["ALT_left"]]))
+    mod.add_focus("alt", Focus(id="ALT_left_next", x=1, y=1, prerequisites=[["ALT_left"]]))
+    mod.add_focus("alt", Focus(id="ALT_right_next", x=1, y=1, prerequisites=[["ALT_right"]]))
+    assert mod.assert_no_visual_overlap("alt")
+
+    mod.add_focus("alt", Focus(id="ALT_clash", x=1, y=1, prerequisites=[["ALT_left"]]))
+    import pytest
+
+    with pytest.raises(ValueError, match="ALT_clash overlaps ALT_left_next"):
+        mod.assert_no_visual_overlap("alt")
