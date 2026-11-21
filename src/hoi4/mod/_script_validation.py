@@ -816,6 +816,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                                 f"{kind} '{obj_id}' adds idea '{ref.value}', but its category "
                                 f"is '{idea.category}', an advisor slot that is hired, not added",
                                 "idea_not_addable", owner, file_path, ref, idea_id=ref.value,
+                                severity="info",
                             )
                 elif ref.kind == "event":
                     if not catalogs.has("events", ref.value):

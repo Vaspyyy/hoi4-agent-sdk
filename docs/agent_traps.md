@@ -19,7 +19,7 @@ Mod.effect_add_target_to_faction("AUS", "BAY")  # AUS = { add_to_faction = BAY }
 Mod.effect_join_faction("BAY", "AUS")           # Same output, named by intent.
 ```
 
-Validation warning: `faction_scope_footgun` for bare or iterated-scope faction commands.
+Validation advice (`info`, shown with `validate(advice=True)`): `faction_scope_footgun` for bare or iterated-scope faction commands.
 
 ## State History vs Runtime Effects
 
@@ -67,7 +67,7 @@ Mod.effect_swap_idea("crisis_3", "crisis_4", target="ITA")
 Mod.effect_upgrade_idea_chain(["crisis_1", "crisis_2", "crisis_3", "crisis_4"], target="ITA")
 ```
 
-Validation warning: `bad_idea_tooltip_pattern`.
+Validation advice (`info`): `bad_idea_tooltip_pattern`.
 
 ## Addable Ideas
 
@@ -81,7 +81,7 @@ mod.set_loc("TAG_crisis", "Political Crisis")
 mod.set_loc("TAG_crisis_desc", "The government is struggling to retain control.")
 ```
 
-Validation warning: `idea_not_addable` when a loaded non-country idea is used with `add_ideas`.
+Validation advice (`info`): `idea_not_addable` when an idea of an advisor category is used with `add_ideas`.
 
 ## Guard Repeated Runtime Idea Grants
 
@@ -95,9 +95,10 @@ if = {
 }
 ```
 
-`idea_mutation_collision` recognizes this guard and does not warn. An
-unguarded grant, a guard for another idea, or an event that removes/swaps the
-same idea still warns because it can overwrite staged focus content.
+`idea_mutation_collision` (advice, `info`) recognizes this guard and stays
+quiet. An unguarded grant, a guard for another idea, or an event that
+removes or swaps the same idea is still reported, because it can overwrite
+staged focus content.
 
 ## Idea Picture Stems
 
@@ -349,7 +350,7 @@ For non-war conversions:
 Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
 ```
 
-Validation warning: `revolt_state_already_owned` when a transfer effect gives a state to the country that already owns it in loaded history.
+Validation advice (`info`): `revolt_state_already_owned` when a transfer effect gives a state to the country that already owns it in loaded history.
 
 ## Resistance Is Not Generic Unrest
 
@@ -363,7 +364,7 @@ Bad:
 
 Better: use country/state flags, variables, decisions, and events to represent unrest, then fire a revolt event when thresholds are met.
 
-Validation warning: `resistance_on_core_state` for state-scoped `add_resistance` on owner-core states.
+Validation advice (`info`): `resistance_on_core_state` for state-scoped `add_resistance` on owner-core states.
 
 ## Lore Events Need Gameplay Options
 
@@ -390,7 +391,7 @@ mod.place_continuous_focus_below_tree("TAG_focus", padding=400)
 mod.assert_no_visual_overlap("TAG_focus")
 ```
 
-Validation warning: `visual_overlap` if normal focuses collide or continuous focuses are too high.
+Validation warning: `visual_overlap` if normal focuses collide. Advice (`info`): `continuous_focus_position_high` if continuous focuses are too high.
 
 ## Localization
 

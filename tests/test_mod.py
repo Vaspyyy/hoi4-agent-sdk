@@ -1098,7 +1098,7 @@ class TestAgentFacingApis:
         mod.create_event(
             "scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_crisis")]
         )
-        errors = mod.validate()
+        errors = mod.validate(advice=True)
         assert any(error.code == "idea_mutation_collision" for error in errors)
 
     def test_idea_mutation_collision_ignores_guarded_runtime_addition(self, tmp_mod):
@@ -1124,7 +1124,7 @@ class TestAgentFacingApis:
             ],
         )
 
-        errors = mod.validate()
+        errors = mod.validate(advice=True)
 
         assert not any(
             error.code == "idea_mutation_collision" for error in errors
@@ -1153,7 +1153,7 @@ class TestAgentFacingApis:
             ],
         )
 
-        errors = mod.validate()
+        errors = mod.validate(advice=True)
 
         assert any(error.code == "idea_mutation_collision" for error in errors)
 

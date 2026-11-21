@@ -101,13 +101,27 @@ def _default(function: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> ast
 
 
 def _call_sites(
-    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    function: ast.FunctionDef | ast.AsyncFunctionDef, module: _Module
 ) -> list[tuple[ast.Call, _Module]]:
+    """Return every call of ``function``.
+
+    A function nested in another one can only be called from there, so only
+    that body is searched; a method or module-level function is looked up by
+    name in the whole package.
+    """
+
+    enclosing = module.parent_function.get(id(function))
+    if enclosing is not None:
+        return [
+            (node, module)
+            for node in ast.walk(enclosing)
+            if isinstance(node, ast.Call) and _call_name(node) == function.name
+        ]
     sites = []
-    for module in MODULES:
-        for node in ast.walk(module.tree):
+    for other in MODULES:
+        for node in ast.walk(other.tree):
             if isinstance(node, ast.Call) and _call_name(node) == function.name:
-                sites.append((node, module))
+                sites.append((node, other))
     return sites
 
 
@@ -131,6 +145,15 @@ def _argument(
     return _default(function, name)
 
 
+def _is_parameter(expr: ast.expr | None, module: _Module, node: ast.AST) -> bool:
+    function = module.parent_function.get(id(node))
+    return (
+        function is not None
+        and isinstance(expr, ast.Name)
+        and expr.id in {arg.arg for arg in _parameters(function)}
+    )
+
+
 def _resolve(
     expr: ast.expr | None,
     module: _Module,
@@ -141,18 +164,94 @@ def _resolve(
 ) -> set[str]:
     """Return every string ``expr`` can evaluate to at ``node``."""
 
-    if depth > 8:
+    return {
+        values[0]
+        for values in _resolve_together((expr,), (missing,), module, node, depth=depth)
+    }
+
+
+_Item = ast.expr | frozenset[str] | None
+
+
+def _resolve_together(
+    items: tuple[_Item, ...],
+    missing: tuple[str | None, ...],
+    module: _Module,
+    node: ast.AST,
+    *,
+    depth: int = 0,
+) -> set[tuple[str, ...]]:
+    """Return every combination of strings ``items`` can take together.
+
+    An item is an expression at ``node`` or a set of strings already found.
+    Expressions that depend on the same thing are followed together, so the
+    result holds the real combinations and not every mix:
+
+    * ``a if cond else b`` items with the same ``cond`` take the same branch;
+    * parameters of the enclosing function are replaced, at each call of that
+      function, by the arguments of that one call (any number of levels).
+    """
+
+    if depth > 12:
         raise _Unresolved("too deep")
-    if expr is None:
-        if missing is None:
-            raise _Unresolved("argument not given")
-        return {missing}
+    # Same condition, same branch.
+    for item in items:
+        if isinstance(item, ast.IfExp):
+            test = ast.dump(item.test)
+
+            def branch(chosen: str) -> tuple[_Item, ...]:
+                return tuple(
+                    getattr(other, chosen)
+                    if isinstance(other, ast.IfExp) and ast.dump(other.test) == test
+                    else other
+                    for other in items
+                )
+
+            return _resolve_together(
+                branch("body"), missing, module, node, depth=depth + 1
+            ) | _resolve_together(branch("orelse"), missing, module, node, depth=depth + 1)
+    # Everything that is not a parameter is resolved where it stands.
+    resolved: list[_Item] = []
+    for item, default in zip(items, missing):
+        if item is None or isinstance(item, frozenset):
+            resolved.append(item)
+        elif _is_parameter(item, module, node):
+            resolved.append(item)
+        else:
+            resolved.append(frozenset(_resolve_one(item, module, node, default, depth)))
+    if any(isinstance(item, ast.expr) for item in resolved):
+        function = module.parent_function[id(node)]
+        sites = _call_sites(function, module)
+        if not sites:
+            raise _Unresolved(f"{function.name}() is never called")
+        result: set[tuple[str, ...]] = set()
+        for call, caller in sites:
+            at_site = tuple(
+                _argument(call, function, item.id) if isinstance(item, ast.Name) else item
+                for item in resolved
+            )
+            result |= _resolve_together(at_site, missing, caller, call, depth=depth + 1)
+        return result
+    combinations: set[tuple[str, ...]] = {()}
+    for item, default in zip(resolved, missing):
+        if item is None:
+            if default is None:
+                raise _Unresolved("argument not given")
+            values: frozenset[str] = frozenset({default})
+        else:
+            assert isinstance(item, frozenset)
+            values = item
+        combinations = {(*combination, value) for combination in combinations for value in values}
+    return combinations
+
+
+def _resolve_one(
+    expr: ast.expr, module: _Module, node: ast.AST, missing: str | None, depth: int
+) -> set[str]:
+    """Return the strings an expression that is not a parameter can take."""
+
     if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
         return {expr.value}
-    if isinstance(expr, ast.IfExp):
-        return _resolve(expr.body, module, node, missing=missing, depth=depth + 1) | _resolve(
-            expr.orelse, module, node, missing=missing, depth=depth + 1
-        )
     if isinstance(expr, ast.JoinedStr):
         pattern = "".join(
             re.escape(str(part.value)) if isinstance(part, ast.Constant) else "[a-z0-9_]+"
@@ -181,15 +280,6 @@ def _resolve(
                 return values | _resolve(expr.args[1], module, node, missing=None, depth=depth + 1)
         raise _Unresolved(f"cannot follow {ast.unparse(expr)}")
     if isinstance(expr, ast.Name) and function is not None:
-        if expr.id in {arg.arg for arg in _parameters(function)}:
-            values = set()
-            sites = _call_sites(function)
-            if not sites:
-                raise _Unresolved(f"{function.name}() is never called")
-            for call, caller in sites:
-                argument = _argument(call, function, expr.id)
-                values |= _resolve(argument, caller, call, missing=missing, depth=depth + 1)
-            return values
         assigned: set[str] = set()
         for sub in ast.walk(function):
             if isinstance(sub, ast.Assign) and any(
@@ -201,43 +291,22 @@ def _resolve(
     raise _Unresolved(f"cannot follow {ast.unparse(expr)}")
 
 
-def _pairs(
-    call: ast.Call, module: _Module
-) -> list[tuple[set[str], set[str], str]]:
-    """Return ``(codes, severities, where)`` for each concrete call path.
+def _pairs(call: ast.Call, module: _Module) -> set[tuple[str, str]]:
+    """Return every ``(code, severity)`` pair a ``ValidationError`` call can build.
 
-    When ``code`` and ``severity`` are parameters of the same helper, they are
-    followed together through each call of that helper, so a helper called
-    once with an error code and once with a warning code is checked per call.
+    ``code`` and ``severity`` are followed together (see ``_resolve_together``),
+    so a helper called once with an error code and once with a warning code
+    gives two pairs, not four.
     """
 
     keywords = {keyword.arg: keyword.value for keyword in call.keywords}
     code_expr = keywords.get("code")
-    severity_expr = keywords.get("severity")
-    where = f"{module.path.relative_to(PACKAGE.parent)}:{call.lineno}"
-    function = module.parent_function.get(id(call))
-    parameters = {arg.arg for arg in _parameters(function)} if function else set()
-
-    def is_param(expr: ast.expr | None) -> bool:
-        return isinstance(expr, ast.Name) and expr.id in parameters
-
-    if function is not None and is_param(code_expr) and is_param(severity_expr):
-        assert isinstance(code_expr, ast.Name) and isinstance(severity_expr, ast.Name)
-        result = []
-        for site, caller in _call_sites(function):
-            codes = _resolve(
-                _argument(site, function, code_expr.id), caller, site, missing=None
-            )
-            severities = _resolve(
-                _argument(site, function, severity_expr.id), caller, site, missing="error"
-            )
-            result.append((codes, severities, f"{where} via {caller.path.name}:{site.lineno}"))
-        return result
     if code_expr is None:
         raise _Unresolved("no code")
-    codes = _resolve(code_expr, module, call, missing=None)
-    severities = _resolve(severity_expr, module, call, missing="error")
-    return [(codes, severities, where)]
+    found = _resolve_together(
+        (code_expr, keywords.get("severity")), (None, "error"), module, call
+    )
+    return {(code, severity) for code, severity in found}
 
 
 def _constructions() -> list[tuple[ast.Call, _Module]]:
@@ -260,15 +329,32 @@ def test_every_validation_error_has_a_registered_code():
         except _Unresolved as error:
             problems.append(f"{where}: code cannot be followed ({error})")
             continue
-        for codes, severities, path in pairs:
-            for code in sorted(codes):
-                if not code:
-                    problems.append(f"{path}: empty code")
-                elif code not in VALIDATION_CODES:
-                    problems.append(f"{path}: code {code!r} is not registered")
-                for severity in sorted(severities):
-                    if severity not in SEVERITIES:
-                        problems.append(f"{path}: unknown severity {severity!r}")
+        for code, severity in sorted(pairs):
+            if not code:
+                problems.append(f"{where}: empty code")
+            elif code not in VALIDATION_CODES:
+                problems.append(f"{where}: code {code!r} is not registered")
+            if severity not in SEVERITIES:
+                problems.append(f"{where}: unknown severity {severity!r}")
+    assert not problems, "\n".join(problems)
+
+
+def test_every_raise_site_uses_the_registered_severity():
+    """A finding has the same severity whether or not ``Mod.validate()`` ran."""
+
+    problems: list[str] = []
+    for call, module in _constructions():
+        where = f"{module.path.relative_to(PACKAGE.parent)}:{call.lineno}"
+        try:
+            pairs = _pairs(call, module)
+        except _Unresolved:
+            continue  # reported by the test above
+        for code, severity in sorted(pairs):
+            expected = VALIDATION_SEVERITIES.get(code)
+            if expected is not None and severity != expected:
+                problems.append(
+                    f"{where}: {code!r} is raised as {severity!r}, registered as {expected!r}"
+                )
     assert not problems, "\n".join(problems)
 
 

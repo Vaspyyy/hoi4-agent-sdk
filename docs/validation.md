@@ -233,7 +233,6 @@ the content checks read them the way the game does:
 | `flag_read_never_set` | warning | A scripted flag is read but never written by the mod. |
 | `flag_set_never_read` | warning | A scripted flag is written but never read. |
 | `history_set_owner_in_effect` | warning | State history owner directive appears in runtime effect script. |
-| `idea_mutation_collision` | warning | Focuses and delayed/runtime events mutate the same idea IDs. |
 | `invalid_idea_icon_key` | warning | Idea definitions must use a bare picture stem, not an icon assignment. |
 | `missing_country_name` | warning | No name localisation exists for a country, in any ideology variant. |
 | `missing_event_description` | warning | A visible event has no description. |
@@ -247,8 +246,6 @@ the content checks read them the way the game does:
 | `oob_ship_name` | warning | A ship has neither a name nor an ordered_name. |
 | `province_missing_state` | warning | A land province belongs to no state. |
 | `province_missing_strategic_region` | warning | A province belongs to no strategic region. |
-| `resistance_on_core_state` | warning | Resistance effects target a state that is already a core of its owner. |
-| `revolt_state_already_owned` | warning | Revolt script transfers a state already owned by the target country. |
 | `unfired_event` | warning | A triggered-only event has no modeled incoming reference. |
 | `ungranted_idea` | warning | A country idea is never granted by modeled content. |
 | `unknown_assigned_idea` | warning | Country history assigns an idea ID not loaded by the SDK. |
@@ -288,6 +285,7 @@ the content checks read them the way the game does:
 | `continuous_focus_position_high` | info | The continuous focus panel starts above the bottom row of the focus tree. |
 | `event_option_no_effect` | info | An event option only closes the event. That is normal for flavour events. |
 | `faction_scope_footgun` | info | Faction effect direction depends on current scope. |
+| `idea_mutation_collision` | info | Focuses and delayed/runtime events mutate the same idea IDs. |
 | `idea_not_addable` | info | An effect adds an idea of an advisor category with add_ideas. Advisors are hired through their character, not added as ideas. |
 | `idea_without_effect` | info | An idea has no modifier, bonus, rule or effect block. |
 | `invalid_idea_picture_prefix` | info | An idea picture repeats the GFX_idea_ prefix. The game accepts it; the bare stem is the convention. |
@@ -297,6 +295,8 @@ the content checks read them the way the game does:
 | `oob_air_location_not_owned` | info | An air OOB entry is outside its country's territory. |
 | `oob_location_not_owned` | info | A starting division is placed outside its country's territory. |
 | `oob_naval_location_not_owned` | info | A naval OOB entry is outside its country's territory. |
+| `resistance_on_core_state` | info | Resistance effects target a state that is already a core of its owner. |
+| `revolt_state_already_owned` | info | Revolt script transfers a state already owned by the target country. |
 | `triggered_only_with_mtth` | info | A triggered-only event also has mean_time_to_happen, which the game ignores. |
 | `unseen_effect_token` | info | A documented effect has zero installed-game uses. |
 | `unseen_modifier_token` | info | A documented modifier has zero installed-game uses. |

@@ -503,6 +503,12 @@ _INFO_CODES = {
     "faction_scope_footgun",
     "civil_war_scope_footgun",
     "civil_war_focus_tree_missing",
+    # The effect works; the state's history says little about the moment it
+    # runs.
+    "resistance_on_core_state",
+    "revolt_state_already_owned",
+    # Focuses and events often change the same spirit on purpose.
+    "idea_mutation_collision",
     # A leader of another party is normal; the game makes one up for the
     # ruling party.
     "leader_party_mismatch",
