@@ -592,6 +592,22 @@ def test_validation_detects_missing_strategic_region(tmp_path: Path) -> None:
     assert "province_missing_strategic_region" in _codes(mod)
 
 
+def test_an_empty_region_of_the_game_is_not_the_mods_problem(tmp_path: Path) -> None:
+    empty = SEA_REGION.replace("id=2", "id=3").replace("id = 2", "id = 3")
+    empty = empty[: empty.index("provinces")] + "provinces={\n\t}\n}\n"
+    assert parse_strategic_regions(empty, "x")[0].provinces == ()
+    _game(tmp_path)
+    _write(tmp_path / "game", "map/strategicregions/3-Empty.txt", empty)
+    (tmp_path / "mod").mkdir()
+
+    assert "empty_strategic_region" not in _codes(Mod(tmp_path / "mod", hoi4_install=tmp_path / "game"))
+
+    # The same region in the mod's own file is reported.
+    _write(tmp_path / "mod", "map/strategicregions/3-Empty.txt", empty)
+    codes = _codes(Mod(tmp_path / "mod", hoi4_install=tmp_path / "game"))
+    assert codes["empty_strategic_region"] == ["Strategic region 3 has no provinces"]
+
+
 # ── Serializer regression checks ─────────────────────────────────────
 
 

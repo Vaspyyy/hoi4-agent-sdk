@@ -276,6 +276,9 @@ All notable changes to this project are documented here. The format follows
   of the game's own files it went from about 13,000 false alarms to the 17
   real mistakes in the game. What it reads from the install is cached under
   `~/.cache/hoi4-sdk/script-vocabulary`.
+- A strategic region without provinces is reported only when the mod's own
+  file holds it. The game ships three such regions, and every mod used to
+  get three warnings for them.
 - Reference and liveness checks read the syntax tree instead of searching
   text with regular expressions. Comments and quoted text no longer count
   as references, catalogs read definitions where the game keeps them (tag
