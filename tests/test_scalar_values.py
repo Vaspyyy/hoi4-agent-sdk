@@ -483,11 +483,32 @@ def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Pat
 
     # A comment in an effect swallows neither the closing brace nor the next effect.
     commented = mod.scope_block("GER", "add_political_power = 1 # a gift", "add_stability = 0.1")
-    assert commented == "GER = { add_political_power = 1 # a gift\nadd_stability = 0.1\n}"
+    assert commented == "GER = { add_political_power = 1 # a gift\nadd_stability = 0.1 }"
     assert _names(commented) == ["GER", "add_political_power", "add_stability"]
     commented = mod.scope_block("GER", "add_political_power = 1 # a gift")
     assert commented == "GER = { add_political_power = 1 # a gift\n}"
     assert _names(commented) == ["GER", "add_political_power"]
+    # A comment that does not end the text changes nothing about the layout.
+    assert mod.scope_block("GER", "# note\nadd_political_power = 1") == (
+        "GER = { # note\nadd_political_power = 1 }"
+    )
+    assert mod.scope_block("GER", 'set_country_flag = "a # b"', "add_stability = 0.1") == (
+        'GER = { set_country_flag = "a # b" add_stability = 0.1 }'
+    )
+    assert mod.scope_block(" GER ", "add_stability = 0.1") == "GER = { add_stability = 0.1 }"
+    assert mod.scope_block("GER") == "GER = {  }"
+    nested = mod.scope_block(
+        "GER",
+        "add_political_power = 1 # gift",
+        "if = {\n\tlimit = { always = yes }\n\tadd_war_support = 0.1\n}\nadd_stability = 0.1",
+    )
+    assert _names(nested)[:3] == ["GER", "add_political_power", "if"]
+    from hoi4.syntax import parse
+
+    (outer,) = parse(nested).root.items
+    assert [item.name for item in outer.block.assignments()] == [
+        "add_political_power", "if", "add_stability",
+    ]
 
     # A division template keeps comments, in the middle and at the end.
     template = mod.effect_division_template(
@@ -496,7 +517,10 @@ def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Pat
     )
     assert template == (
         'division_template = { name = "Test" regiments = { infantry = { x = 0 y = 0 } # first\n'
-        "artillery = { x = 1 y = 0 }\n} }"
+        "artillery = { x = 1 y = 0 } } }"
+    )
+    assert mod.effect_division_template("Test", "# frontline\ninfantry = { x = 0 y = 0 }") == (
+        'division_template = { name = "Test" regiments = { # frontline\ninfantry = { x = 0 y = 0 } } }'
     )
     assert _names(template) == [
         "division_template", "name", "regiments", "infantry", "x", "y", "artillery", "x", "y",
@@ -514,6 +538,25 @@ def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Pat
     assert mod.effect_division_template("Test", "infantry = { x = 0 y = 0 }") == (
         'division_template = { name = "Test" regiments = { infantry = { x = 0 y = 0 } } }'
     )
+
+
+def test_pdx_value_spells_any_object_as_one_scalar() -> None:
+    from decimal import Decimal
+
+    from hoi4.script import pdx_value
+
+    assert pdx_value(Path("gfx/my folder/x.dds")) == '"gfx/my folder/x.dds"'
+    assert pdx_value(Decimal("0.5")) == "0.5"
+    assert pdx_value(3) == "3"
+    assert pdx_value(0.25) == "0.25"
+    assert pdx_value(True) == "yes"
+
+
+def test_a_number_beyond_what_can_be_compared_is_not_a_crash() -> None:
+    from hoi4.patching import plain_values_equivalent
+
+    assert plain_values_equivalent("1e10000000000000000000", "0") is False
+    assert plain_values_equivalent("1e3", "1000") is True
 
 
 def test_a_very_small_state_number_keeps_its_digits() -> None:

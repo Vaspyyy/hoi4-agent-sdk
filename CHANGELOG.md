@@ -151,9 +151,10 @@ All notable changes to this project are documented here. The format follows
   the flags of `create_decision_chain` follow the same rule. `effect_block`
   and `scope_block` check their name, keys and scope, and `scope_block`,
   `effect_start_civil_war` and `effect_division_template` check the script
-  they wrap. A comment in an effect given to `scope_block` or in the
-  regiments of a division template no longer swallows the closing brace
-  or the effect after it: the next part goes on a new line.
+  they wrap. A comment at the end of an effect given to `scope_block`, or
+  at the end of the regiments of a division template, no longer swallows
+  the closing brace or the effect after it: what follows goes on a new
+  line. `pdx_value` spells any object (a path, a decimal) as one scalar.
   `tests/test_block_body_guard.py` tries thirteen attack texts on every text
   field of every model, on new and on loaded objects.
 - A state edit that only adds quote characters or a space at an end of a

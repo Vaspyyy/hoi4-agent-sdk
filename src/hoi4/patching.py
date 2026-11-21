@@ -251,7 +251,10 @@ def plain_values_equivalent(left: str, right: str) -> bool:
     if left == right:
         return True
     if _PLAIN_NUMBER.fullmatch(left) and _PLAIN_NUMBER.fullmatch(right):
-        return Decimal(left) == Decimal(right)
+        try:
+            return Decimal(left) == Decimal(right)
+        except InvalidOperation:  # an exponent beyond what Decimal holds
+            return False
     return False
 
 

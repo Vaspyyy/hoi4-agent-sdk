@@ -34,7 +34,10 @@ def pdx_value(value: object) -> str:
         if _needs_quotes(value):
             return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
         return value
-    return str(value)
+    if isinstance(value, (int, float)):
+        return str(value)
+    # Any other object (a path, a decimal) is written as its text.
+    return pdx_value(str(value))
 
 
 def pdx_string(value: object) -> str:
@@ -69,22 +72,29 @@ def scope_block(scope: str | int, *effects: str) -> str:
     The scope has to be one word and every effect well formed on its own, so
     that nothing lands outside the block.
     """
-    scope = require_key(scope, "a scope")
+    scope = require_key(str(scope).strip(), "a scope")
     parts = [effect.strip() for effect in effects if effect and effect.strip()]
+    body = ""
     for part in parts:
         require_well_formed(part, f"an effect in the scope '{scope}'")
-    # A comment runs to the end of its line: the next effect goes below it.
-    separator = "\n" if any(parse(part).comments for part in parts) else " "
-    return f"{scope} = {braced(separator.join(parts))}"
+        # A comment runs to the end of its line: the next effect goes below it.
+        body += ("\n" if _ends_in_comment(body) else " " if body else "") + part
+    return f"{scope} = {braced(body)}"
 
 
 def braced(body: str) -> str:
-    """Return ``{ body }``; the closing brace goes on a new line below a comment.
+    """Return ``{ body }``; the closing brace goes on a new line if ``body`` ends in a comment.
 
     A comment runs to the end of its line, so a brace behind it on the same
     line would be part of the comment.
     """
-    return f"{{ {body}\n}}" if parse(body).comments else f"{{ {body} }}"
+    return f"{{ {body}\n}}" if _ends_in_comment(body) else f"{{ {body} }}"
+
+
+def _ends_in_comment(text: str) -> bool:
+    """Whether anything put behind ``text`` on the same line would land in a comment."""
+    comments = parse(text).comments
+    return bool(comments) and comments[-1][1] == len(text)
 
 
 def validate_script_syntax(script: str) -> list[str]:
