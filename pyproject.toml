@@ -31,7 +31,7 @@ assets = [
     "Pillow>=10.0,<14.0",
 ]
 gemini = [
-    "google-genai>=2.14,<3",
+    "google-genai>=2.14,<4",
     "Pillow>=12.3,<14",
 ]
 map = [
