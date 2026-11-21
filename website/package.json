@@ -1,0 +1,27 @@
+{
+  "name": "hoi4-agent-sdk-website",
+  "private": true,
+  "version": "0.6.5",
+  "type": "module",
+  "scripts": {
+    "extract": "python3 scripts/extract_sdk_data.py",
+    "dev": "npm run extract && vite",
+    "build": "npm run extract && tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "lucide-react": "^0.511.0",
+    "marked": "^15.0.12",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.5",
+    "@vitejs/plugin-react": "^4.5.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}

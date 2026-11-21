@@ -17,3 +17,7 @@ htmlcov/
 *.egg-info/
 build/
 dist/
+
+website/node_modules/
+website/dist/
+website/src/generated/

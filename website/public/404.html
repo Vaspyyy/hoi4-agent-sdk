@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Redirecting — HOI4 Agent SDK</title>
+    <script>
+      (function () {
+        var segs = location.pathname.split("/").filter(Boolean);
+        var base =
+          location.hostname.endsWith(".github.io") && segs.length > 0
+            ? "/" + segs[0] + "/"
+            : "/";
+        sessionStorage.setItem(
+          "hoi4-sdk-redirect",
+          location.pathname + location.search + location.hash
+        );
+        location.replace(base);
+      })();
+    </script>
+  </head>
+  <body></body>
+</html>
