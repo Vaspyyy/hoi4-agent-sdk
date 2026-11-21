@@ -54,6 +54,28 @@ def _inherited_references(path: Path, relative: str) -> FileReferences | None:
         return None
 
 
+_FOCUS_KEYS = ("focus", "shared_focus", "joint_focus")
+
+
+def _focus_ids(text: str) -> frozenset[str]:
+    """The ``id`` of every focus in a focus file.
+
+    Read from the focuses of each ``focus_tree`` and from the top-level
+    ``focus``, ``shared_focus`` and ``joint_focus`` blocks.
+    """
+
+    ids: set[str] = set()
+    root = parse(text).root
+    blocks = [block for key in _FOCUS_KEYS for block in root.blocks(key, fold=True)]
+    for tree in root.blocks("focus_tree", fold=True):
+        blocks.extend(block for key in _FOCUS_KEYS for block in tree.blocks(key, fold=True))
+    for block in blocks:
+        focus_id = block.scalar("id", fold=True)
+        if focus_id:
+            ids.add(focus_id)
+    return frozenset(ids)
+
+
 def _sprite_names(text: str) -> set[str]:
     """The ``name = GFX_...`` of every sprite declared in a ``.gfx`` text."""
 
@@ -130,6 +152,23 @@ class CatalogsLayer(SourcesLayer):
         trees = set(self._focus_trees)
         trees |= self._cached_names("focus_trees", "common/national_focus", "focus_trees")
         return trees
+
+    def _known_focus_ids(self) -> set[str]:
+        """Every focus id of the mod (with pending edits) and of the files it inherits.
+
+        Shared and joint focuses count, so a mod's focus may require or
+        anchor to a focus the game defines. Each file is scanned once while
+        it is unchanged. The mod's files with unsaved focus edits are read
+        from the models only, so a deleted focus does not come back.
+        """
+
+        ids = {focus.id for tree in self._focus_trees.values() for focus in tree.focuses}
+        replaced = set(self._group_focus_trees_by_file(dirty_only=True))
+        for _, found in self._effective_script_results(
+            "common/national_focus", "focus_ids", _focus_ids, skip=replaced
+        ):
+            ids |= found
+        return ids
 
     def _localisation_value_names(self) -> set[str]:
         """Names that localisation texts read with ``[?name]``: variables and flags.

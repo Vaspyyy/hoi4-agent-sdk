@@ -84,3 +84,91 @@ def test_replace_path_hides_an_inherited_country_file(tmp_path):
     write(root, "common/country_tags/00_countries.txt", 'GER = "countries/Germany.txt"\n')
     findings = codes(Mod(root, hoi4_install=game).validate(stage="build"), "tag_definition")
     assert [f.country_tag for f in findings] == ["GER"]
+
+
+# ── Focus ids of inherited files ────────────────────────────────────
+
+
+def focus_game(tmp_path: Path) -> Path:
+    game = tmp_path / "game"
+    write(
+        game,
+        "common/national_focus/generic.txt",
+        "focus_tree = {\n id = generic_focus\n"
+        " focus = { id = army_effort x = 0 y = 0 }\n}\n",
+    )
+    write(
+        game,
+        "common/national_focus/congo_shared.txt",
+        "shared_focus = { id = CONGO_free_state x = 3 y = 0 }\n",
+    )
+    return game
+
+
+def test_a_mod_focus_may_require_a_shared_focus_of_the_game(tmp_path):
+    game = focus_game(tmp_path)
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/national_focus/belgium.txt",
+        "focus_tree = {\n id = belgium_focus\n shared_focus = CONGO_free_state\n"
+        " focus = { id = BEL_a x = 0 y = 0 prerequisite = { focus = CONGO_free_state } }\n"
+        " focus = { id = BEL_b x = 1 y = 0 prerequisite = { focus = BEL_nowhere } }\n}\n",
+    )
+    findings = Mod(root, hoi4_install=game).validate(stage="build")
+    missing = codes(findings, "missing_focus_prerequisite")
+    assert [f.focus_id for f in missing] == ["BEL_b"]
+
+
+def test_a_mod_shared_focus_may_require_and_anchor_to_a_game_focus(tmp_path):
+    game = focus_game(tmp_path)
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/national_focus/shared.txt",
+        "shared_focus = {\n id = MOD_shared\n prerequisite = { focus = army_effort }\n"
+        " relative_position_id = army_effort\n x = 1 y = 1\n}\n",
+    )
+    findings = Mod(root, hoi4_install=game).validate(stage="build")
+    assert not codes(findings, "missing_focus_prerequisite")
+    assert not codes(findings, "unresolved_focus_position")
+
+
+def test_a_mod_file_that_overrides_a_game_focus_file_hides_its_focuses(tmp_path):
+    game = focus_game(tmp_path)
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/national_focus/generic.txt",
+        "focus_tree = {\n id = generic_focus\n focus = { id = mod_effort x = 0 y = 0 }\n}\n",
+    )
+    write(
+        root,
+        "common/national_focus/shared.txt",
+        "shared_focus = { id = MOD_shared x = 1 y = 1 prerequisite = { focus = army_effort } }\n",
+    )
+    findings = Mod(root, hoi4_install=game).validate(stage="build")
+    assert [f.focus_id for f in codes(findings, "missing_focus_prerequisite")] == ["MOD_shared"]
+
+
+def test_an_unsaved_focus_deletion_is_not_undone_by_the_file_scan(tmp_path):
+    game = focus_game(tmp_path)
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/national_focus/a.txt",
+        "focus_tree = {\n id = a_tree\n focus = { id = A_one x = 0 y = 0 }\n"
+        " focus = { id = A_two x = 1 y = 0 }\n}\n",
+    )
+    write(
+        root,
+        "common/national_focus/b.txt",
+        "focus_tree = {\n id = b_tree\n"
+        " focus = { id = B_one x = 0 y = 0 prerequisite = { focus = A_one } }\n"
+        " focus = { id = B_two x = 1 y = 0 prerequisite = { focus = army_effort } }\n}\n",
+    )
+    mod = Mod(root, hoi4_install=game)
+    assert not codes(mod.validate(stage="build"), "missing_focus_prerequisite")
+    mod.remove_focus("a_tree", "A_one")
+    findings = codes(mod.validate(stage="build"), "missing_focus_prerequisite")
+    assert [f.focus_id for f in findings] == ["B_one"]

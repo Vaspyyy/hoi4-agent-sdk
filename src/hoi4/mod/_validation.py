@@ -899,11 +899,21 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                     )
 
         begin_phase("focus_catalog", "Preparing focus validation context")
-        all_focus_ids: set[str] = set()
+        all_focus_ids = {f.id for tree in self._focus_trees.values() for f in tree.focuses}
+        # A focus may require, exclude or anchor to a focus of the game or a
+        # base mod. Their files are scanned only when a name is not the mod's.
+        if any(
+            ref not in all_focus_ids
+            for tree in self._focus_trees.values()
+            for focus in tree.focuses
+            for ref in (
+                *(ref for group in focus.prerequisites for ref in group),
+                *(ref for group in focus.mutually_exclusive for ref in group),
+                *([focus.relative_position_id] if focus.relative_position_id else []),
+            )
+        ):
+            all_focus_ids |= self._known_focus_ids()
         begin_phase("focus_trees", "Validating focus trees")
-        for tree in self._focus_trees.values():
-            check_cancelled(cancelled, operation="validation")
-            all_focus_ids.update(f.id for f in tree.focuses)
 
         icon_suggestions: dict[str, str] = {}
         if validate_icons and known_focus_icons:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from functools import partial
 from pathlib import Path
 from typing import Iterator, Optional, TypeVar, cast
@@ -90,7 +90,12 @@ class SourcesLayer(LocalisationLayer):
                 continue
 
     def _effective_script_results(
-        self, relative: str, purpose: str, compute: Callable[[str], T]
+        self,
+        relative: str,
+        purpose: str,
+        compute: Callable[[str], T],
+        *,
+        skip: Collection[Path] = (),
     ) -> Iterator[tuple[Path, T]]:
         """``compute(text)`` of every effective script file of one folder.
 
@@ -98,9 +103,13 @@ class SourcesLayer(LocalisationLayer):
         (``hoi4._file_cache``), so a second validation does not read the
         game's folders again. Files with pending edits are always computed
         from their pending text. The result may be shared: never change it.
+        ``skip`` names target paths (in the mod) to leave out, such as the
+        files whose content the loaded models hold.
         """
 
         for target, source, pending in self._effective_script_files(relative):
+            if target in skip:
+                continue
             try:
                 if pending is not None:
                     yield target, compute(pending())
@@ -118,10 +127,13 @@ class SourcesLayer(LocalisationLayer):
         ``None`` when the file on disk at ``source`` is current.
         """
 
-        files: dict[Path, Path] = {}
-        for root in reversed(self._data_roots()):
-            for source in sorted((root / relative).rglob("*.txt")):
-                files[self.mod_root / source.relative_to(root)] = source
+        # content_files knows the game install, the base mods, the files the
+        # mod overrides and the folders its replace_path hides.
+        files: dict[Path, Path] = {
+            self.mod_root / name: source
+            for name, source in self.content_files(relative).items()
+            if name.endswith(".txt")
+        }
         for target in self._script_file_updates:
             if target.is_relative_to(self.mod_root / relative):
                 files.setdefault(target, target)

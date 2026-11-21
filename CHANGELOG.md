@@ -322,6 +322,14 @@ All notable changes to this project are documented here. The format follows
   file and line.
 - `tag_definition` no longer reports a tag whose country file the mod
   inherits from the game or a base mod (`replace_path` is respected).
+- A mod's focus may require, exclude or anchor to a focus of the game or a
+  base mod (shared and joint focuses included) without
+  `missing_focus_prerequisite` or `unresolved_focus_position`. The
+  inherited focus files are scanned once, and only when a name is not the
+  mod's own.
+- The catalogs read from a folder of the game and the mod (advisor idea
+  tokens, technologies, equipment, name pools, scripted effects and
+  triggers) skip the inherited files that the mod's `replace_path` hides.
 - Adding an event to an on-action merged its repeated `events` blocks into
   one and dropped the comments inside them. Event lists are now edited entry
   by entry.
