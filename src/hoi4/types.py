@@ -196,6 +196,19 @@ class LoadDiagnostic:
 
 
 @dataclass
+class EventText:
+    """One conditional localisation key of an event title, description or option name.
+
+    ``title = { text = KEY trigger = { ... } }`` reads as
+    ``EventText(text="KEY", trigger="...")``. The game shows the first entry
+    whose trigger holds.
+    """
+
+    text: str
+    trigger: str = ""
+
+
+@dataclass
 class EventOption:
     name: str = ""
     trigger: str = ""
@@ -203,12 +216,22 @@ class EventOption:
     ai_chance: str = ""
     raw_block: str = ""
     touched: bool = False
+    # ``name = { text = ... trigger = { ... } }`` entries, in source order.
+    conditional_names: list[EventText] = field(default_factory=list)
     # Exact interior retained independently of the option's current list position.
     _source_body: Optional[str] = field(default=None, repr=False, compare=False)
 
 
 @dataclass
 class Event:
+    """One event.
+
+    ``title`` and ``description`` hold the unconditional key: a plain
+    ``title = KEY`` or a ``title = { text = KEY }`` without a trigger.
+    ``conditional_titles`` and ``conditional_descriptions`` hold every
+    ``title``/``desc`` block that has a trigger, in source order.
+    """
+
     id: str
     title: str = ""
     description: str = ""
@@ -224,6 +247,8 @@ class Event:
     raw_block: str = ""
     touched: bool = False
     touched_fields: set[str] = field(default_factory=set)
+    conditional_titles: list[EventText] = field(default_factory=list)
+    conditional_descriptions: list[EventText] = field(default_factory=list)
 
 
 @dataclass

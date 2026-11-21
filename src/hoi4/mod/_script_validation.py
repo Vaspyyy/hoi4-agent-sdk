@@ -920,22 +920,21 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             )
 
         for event in self._events.values():
-            if event.title and not self._has_loc(event.title):
-                add_missing(
-                    f"Event '{event.id}' title localization '{event.title}' not found",
-                    event_id=event.id,
-                    file_path=str(event.path) if event.path else None,
-                )
-            if event.description and not self._has_loc(event.description):
-                add_missing(
-                    f"Event '{event.id}' description localization '{event.description}' not found",
-                    event_id=event.id,
-                    file_path=str(event.path) if event.path else None,
-                )
-            for option in event.options:
-                if option.name and not self._has_loc(option.name):
+            event_keys = [
+                ("title", key)
+                for key in (event.title, *(e.text for e in event.conditional_titles))
+            ] + [
+                ("description", key)
+                for key in (event.description, *(e.text for e in event.conditional_descriptions))
+            ] + [
+                ("option", key)
+                for option in event.options
+                for key in (option.name, *(e.text for e in option.conditional_names))
+            ]
+            for label, key in event_keys:
+                if key and not self._has_loc(key):
                     add_missing(
-                        f"Event '{event.id}' option localization '{option.name}' not found",
+                        f"Event '{event.id}' {label} localization '{key}' not found",
                         event_id=event.id,
                         file_path=str(event.path) if event.path else None,
                     )

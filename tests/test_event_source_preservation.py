@@ -77,11 +77,16 @@ def test_direct_scalar_description_change_is_serialized(tmp_path):
         ),
     )
     event = load_events_file(path)[1][0]
+    assert [entry.text for entry in event.conditional_descriptions] == ["source.french"]
     event.description = "source.changed"
     event.touched = True
     rendered = serialize_event(event)
     assert "desc = source.changed" in rendered
-    assert "source.french" not in rendered
+    # The serializer writes what the model says: the conditional entry is still
+    # in the model, so it stays. ``update_event(description=...)`` clears it.
+    assert "source.french" in rendered
+    event.conditional_descriptions = []
+    assert "source.french" not in serialize_event(event)
 
 
 OPTIONS_SOURCE = """add_namespace = source

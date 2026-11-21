@@ -408,7 +408,9 @@ def _known_localization_uses(mod: LivenessSource) -> set[str]:
             result.update((focus.id, f"{focus.id}_desc"))
     for event in mod._events.values():
         result.update((event.title, event.description))
+        result.update(e.text for e in (*event.conditional_titles, *event.conditional_descriptions))
         result.update(option.name for option in event.options)
+        result.update(e.text for option in event.options for e in option.conditional_names)
     for idea in mod._ideas.values():
         result.update((idea.id, f"{idea.id}_desc"))
     for decision in mod._decisions.values():

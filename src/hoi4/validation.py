@@ -1113,7 +1113,7 @@ def validate_event(
         )
         return errors
 
-    if not event.title:
+    if not event.title and not event.conditional_titles:
         errors.append(
             ValidationError(
                 message=f"Event '{event.id}' has no title",
@@ -1122,7 +1122,7 @@ def validate_event(
             )
         )
 
-    if not event.description:
+    if not event.description and not event.conditional_descriptions:
         errors.append(
             ValidationError(
                 message=f"Event '{event.id}' has no description",
@@ -1130,6 +1130,26 @@ def validate_event(
                 event_id=event.id,
             )
         )
+
+    conditional_texts = [
+        ("title", entry) for entry in event.conditional_titles
+    ] + [("description", entry) for entry in event.conditional_descriptions]
+    conditional_texts += [
+        (f"option '{option.name or '<unnamed>'}' name", entry)
+        for option in event.options
+        for entry in option.conditional_names
+    ]
+    for label, entry in conditional_texts:
+        if not entry.text:
+            errors.append(
+                ValidationError(
+                    message=f"Event '{event.id}' has a conditional {label} without text",
+                    severity="warning",
+                    code="event_conditional_text_missing",
+                    event_id=event.id,
+                    file_path=str(event.path) if event.path else None,
+                )
+            )
 
     if not event.options:
         errors.append(
@@ -1183,6 +1203,7 @@ def validate_event(
     effect_script = "\n".join(
         [event.trigger, event.immediate, event.mean_time_to_happen]
         + [opt.trigger + "\n" + opt.effect for opt in event.options]
+        + [entry.trigger for _, entry in conditional_texts]
     )
     errors.extend(
         _script_warnings(
