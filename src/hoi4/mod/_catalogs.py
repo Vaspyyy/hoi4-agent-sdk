@@ -438,7 +438,7 @@ class CatalogsLayer(SourcesLayer):
                 except (OSError, ValueError):
                     continue
             cached = cache.get(path)
-            if cached is None or cached[0] != text or cached[1] != characters:
+            if cached is None or cached[0] != text or cached[1] is not characters:
                 found = file_references(
                     str(path), relative, text, own=True, characters=characters
                 )
@@ -456,10 +456,15 @@ class CatalogsLayer(SourcesLayer):
         only counted as uses.
         """
 
-        return self._run_cached(
-            "character_scope_names",
-            lambda: frozenset(name.lower() for name in self._known_character_ids()),
-        )
+        def build() -> frozenset[str]:
+            names = frozenset(name.lower() for name in self._known_character_ids())
+            # The same object as long as the names are the same, so that the
+            # cached references of a file are checked by identity.
+            if names != self._character_scope_names_seen:
+                self._character_scope_names_seen = names
+            return self._character_scope_names_seen
+
+        return self._run_cached("character_scope_names", build)
 
     def _known_idea_ids(self) -> set[str]:
         ids = set(self._ideas)

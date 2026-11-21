@@ -151,9 +151,10 @@ the content checks read them the way the game does:
   block holds, or of one on a focus it is placed relative to; an offset of
   0 0 moves nothing), and `allow_branch` can hide at least one of them.
   Two: each of them needs an `allow_branch` condition that the other does
-  not need. A condition is its text without comments and spacing, so two
-  focuses that write the same `allow_branch` are behind one condition and
-  appear together. The SDK does not work out whether two different
+  not need. A condition is its text without comments and spacing, with
+  names in lower case and no quotes around a single word, so two focuses
+  that write the same `allow_branch` are behind one condition and appear
+  together. The SDK does not work out whether two different
   conditions can hold at the same time, or whether the trigger of an
   `offset` block holds exactly when the other focus appears.
 - Hidden events (`hidden = yes`) need no title, description or option.

@@ -65,6 +65,8 @@ class LivenessSource(Protocol):
 
     def _localisation_value_names(self) -> set[str]: ...
 
+    def _character_scope_names(self) -> frozenset[str]: ...
+
 
 _BARE_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:-]+")
 
@@ -475,10 +477,13 @@ def _country_history_references(mod: LivenessSource) -> list[FileReferences]:
     """
 
     found: list[FileReferences] = []
+    characters = mod._character_scope_names()
     for country in mod._countries.values():
         if not country.raw_history.strip():
             continue
-        owner = fragment_owner(country.raw_history, "country_history", country.tag, COUNTRY)
+        owner = fragment_owner(
+            country.raw_history, "country_history", country.tag, COUNTRY, characters=characters
+        )
         path = country.history_path or mod.mod_root / "history" / "countries" / f"{country.tag}.txt"
         found.append(
             FileReferences(

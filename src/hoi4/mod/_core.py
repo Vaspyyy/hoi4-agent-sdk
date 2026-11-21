@@ -159,6 +159,7 @@ class CoreLayer:
         # they were read from; a changed text is read again.
         # ``path -> (text, character ids, references)`` of the mod's own files.
         self._own_reference_cache: dict[Path, tuple[str, frozenset[str], FileReferences]] = {}
+        self._character_scope_names_seen: frozenset[str] = frozenset()
         # Data built once per validate() call and shared by its checks; None
         # outside a run, because edits between runs change it.
         self._validation_run: dict[str, object] | None = None

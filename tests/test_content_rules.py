@@ -446,6 +446,8 @@ def test_two_branches_behind_the_same_condition_are_shown_together():
 
     # Two gate focuses, one condition: when it holds, both branches appear.
     assert pair("has_country_flag = f", "has_country_flag  =  f") == ["B"]
+    assert pair('has_dlc = "X"', "HAS_DLC = X # the same") == ["B"]
+    assert pair('has_dlc = "X"', 'has_dlc = "x"') == []
     assert pair("always = yes", "always = yes") == ["B"]
     assert pair("has_country_flag = f", "NOT = { has_country_flag = f }") == []
 

@@ -83,16 +83,19 @@ _OPERATOR_RE = re.compile(r"\s*([={}<>])\s*")
 def _condition(text: str) -> str:
     """An ``allow_branch`` body as one line, or ``""`` when it always holds.
 
-    No comments, one space between tokens, and names in front of ``=``,
-    ``<`` and ``>`` in lower case (the game reads them without regard to
-    case). An empty body and ``always = yes`` hide nothing.
+    No comments, one space between tokens, names in front of ``=``, ``<``
+    and ``>`` in lower case (the game reads them without regard to case),
+    and no quotes around a single word (``has_dlc = "X"`` is
+    ``has_dlc = X``). An empty body and ``always = yes`` hide nothing.
     """
 
     text = _COMMENT_RE.sub(lambda match: match.group(1) or "", text)
     tokens = _OPERATOR_RE.sub(r" \1 ", text).split()
-    for index in range(len(tokens) - 1):
-        if tokens[index + 1] in ("=", "<", ">") and not tokens[index].startswith('"'):
-            tokens[index] = tokens[index].lower()
+    for index, token in enumerate(tokens):
+        if len(token) > 2 and token[0] == token[-1] == '"' and '"' not in token[1:-1]:
+            tokens[index] = token[1:-1]
+        elif index + 1 < len(tokens) and tokens[index + 1] in ("=", "<", ">"):
+            tokens[index] = token.lower()
     condition = " ".join(tokens)
     return "" if condition == "always = yes" else condition
 
