@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from typing import Literal, Sequence, cast
+from typing import Callable, Literal, Sequence, cast
 
 from ..characters import (
     CharacterRole,
@@ -12,14 +11,16 @@ from ..characters import (
 from ..localisation import (
     DEFAULT_LOCALISATION_LANGUAGE,
 )
-from ..parser import (
-    ParseError,
-    iter_assignment_blocks,
-    strip_comments,
-)
 from ..patching import (
-    AssignmentSpan,
     top_level_assignments,
+)
+from ..script_references import (
+    COUNTRY,
+    DYNAMIC_TAG_RE,
+    ScriptOwner,
+    ScriptRef,
+    fragment_owner,
+    is_country_tag,
 )
 from ..script_scopes import entry_scope
 from ..script_vocabulary import (
@@ -34,10 +35,10 @@ from ..states import (
     find_state_file,
     read_state,
 )
+from ..syntax import Assignment, Block, parse
 from ..tags import (
     load_all_tags,
 )
-from ..syntax import parse
 from ..textio import read_text
 from ..types import (
     Event,
@@ -54,11 +55,117 @@ from ._shared import (
     _EVENT_REF_RE,
     _HAS_IDEA_RE,
     _IDEA_EFFECT_RE,
-    _LOAD_FOCUS_TREE_RE,
     _TECH_BLOCK_RE,
     _filter_validation_errors,
 )
 from ._states import StatesLayer
+
+Severity = Literal["error", "warning", "info"]
+
+# Owners whose script runs during the game, not at scenario start.
+_RUNTIME_OWNERS = frozenset(
+    {"focus", "event", "on_action", "decision", "decision_category", "scripted_effect",
+     "idea", "effect"}
+)
+# Owners whose blocks are effects and triggers, where a tag key is a scope.
+_SCRIPT_OWNERS = frozenset(
+    {"focus", "focus_tree", "event", "decision", "decision_category", "on_action",
+     "scripted_effect", "scripted_trigger", "idea", "effect"}
+)
+# References to something by its name.
+_NAMED_KINDS = frozenset({"idea", "event", "focus_tree", "technology", "equipment"})
+# Country and state history: checked by the history validators.
+_HISTORY_OWNERS = frozenset({"country_history", "state_history"})
+# Idea categories that fill an advisor slot: hired, never added.
+_HIRED_IDEA_CATEGORIES = frozenset(
+    {"political_advisor", "army_chief", "navy_chief", "air_chief", "high_command", "theorist"}
+)
+
+
+def _core_effect_message(ref: ScriptRef) -> str:
+    if is_country_tag(ref.scope_key) and ref.value.isdigit():
+        return (
+            f"'{ref.scope_key} = {{ {ref.key} = {ref.value} }}' runs in the country "
+            f"{ref.scope_key}, not in a state. Use '{ref.value} = {{ {ref.key} = "
+            f"{ref.scope_key} }}' for a state-scoped core change."
+        )
+    return (
+        f"'{ref.key}' appears at country scope. Use a state scope such as "
+        f"'115 = {{ {ref.key} = TAG }}' or every_owned_state to change cores."
+    )
+
+
+class _LazyCatalogs:
+    """Catalogs of what exists, completed only when a name is not found.
+
+    The caller's sets are tried first. A miss loads the full catalog of the
+    mod and the game once, so a mod with no unknown names never pays for it.
+    """
+
+    def __init__(
+        self,
+        mod: ScriptValidationLayer,
+        state_ids: Callable[[], set[int]],
+        **known: set[str],
+    ) -> None:
+        self.mod = mod
+        self.state_ids = state_ids
+        self.known = {name: set(values) for name, values in known.items()}
+        self.complete: set[str] = set()
+        self.tags: set[str] | None = None
+        self.states: set[int] | None = None
+        self.folded: dict[str, dict[str, str]] = {}
+
+    def _load(self, name: str) -> set[str]:
+        values = self.known[name]
+        if name in self.complete:
+            return values
+        self.complete.add(name)
+        mod = self.mod
+        if name == "ideas":
+            values |= mod._known_idea_ids() | mod._known_advisor_idea_ids()
+        elif name == "events":
+            values |= mod._known_event_ids()
+        elif name == "focus_trees":
+            values |= mod._known_focus_tree_ids()
+        elif name == "technologies":
+            values |= mod._known_technology_ids()
+        elif name == "equipment":
+            values |= mod._known_equipment_ids()
+        return values
+
+    def has(self, name: str, value: str) -> bool:
+        if value in self.known[name]:
+            return True
+        values = self._load(name)
+        # Without a catalog (no game install and nothing defined) nothing can
+        # be said about an event, a technology or a piece of equipment.
+        return value in values or (not values and name != "ideas")
+
+    def has_idea(self, value: str, *, show: bool = False) -> bool:
+        if self.has("ideas", value):
+            return True
+        return show and value in self.mod._known_organization_ids()
+
+    def case_hint(self, name: str, value: str) -> str:
+        folded = self.folded.get(name)
+        if folded is None:
+            folded = {known.lower(): known for known in self._load(name)}
+            self.folded[name] = folded
+        match = folded.get(value.lower())
+        if match is None:
+            return ""
+        return f"; '{match}' exists, but names are case-sensitive"
+
+    def has_tag(self, tag: str) -> bool:
+        if self.tags is None:
+            self.tags = self.mod._known_country_tags()
+        return tag in self.tags
+
+    def has_state(self, state_id: int) -> bool:
+        if self.states is None:
+            self.states = self.state_ids()
+        return not self.states or state_id in self.states
 
 
 def _idea_mutation_ids(
@@ -66,134 +173,82 @@ def _idea_mutation_ids(
     *,
     ignore_guarded_additions: bool = False,
 ) -> set[str]:
-    """Return ideas mutated by script, optionally ignoring safe guarded adds."""
+    """Ideas a piece of script adds or removes, read from the syntax tree.
+
+    With ``ignore_guarded_additions``, an idea added inside
+    ``if = { limit = { NOT = { has_idea = X } } add_ideas = X }`` is left out:
+    the guard makes the addition safe to repeat.
+    """
 
     mutations: set[str] = set()
 
-    def scalar(container: str, span: AssignmentSpan) -> str:
-        return container[span.value_start : span.value_end].strip().strip('"')
-
-    def block(container: str, span: AssignmentSpan) -> str:
-        if span.body_start is None or span.body_end is None:
-            return ""
-        return container[span.body_start : span.body_end]
-
-    def values(container: str, span: AssignmentSpan) -> set[str]:
-        if not span.is_block:
-            value = scalar(container, span)
-            return {value} if value else set()
-        return {
-            value
-            for value in re.findall(
-                r'(?<![A-Za-z0-9_.:-])"?([A-Za-z0-9_.:-]+)"?',
-                strip_comments(block(container, span)),
-            )
-            if value.lower() not in {"yes", "no"}
-        }
-
-    def negative_has_idea_guards(body: str) -> set[str]:
+    def absent_guards(block: Block, positive: bool = True) -> set[str]:
         guarded: set[str] = set()
-
-        def visit(fragment: str, positive: bool = True) -> None:
-            try:
-                spans = top_level_assignments(fragment)
-            except (ParseError, ValueError):
-                return
-            for span in spans:
-                if span.key == "has_idea" and not positive and not span.is_block:
-                    idea_id = scalar(fragment, span)
-                    if idea_id:
-                        guarded.add(idea_id)
-                    continue
-                if not span.is_block:
-                    continue
-                nested = block(fragment, span)
-                if span.key == "NOT":
-                    visit(nested, not positive)
-                elif span.key == "AND" and positive:
-                    visit(nested, positive)
-                elif span.key == "OR" and not positive:
-                    visit(nested, positive)
-
-        visit(body)
+        for item in block.assignments():
+            name = item.key.value.lower()
+            if name == "has_idea" and not positive and item.scalar:
+                guarded.add(item.scalar)
+            elif item.block is None:
+                continue
+            elif name == "not":
+                guarded |= absent_guards(item.block, not positive)
+            elif (name == "and" and positive) or (name == "or" and not positive):
+                guarded |= absent_guards(item.block, positive)
         return guarded
 
-    def process(
-        container: str,
-        span: AssignmentSpan,
-        guarded_absent: set[str],
-    ) -> None:
-        key = span.key
-        if key in {"add_ideas", "remove_ideas"}:
-            for idea_id in values(container, span):
-                if (
-                    key == "add_ideas"
+    def idea_values(item: Assignment) -> list[str]:
+        if item.scalar is not None:
+            return [item.scalar]
+        if item.block is None:
+            return []
+        return [
+            value.value
+            for value in item.block.values()
+            if value.value.lower() not in {"yes", "no"}
+        ]
+
+    def walk(block: Block, guarded_absent: set[str]) -> None:
+        for item in block.assignments():
+            visit(item, guarded_absent)
+
+    def visit(item: Assignment, guarded_absent: set[str]) -> None:
+        name = item.key.value.lower()
+        inner = item.block
+        if name in {"add_ideas", "remove_ideas"}:
+            for idea_id in idea_values(item):
+                if not (
+                    name == "add_ideas"
                     and ignore_guarded_additions
                     and idea_id in guarded_absent
                 ):
-                    continue
-                mutations.add(idea_id)
-            return
-        if key == "add_timed_idea" and span.is_block:
-            try:
-                timed_spans = top_level_assignments(block(container, span))
-            except (ParseError, ValueError):
-                timed_spans = []
-            timed_body = block(container, span)
-            for timed_span in timed_spans:
-                if timed_span.key != "idea" or timed_span.is_block:
-                    continue
-                idea_id = scalar(timed_body, timed_span)
-                if not (
-                    ignore_guarded_additions and idea_id in guarded_absent
-                ):
                     mutations.add(idea_id)
+        elif inner is None:
             return
-        if key == "swap_ideas" and span.is_block:
-            swap_body = block(container, span)
-            try:
-                swap_spans = top_level_assignments(swap_body)
-            except (ParseError, ValueError):
-                swap_spans = []
-            for swap_span in swap_spans:
-                if (
-                    swap_span.key in {"add_idea", "remove_idea"}
-                    and not swap_span.is_block
-                ):
-                    mutations.add(scalar(swap_body, swap_span))
-            return
-        if key in {"if", "else_if"} and span.is_block:
-            walk_if(block(container, span), guarded_absent)
-            return
-        if span.is_block:
-            walk(block(container, span), guarded_absent)
+        elif name == "add_timed_idea":
+            timed = inner.scalar("idea")
+            if timed and not (ignore_guarded_additions and timed in guarded_absent):
+                mutations.add(timed)
+        elif name == "swap_ideas":
+            for field_name in ("add_idea", "remove_idea"):
+                swapped = inner.scalar(field_name)
+                if swapped:
+                    mutations.add(swapped)
+        elif name in {"if", "else_if"}:
+            local = set(guarded_absent)
+            for limit in inner.blocks("limit", fold=True):
+                local |= absent_guards(limit)
+            for child in inner.assignments():
+                child_name = child.key.value.lower()
+                if child_name == "limit":
+                    continue
+                if child_name == "else" and child.block is not None:
+                    walk(child.block, guarded_absent)
+                else:
+                    visit(child, local)
+        else:
+            walk(inner, guarded_absent)
 
-    def walk_if(body: str, inherited_guards: set[str]) -> None:
-        try:
-            spans = top_level_assignments(body)
-        except (ParseError, ValueError):
-            return
-        local_guards = set(inherited_guards)
-        for span in spans:
-            if span.key == "limit" and span.is_block:
-                local_guards.update(negative_has_idea_guards(block(body, span)))
-        for span in spans:
-            if span.key == "limit":
-                continue
-            if span.key == "else" and span.is_block:
-                walk(block(body, span), inherited_guards)
-                continue
-            process(body, span, local_guards)
-
-    def walk(body: str, guarded_absent: set[str]) -> None:
-        try:
-            spans = top_level_assignments(body)
-        except (ParseError, ValueError):
-            return
-        for span in spans:
-            process(body, span, guarded_absent)
-
-    walk(script, set())
+    walk(parse(script).root, set())
     return {idea_id for idea_id in mutations if idea_id}
 
 
@@ -660,6 +715,31 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             )
         return entries
 
+    def _reference_owners(
+        self,
+        entries: list[tuple[str, str, str | None, str | None]] | None,
+    ) -> list[tuple[ScriptOwner, str | None]]:
+        """The script to check, owner by owner, with the file it is in.
+
+        Loose ``entries`` (``validate_effect``) are read as country-scope
+        effects. Otherwise every script file of the mod is read, with its
+        pending edits; inherited files are the game's and never reported.
+        """
+
+        if entries is not None:
+            return [
+                (fragment_owner(script, kind, obj_id or "", COUNTRY), file_path)
+                for script, kind, obj_id, file_path in entries
+                if script
+            ]
+        return [
+            (owner, found.path)
+            for found in self._reference_corpus(inherited=False)
+            if found.own
+            for owner in found.owners
+            if owner.kind not in _HISTORY_OWNERS
+        ]
+
     def _validate_script_references(
         self,
         *,
@@ -670,226 +750,237 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         known_focus_trees: set[str],
         entries: list[tuple[str, str, str | None, str | None]] | None = None,
     ) -> list[ValidationError]:
+        """Check what the mod's script names against what exists.
+
+        The ``known_*`` sets are what the caller already has; a name missing
+        from them is looked up in the complete catalog of the mod and the game
+        before it is reported.
+        """
+
         errors: list[ValidationError] = []
-        script_entries = entries or self._script_entries()
-        known_state_ids = (
-            {entry["id"] for entry in self.state_index()}
-            if any("start_civil_war" in script for script, _, _, _ in script_entries)
-            else set()
+        owners = self._reference_owners(entries)
+        catalogs = _LazyCatalogs(
+            self,
+            lambda: {entry["id"] for entry in self.state_index()},
+            ideas=known_ideas,
+            events=known_events,
+            technologies=known_technologies,
+            equipment=known_equipment,
+            focus_trees=known_focus_trees,
         )
-        runtime_entries = list(script_entries)
-        if entries is None:
-            runtime_entries.extend(
-                (
-                    source.text,
-                    source.owner_kind,
-                    source.owner_id,
-                    source.file_path,
-                )
-                for source in self._semantic_script_sources()
-                if source.owner_kind == "scripted_effect"
-            )
-        for script, kind, obj_id, file_path in runtime_entries:
-            if not script:
-                continue
-            matches = list(
-                re.finditer(
-                    r"\brecruit_character\s*=",
-                    self._mask_script_comments(script),
+
+        def report(
+            message: str,
+            code: str,
+            owner: ScriptOwner,
+            file_path: str | None,
+            ref: ScriptRef,
+            *,
+            severity: Severity = "warning",
+            idea_id: str | None = None,
+            event_id: str | None = None,
+        ) -> None:
+            errors.append(
+                self._script_ref_error(
+                    message, code, owner.kind, owner.id, file_path,
+                    idea_id=idea_id, event_id=event_id, severity=severity, line=ref.line,
+                    column=ref.column,
                 )
             )
-            for occurrence, match in enumerate(matches):
-                line, column = self._script_reference_location(
-                    script,
-                    match.start(),
-                    obj_id=obj_id,
-                    file_path=file_path,
-                    token="recruit_character",
-                    occurrence=occurrence,
-                )
-                errors.append(
-                    self._script_ref_error(
+
+        for owner, file_path in owners:
+            kind, obj_id = owner.kind, owner.id
+            has_tree_load = any(True for _ in owner.of("focus_tree"))
+            for ref in owner.refs:
+                if ref.kind == "recruit_character" and kind in _RUNTIME_OWNERS:
+                    report(
                         (
                             f"{kind} '{obj_id}' uses recruit_character at runtime. "
                             "HOI4 only executes recruit_character from game/history "
                             "at scenario start; recruit the character in country "
                             "history and gate its role availability instead."
                         ),
-                        "runtime_recruit_character",
-                        kind,
-                        obj_id,
-                        file_path,
-                        severity="error",
-                        line=line,
-                        column=column,
+                        "runtime_recruit_character", owner, file_path, ref, severity="error",
                     )
-                )
-        for script, kind, obj_id, file_path in script_entries:
-            if not script:
-                continue
-            for idea_id in sorted(
-                set(_IDEA_EFFECT_RE.findall(script) + _HAS_IDEA_RE.findall(script))
-            ):
-                if idea_id not in known_ideas:
-                    errors.append(
-                        self._script_ref_error(
-                            f"{kind} '{obj_id}' references unknown idea '{idea_id}'",
-                            "unknown_idea_reference",
-                            kind,
-                            obj_id,
-                            file_path,
-                            idea_id=idea_id,
+                elif ref.dynamic and ref.kind in _NAMED_KINDS:
+                    # The game builds the name while it runs.
+                    continue
+                elif ref.kind == "idea":
+                    if not catalogs.has_idea(ref.value, show=ref.action == "show"):
+                        report(
+                            f"{kind} '{obj_id}' references unknown idea '{ref.value}'"
+                            + catalogs.case_hint("ideas", ref.value),
+                            "unknown_idea_reference", owner, file_path, ref, idea_id=ref.value,
                         )
-                    )
-                elif re.search(rf"\badd_ideas\s*=\s*{re.escape(idea_id)}\b", script):
-                    idea = self._ideas.get(idea_id)
-                    if idea is not None and idea.category != "country":
-                        errors.append(
-                            self._script_ref_error(
-                                f"{kind} '{obj_id}' adds idea '{idea_id}', but its category is '{idea.category or '<none>'}', not 'country'",
-                                "idea_not_addable",
-                                kind,
-                                obj_id,
-                                file_path,
-                                idea_id=idea_id,
+                    elif ref.key == "add_ideas":
+                        idea = self._ideas.get(ref.value)
+                        if idea is not None and idea.category in _HIRED_IDEA_CATEGORIES:
+                            report(
+                                f"{kind} '{obj_id}' adds idea '{ref.value}', but its category "
+                                f"is '{idea.category}', an advisor slot that is hired, not added",
+                                "idea_not_addable", owner, file_path, ref, idea_id=ref.value,
                             )
+                elif ref.kind == "event":
+                    if not catalogs.has("events", ref.value):
+                        report(
+                            f"{kind} '{obj_id}' references unknown event '{ref.value}'"
+                            + catalogs.case_hint("events", ref.value),
+                            "unknown_event_reference", owner, file_path, ref, event_id=ref.value,
                         )
-            for event_id in sorted(set(_EVENT_REF_RE.findall(script))):
-                if known_events and event_id not in known_events:
-                    errors.append(
-                        self._script_ref_error(
-                            f"{kind} '{obj_id}' references unknown event '{event_id}'",
-                            "unknown_event_reference",
-                            kind,
-                            obj_id,
-                            file_path,
-                            event_id=event_id,
+                elif ref.kind == "focus_tree":
+                    if not catalogs.has("focus_trees", ref.value):
+                        report(
+                            f"{kind} '{obj_id}' references unknown focus tree '{ref.value}'",
+                            "unknown_focus_tree_reference", owner, file_path, ref,
                         )
-                    )
-            for tree_id in sorted(set(_LOAD_FOCUS_TREE_RE.findall(script))):
-                if tree_id not in known_focus_trees:
-                    errors.append(
-                        self._script_ref_error(
-                            f"{kind} '{obj_id}' references unknown focus tree '{tree_id}'",
-                            "unknown_focus_tree_reference",
-                            kind,
-                            obj_id,
-                            file_path,
+                elif ref.kind == "technology":
+                    if not catalogs.has("technologies", ref.value):
+                        report(
+                            f"{kind} '{obj_id}' references unknown technology '{ref.value}'",
+                            "unknown_technology_reference", owner, file_path, ref,
                         )
-                    )
-            if known_state_ids:
-                for body, _, _ in iter_assignment_blocks(script, "start_civil_war"):
-                    capital_match = re.search(r"\bcapital\s*=\s*(\d+)\b", body)
+                elif ref.kind == "equipment":
+                    if not catalogs.has("equipment", ref.value):
+                        report(
+                            f"{kind} '{obj_id}' references unknown equipment '{ref.value}'",
+                            "unknown_equipment_reference", owner, file_path, ref,
+                        )
+                elif ref.kind == "civil_war_capital":
+                    if ref.value.isdigit() and not catalogs.has_state(int(ref.value)):
+                        report(
+                            f"{kind} '{obj_id}' uses civil-war capital {ref.value}, "
+                            "which is not a known state ID",
+                            "civil_war_capital_ref", owner, file_path, ref,
+                        )
+                elif ref.kind == "country":
                     if (
-                        capital_match is not None
-                        and int(capital_match.group(1)) not in known_state_ids
+                        ref.statement
+                        and kind in _SCRIPT_OWNERS
+                        and not DYNAMIC_TAG_RE.match(ref.value)
+                        and not catalogs.has_tag(ref.value)
                     ):
-                        errors.append(
-                            self._script_ref_error(
-                                (
-                                    f"{kind} '{obj_id}' uses civil-war capital "
-                                    f"{capital_match.group(1)}, which is not a known state ID"
-                                ),
-                                "civil_war_capital_ref",
-                                kind,
-                                obj_id,
-                                file_path,
-                            )
+                        report(
+                            f"{kind} '{obj_id}' scopes into unknown country tag '{ref.value}'",
+                            "unknown_country_scope", owner, file_path, ref,
                         )
-            if known_technologies:
-                for tech_id in sorted(set(self._technology_refs(script))):
-                    if tech_id not in known_technologies:
-                        errors.append(
-                            self._script_ref_error(
-                                f"{kind} '{obj_id}' references unknown technology '{tech_id}'",
-                                "unknown_technology_reference",
-                                kind,
-                                obj_id,
-                                file_path,
-                            )
+                elif ref.kind == "core_effect":
+                    if ref.certain and ref.scope == COUNTRY and kind in _SCRIPT_OWNERS:
+                        report(
+                            _core_effect_message(ref),
+                            "country_scope_core_effect", owner, file_path, ref,
                         )
-            if known_equipment:
-                for equipment_id in sorted(set(self._equipment_refs(script))):
-                    if equipment_id not in known_equipment:
-                        errors.append(
-                            self._script_ref_error(
-                                f"{kind} '{obj_id}' references unknown equipment '{equipment_id}'",
-                                "unknown_equipment_reference",
-                                kind,
-                                obj_id,
-                                file_path,
-                            )
+                elif ref.kind == "faction_effect":
+                    if ref.iterator == "country" and ref.certain:
+                        report(
+                            f"{kind} '{obj_id}': 'add_to_faction' inside "
+                            f"'{ref.scope_key}' runs once for every matched country, and "
+                            "each of them adds the target to its own faction. Scope to the "
+                            "faction leader instead, for example with "
+                            "Mod.effect_add_target_to_faction(leader, target).",
+                            "faction_scope_footgun", owner, file_path, ref, severity="info",
                         )
-            remove_count = len(re.findall(r"\bremove_ideas\s*=", script))
-            add_count = len(re.findall(r"\badd_ideas\s*=", script))
-            if remove_count >= 2 and add_count >= 1 and "swap_ideas" not in script:
-                errors.append(
-                    self._script_ref_error(
-                        f"{kind} '{obj_id}' removes {remove_count} ideas and adds {add_count}; consider Mod.effect_swap_idea() or hidden effects for cleaner tooltips",
-                        "bad_idea_tooltip_pattern",
-                        kind,
-                        obj_id,
-                        file_path,
-                    )
-                )
+                elif ref.kind == "civil_war":
+                    fields = set(ref.value.split("+"))
+                    if not fields & {"capital", "states"}:
+                        report(
+                            f"{kind} '{obj_id}': 'start_civil_war' names neither a capital "
+                            "nor states, so the game picks the revolt's territory; "
+                            "consider Mod.effect_spawn_revolution(...) for an explicit setup.",
+                            "civil_war_scope_footgun", owner, file_path, ref, severity="info",
+                        )
+                    if not has_tree_load:
+                        report(
+                            f"{kind} '{obj_id}': 'start_civil_war' is not paired with "
+                            "load_focus_tree; the breakaway country keeps a copy of its "
+                            "original's tree unless the script loads another one.",
+                            "civil_war_focus_tree_missing", owner, file_path, ref,
+                            severity="info",
+                        )
+            errors.extend(self._idea_tooltip_findings(owner, file_path))
         return errors
+
+    def _idea_tooltip_findings(
+        self, owner: ScriptOwner, file_path: str | None
+    ) -> list[ValidationError]:
+        """Advice: one effect that visibly removes several ideas and adds one."""
+
+        removed: dict[int, list[ScriptRef]] = {}
+        added: dict[int, int] = {}
+        swapped: set[int] = set()
+        for ref in owner.refs:
+            if ref.kind == "swap_ideas":
+                swapped.add(ref.root)
+            if ref.kind != "idea" or ref.hidden or ref.guarded:
+                continue
+            if ref.key == "remove_ideas":
+                removed.setdefault(ref.root, []).append(ref)
+            elif ref.key == "add_ideas":
+                added[ref.root] = added.get(ref.root, 0) + 1
+        findings: list[ValidationError] = []
+        for root, removals in removed.items():
+            if len(removals) < 2 or not added.get(root) or root in swapped:
+                continue
+            findings.append(
+                self._script_ref_error(
+                    f"{owner.kind} '{owner.id}' removes {len(removals)} ideas and adds "
+                    f"{added[root]} in one effect; consider Mod.effect_swap_idea() or "
+                    "hidden effects for cleaner tooltips",
+                    "bad_idea_tooltip_pattern", owner.kind, owner.id, file_path,
+                    severity="info", line=removals[0].line, column=removals[0].column,
+                )
+            )
+        return findings
 
     def _validate_state_effect_assumptions(
         self,
         *,
         entries: list[tuple[str, str, str | None, str | None]] | None = None,
     ) -> list[ValidationError]:
+        """Advice about state effects that may not do what they seem to.
+
+        Both findings are ``info``: the state's owner and cores at scenario
+        start say little about the moment the effect runs.
+        """
+
         errors: list[ValidationError] = []
-        for script, kind, obj_id, file_path in entries or self._script_entries():
-            if not script:
-                continue
-            for state_id_text in sorted(
-                set(
-                    re.findall(
-                        r"\b([0-9]+)\s*=\s*\{[^{}]*\badd_resistance\s*=",
-                        script,
-                        flags=re.DOTALL,
-                    )
-                )
-            ):
-                state = self._read_state_readonly(int(state_id_text))
-                if state and state.owner and state.owner in state.cores:
-                    errors.append(
-                        self._script_ref_error(
-                            (
-                                f"{kind} '{obj_id}' adds resistance to state {state.id}, but current owner "
-                                f"{state.owner} is already a core. Occupation resistance will not behave like "
-                                "generic unrest; use flags, variables, decisions, or revolt events."
-                            ),
-                            "resistance_on_core_state",
-                            kind,
-                            obj_id,
-                            file_path,
+        for owner, file_path in self._reference_owners(entries):
+            kind, obj_id = owner.kind, owner.id
+            for ref in owner.refs:
+                if ref.guarded:
+                    continue
+                if ref.kind == "resistance" and ref.scope_key.isdigit():
+                    state = self._read_state_readonly(int(ref.scope_key))
+                    if state and state.owner and state.owner in state.cores:
+                        errors.append(
+                            self._script_ref_error(
+                                (
+                                    f"{kind} '{obj_id}' adds resistance to state {state.id}, "
+                                    f"but its owner {state.owner} has a core there in history. "
+                                    "Occupation resistance will not behave like generic unrest; "
+                                    "use flags, variables, decisions, or revolt events."
+                                ),
+                                "resistance_on_core_state", kind, obj_id, file_path,
+                                severity="info", line=ref.line, column=ref.column,
+                            )
                         )
-                    )
-            for tag, state_id_text in sorted(
-                set(
-                    re.findall(
-                        r"\b([A-Z][A-Z0-9]{2})\s*=\s*\{[^{}]*\btransfer_state\s*=\s*([0-9]+)\b",
-                        script,
-                        flags=re.DOTALL,
-                    )
-                )
-            ):
-                state = self._read_state_readonly(int(state_id_text))
-                if state and state.owner == tag:
-                    errors.append(
-                        self._script_ref_error(
-                            (
-                                f"{kind} '{obj_id}' transfers state {state.id} to {tag}, but {tag} already "
-                                "owns that state in loaded history. Check released/existing-country edge cases."
-                            ),
-                            "revolt_state_already_owned",
-                            kind,
-                            obj_id,
-                            file_path,
+                elif (
+                    ref.kind == "transfer_state"
+                    and ref.value.isdigit()
+                    and is_country_tag(ref.scope_key)
+                ):
+                    state = self._read_state_readonly(int(ref.value))
+                    if state and state.owner == ref.scope_key:
+                        errors.append(
+                            self._script_ref_error(
+                                (
+                                    f"{kind} '{obj_id}' transfers state {state.id} to "
+                                    f"{ref.scope_key}, which already owns it in history. "
+                                    "Check released and existing-country edge cases."
+                                ),
+                                "revolt_state_already_owned", kind, obj_id, file_path,
+                                severity="info", line=ref.line, column=ref.column,
+                            )
                         )
-                    )
         return errors
 
     def _read_state_readonly(self, state_id: int) -> State | None:
@@ -1181,7 +1272,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         *,
         idea_id: str | None = None,
         event_id: str | None = None,
-        severity: Literal["error", "warning"] = "warning",
+        severity: Severity = "warning",
         line: int | None = None,
         column: int | None = None,
     ) -> ValidationError:
@@ -1192,90 +1283,8 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             file_path=file_path,
             focus_id=obj_id if kind == "focus" else None,
             event_id=event_id or (obj_id if kind == "event" else None),
-            idea_id=idea_id,
+            decision_id=obj_id if kind == "decision" else None,
+            idea_id=idea_id or (obj_id if kind == "idea" else None),
             line=line,
             column=column,
         )
-
-    @classmethod
-    def _script_reference_location(
-        cls,
-        script: str,
-        script_offset: int,
-        *,
-        obj_id: str | None,
-        file_path: str | None,
-        token: str,
-        occurrence: int = 0,
-    ) -> tuple[int, int]:
-        """Resolve a script finding to its source file when possible."""
-
-        if file_path is None:
-            return cls._line_column(script, script_offset)
-        path = Path(file_path)
-        try:
-            source = read_text(path)
-        except OSError:
-            return cls._line_column(script, script_offset)
-
-        ranges: list[tuple[int, int]] = []
-
-        def find_object_ranges(fragment: str, base_offset: int) -> None:
-            try:
-                spans = top_level_assignments(fragment)
-            except (ParseError, ValueError):
-                return
-            for span in spans:
-                if (
-                    not span.is_block
-                    or span.body_start is None
-                    or span.body_end is None
-                ):
-                    continue
-                body = fragment[span.body_start : span.body_end]
-                start = base_offset + span.body_start
-                end = base_offset + span.body_end
-                direct_id = next(
-                    (
-                        item
-                        for item in top_level_assignments(body)
-                        if item.key == "id" and not item.is_block
-                    ),
-                    None,
-                )
-                value = (
-                    body[direct_id.value_start : direct_id.value_end]
-                    .strip()
-                    .strip('"')
-                    if direct_id is not None
-                    else ""
-                )
-                if obj_id is not None and (span.key == obj_id or value == obj_id):
-                    ranges.append((start, end))
-                find_object_ranges(body, start)
-
-        if obj_id is not None:
-            find_object_ranges(source, 0)
-        masked = cls._mask_script_comments(source)
-        pattern = re.compile(rf"\b{re.escape(token)}\s*=")
-        for start, end in ranges:
-            base = source.find(script, start, end)
-            if base >= 0:
-                return cls._line_column(source, base + script_offset)
-        remaining = occurrence
-        for start, end in ranges:
-            matches = list(pattern.finditer(masked, start, end))
-            if remaining < len(matches):
-                return cls._line_column(source, matches[remaining].start())
-            remaining -= len(matches)
-        if ranges:
-            # The modeled object has diverged from its on-disk source. Do not
-            # borrow an identically named token from another source object.
-            return cls._line_column(script, script_offset)
-        base = source.find(script)
-        if base >= 0:
-            return cls._line_column(source, base + script_offset)
-        matches = list(pattern.finditer(masked))
-        if occurrence < len(matches):
-            return cls._line_column(source, matches[occurrence].start())
-        return cls._line_column(script, script_offset)

@@ -11,23 +11,49 @@ from ..events import scan_event_ids_file
 from ..ideas import scan_idea_ids_file
 from ..parser import (
     iter_assignment_blocks,
-    strip_comments,
 )
 from ..patching import (
     top_level_assignments,
 )
+from ..script_references import (
+    Definitions,
+    FileReferences,
+    definitions_of,
+    file_references,
+    resolve_equipment,
+)
 from ..syntax import parse
+from ..tags import load_all_tags
 from ..textio import decode_text, read_text
 from ..validation import (
     collect_character_ids,
 )
-from ._shared import (
-    _EQUIPMENT_STOCKPILE_RE,
-    _TECH_BLOCK_RE,
-)
 from ._sources import SourcesLayer
 
-_SCRIPT_BLOCK_ID_RE = re.compile(r"(?m)^\s*([A-Za-z0-9_.:-]+)\s*=\s*\{")
+# Folders whose script the game reads as effects, triggers and definitions.
+_CORPUS_DIRECTORIES = ("common", "events", "history")
+# References of inherited files, by path. A file is read again only when its
+# size or modification time changes, so a second Mod over the same game, or a
+# second validation, does not parse the whole game again.
+_INHERITED_REFERENCES: dict[str, tuple[int, int, FileReferences]] = {}
+
+
+def _inherited_references(path: Path, relative: str) -> FileReferences | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = str(path)
+    cached = _INHERITED_REFERENCES.get(key)
+    if cached is not None and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+        return cached[2]
+    try:
+        text = read_text(path)
+    except (OSError, ValueError):
+        return None
+    found = file_references(key, relative, text, own=False)
+    _INHERITED_REFERENCES[key] = (stat.st_mtime_ns, stat.st_size, found)
+    return found
 
 
 def _sprite_names(text: str) -> set[str]:
@@ -46,21 +72,134 @@ def _sprite_names(text: str) -> set[str]:
 class CatalogsLayer(SourcesLayer):
     """Catalogs of known identifiers (ideas, events, technologies, equipment, sprites)."""
 
-    @staticmethod
-    def _technology_refs(script: str) -> list[str]:
-        refs: list[str] = []
-        for body in _TECH_BLOCK_RE.findall(script):
-            refs.extend(
-                key for key in re.findall(r"\b([A-Za-z0-9_.:-]+)\s*=", body) if key != "popup"
-            )
-        return refs
+    def _definitions_in(self, relative: str) -> Definitions:
+        """What the effective files of one folder define, read from the tree."""
 
-    @staticmethod
-    def _equipment_refs(script: str) -> list[str]:
-        refs: list[str] = []
-        for body in _EQUIPMENT_STOCKPILE_RE.findall(script):
-            refs.extend(re.findall(r"\btype\s*=\s*([A-Za-z0-9_.:-]+)", body))
-        return refs
+        merged = Definitions()
+        for path, text in self._effective_script_texts(relative):
+            try:
+                inner = path.relative_to(self.mod_root).as_posix()
+            except ValueError:
+                inner = f"{relative}/{path.name}"
+            found = definitions_of(parse(text), inner)
+            merged.events.update(found.events)
+            merged.ideas.update(found.ideas)
+            merged.advisor_ideas |= found.advisor_ideas
+            merged.focus_trees |= found.focus_trees
+            merged.technologies |= found.technologies
+            merged.equipment.update(found.equipment)
+            merged.equipment_copies.extend(found.equipment_copies)
+            merged.tags |= found.tags
+            merged.organizations |= found.organizations
+        return merged
+
+    def _cached_names(self, key: str, relative: str, pick: str) -> set[str]:
+        cached = self._scan_cache.get(key)
+        if cached is None:
+            cached = set(getattr(self._definitions_in(relative), pick))
+            self._scan_cache[key] = cached
+        return set(cached)
+
+    def _known_advisor_idea_ids(self) -> set[str]:
+        """``idea_token`` of every advisor: hired, removed and checked as ideas."""
+
+        return self._cached_names("advisor_ideas", "common/characters", "advisor_ideas")
+
+    def _known_organization_ids(self) -> set[str]:
+        """Military-industrial organizations; ``show_ideas_tooltip`` can name them."""
+
+        return self._cached_names(
+            "organizations", "common/military_industrial_organization", "organizations"
+        )
+
+    def _known_country_tags(self) -> set[str]:
+        """Every tag a script may scope into.
+
+        Tags from ``common/country_tags`` of the game and the mod, the aliases of
+        ``common/country_tag_aliases`` (``SOU``, ``SPD``, ``VIC``, ...) and the
+        countries this mod creates. Dynamic tags ``D01`` to ``D99`` are checked
+        by their shape.
+        """
+
+        tags = set(load_all_tags(self._base_content_root, self.mod_root))
+        tags |= self._cached_names("tag_aliases", "common/country_tag_aliases", "tags")
+        tags.update(self._countries)
+        return tags
+
+    def _known_focus_tree_ids(self) -> set[str]:
+        """Focus trees of the mod (with pending edits) and the ones it inherits."""
+
+        trees = set(self._focus_trees)
+        trees |= self._cached_names("focus_trees", "common/national_focus", "focus_trees")
+        return trees
+
+    def _pending_script_texts(self) -> dict[Path, str | None]:
+        """Text every changed file will have after ``save()``; ``None`` deletes it."""
+
+        render = getattr(self, "_render_dirty_files", None)
+        pending: dict[Path, str | None] = dict(self._script_file_updates)
+        if render is not None:
+            try:
+                pending.update(render())
+            except Exception:
+                # Validation must still run when a pending edit cannot be
+                # rendered; save() reports that problem on its own.
+                pass
+        return pending
+
+    def _reference_corpus(self, *, inherited: bool = True) -> list[FileReferences]:
+        """The references of every script file the game will read.
+
+        The mod's own files come with their pending edits. With ``inherited``,
+        the files of the game and base mods that the mod does not override (or
+        hide with ``replace_path``) come too, marked ``own=False``.
+        """
+
+        pending = self._pending_script_texts()
+        sources: dict[str, Path] = {}
+        for top in _CORPUS_DIRECTORIES:
+            if inherited:
+                sources.update(
+                    (Path(relative).as_posix(), path)
+                    for relative, path in self.content_files(top).items()
+                )
+            else:
+                folder = self.mod_root / top
+                if folder.is_dir():
+                    for path in folder.rglob("*.txt"):
+                        sources[path.relative_to(self.mod_root).as_posix()] = path
+        for path in pending:
+            if path.is_relative_to(self.mod_root):
+                relative = path.relative_to(self.mod_root).as_posix()
+                if relative.split("/", 1)[0] in _CORPUS_DIRECTORIES:
+                    sources[relative] = path
+        cache: dict[Path, tuple[str, FileReferences]] = self.__dict__.setdefault(
+            "_own_reference_cache", {}
+        )
+        corpus: list[FileReferences] = []
+        for relative, path in sorted(sources.items()):
+            if not relative.endswith(".txt"):
+                continue
+            if not path.is_relative_to(self.mod_root):
+                found = _inherited_references(path, relative)
+                if found is not None:
+                    corpus.append(found)
+                continue
+            if path in pending:
+                text = pending[path]
+                if text is None:
+                    continue
+            else:
+                try:
+                    text = read_text(path)
+                except (OSError, ValueError):
+                    continue
+            cached = cache.get(path)
+            if cached is None or cached[0] != text:
+                cached = (text, file_references(str(path), relative, text, own=True))
+                cache[path] = cached
+            corpus.append(cached[1])
+        return corpus
 
     def _known_idea_ids(self) -> set[str]:
         ids = set(self._ideas)
@@ -100,11 +239,13 @@ class CatalogsLayer(SourcesLayer):
             events_dir = base / "events"
             if not events_dir.exists():
                 continue
-            for path in events_dir.glob("*.txt"):
+            for path in events_dir.rglob("*.txt"):
                 try:
                     scanned.update(scan_event_ids_file(path))
+                    text = read_text(path)
                 except (OSError, ValueError):
                     continue
+                scanned.update(definitions_of(parse(text), "events/" + path.name).events)
         self._scan_cache["events"] = scanned
         ids.update(scanned)
         return ids
@@ -204,22 +345,7 @@ class CatalogsLayer(SourcesLayer):
         cached = self._scan_cache.get("technologies")
         if cached is not None:
             return set(cached)
-        ids: set[str] = set()
-        ignored = {
-            "technologies",
-            "folder",
-            "path",
-            "xor",
-            "research_cost",
-            "start_year",
-            "categories",
-        }
-        for _, text in self._effective_script_texts("common/technologies"):
-            ids.update(
-                candidate
-                for candidate in _SCRIPT_BLOCK_ID_RE.findall(text)
-                if candidate not in ignored
-            )
+        ids = set(self._definitions_in("common/technologies").technologies)
         self._scan_cache["technologies"] = ids
         return ids
 
@@ -228,58 +354,17 @@ class CatalogsLayer(SourcesLayer):
             return dict(self._equipment_unlock_cache)
         unlocks: dict[str, list[str]] = {}
         for _, text in self._effective_script_texts("common/technologies"):
-            try:
-                wrappers = [
-                    span
-                    for span in top_level_assignments(text)
-                    if span.key == "technologies"
-                    and span.is_block
-                    and span.body_start is not None
-                    and span.body_end is not None
-                ]
-                for wrapper in wrappers:
-                    assert wrapper.body_start is not None
-                    assert wrapper.body_end is not None
-                    body = text[wrapper.body_start : wrapper.body_end]
-                    for technology in top_level_assignments(body):
-                        if (
-                            not technology.is_block
-                            or technology.body_start is None
-                            or technology.body_end is None
-                        ):
-                            continue
-                        tech_body = body[
-                            technology.body_start : technology.body_end
-                        ]
-                        equipment_span = next(
-                            (
-                                span
-                                for span in top_level_assignments(tech_body)
-                                if span.key == "enable_equipments"
-                                and span.is_block
-                                and span.body_start is not None
-                                and span.body_end is not None
-                            ),
-                            None,
-                        )
-                        if equipment_span is None:
-                            continue
-                        assert equipment_span.body_start is not None
-                        assert equipment_span.body_end is not None
-                        equipment_body = strip_comments(
-                            tech_body[
-                                equipment_span.body_start : equipment_span.body_end
-                            ]
-                        )
-                        for equipment in re.findall(
-                            r"\b[A-Za-z][A-Za-z0-9_.:-]*\b",
-                            equipment_body,
-                        ):
-                            unlocks.setdefault(equipment, []).append(
-                                technology.key
+            for wrapper in parse(text).root.assignments("technologies"):
+                if wrapper.block is None:
+                    continue
+                for technology in wrapper.block.assignments():
+                    if technology.block is None:
+                        continue
+                    for enabled in technology.block.blocks("enable_equipments"):
+                        for equipment in enabled.values():
+                            unlocks.setdefault(equipment.value, []).append(
+                                technology.key.value
                             )
-            except (OSError, ValueError):
-                continue
         self._equipment_unlock_cache = {
             equipment: tuple(dict.fromkeys(technologies))
             for equipment, technologies in unlocks.items()
@@ -290,9 +375,8 @@ class CatalogsLayer(SourcesLayer):
         cached = self._scan_cache.get("equipment")
         if cached is not None:
             return set(cached)
-        ids: set[str] = set()
-        for _, text in self._effective_script_texts("common/units/equipment"):
-            ids.update(_SCRIPT_BLOCK_ID_RE.findall(text))
+        found = self._definitions_in("common/units/equipment")
+        ids = resolve_equipment(found.equipment, found.equipment_copies)
         self._scan_cache["equipment"] = ids
         return ids
 

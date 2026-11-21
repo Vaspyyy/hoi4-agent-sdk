@@ -1030,12 +1030,12 @@ class TestAgentFacingApis:
         tech_dir = tmp_mod.root / "common" / "technologies"
         tech_dir.mkdir(parents=True, exist_ok=True)
         tech_dir.joinpath("industry.txt").write_text(
-            "known_tech = { research_cost = 1 }", encoding="utf-8"
+            "technologies = { known_tech = { research_cost = 1 } }", encoding="utf-8"
         )
         equip_dir = tmp_mod.root / "common" / "units" / "equipment"
         equip_dir.mkdir(parents=True, exist_ok=True)
         equip_dir.joinpath("infantry.txt").write_text(
-            "infantry_equipment_0 = { }", encoding="utf-8"
+            "equipments = { infantry_equipment_0 = { } }", encoding="utf-8"
         )
 
         mod.create_focus_tree("scl_focus", "SCL")
