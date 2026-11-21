@@ -517,7 +517,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         file_path = str(oob.path) if oob.path is not None else None
         tag = oob.country_tag or None
 
-        def add(
+        def flag(
             message: str,
             code: str,
             line: int | None,
@@ -542,7 +542,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
             line = lines.at(lines.templates, index)
             for battalion in (*template.battalions, *template.support):
                 if units and battalion.unit_type and battalion.unit_type not in units:
-                    add(
+                    flag(
                         f"template '{template.name}' uses unknown sub-unit type "
                         f"'{battalion.unit_type}'",
                         "unknown_oob_unit_type",
@@ -558,14 +558,14 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
             state = data.province_states.get(division.location)
             province_type = types.get(division.location)
             if state is None or (types and province_type is None):
-                add(
+                flag(
                     f"division '{label}' uses unknown province {division.location}",
                     "unknown_oob_province",
                     line,
                     state_id=state.id if state is not None else None,
                 )
             elif province_type is not None and province_type != "land":
-                add(
+                flag(
                     f"division '{label}' is placed in {province_type} province "
                     f"{division.location}",
                     "oob_water_location",
@@ -576,7 +576,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         for fleet_index, fleet in enumerate(oob.fleets):
             fleet_line = lines.at(lines.fleets, fleet_index)
             if fleet.naval_base > 0 and fleet.naval_base not in data.province_states:
-                add(
+                flag(
                     f"fleet '{fleet.name}' naval base uses unknown location "
                     f"{fleet.naval_base}",
                     "unknown_oob_naval_location",
@@ -593,7 +593,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                     and location not in data.province_states
                     and location not in types
                 ):
-                    add(
+                    flag(
                         f"task force '{task_force.name}' location uses unknown "
                         f"location {location}",
                         "unknown_oob_naval_location",
@@ -605,7 +605,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                     )
                     label = ship.name or "<ordered name>"
                     if units and ship.definition and ship.definition not in units:
-                        add(
+                        flag(
                             f"ship '{label}' uses unknown definition "
                             f"'{ship.definition}'",
                             "unknown_oob_ship_definition",
@@ -617,7 +617,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                             and equipment.equipment_type
                             and equipment.equipment_type not in equipment_ids
                         ):
-                            add(
+                            flag(
                                 f"ship '{label}' uses unknown equipment "
                                 f"'{equipment.equipment_type}'",
                                 "unknown_oob_equipment",
@@ -625,7 +625,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                             )
                         for owner in (equipment.owner, equipment.creator):
                             if owner and owner not in data.known_tags:
-                                add(
+                                flag(
                                     f"ship '{label}' uses unknown equipment owner "
                                     f"'{owner}'",
                                     "unknown_oob_equipment_owner",
@@ -640,7 +640,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                 and wing.location not in data.states
                 and wing.location not in data.province_states
             ):
-                add(
+                flag(
                     f"air wing '{wing.equipment_type}' location uses unknown "
                     f"location {wing.location}",
                     "unknown_oob_air_location",
@@ -651,14 +651,14 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                 and wing.equipment_type
                 and wing.equipment_type not in equipment_ids
             ):
-                add(
+                flag(
                     f"air wing uses unknown equipment '{wing.equipment_type}'",
                     "unknown_oob_equipment",
                     line,
                 )
             for owner in (wing.owner, wing.creator):
                 if owner and owner not in data.known_tags:
-                    add(
+                    flag(
                         f"air wing uses unknown equipment owner '{owner}'",
                         "unknown_oob_equipment_owner",
                         line,
@@ -682,7 +682,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         required = set(reference.required_dlc)
         excluded = set(reference.excluded_dlc)
 
-        def add(
+        def flag_use(
             message: str,
             code: str,
             line: int | None,
@@ -709,7 +709,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         def owner_advice(state: State | None, label: str, location: int, code: str, line: int | None) -> None:
             if not check_owner or state is None or state.owner == country_tag:
                 return
-            add(
+            flag_use(
                 f"{label} starts at {location}, owned by {state.owner}, not by "
                 f"{country_tag}. The game allows this (for example units in a "
                 "subject's or an ally's territory); check the location if it "
@@ -769,7 +769,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                         if not is_hull and _MAN_THE_GUNS not in excluded:
                             if not reported_legacy:
                                 reported_legacy = True
-                                add(
+                                flag_use(
                                     f"uses legacy naval equipment "
                                     f"'{equipment.equipment_type}' when Man the "
                                     "Guns may be active. HOI4 will skip these "
@@ -788,7 +788,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                         if is_hull and _MAN_THE_GUNS not in required:
                             if not reported_ungated:
                                 reported_ungated = True
-                                add(
+                                flag_use(
                                     "uses Man the Guns hull equipment but is not "
                                     "gated with required_dlc=('Man the Guns',). "
                                     "Add the gate and a legacy naval fallback.",
@@ -798,7 +798,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                         if not is_hull:
                             continue
                         if not equipment.version_name:
-                            add(
+                            flag_use(
                                 f"ship '{label}' uses "
                                 f"'{equipment.equipment_type}' without a "
                                 "version_name matching a country-history "
@@ -814,7 +814,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                             _MAN_THE_GUNS,
                             data,
                         ):
-                            add(
+                            flag_use(
                                 f"ship '{label}' references "
                                 f"{equipment.equipment_type} variant "
                                 f"'{equipment.version_name}', but no "
@@ -830,7 +830,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
             if "airframe" not in wing.equipment_type:
                 continue
             if _BY_BLOOD_ALONE not in required:
-                add(
+                flag_use(
                     f"uses By Blood Alone airframe equipment "
                     f"'{wing.equipment_type}' but is not gated with "
                     "required_dlc=('By Blood Alone',). Add the gate and a "
@@ -839,7 +839,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                     line,
                 )
             if not wing.version_name:
-                add(
+                flag_use(
                     f"air wing uses '{wing.equipment_type}' without a "
                     "version_name matching a country-history "
                     "create_equipment_variant definition.",
@@ -854,7 +854,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                 _BY_BLOOD_ALONE,
                 data,
             ):
-                add(
+                flag_use(
                     f"air wing references {wing.equipment_type} variant "
                     f"'{wing.version_name}', but no create_equipment_variant "
                     "definition in the owner or creator country history "
