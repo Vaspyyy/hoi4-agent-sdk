@@ -752,6 +752,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 self.mod_root,
                 known_state_ids=known_state_ids,
                 known_character_ids=known_character_ids,
+                pending=self._pending_script_texts(),
             )
         )
 

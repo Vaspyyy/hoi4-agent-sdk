@@ -336,3 +336,34 @@ def test_every_error_code_is_listed_once():
             break
     else:
         raise AssertionError("_ERROR_CODES not found")
+
+
+def test_country_history_references_read_the_unsaved_history(tmp_path):
+    from hoi4.characters import AdvisorRole, Character
+
+    root = mod_root(tmp_path)
+    write(root, "common/country_tags/00_countries.txt", 'CCH = "countries/Cch.txt"\n')
+    write(root, "common/countries/Cch.txt", "color = { 1 2 3 }\n")
+    write(
+        root,
+        "common/characters/CCH.txt",
+        "characters = {\n CCH_boss = {\n  name = CCH_boss\n"
+        "  country_leader = { ideology = liberalism }\n }\n}\n",
+    )
+    write(root, "history/countries/CCH - Cch.txt", "capital = 1\nrecruit_character = CCH_boss\n")
+    mod = Mod(root)
+    assert not codes(mod.validate(stage="build"), "character_ref")
+    mod.create_character(
+        "CCH",
+        Character(
+            id="CCH_new",
+            name="CCH_new",
+            roles=[AdvisorRole(slot="political_advisor", idea_token="cch_new_tok")],
+        ),
+    )
+    assert "recruit_character = CCH_new" in mod.preview()
+    assert not codes(mod.validate(stage="build"), "character_ref")
+    # Deleting the character but keeping its unsaved recruitment is a real mistake.
+    assert mod.delete_character("CCH_new", remove_recruitment=False)
+    findings = codes(mod.validate(stage="build"), "character_ref")
+    assert [f.message for f in findings] == ["Character CCH_new is not defined"]

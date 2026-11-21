@@ -337,6 +337,8 @@ All notable changes to this project are documented here. The format follows
   which follow the files on disk, so `save()` and `discard()` leave none
   stale. A file's top-level focus container is no longer taken for a focus
   tree id.
+- `capital_ref` and `character_ref` read a country history with its unsaved
+  edits, not only the file on disk.
 - `validate(suppress="code")` with one string instead of a list raises
   "takes a list of codes, not one string" instead of complaining about the
   code `'v'`.

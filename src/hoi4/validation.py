@@ -5,7 +5,7 @@ Validation rules for HOI4 mod data.
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -687,15 +687,27 @@ def validate_country_history_references(
     *,
     known_state_ids: set[int],
     known_character_ids: set[str],
+    pending: Mapping[Path, str | None] | None = None,
 ) -> list[ValidationError]:
-    """Validate capital and recruited-character references in mod histories."""
+    """Validate capital and recruited-character references in mod histories.
+
+    ``pending`` maps a file to the text an unsaved edit gives it (``None``
+    deletes it); such a file is read from there instead of from disk.
+    """
 
     issues: list[ValidationError] = []
     histories_dir = mod_root / "history" / "countries"
-    if not histories_dir.is_dir():
-        return issues
-    for path in sorted(histories_dir.glob("*.txt")):
-        doc = parse(read_text(path))
+    paths = set(histories_dir.glob("*.txt")) if histories_dir.is_dir() else set()
+    pending = pending or {}
+    paths.update(path for path in pending if path.parent == histories_dir and path.suffix == ".txt")
+    for path in sorted(paths):
+        if path in pending:
+            text = pending[path]
+            if text is None:
+                continue
+        else:
+            text = read_text(path)
+        doc = parse(text)
         # Every depth: a capital or recruitment inside a date or ``if`` block
         # is still a reference. Comments and strings are never statements.
         statements = sorted(

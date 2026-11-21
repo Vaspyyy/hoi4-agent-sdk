@@ -283,8 +283,14 @@ class CatalogsLayer(SourcesLayer):
         return names
 
     def _pending_script_texts(self) -> dict[Path, str | None]:
-        """Text every changed file will have after ``save()``; ``None`` deletes it."""
+        """Text every changed file will have after ``save()``; ``None`` deletes it.
 
+        Rendered once per validate() run; the result is shared, never change it.
+        """
+
+        return self._run_cached("pending_script_texts", self._render_pending_script_texts)
+
+    def _render_pending_script_texts(self) -> dict[Path, str | None]:
         render = getattr(self, "_render_dirty_files", None)
         pending: dict[Path, str | None] = dict(self._script_file_updates)
         if render is not None:
