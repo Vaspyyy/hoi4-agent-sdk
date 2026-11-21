@@ -60,15 +60,18 @@ __all__ = [
 # parser can never stop early.
 # A lone "!" or "?" belongs to a word ("foo?0" is a variable with a default);
 # only "!=" and "?=" are operators.
+# Strings and words take runs of plain characters at once (unrolled loops),
+# which the regex engine matches much faster than one alternation per
+# character.
 _TOKEN_RE = re.compile(
     r"""[ \t\r\n\f\v\ufeff]*(?:
         (\#[^\n]*)                                   # 1 comment
       | (\{)                                         # 2 open
       | (\})                                         # 3 close
       | ([<>]=?|[!?=]=|=)                            # 4 operator
-      | ("(?:[^"\\]|\\.)*"?)                         # 5 string (maybe unterminated)
+      | ("[^"\\]*(?:\\.[^"\\]*)*"?)                  # 5 string (maybe unterminated)
       | (@\[[^\]\n]*\]                               # 6 word: inline maths @[ 1 + 2 ]
-        |(?:[^ \t\r\n\f\v\ufeff{}=<>\#"!?]|[!?](?!=))+)   #   or a plain word
+        |(?:[^ \t\r\n\f\v\ufeff{}=<>\#"!?]+|[!?](?!=))+)  #   or a plain word
     )""",
     re.VERBOSE | re.DOTALL,
 )
@@ -489,7 +492,12 @@ def _parse_into(doc: Document) -> None:
                 problems.append(Problem(start, "unterminated_string", "Unterminated quoted string"))
             scalar = Scalar(doc, start, end, quoted)
             # Only a short bare word can be a type tag (``hsv360`` is the longest).
-            maybe_tag = not quoted and end - start <= 6 and text[start:end].lower() in _TAGS
+            maybe_tag = (
+                not quoted
+                and end - start <= 6
+                and text[start] in "rRhH"
+                and text[start:end].lower() in _TAGS
+            )
             if pending is not None:
                 key, op_start, op_end = pending
                 pending = None
