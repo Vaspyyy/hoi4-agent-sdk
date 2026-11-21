@@ -23,7 +23,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_value
-from .syntax import Assignment, Block, parse
+from .syntax import Assignment, Block, parse, require_entry
 from .textio import read_text
 
 VANILLA_AI_BEHAVIORS = ("democratic", "communist", "fascist", "neutral")
@@ -376,7 +376,9 @@ def serialize_ideologies_file(
 
 
 def _mapping_body(values: dict[str, str]) -> str:
-    return "\n".join(f"{key} = {value}" for key, value in values.items())
+    return "\n".join(
+        require_entry(key, value, f"the entry '{key}'") for key, value in values.items()
+    )
 
 
 def _patch_types_assignment(body: str, subtypes: list[SubIdeology]) -> str:

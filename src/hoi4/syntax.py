@@ -44,6 +44,9 @@ __all__ = [
     "parse",
     "quote",
     "repair",
+    "require_entry",
+    "require_statement",
+    "require_value",
     "require_well_formed",
     "unquote",
 ]
@@ -578,6 +581,42 @@ def require_well_formed(text: str, source: str | None = None) -> Document:
         where = f" in {source}" if source else ""
         raise ParseError(f"{problem.message} at line {line}, column {col}{where}")
     return doc
+
+
+def require_statement(statement: str, source: str | None = None) -> str:
+    """Return ``statement`` if it is exactly one well-formed statement.
+
+    A writer that puts a value after ``key =`` uses this for values it does
+    not quote itself: ``owner = GER`` is one statement, ``owner = a b`` is two
+    and ``owner = } x = 1 {`` is not well formed. Both would land in the
+    script around the statement. Raises :class:`ParseError` otherwise.
+    """
+
+    doc = require_well_formed(statement, source)
+    if len(doc.root.items) != 1:
+        where = f" in {source}" if source else ""
+        raise ParseError(
+            f"Expected one statement, found {len(doc.root.items)}{where}: {statement.strip()[:80]!r}"
+        )
+    return statement
+
+
+def require_value(value: object, source: str | None = None) -> str:
+    """Return ``value`` as text if it is exactly one value.
+
+    One value is a bare word, a quoted string or one block. Anything else
+    would not stay the value of the key it is written after.
+    """
+
+    text = str(value)
+    require_statement(f"value = {text}", source)
+    return text
+
+
+def require_entry(key: object, value: object, source: str | None = None) -> str:
+    """Return ``key = value`` if that is exactly one well-formed statement."""
+
+    return require_statement(f"{key} = {value}", source)
 
 
 def repair(text: str) -> str:

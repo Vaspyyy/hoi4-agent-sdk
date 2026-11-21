@@ -35,7 +35,7 @@ from .patching import (
     set_scalar,
 )
 from .script import pdx_string, pdx_value
-from .syntax import Assignment, Block, parse
+from .syntax import Assignment, Block, parse, quote, require_entry, require_well_formed
 from .textio import read_text, write_text
 from .types import Idea
 
@@ -250,9 +250,12 @@ def serialize_idea(idea: Idea, indent: int = 1) -> str:
         body = _patch_idea_body(idea, idea.raw_block)
         return f"{tab}{idea.id} = {{\n{_indent(body, indent + 1)}\n{tab}}}"
     lines = [f"{tab}{idea.id} = {{"]
-    lines.append(f"{tab}\tpicture = {normalize_idea_icon(idea.icon)}")
+    lines.append(f"{tab}\tpicture = {quote(normalize_idea_icon(idea.icon))}")
     if idea.removal_cost is not None:
         lines.append(f"{tab}\tremoval_cost = {pdx_value(idea.removal_cost)}")
+    # A body with a stray or missing brace would change the script around it.
+    for name in ("allowed", "ai_will_do"):
+        require_well_formed(getattr(idea, name), f"'{name}' of idea '{idea.id}'")
     if idea.allowed:
         lines.append(f"{tab}\tallowed = {{")
         for line in idea.allowed.strip().split("\n"):
@@ -261,19 +264,19 @@ def serialize_idea(idea: Idea, indent: int = 1) -> str:
     if idea.modifier:
         lines.append(f"{tab}\tmodifier = {{")
         for key, value in idea.modifier.items():
-            if isinstance(value, bool):
-                lines.append(f"{tab}\t\t{key} = {'yes' if value else 'no'}")
-            elif isinstance(value, float):
-                lines.append(f"{tab}\t\t{key} = {value}")
-            elif isinstance(value, int):
-                lines.append(f"{tab}\t\t{key} = {value}")
-            else:
-                lines.append(f"{tab}\t\t{key} = {pdx_string(value)}")
+            rendered = (
+                ("yes" if value else "no") if isinstance(value, bool)
+                else str(value) if isinstance(value, (int, float))
+                else pdx_string(value)
+            )
+            lines.append(f"{tab}\t\t" + require_entry(key, rendered, f"the modifier '{key}'"))
         lines.append(f"{tab}\t}}")
     if idea.research_bonus:
         lines.append(f"{tab}\tresearch_bonus = {{")
         for key, value in idea.research_bonus.items():
-            lines.append(f"{tab}\t\t{key} = {value}")
+            lines.append(
+                f"{tab}\t\t" + require_entry(key, value, f"the research bonus '{key}'")
+            )
         lines.append(f"{tab}\t}}")
     if idea.ai_will_do:
         lines.append(f"{tab}\tai_will_do = {{")
@@ -281,7 +284,7 @@ def serialize_idea(idea: Idea, indent: int = 1) -> str:
             lines.append(f"{tab}\t\t{line.strip()}")
         lines.append(f"{tab}\t}}")
     if idea.traits:
-        lines.append(f"{tab}\ttraits = {{ {' '.join(idea.traits)} }}")
+        lines.append(f"{tab}\ttraits = {{ {' '.join(quote(trait) for trait in idea.traits)} }}")
     lines.append(f"{tab}}}")
     return "\n".join(lines)
 

@@ -654,11 +654,14 @@ def _insert_statement(
         rest = body[anchor.end : len(body) if line_end < 0 else line_end]
         commented = rest.lstrip().startswith("#")
         rest_is_trailer = not rest.strip() or commented
-        if commented and not owns_line and line_start > 0:
+        if commented and not owns_line and line_end >= 0:
             # ``a = 1 b = 2 # note``: the comment stays with the statement it
-            # follows, and the new one goes on a line of its own below.
+            # follows, and the new one goes on a line of its own below. On the
+            # line of the opening brace it is indented like the line after it.
             owns_line = True
-            indent = prefix[: len(prefix) - len(prefix.lstrip())]
+            below = body[line_end + 1 :].split("\n", 1)[0]
+            source = prefix if line_start > 0 else below if below.strip() else "\t"
+            indent = source[: len(source) - len(source.lstrip())]
         # On the last line of a body the item shares its line with the ``}``.
         if owns_line and rest_is_trailer and line_end >= 0:
             rendered = "".join(indent + line + "\n" for line in lines)

@@ -30,7 +30,16 @@ from .patching import (
 from .paths import require_country_tag, safe_file_stem
 from .script import pdx_string, pdx_value
 from .structured_patching import patch_scalar_mapping
-from .syntax import Assignment, Block, Scalar, Tagged, Value, parse
+from .syntax import (
+    Assignment,
+    Block,
+    Scalar,
+    Tagged,
+    Value,
+    parse,
+    require_entry,
+    require_value,
+)
 from .tags import (
     add_country_tag,
     resolve_country_filename,
@@ -565,7 +574,9 @@ def _read_politics(history: str) -> tuple[str, bool | None]:
 def _popularity_body(popularities: dict[str, int]) -> str:
     ordered = [key for key in STANDARD_IDEOLOGY_GROUPS if key in popularities]
     ordered.extend(sorted(set(popularities) - set(ordered)))
-    return "\n".join(f"{key} = {popularities[key]}" for key in ordered)
+    return "\n".join(
+        require_entry(key, popularities[key], f"the popularity of '{key}'") for key in ordered
+    )
 
 
 def _country_localisation_suffixes(country: Country) -> list[str]:
@@ -839,14 +850,16 @@ def serialize_country_files(
         )
     )
     recruitment_lines = "".join(
-        f"recruit_character = {character_id}\n"
+        require_entry("recruit_character", character_id, "a recruited character") + "\n"
         for character_id in recruited_characters
     )
     elections = "yes" if country.elections_allowed else "no"
     pops = country.popularities
     ideas_block = ""
     if country.ideas:
-        ideas_lines = "\n".join(f" {idea}" for idea in country.ideas)
+        ideas_lines = "\n".join(
+            f" {require_value(idea, 'an entry of add_ideas')}" for idea in country.ideas
+        )
         ideas_block = f"\nadd_ideas = {{\n{ideas_lines}\n}}\n"
     research_slots = (
         f"set_research_slots = {country.research_slots}\n\n"
@@ -867,7 +880,7 @@ def serialize_country_files(
     technologies = ""
     if country.technologies:
         technology_lines = "\n".join(
-            f" {technology} = {level}"
+            " " + require_entry(technology, level, f"the technology '{technology}'")
             for technology, level in country.technologies.items()
         )
         technologies = f"set_technology = {{\n{technology_lines}\n}}\n"
@@ -890,7 +903,7 @@ def serialize_country_files(
         f"}}\n"
         f"\n"
         f"set_politics = {{\n"
-        f" ruling_party = {country.ruling_party}\n"
+        f" ruling_party = {require_value(country.ruling_party, 'ruling_party')}\n"
         f' last_election = "1936.1.1"\n'
         f" elections_allowed = {elections}\n"
         f"}}\n"
@@ -1057,7 +1070,10 @@ def _set_scalar_mapping_block(
     spans = [span for span in top_level_assignments(text) if span.key == key]
     if not values:
         return set_block(text, key, None)
-    rendered = "\n".join(f"{name} = {level}" for name, level in values.items())
+    rendered = "\n".join(
+        require_entry(name, level, f"the entry '{name}' of '{key}'")
+        for name, level in values.items()
+    )
     if not spans:
         return set_block(text, key, rendered)
     span = spans[0]

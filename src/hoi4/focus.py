@@ -335,6 +335,9 @@ def serialize_focus_tree(tree: FocusTree) -> str:
         parts.append(f"\tdefault = {'yes' if tree.default else 'no'}")
         parts.append("")
     if tree.continuous_focus_position:
+        require_well_formed(
+            tree.continuous_focus_position, "the body of 'continuous_focus_position'"
+        )
         parts.append("\tcontinuous_focus_position = {")
         for line in tree.continuous_focus_position.strip().split("\n"):
             parts.append(f"\t\t{line.strip()}")

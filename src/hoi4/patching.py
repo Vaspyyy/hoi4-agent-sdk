@@ -20,7 +20,7 @@ from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 
 from .parser import ParseError, TokenType, tokenize
-from .syntax import Assignment, Block, Tagged, parse, require_well_formed
+from .syntax import Assignment, Block, Tagged, parse, require_statement, require_well_formed
 
 
 @dataclass(frozen=True)
@@ -94,6 +94,9 @@ def set_scalar(text: str, key: str, value: str | None) -> str:
     spans = assignment_spans(text, key)
     if value is None:
         return _remove_assignments(text, spans)
+    # A value of several words, or one with a stray brace, would not stay the
+    # value of ``key``. (The key itself may be one that needs quotes.)
+    require_statement(f"value = {value}", f"the value of '{key}'")
     if not spans:
         return append_assignment(text, f"{key} = {value}")
     first = spans[0]
@@ -185,7 +188,8 @@ def same_block_body(current: str, new: str, *, comments: bool = False) -> bool:
     Comments are compared as soon as ``new`` has any, or when ``comments`` is
     true: a ``new`` without comments says nothing about the ones in
     ``current``. A compared comment has to say the same and sit at the same
-    statement: one that moved from the end of one line to another is a change.
+    statement, at every depth: one that moved from the end of one line to
+    another, also inside a nested block, is a change.
     """
 
     if not block_bodies_equivalent(current, new):
@@ -432,6 +436,27 @@ def _statement_key(segment: _Segment, fallback: object) -> object:
     return fallback
 
 
+def _comment_shape(text: str, item: object) -> tuple[object, ...]:
+    """Where the comments of one statement sit.
+
+    For a block they are told per inner statement, at every depth, so a
+    comment that moves between two statements of a nested block is a change.
+    For any other statement it is the text of its comments.
+    """
+
+    start, end = item.start, item.end  # type: ignore[attr-defined]
+    block = item.block if type(item) is Assignment else item if type(item) is Block else None
+    inner = None
+    if block is not None and block.closed:
+        inner = _segments(text[block.body_start : block.body_end], True, ())
+    if block is None or inner is None:
+        return _comment_texts(text[start:end])
+    outside = _comment_texts(text[start : block.body_start]) + _comment_texts(
+        text[block.body_end : end]
+    )
+    return (outside, tuple(segment.meaning for segment in inner))
+
+
 def _segments(text: str, count_comments: bool, keep: Collection[str]) -> list[_Segment] | None:
     doc = parse(text)
     if doc.problems:
@@ -465,7 +490,7 @@ def _segments(text: str, count_comments: bool, keep: Collection[str]) -> list[_S
             raw = text[item.start : item.end]
             meaning: tuple[object, ...] = ("statement", _semantic_tokens(raw))
             if count_comments:
-                meaning += (_comment_texts(raw), trailing)
+                meaning += (_comment_shape(text, item), trailing)
             segments.append(_Segment(item.start, item.end, full_end, meaning, item, trailing))
     except ParseError:
         return None

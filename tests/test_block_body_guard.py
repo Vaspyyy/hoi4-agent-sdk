@@ -1,120 +1,699 @@
-"""Script text with a stray brace is refused by every writer.
+"""No text handed to a writer may escape the place it is written to.
 
 ``} zz_breakout = 1 {`` is balanced once it sits inside a block, so the file
 it lands in still parses: the block closes early, the statement escapes into
-the surrounding script and a new block opens. Only the writer that wraps the
-text knows where the block was meant to end, so each one checks it.
+the surrounding script and a new block opens. The same works through a value
+(``ok } zz_breakout = 1 { x = 1``) or a key that is written bare. Only the
+writer knows where its block or value was meant to end, so each one has to
+refuse the text or quote it.
+
+The cases are not a hand-written list. Every text field of every model class
+is tried, read from the dataclasses themselves, in three situations: the
+object is created with the field, the field is set on a new object, and the
+field is set on an object that was saved and loaded again. A new field or a
+new model is covered without touching this file; a new ``create_*`` method
+needs one recipe below.
+
+Run this file as a script to see what each case does:
+``PYTHONPATH=src python tests/test_block_body_guard.py``.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import inspect
+import re
+import sys
+import tempfile
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Iterator
 
 import pytest
 
-from hoi4 import EventOption, EventText, Focus, Mod
-
-PAYLOAD = "} zz_breakout = 1 {"
-
-EVENTS = (
-    "add_namespace = t\ncountry_event = {\n\tid = t.1\n\ttitle = t.1.t\n"
-    "\toption = { name = t.1.a }\n}\n"
+from hoi4 import (
+    AdvisorRole,
+    AirWing,
+    ArmyCommanderRole,
+    Battalion,
+    Bookmark,
+    BookmarkCountry,
+    Character,
+    CharacterInstance,
+    CharacterPortrait,
+    Country,
+    CountryLeaderRole,
+    Decision,
+    DecisionCategory,
+    DivisionTemplate,
+    DivisionUnit,
+    DynamicModifier,
+    EquipmentVariant,
+    Event,
+    EventOption,
+    EventText,
+    Fleet,
+    Focus,
+    FocusTree,
+    Idea,
+    Ideology,
+    Mod,
+    NavyLeaderRole,
+    OnAction,
+    Ship,
+    ShipEquipment,
+    State,
+    SubIdeology,
+    TaskForce,
 )
-FOCUS_TREE = (
-    "focus_tree = {\n\tid = zz_tree\n\tcountry = { factor = 1 }\n"
-    "\tfocus = {\n\t\tid = F1\n\t\ticon = GFX_goal_generic\n\t\tx = 0\n\t\ty = 0\n\t\tcost = 1\n\t}\n}\n"
-)
-DECISIONS = "cat_a = {\n\ticon = icon_a\n\tdec_a = {\n\t\tcost = 10\n\t}\n}\n"
-STATE = (
-    "state = {\n\tid = 1\n\tname = \"STATE_1\"\n\tmanpower = 1\n\tstate_category = town\n"
-    "\thistory = {\n\t\towner = FRA\n\t}\n\tprovinces = { 1 }\n}\n"
-)
-ON_ACTIONS = "on_actions = {\n\ton_startup = {\n\t\tevents = {\n\t\t\tt.1\n\t\t}\n\t}\n}\n"
+from hoi4.definitions import DEFINITION_KINDS
+from hoi4.syntax import parse
+from hoi4.textio import read_text
 
-SOURCES = {
-    "events/t.txt": EVENTS,
-    "common/national_focus/zz.txt": FOCUS_TREE,
-    "common/decisions/zz.txt": DECISIONS,
-    "history/states/1-Test.txt": STATE,
-    "common/on_actions/zz_on_actions.txt": ON_ACTIONS,
-}
+BLOCK = "} zz_breakout = 1 {"
+SCALAR = "ok } zz_breakout = 1 { x = 1"
+KEY = "a = 1 } zz_breakout = 1 { b"
 
-Attempt = Callable[[Mod], object]
-
-ATTEMPTS: dict[str, Attempt] = {
-    # A new block in an existing object.
-    "event trigger": lambda mod: mod.update_event("t.1", trigger=PAYLOAD),
-    "event immediate": lambda mod: mod.update_event("t.1", immediate=PAYLOAD),
-    "event mean_time_to_happen": lambda mod: mod.update_event("t.1", mean_time_to_happen=PAYLOAD),
-    "event conditional title": lambda mod: mod.update_event(
-        "t.1", conditional_titles=[EventText("t.1.t2", PAYLOAD)]
-    ),
-    "event option effect": lambda mod: mod.update_event_option("t.1", 0, effect=PAYLOAD),
-    "focus icon block": lambda mod: mod.update_focus("zz_tree", "F1", icon_blocks=[PAYLOAD]),
-    "focus completion_reward": lambda mod: mod.update_focus(
-        "zz_tree", "F1", completion_reward=PAYLOAD
-    ),
-    "decision available": lambda mod: mod.update_decision("dec_a", available=PAYLOAD),
-    "decision category allowed": lambda mod: mod.update_decision_category(
-        "cat_a", allowed=PAYLOAD
-    ),
-    "state buildings": lambda mod: mod.set_state_properties(1, buildings=PAYLOAD),
-    "on_action effect": lambda mod: mod.update_on_action("on_startup", effect=PAYLOAD),
-    "on_action events": lambda mod: mod.update_on_action("on_startup", events=[PAYLOAD]),
-    "on_action random_events": lambda mod: mod.update_on_action(
-        "on_startup", random_events=["10", PAYLOAD]
-    ),
-    # A new object.
-    "new event trigger": lambda mod: mod.create_event("t.2", title="t", trigger=PAYLOAD),
-    "new event option": lambda mod: mod.create_event(
-        "t.2", title="t", options=[EventOption(name="t.2.a", effect=PAYLOAD)]
-    ),
-    "new event conditional description": lambda mod: mod.create_event(
-        "t.2", title="t", conditional_descriptions=[EventText("t.2.d", PAYLOAD)]
-    ),
-    "new focus available": lambda mod: mod.add_focus(
-        "zz_tree", Focus(id="F2", x=1, y=0, available=PAYLOAD)
-    ),
-    "new focus icon block": lambda mod: mod.add_focus(
-        "zz_tree", Focus(id="F2", x=1, y=0, icon_blocks=[PAYLOAD])
-    ),
-    "new decision complete_effect": lambda mod: mod.create_decision(
-        "cat_a", "dec_b", complete_effect=PAYLOAD
-    ),
-    "new mission activation": lambda mod: mod.create_mission(
-        "cat_a", "mission_b", days_mission_timeout=30, activation=PAYLOAD
-    ),
-    "new decision category visible": lambda mod: mod.create_decision_category(
-        "cat_b", visible=PAYLOAD
-    ),
-    "new dynamic modifier enable": lambda mod: mod.create_dynamic_modifier(
-        "zz_dynamic", enable=PAYLOAD
-    ),
-    "new on_action effect": lambda mod: mod.create_on_action("on_monthly", effect=PAYLOAD),
-    "new on_action events": lambda mod: mod.create_on_action("on_monthly", events=[PAYLOAD]),
-    "new ai strategy allowed": lambda mod: mod.create_ai_strategy(
-        "zz_plan", [("alliance", "GER", 10)], allowed=PAYLOAD
-    ),
-    "new scripted localisation trigger": lambda mod: mod.create_scripted_localisation(
-        "zz_text", [(PAYLOAD, "KEY")]
-    ),
-    "new scripted effect": lambda mod: mod.create_scripted_effect("zz_effect", PAYLOAD),
+_SCRIPT_SUFFIXES = {".txt", ".gfx", ".gui", ".asset"}
+# Fields that hold what was read from the file, not what is written.
+_SOURCE_FIELDS = {
+    "raw_block", "raw_text", "raw_definition", "raw_history", "raw_character",
+    "category_raw_block", "definition_raw_block", "touched", "touched_fields",
+    "path", "paths", "definition_path", "history_path", "character_path",
+    "source_path", "source_index", "source_occurrence", "source_location_index",
+    "_source_body", "id", "tag", "kind",
 }
 
 
-@pytest.mark.parametrize("name", sorted(ATTEMPTS))
-def test_script_text_with_a_stray_brace_is_refused(tmp_path: Path, name: str) -> None:
-    for relative, text in SOURCES.items():
-        target = tmp_path / relative
+def _values(annotation: object) -> list[Any]:
+    """Texts worth trying for a field or parameter of this type."""
+
+    text = str(annotation).replace("typing.", "").replace("Optional[", "").lower()
+    text = text.strip("'\"")
+    if text.startswith(("dict[str", "mapping[str")):
+        return [{"zz_key": BLOCK}, {"zz_key": SCALAR}, {KEY: 1}]
+    if "list[list[str]]" in text:
+        return [[[BLOCK]], [[SCALAR]]]
+    if "list[str]" in text or "sequence[str]" in text:
+        return [[BLOCK], [SCALAR]]
+    if "tuple[str, ...]" in text:
+        return [(BLOCK,), (SCALAR,)]
+    if any(container in text for container in ("list[", "dict[", "tuple[", "sequence[", "set[")):
+        return []
+    return [BLOCK, SCALAR] if re.search(r"\bstr\b", text) else []
+
+
+def _fields(cls: type, skip: frozenset[str] = frozenset()) -> list[tuple[str, Any]]:
+    cases = []
+    for field in dataclasses.fields(cls):
+        if field.name in _SOURCE_FIELDS or field.name in skip:
+            continue
+        cases.extend((field.name, value) for value in _values(field.type))
+    return cases
+
+
+def _parameters(function: Callable[..., object], skip: frozenset[str]) -> list[tuple[str, Any]]:
+    cases = []
+    for parameter in list(inspect.signature(function).parameters.values())[1:]:
+        if parameter.name in skip or parameter.kind is parameter.VAR_KEYWORD:
+            continue
+        cases.extend((parameter.name, value) for value in _values(parameter.annotation))
+    return cases
+
+
+# ── fixtures ────────────────────────────────────────────────────────
+
+
+def _plain_mod(root: Path) -> Mod:
+    return Mod(root)
+
+
+def _map_mod(root: Path) -> Mod:
+    """A mod over a tiny game folder with two states, for map and state edits."""
+
+    game = root.parent / (root.name + "_game")
+    rows = ["0;0;0;0;land;false;unknown;0"] + [
+        f"{province};{province * 10};0;0;land;false;plains;1" for province in range(1, 7)
+    ]
+
+    def write(relative: str, text: str) -> None:
+        target = game / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
-    mod = Mod(tmp_path)
 
-    # ParseError is a ValueError; some writers refuse with a plain one.
-    with pytest.raises(ValueError):
-        ATTEMPTS[name](mod)
+    write("map/definition.csv", "\n".join(rows) + "\n")
+    for state_id, provinces in ((1, "1 2 3"), (2, "4 5 6")):
+        write(
+            f"history/states/{state_id}-S.txt",
+            f"state = {{\n\tid = {state_id}\n\tname = \"STATE_{state_id}\"\n\tmanpower = 1\n"
+            "\tstate_category = rural\n\thistory = {\n\t\towner = ABC\n\t\tadd_core_of = ABC\n"
+            "\t\tbuildings = {\n\t\t\tinfrastructure = 1\n\t\t}\n\t}\n"
+            f"\tprovinces = {{ {provinces} }}\n}}\n",
+        )
+    write(
+        "map/strategicregions/1-Land.txt",
+        "strategic_region = {\n\tid = 1\n\tname = \"STRATEGICREGION_1\"\n"
+        "\tprovinces = { 1 2 3 4 5 6 }\n\tweather = {\n\t\tperiod = {\n"
+        "\t\t\tbetween = { 0.0 30.0 }\n\t\t}\n\t}\n}\n",
+    )
+    write("map/buildings.txt", "1;arms_factory;0.50;1.00;3.50;0.00;0\n")
+    return Mod(root, hoi4_install=game)
+
+
+@dataclasses.dataclass(frozen=True)
+class Recipe:
+    """How one kind of object is created and changed.
+
+    ``create`` makes a plain valid object. ``update`` sets one field of it.
+    ``create_with`` makes it with one field already set. ``cases`` are the
+    ``(field, value)`` pairs to try.
+    """
+
+    name: str
+    cases: list[tuple[str, Any]]
+    create: Callable[[Mod], object] | None = None
+    update: Callable[[Mod, str, Any], object] | None = None
+    create_with: Callable[[Mod, str, Any], object] | None = None
+    make_mod: Callable[[Path], Mod] = _plain_mod
+
+
+def _new_focus_tree(mod: Mod) -> None:
+    mod.create_focus_tree("zz_tree", "ZZZ")
+    mod.add_focus("zz_tree", Focus(id="ZZ_focus", x=0, y=0))
+
+
+def _new_event(mod: Mod) -> None:
+    mod.create_event("zz.1", title="zz.1.t", options=[EventOption(name="zz.1.a")])
+
+
+def _new_character(mod: Mod, **fields: Any) -> None:
+    mod.create_character(
+        "ZZZ", Character(**{"id": "ZZZ_person", "name": "Person", **fields}), recruit=False
+    )
+
+
+def _new_oob(mod: Mod, **parts: Any) -> None:
+    land = {
+        "templates": [DivisionTemplate("Line", [Battalion("infantry", 0, 0)])],
+        "divisions": [DivisionUnit("Line", 1)],
+    }
+    mod.create_oob("ZZZ_1936", "ZZZ", assign=False, **(parts or land))
+
+
+def _role_recipe(name: str, role_type: str, cls: type) -> Recipe:
+    return Recipe(
+        name,
+        _fields(cls),
+        create=lambda mod: _new_character(mod, roles=[cls()]),
+        update=lambda mod, field, value: mod.update_character_role(
+            "ZZZ_person", role_type, **{field: value}
+        ),
+        create_with=lambda mod, field, value: _new_character(
+            mod, roles=[cls(**{field: value})]
+        ),
+    )
+
+
+def _replaced(obj: Any, field: str, value: Any) -> Any:
+    return dataclasses.replace(obj, **{field: value})
+
+
+_SHIP = Ship("Ship", "destroyer", [ShipEquipment("ship_hull_light_1", 1, "ZZZ")])
+_FORCE = TaskForce("Force", 1, [_SHIP])
+_FLEET = Fleet("Fleet", 1, [_FORCE])
+_TEMPLATE = DivisionTemplate("Line", [Battalion("infantry", 0, 0)])
+
+RECIPES: list[Recipe] = [
+    Recipe(
+        "focus",
+        _fields(Focus),
+        create=_new_focus_tree,
+        update=lambda mod, field, value: mod.update_focus("zz_tree", "ZZ_focus", **{field: value}),
+        create_with=lambda mod, field, value: (
+            mod.create_focus_tree("zz_tree", "ZZZ"),
+            mod.add_focus("zz_tree", Focus(**{"id": "ZZ_focus", "x": 0, "y": 0, field: value})),
+        ),
+    ),
+    Recipe(
+        "focus tree",
+        _fields(FocusTree),
+        create=_new_focus_tree,
+        update=lambda mod, field, value: mod.update_focus_tree("zz_tree", **{field: value}),
+    ),
+    Recipe(
+        "event",
+        _fields(Event),
+        create=_new_event,
+        update=lambda mod, field, value: mod.update_event("zz.1", **{field: value}),
+        create_with=lambda mod, field, value: mod.create_event(
+            "zz.1", **{"title": "zz.1.t", field: value}
+        ),
+    ),
+    Recipe(
+        "event option",
+        _fields(EventOption),
+        create=_new_event,
+        update=lambda mod, field, value: mod.update_event_option("zz.1", 0, **{field: value}),
+        create_with=lambda mod, field, value: mod.create_event(
+            "zz.1", title="zz.1.t", options=[EventOption(**{"name": "zz.1.a", field: value})]
+        ),
+    ),
+    Recipe(
+        "event conditional text",
+        [
+            (kind, EventText(**{"text": "zz.1.t2", "trigger": "always = yes", field: value}))
+            for kind in ("conditional_titles", "conditional_descriptions")
+            for field, value in _fields(EventText)
+        ],
+        create=_new_event,
+        update=lambda mod, field, value: mod.update_event("zz.1", **{field: [value]}),
+        create_with=lambda mod, field, value: mod.create_event(
+            "zz.1", title="zz.1.t", **{field: [value]}
+        ),
+    ),
+    Recipe(
+        "event option conditional name",
+        [
+            ("conditional_names", EventText(**{"text": "zz.1.a2", "trigger": "always = yes", field: value}))
+            for field, value in _fields(EventText)
+        ],
+        create=_new_event,
+        update=lambda mod, field, value: mod.update_event_option("zz.1", 0, **{field: [value]}),
+    ),
+    Recipe(
+        "idea",
+        _fields(Idea),
+        create=lambda mod: mod.create_idea("zz_idea"),
+        update=lambda mod, field, value: mod.update_idea("zz_idea", **{field: value}),
+        create_with=lambda mod, field, value: mod.create_idea("zz_idea", **{field: value}),
+    ),
+    Recipe(
+        "decision",
+        _fields(Decision),
+        create=lambda mod: mod.create_decision("zz_cat", "zz_decision"),
+        update=lambda mod, field, value: mod.update_decision("zz_decision", **{field: value}),
+        create_with=lambda mod, field, value: mod.create_decision(
+            "zz_cat", "zz_decision", **{field: value}
+        ),
+    ),
+    Recipe(
+        "decision category",
+        _fields(DecisionCategory),
+        create=lambda mod: mod.create_decision_category("zz_cat"),
+        update=lambda mod, field, value: mod.update_decision_category("zz_cat", **{field: value}),
+        create_with=lambda mod, field, value: mod.create_decision_category(
+            "zz_cat", **{field: value}
+        ),
+    ),
+    Recipe(
+        "ideology",
+        _fields(Ideology),
+        create=lambda mod: mod.create_ideology("zz_ideology"),
+        update=lambda mod, field, value: mod.update_ideology("zz_ideology", **{field: value}),
+        create_with=lambda mod, field, value: mod.create_ideology(
+            "zz_ideology", **{field: value}
+        ),
+    ),
+    Recipe(
+        "sub-ideology",
+        [("name", BLOCK), ("name", SCALAR)],
+        create_with=lambda mod, field, value: mod.create_ideology(
+            "zz_ideology", types=[SubIdeology(value)]
+        ),
+    ),
+    Recipe(
+        "dynamic modifier",
+        _fields(DynamicModifier),
+        create=lambda mod: mod.create_dynamic_modifier("zz_dynamic"),
+        update=lambda mod, field, value: mod.update_dynamic_modifier(
+            "zz_dynamic", **{field: value}
+        ),
+        create_with=lambda mod, field, value: mod.create_dynamic_modifier(
+            "zz_dynamic", **{field: value}
+        ),
+    ),
+    Recipe(
+        "bookmark",
+        _fields(Bookmark, frozenset({"name"})),
+        create=lambda mod: mod.create_bookmark("ZZ_BOOKMARK"),
+        update=lambda mod, field, value: mod.update_bookmark("ZZ_BOOKMARK", **{field: value}),
+        create_with=lambda mod, field, value: mod.create_bookmark(
+            "ZZ_BOOKMARK", **{field: value}
+        ),
+    ),
+    Recipe(
+        "bookmark name",
+        [("name", BLOCK), ("name", SCALAR)],
+        create_with=lambda mod, field, value: mod.create_bookmark(value),
+    ),
+    Recipe(
+        "bookmark country",
+        _fields(BookmarkCountry),
+        create=lambda mod: mod.create_bookmark("ZZ_BOOKMARK", countries=[BookmarkCountry("GER")]),
+        update=lambda mod, field, value: mod.update_bookmark_country(
+            "ZZ_BOOKMARK", "GER", **{field: value}
+        ),
+        create_with=lambda mod, field, value: mod.create_bookmark(
+            "ZZ_BOOKMARK", countries=[BookmarkCountry(**{"tag": "GER", field: value})]
+        ),
+    ),
+    Recipe(
+        "country",
+        [
+            *_fields(Country),
+            *((name, value) for name in ("leader_name", "leader_ideology", "leader_portrait_slug")
+              for value in (BLOCK, SCALAR)),
+        ],
+        create=lambda mod: mod.create_country("ZZZ", "Zzz"),
+        update=lambda mod, field, value: mod.update_country("ZZZ", **{field: value}),
+        create_with=lambda mod, field, value: mod.create_country(
+            "ZZZ", **{"name": "Zzz", field: value}
+        ),
+    ),
+    Recipe(
+        "country name pool",
+        [
+            (name, value)
+            for name in ("male_names", "surnames", "female_names", "callsigns")
+            for value in ([BLOCK], [SCALAR])
+        ],
+        create_with=lambda mod, field, value: mod.set_country_name_pool(
+            "ZZZ", **{"male_names": ["A"], "surnames": ["B"], field: value}
+        ),
+    ),
+    Recipe(
+        "character",
+        _fields(Character),
+        create=_new_character,
+        update=lambda mod, field, value: mod.update_character("ZZZ_person", **{field: value}),
+        create_with=lambda mod, field, value: _new_character(mod, **{field: value}),
+    ),
+    Recipe(
+        "character portrait",
+        _fields(CharacterPortrait),
+        create_with=lambda mod, field, value: _new_character(
+            mod, portraits=[CharacterPortrait(**{field: value})]
+        ),
+    ),
+    Recipe(
+        "character instance",
+        _fields(CharacterInstance),
+        create=lambda mod: _new_character(mod, instances=[CharacterInstance()]),
+        update=lambda mod, field, value: mod.update_character_instance(
+            "ZZZ_person", 0, **{field: value}
+        ),
+        create_with=lambda mod, field, value: _new_character(
+            mod, instances=[CharacterInstance(**{field: value})]
+        ),
+    ),
+    _role_recipe("advisor role", "advisor", AdvisorRole),
+    _role_recipe("country leader role", "country_leader", CountryLeaderRole),
+    _role_recipe("army commander role", "corps_commander", ArmyCommanderRole),
+    _role_recipe("navy leader role", "navy_leader", NavyLeaderRole),
+    Recipe(
+        "on_action",
+        _fields(OnAction),
+        create=lambda mod: mod.create_on_action("on_startup", events=["zz.1"]),
+        update=lambda mod, field, value: mod.update_on_action("on_startup", **{field: value}),
+        create_with=lambda mod, field, value: mod.create_on_action(
+            "on_startup", **{field: value}
+        ),
+    ),
+    Recipe(
+        "on_action random event",
+        [("random_events", ["10", BLOCK]), ("random_events", ["10", SCALAR])],
+        create=lambda mod: mod.create_on_action("on_startup", random_events=["5", "zz.1"]),
+        update=lambda mod, field, value: mod.update_on_action("on_startup", **{field: value}),
+        create_with=lambda mod, field, value: mod.create_on_action(
+            "on_startup", **{field: value}
+        ),
+    ),
+    Recipe(
+        "state",
+        _fields(State, frozenset({"name"})),
+        update=lambda mod, field, value: mod.set_state_properties(1, **{field: value}),
+        make_mod=_map_mod,
+    ),
+    Recipe(
+        "new state",
+        _parameters(Mod.create_state, frozenset({"localisation_file", "provinces"})),
+        create_with=lambda mod, field, value: mod.create_state(
+            [3], **{"name": "New", field: value}
+        ),
+        make_mod=_map_mod,
+    ),
+    Recipe(
+        "new strategic region",
+        _parameters(Mod.create_strategic_region, frozenset({"localisation_file", "provinces"})),
+        create_with=lambda mod, field, value: mod.create_strategic_region(
+            **{"name": "Region", "provinces": [3], field: value}
+        ),
+        make_mod=_map_mod,
+    ),
+    Recipe(
+        "map building",
+        [("building", BLOCK), ("building", SCALAR)],
+        create_with=lambda mod, field, value: mod.add_map_building(1, value, 1.0, 1.0, 1.0, 0.0),
+        make_mod=_map_mod,
+    ),
+    Recipe(
+        "order of battle",
+        _parameters(Mod.create_oob, frozenset({"path", "kind", "country_tag"})),
+        create_with=lambda mod, field, value: mod.create_oob(
+            **{
+                "name": "ZZZ_1936", "country_tag": "ZZZ", "assign": False,
+                "templates": [_TEMPLATE], "divisions": [DivisionUnit("Line", 1)],
+                field: value,
+            }
+        ),
+    ),
+    Recipe(
+        "division template",
+        _fields(DivisionTemplate),
+        create_with=lambda mod, field, value: _new_oob(
+            mod, templates=[_replaced(_TEMPLATE, field, value)], divisions=[]
+        ),
+    ),
+    Recipe(
+        "battalion",
+        _fields(Battalion),
+        create_with=lambda mod, field, value: _new_oob(
+            mod, templates=[DivisionTemplate("Line", [Battalion(value, 0, 0)])], divisions=[]
+        ),
+    ),
+    Recipe(
+        "division",
+        _fields(DivisionUnit),
+        create_with=lambda mod, field, value: _new_oob(
+            mod,
+            templates=[
+                DivisionTemplate(
+                    value if field == "division_template" else "Line",
+                    [Battalion("infantry", 0, 0)],
+                )
+            ],
+            divisions=[_replaced(DivisionUnit("Line", 1), field, value)],
+        ),
+    ),
+    Recipe(
+        "fleet",
+        _fields(Fleet),
+        create_with=lambda mod, field, value: _new_oob(
+            mod, fleets=[_replaced(_FLEET, field, value)]
+        ),
+    ),
+    Recipe(
+        "task force",
+        _fields(TaskForce),
+        create_with=lambda mod, field, value: _new_oob(
+            mod, fleets=[Fleet("Fleet", 1, [_replaced(_FORCE, field, value)])]
+        ),
+    ),
+    Recipe(
+        "ship",
+        _fields(Ship),
+        create_with=lambda mod, field, value: _new_oob(
+            mod,
+            fleets=[Fleet("Fleet", 1, [TaskForce("Force", 1, [_replaced(_SHIP, field, value)])])],
+        ),
+    ),
+    Recipe(
+        "ship equipment",
+        _fields(ShipEquipment),
+        create_with=lambda mod, field, value: _new_oob(
+            mod,
+            fleets=[
+                Fleet(
+                    "Fleet", 1,
+                    [TaskForce("Force", 1, [Ship("Ship", "destroyer", [
+                        _replaced(ShipEquipment("ship_hull_light_1", 1, "ZZZ"), field, value)
+                    ])])],
+                )
+            ],
+        ),
+    ),
+    Recipe(
+        "air wing",
+        _fields(AirWing),
+        create_with=lambda mod, field, value: _new_oob(
+            mod, air_wings=[_replaced(AirWing(1, "fighter_equipment_0", 10, "ZZZ"), field, value)]
+        ),
+    ),
+    Recipe(
+        "equipment variant",
+        _fields(EquipmentVariant),
+        create_with=lambda mod, field, value: mod.create_equipment_variant(
+            "ZZZ",
+            EquipmentVariant(**{"name": "Variant", "equipment_type": "light_tank_chassis_1", field: value}),
+        ),
+    ),
+    Recipe(
+        "definition",
+        [(kind, value) for kind in DEFINITION_KINDS for value in (BLOCK, SCALAR)],
+        create_with=lambda mod, field, value: mod.create_definition(field, "zz_definition", value),
+    ),
+    Recipe(
+        "definition id",
+        [(kind, value) for kind in DEFINITION_KINDS for value in (BLOCK, SCALAR)],
+        create_with=lambda mod, field, value: mod.create_definition(field, value, "x = 1"),
+    ),
+    Recipe(
+        "ai strategy",
+        [
+            *_parameters(Mod.create_ai_strategy, frozenset({"path", "plan_id", "strategies"})),
+            *(("strategies", [entry]) for entry in (
+                (BLOCK, "GER", 1), (SCALAR, "GER", 1), ("alliance", BLOCK, 1), ("alliance", SCALAR, 1),
+            )),
+        ],
+        create_with=lambda mod, field, value: mod.create_ai_strategy(
+            **{"plan_id": "zz_plan", "strategies": [("alliance", "GER", 1)], field: value}
+        ),
+    ),
+    Recipe(
+        "scripted localisation",
+        [
+            ("entries", [(BLOCK, "KEY")]), ("entries", [(SCALAR, "KEY")]),
+            ("entries", [("always = yes", BLOCK)]), ("entries", [("always = yes", SCALAR)]),
+        ],
+        create_with=lambda mod, field, value: mod.create_scripted_localisation("zz_text", value),
+    ),
+    Recipe(
+        "static modifier",
+        _values("dict[str, str]"),  # type: ignore[arg-type]
+        create_with=lambda mod, field, value: mod.create_static_modifier("zz_static", field),
+    ),
+    Recipe(
+        "wargoal effect",
+        _parameters(Mod.create_wargoal, frozenset()),
+        create_with=lambda mod, field, value: mod.create_event(
+            "zz.1", title="zz.1.t",
+            immediate=mod.create_wargoal(**{"target": "GER", "war_goal_type": "annex_everything", field: value}),
+        ),
+    ),
+]
+# The static modifier recipe keeps its payload in the "field" slot.
+RECIPES = [
+    dataclasses.replace(recipe, cases=[(value, value) for value in recipe.cases])
+    if recipe.name == "static modifier"
+    else recipe
+    for recipe in RECIPES
+]
+
+MODES = ("created with", "set on new", "set after reload")
+
+
+def _cases() -> Iterator[tuple[str, Recipe, str, str, Any]]:
+    for recipe in RECIPES:
+        for index, (field, value) in enumerate(recipe.cases):
+            for mode in MODES:
+                if mode == "created with" and recipe.create_with is None:
+                    continue
+                if mode != "created with" and (recipe.create is None or recipe.update is None):
+                    if not (mode == "set on new" and recipe.create is None and recipe.update):
+                        continue
+                label = f"{recipe.name}: {field if isinstance(field, str) else 'value'} #{index} ({mode})"
+                yield label, recipe, mode, field, value
+
+
+CASES = {label: (recipe, mode, field, value) for label, recipe, mode, field, value in _cases()}
+
+
+def _not_applicable(error: BaseException) -> bool:
+    """A recipe asked for a field this call does not take: nothing was tested."""
+
+    text = str(error)
+    return isinstance(error, TypeError) and (
+        "unexpected keyword argument" in text
+        or "got multiple values" in text
+        # A field the API refuses to change at all (a character's country).
+        or "cannot update" in text
+    )
+
+
+def run_case(root: Path, recipe: Recipe, mode: str, field: Any, value: Any) -> tuple[str, str]:
+    """Return ``(outcome, detail)``: refused, written, skipped, or escaped."""
+
+    mod = recipe.make_mod(root)
+    try:
+        if mode == "created with":
+            assert recipe.create_with is not None
+            recipe.create_with(mod, field, value)
+        else:
+            if recipe.create is not None:
+                recipe.create(mod)
+                if mode == "set after reload":
+                    mod.save()
+                    mod = type(mod)(root, hoi4_install=mod.hoi4_install)
+            assert recipe.update is not None
+            recipe.update(mod, field, value)
         mod.preview()
+        mod.save()
+    except (ValueError, RuntimeError) as error:
+        # ParseError is a ValueError; the last check before saving raises
+        # RuntimeError. Either way nothing escaped.
+        outcome = ("refused", f"{type(error).__name__}: {str(error)[:90]}")
+    except Exception as error:  # noqa: BLE001 - reported by the test
+        if _not_applicable(error):
+            return "skipped", str(error)[:90]
+        return "crashed", f"{type(error).__name__}: {str(error)[:160]}"
+    else:
+        outcome = ("written", "")
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in _SCRIPT_SUFFIXES:
+            continue
+        document = parse(read_text(path))
+        relative = path.relative_to(root).as_posix()
+        if any(item.name == "zz_breakout" for item, _ in document.root.walk()):
+            return "escaped", relative
+        if document.problems:
+            return "escaped", f"{relative} no longer parses: {document.problems[0].message}"
+    return outcome
 
-    for relative, text in SOURCES.items():
-        assert (tmp_path / relative).read_text(encoding="utf-8") == text
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning", "ignore::DeprecationWarning")
+@pytest.mark.parametrize("label", sorted(CASES))
+def test_text_never_escapes_where_it_is_written(tmp_path: Path, label: str) -> None:
+    recipe, mode, field, value = CASES[label]
+    outcome, detail = run_case(tmp_path / "mod", recipe, mode, field, value)
+    if outcome == "skipped":
+        pytest.skip(detail)
+    assert outcome in {"refused", "written"}, f"{outcome}: {detail}"
+
+
+def test_the_probe_covers_every_writer() -> None:
+    """Guard the guard: the case list must stay broad."""
+
+    names = {recipe.name for recipe in RECIPES}
+    assert len(CASES) > 900
+    assert {"focus", "event", "idea", "decision", "state", "country", "character"} <= names
+
+
+if __name__ == "__main__":
+    counts: dict[str, int] = {}
+    for label in sorted(CASES):
+        recipe, mode, field, value = CASES[label]
+        with tempfile.TemporaryDirectory() as folder:
+            outcome, detail = run_case(Path(folder) / "mod", recipe, mode, field, value)
+        counts[outcome] = counts.get(outcome, 0) + 1
+        if outcome in {"escaped", "crashed"} or "-v" in sys.argv:
+            print(f"{outcome:8} {label}  {detail}")
+    print(counts)

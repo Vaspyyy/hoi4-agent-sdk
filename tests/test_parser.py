@@ -221,3 +221,19 @@ def test_set_value_turns_a_comparison_into_an_assignment():
     node = parse_pdx("a > 1\n")
     node.set_value("a", "2")
     assert serialize_pdx(node) == "a = 2\n"
+
+
+def test_require_statement_value_and_entry():
+    from hoi4.syntax import ParseError, require_entry, require_statement, require_value
+
+    assert require_statement("owner = GER") == "owner = GER"
+    assert require_value('"two words"') == '"two words"'
+    assert require_value("rgb { 1 2 3 }") == "rgb { 1 2 3 }"
+    assert require_entry("stability_factor", 0.1) == "stability_factor = 0.1"
+    for bad in ("a b", "} x = 1 {", "ok } x = 1 { y = 2", "", "a\nb = 2"):
+        with pytest.raises(ParseError):
+            require_value(bad)
+    with pytest.raises(ParseError):
+        require_entry("a = 1 } x = 1 { b", 1)
+    with pytest.raises(ParseError):
+        require_statement("a = 1 b = 2")

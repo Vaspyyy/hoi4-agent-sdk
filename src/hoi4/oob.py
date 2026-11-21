@@ -21,7 +21,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_string, pdx_value
-from .syntax import parse
+from .syntax import parse, require_entry, require_value
 from .textio import read_text
 from .types import ValidationError
 
@@ -371,12 +371,13 @@ def serialize_equipment_variant(variant: EquipmentVariant) -> str:
         lines.append(f"role_icon_index = {pdx_value(variant.role_icon_index)}")
     if variant.upgrades:
         body = "\n".join(
-            f"{name} = {level}" for name, level in variant.upgrades.items()
+            require_entry(name, level, f"the upgrade '{name}'")
+            for name, level in variant.upgrades.items()
         )
         lines.append(_wrap_block("upgrades", body, 0))
     if variant.modules:
         body = "\n".join(
-            f"{slot} = {pdx_value(module)}"
+            require_entry(slot, pdx_value(module), f"the module slot '{slot}'")
             for slot, module in variant.modules.items()
         )
         lines.append(_wrap_block("modules", body, 0))
@@ -1099,6 +1100,7 @@ def _set_scalar(body: str, key: str, value: str | None) -> str:
     """``patching.set_scalar`` that keeps a block written on one line on one line."""
 
     if value is not None and "\n" not in body and not assignment_spans(body, key):
+        require_value(value, f"the value of '{key}'")
         content = body.rstrip()
         return f"{content} {key} = {value}" + (body[len(content):] or " ")
     return set_scalar(body, key, value)

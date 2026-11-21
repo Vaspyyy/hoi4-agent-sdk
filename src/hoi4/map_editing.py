@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from .patching import AssignmentSpan, append_assignment, replace_assignment, top_level_assignments
-from .syntax import Assignment, Block, Scalar, parse
+from .syntax import Assignment, Block, Scalar, parse, require_statement, require_well_formed
 from .textio import read_text
 from .types import ValidationError
 
@@ -573,7 +573,11 @@ def render_strategic_region(
         is_assignment = (
             len(items) == 1 and type(items[0]) is Assignment and items[0].name == "weather"
         )
-        if not is_assignment:
+        if is_assignment:
+            require_statement(assignment, "the weather of a strategic region")
+        else:
+            # A body with a stray or missing brace would change the region around it.
+            require_well_formed(assignment, "the weather of a strategic region")
             assignment = "weather = {\n" + textwrap.indent(
                 textwrap.dedent(weather).strip(), "\t"
             ) + "\n}"

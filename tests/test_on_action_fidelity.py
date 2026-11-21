@@ -213,3 +213,20 @@ def test_a_statement_in_random_events_is_not_taken_for_a_weight(tmp_path: Path) 
     assert Mod(tmp_path).get_on_action("on_monthly").random_events == [
         "chance_to_fire = 25", "100", "0", "10", "bar.1", "5", "bar.2",
     ]
+
+
+def test_a_statement_without_spaces_is_not_paired_with_a_weight(tmp_path: Path) -> None:
+    path = tmp_path / "common/on_actions/zz_on_actions.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "on_actions = {\n\ton_monthly = {\n\t\trandom_events = {\n\t\t\t100 = 0\n\t\t}\n\t}\n}\n",
+        encoding="utf-8",
+    )
+    mod = Mod(tmp_path)
+    mod.update_on_action(
+        "on_monthly", random_events=["100", "0", "chance_to_fire=25", "10", "a.1"]
+    )
+    mod.save()
+    assert Mod(tmp_path).get_on_action("on_monthly").random_events == [
+        "100", "0", "chance_to_fire = 25", "10", "a.1",
+    ]

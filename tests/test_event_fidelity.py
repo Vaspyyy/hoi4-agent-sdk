@@ -462,3 +462,19 @@ def test_new_statement_goes_below_a_shared_line_that_ends_in_a_comment(tmp_path:
     assert path.read_text(encoding="utf-8") == source.replace(
         "# note\n", "# note\n\tpicture = GFX_x\n"
     )
+
+
+def test_new_statement_goes_below_the_opening_line_that_ends_in_a_comment(tmp_path: Path) -> None:
+    source = (
+        "add_namespace = e\ncountry_event = { id = e.1 desc = e.1.d # desc note\n"
+        "\toption = { name = e.1.a }\n}\n"
+    )
+    path = tmp_path / "events/e.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    mod = Mod(tmp_path)
+    mod.update_event("e.1", picture="GFX_p")
+    mod.save()
+    assert path.read_text(encoding="utf-8") == source.replace(
+        "# desc note\n", "# desc note\n\tpicture = GFX_p\n"
+    )

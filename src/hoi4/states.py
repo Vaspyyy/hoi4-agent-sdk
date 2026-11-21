@@ -24,7 +24,7 @@ from .patching import (
     set_block,
     top_level_assignments,
 )
-from .syntax import Assignment, Block, parse, require_well_formed
+from .syntax import Assignment, Block, parse, require_value, require_well_formed
 from .textio import encode_text, read_text
 from .types import State
 
@@ -409,6 +409,8 @@ def _set_direct_scalar(
         for span in reversed(spans):
             result = replace_assignment(result, span, None)
         return result
+    # A value of several words, or one with a brace, would not stay the value.
+    require_value(value, f"the value of '{key}'")
     if spans:
         span = spans[0]
         existing = text[span.value_start : span.value_end]
@@ -524,6 +526,8 @@ def _set_repeated_scalars(
     spans = [
         span for span in top_level_assignments(text) if span.key == key and not span.is_block
     ]
+    for value in values:
+        require_value(value, f"a value of '{key}'")
     result = text
     for index in range(len(spans) - 1, -1, -1):
         span = spans[index]
@@ -614,6 +618,9 @@ def _render_new_state(state: State) -> str:
         prov_block.children.append(PdxNode(key=None, value=str(pid)))
     state_block.children.append(prov_block)
 
+    # A body with a stray or missing brace would change the state around it.
+    require_well_formed(state.history, "the history of a new state")
+    require_well_formed(state.buildings, "the buildings of a new state")
     history = PdxNode(key="history")
     if state.history:
         parsed_history = parse_pdx(f"history = {{\n{state.history}\n}}")

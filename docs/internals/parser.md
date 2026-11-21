@@ -239,16 +239,27 @@ about the comments in the file, so they are left alone; pass `comments=True`
 to remove them too. `same_block_body(current, new)` answers "would this edit
 change anything?" by the same rule, and is what the content modules use to
 decide whether a text field changed. A compared comment has to say the same
-and sit at the same statement: one that moved to the end of another line is a
-change.
+and sit at the same statement, at every depth: one that moved to the end of
+another line, also inside a nested block, is a change.
 
-A body with a stray brace is refused wherever script text is wrapped into a
-block, not only by `set_block`. `} x = 1 {` is balanced once it sits inside a
-block, so the file would still parse and the last check before saving could
-not see it: the block would close early and `x = 1` would land in the script
-around it. Each writer that builds a new block or a new object therefore
-calls `require_well_formed` on the text it was given
-(`tests/test_block_body_guard.py` lists them).
+Text handed to a writer must not land outside the place it is written to.
+`} x = 1 {` is balanced once it sits inside a block, so the file would still
+parse and the last check before saving could not see it: the block would
+close early and `x = 1` would land in the script around it. The same works
+through a value (`owner = ok } x = 1 {`) or a key that is written bare. Only
+the writer knows where its block or value was meant to end, so each one
+checks the text it was given:
+
+- `require_well_formed(body)` for the body of a block;
+- `require_value(value)` for a value written after `key =` (one word, one
+  quoted string or one block); `set_scalar` does this for every caller;
+- `require_entry(key, value)` for a `key = value` line built from a mapping;
+- `require_statement(text)` for a whole statement that must stay one.
+
+`tests/test_block_body_guard.py` tries a stray brace in every text field of
+every model class, read from the dataclasses themselves, on an object that is
+created with the field, on a new object and on one that was saved and loaded
+again. A new field is covered without touching the test.
 
 Two limits, both about a guess the patcher cannot make:
 

@@ -233,7 +233,7 @@ def _weighted_entries(values: list[str]) -> list[tuple[str, ...]]:
             _is_number(value)
             and index + 1 < len(values)
             # A whole statement (``chance_to_fire = 25``) is not an event id.
-            and not any(char.isspace() for char in values[index + 1])
+            and not _is_statement(values[index + 1])
         ):
             entries.append((value, values[index + 1]))
             index += 2
@@ -241,6 +241,13 @@ def _weighted_entries(values: list[str]) -> list[tuple[str, ...]]:
             entries.append((value,))
             index += 1
     return entries
+
+
+def _is_statement(value: str) -> bool:
+    """Whether a list value is a whole ``key = value`` statement, not one word."""
+
+    items = parse(value).root.items
+    return len(items) != 1 or type(items[0]) is not Scalar
 
 
 def _is_number(value: str) -> bool:
