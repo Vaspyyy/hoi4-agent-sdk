@@ -200,6 +200,10 @@ class _Control:
     unknown_scope: bool = False
     #: A scope the block always runs in (``create_dynamic_country``).
     scope: str | None = None
+    #: The block runs only when a condition holds (``if``, ``random``).
+    guard: bool = False
+    #: The block is hidden from the player (``hidden_effect``).
+    hidden: bool = False
 
 
 _LIMIT = frozenset({"limit"})
@@ -207,21 +211,21 @@ _LIMIT = frozenset({"limit"})
 #: Control structures, folded. Their own names are never checked against the
 #: vocabulary: the game knows them in every scope.
 CONTROL: Mapping[str, _Control] = {
-    "if": _Control("same", trigger_arguments=_LIMIT),
-    "else_if": _Control("same", trigger_arguments=_LIMIT),
+    "if": _Control("same", trigger_arguments=_LIMIT, guard=True),
+    "else_if": _Control("same", trigger_arguments=_LIMIT, guard=True),
     # ``else = { limit = { } }`` works like ``else_if``.
-    "else": _Control("same", trigger_arguments=_LIMIT),
+    "else": _Control("same", trigger_arguments=_LIMIT, guard=True),
     "and": _Control("trigger"),
     "or": _Control("trigger"),
     "not": _Control("trigger"),
-    "hidden_trigger": _Control("trigger"),
+    "hidden_trigger": _Control("trigger", hidden=True),
     "custom_trigger_tooltip": _Control("trigger", frozenset({"tooltip"})),
     "custom_override_tooltip": _Control("same", frozenset({"tooltip", "not_tooltip"})),
     "count_triggers": _Control("trigger", frozenset({"amount"})),
-    "hidden_effect": _Control("effect"),
+    "hidden_effect": _Control("effect", hidden=True),
     "effect_tooltip": _Control("effect"),
-    "random": _Control("effect", frozenset({"chance"})),
-    "random_list": _Control("weighted", frozenset({"seed", "log"})),
+    "random": _Control("effect", frozenset({"chance"}), guard=True),
+    "random_list": _Control("weighted", frozenset({"seed", "log"}), guard=True),
     "while_loop_effect": _Control("effect", frozenset({"break"}), _LIMIT),
     "for_loop_effect": _Control(
         "effect", frozenset({"start", "end", "compare_type", "add", "value", "break"})
@@ -320,6 +324,38 @@ class ScriptStatement:
 
 IsCommand = Callable[[CommandKind, str], bool]
 
+#: What a statement is, for a ``visit`` callback of :func:`walk_script`:
+#: a command, a control structure, an iterator, a scope change, or an
+#: argument (data inside a command's block, or a control's own argument).
+Role = Literal["command", "control", "iterator", "scope", "argument"]
+
+
+class WalkState:
+    """What surrounds the statement a ``visit`` callback is given.
+
+    ``scope_key`` is the key that made the current scope (``GER`` in
+    ``GER = { ... }``, ``every_owned_state``), ``iterator`` the scope an
+    enclosing iterator leads to in lower case (``"state"``; ``"other"`` when
+    the table does not know; ``""`` outside an iterator or after a later
+    scope change). ``hidden`` is true inside ``hidden_effect`` and
+    ``hidden_trigger``, ``guarded`` inside a condition (``if``, ``limit``,
+    ``random``, ``random_list``).
+    """
+
+    __slots__ = ("scope_key", "iterator", "hidden", "guarded")
+
+    def __init__(self) -> None:
+        self.scope_key = ""
+        self.iterator = ""
+        self.hidden = False
+        self.guarded = False
+
+
+#: ``visit(item, role, kind, scope, state)``: ``kind`` is the kind of block the
+#: statement stands in (``None`` for data), ``scope`` the scope it runs in
+#: (``None`` when not certain).
+Visit = Callable[[Assignment, Role, "BlockKind | None", "str | None", WalkState], None]
+
 
 def walk_script(
     text: str | Block,
@@ -330,6 +366,7 @@ def walk_script(
     is_command: IsCommand = lambda kind, name: True,
     characters: Collection[str] = (),
     arguments: Collection[str] = (),
+    visit: Visit | None = None,
 ) -> list[ScriptStatement]:
     """Return every command of a block body, in source order.
 
@@ -341,12 +378,29 @@ def walk_script(
     ``characters`` are character ids in lower case, which may stand as scopes.
     ``arguments`` are keys of the block itself to leave alone (folded), such
     as ``name`` and ``ai_chance`` of an event option.
+
+    ``visit``, when given, is called for every assignment the walk passes
+    (commands, control structures, iterators, scope changes and, as
+    ``"argument"``, everything inside a command's block), except the
+    ``arguments`` above and the weights of ``random_list``. The reference
+    reader of :mod:`hoi4.script_references` uses it.
     """
 
     block = parse(text).root if isinstance(text, str) else text
-    walker = _Walker(block, is_command, characters, from_scope)
+    walker = _Walker(block, is_command, characters, from_scope, visit)
     walker.block(block, kind, [scope], frozenset(arguments))
     return walker.found
+
+
+def walk_data(block: Block, visit: Visit, *, skip: Collection[int] = ()) -> None:
+    """Pass every assignment of a block that holds no script to ``visit`` as data.
+
+    Blocks whose start offset is in ``skip`` are left out (they are walked
+    as script on their own).
+    """
+
+    walker = _Walker(block, lambda kind, name: True, (), None, visit)
+    walker.data(block, frozenset(skip))
 
 
 class _Walker:
@@ -356,11 +410,14 @@ class _Walker:
         is_command: IsCommand,
         characters: Collection[str],
         from_scope: str | None,
+        visit: Visit | None = None,
     ) -> None:
         self.doc = root.doc
         self.is_command = is_command
         self.characters = characters
         self.from_scope = from_scope
+        self.visit = visit
+        self.state = WalkState()
         self.found: list[ScriptStatement] = []
 
     # Each method gets the scope stack; the top is THIS, the bottom ROOT.
@@ -368,6 +425,68 @@ class _Walker:
     def emit(self, item: Assignment, kind: CommandKind, stack: list[str | None]) -> None:
         line, column = self.doc.line_col(item.key.start)
         self.found.append(ScriptStatement(item.key.value, kind, line, column, stack[-1]))
+
+    def note(
+        self, item: Assignment, role: Role, kind: BlockKind | None, scope: str | None
+    ) -> None:
+        if self.visit is not None:
+            self.visit(item, role, kind, scope, self.state)
+
+    def enter(
+        self,
+        *,
+        scope_key: str | None = None,
+        iterator: str | None = None,
+        hidden: bool = False,
+        guarded: bool = False,
+    ) -> tuple[str, str, bool, bool]:
+        """Change what surrounds the next statements; :meth:`leave` undoes it."""
+
+        state = self.state
+        saved = (state.scope_key, state.iterator, state.hidden, state.guarded)
+        if scope_key is not None:
+            state.scope_key = scope_key
+        if iterator is not None:
+            state.iterator = iterator
+        state.hidden = state.hidden or hidden
+        state.guarded = state.guarded or guarded
+        return saved
+
+    def leave(self, saved: tuple[str, str, bool, bool]) -> None:
+        state = self.state
+        state.scope_key, state.iterator, state.hidden, state.guarded = saved
+
+    def data(self, block: Block, skip: Collection[int] = ()) -> None:
+        """Pass everything inside ``block`` to ``visit`` as data."""
+
+        if self.visit is None:
+            return
+        saved = self.enter(scope_key="", iterator="")
+        self._data(block, skip)
+        self.leave(saved)
+
+    def _data(self, block: Block, skip: Collection[int]) -> None:
+        visit = self.visit
+        assert visit is not None
+        for item in block.items:
+            if type(item) is Assignment:
+                inner = item.block
+                if inner is not None and inner.start in skip:
+                    continue
+                visit(item, "argument", None, None, self.state)
+                if inner is not None:
+                    self._data(inner, skip)
+            elif type(item) is Block and item.start not in skip:
+                self._data(item, skip)
+
+    def argument(self, item: Assignment) -> None:
+        """An argument of a control structure, an iterator or a weight block."""
+
+        if self.visit is not None:
+            self.note(item, "argument", None, None)
+            inner = item.block
+            if inner is not None:
+                self.data(inner)
 
     def block(
         self,
@@ -383,7 +502,7 @@ class _Walker:
         elif kind == "weight":
             self.weight(block, stack, skip)
         else:
-            self.arguments_and_body(block, kind, stack, skip, ())
+            self.arguments_and_body(block, kind, stack, (), (), skip)
 
     def statement(self, item: Assignment, kind: Literal["effect", "trigger"], stack: list[str | None]) -> None:
         key = item.key.value
@@ -393,27 +512,42 @@ class _Walker:
         if control is not None and body is not None:
             if folded in CHECKED_CONTROLS:
                 self.emit(item, kind, stack)
+            self.note(item, "control", kind, stack[-1])
+            saved = self.enter(hidden=control.hidden, guarded=control.guard)
             self.control(body, control, kind, stack)
+            self.leave(saved)
             return
         if body is not None and self.is_iterator(folded, kind):
             self.emit(item, kind, stack)
             if not self.is_command(kind, folded):
                 # ``any_owned_state`` among effects: report the iterator only.
+                self.note(item, "command", kind, stack[-1])
+                self.data(body)
                 return
             target = ITERATOR_SCOPES.get(folded)
+            self.note(item, "iterator", kind, stack[-1])
+            saved = self.enter(scope_key=key, iterator=(target or "other").lower())
             self.arguments_and_body(
                 body, kind, [*stack, target], ITERATOR_ARGUMENTS, _LIMIT
             )
+            self.leave(saved)
             return
         resolved = self.resolve_scope(key, stack)
         if resolved is not _NOT_A_SCOPE:
             if body is not None:
+                self.note(item, "scope", kind, stack[-1])
+                saved = self.enter(scope_key=key, iterator="")
                 self.block(body, kind, [*stack, resolved])  # type: ignore[list-item]
+                self.leave(saved)
                 return
             if not self.is_command(kind, folded):
                 # ``ROOT = PREV`` and the like compare scopes; nothing to check.
+                self.note(item, "scope", kind, stack[-1])
                 return
         self.emit(item, kind, stack)
+        self.note(item, "command", kind, stack[-1])
+        if body is not None:
+            self.data(body)
 
     def is_iterator(self, folded: str, kind: CommandKind) -> bool:
         if folded in NOT_ITERATORS:
@@ -448,17 +582,24 @@ class _Walker:
         stack: list[str | None],
         arguments: Collection[str],
         trigger_arguments: Collection[str],
+        skip: Collection[str] = (),
     ) -> None:
         for item in body.items:
             if type(item) is not Assignment:
                 continue
             folded = item.key.value.lower()
+            if folded in skip:
+                continue
             if folded in trigger_arguments:
                 inner = item.block
+                self.note(item, "control", "trigger", stack[-1])
                 if inner is not None:
+                    saved = self.enter(guarded=True)
                     self.block(inner, "trigger", stack)
+                    self.leave(saved)
                 continue
             if folded in arguments:
+                self.argument(item)
                 continue
             self.statement(item, kind, stack)
 
@@ -475,6 +616,7 @@ class _Walker:
             if type(item) is not Assignment:
                 continue
             if item.key.value.lower() in arguments:
+                self.argument(item)
                 continue
             entry = item.block
             if entry is None:
@@ -483,6 +625,7 @@ class _Walker:
                 if type(statement) is not Assignment:
                     continue
                 if statement.key.value.lower() == "modifier" and statement.block is not None:
+                    self.note(statement, "control", "trigger", stack[-1])
                     self.arguments_and_body(
                         statement.block, "trigger", stack, WEIGHT_MODIFIER_ARGUMENTS, ()
                     )
@@ -496,9 +639,13 @@ class _Walker:
             if type(item) is not Assignment:
                 continue
             folded = item.key.value.lower()
-            if folded in WEIGHT_ARGUMENTS or folded in skip:
+            if folded in skip:
+                continue
+            if folded in WEIGHT_ARGUMENTS:
+                self.argument(item)
                 continue
             if folded == "modifier" and item.block is not None:
+                self.note(item, "control", "trigger", stack[-1])
                 self.arguments_and_body(
                     item.block, "trigger", stack, WEIGHT_MODIFIER_ARGUMENTS, ()
                 )
@@ -510,16 +657,22 @@ class _Walker:
             if type(item) is not Assignment:
                 continue
             folded = item.key.value.lower()
-            if folded in MODIFIER_ARGUMENTS or folded in skip:
+            if folded in skip:
+                continue
+            if folded in MODIFIER_ARGUMENTS:
+                self.argument(item)
                 continue
             inner = item.block
             if folded == "hidden_modifier" and inner is not None:
+                self.note(item, "control", "modifier", None)
                 self.modifiers(inner, stack)
                 continue
             if inner is not None:
+                self.argument(item)
                 continue
             line, column = self.doc.line_col(item.key.start)
             self.found.append(ScriptStatement(item.key.value, "modifier", line, column, None))
+            self.note(item, "command", "modifier", None)
 
     def resolve_scope(self, key: str, stack: list[str | None]) -> object:
         """The scope a key leads to, ``None`` when unknown, ``_NOT_A_SCOPE`` if it is no scope."""

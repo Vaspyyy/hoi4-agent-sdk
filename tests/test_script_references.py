@@ -85,6 +85,51 @@ def test_walk_names_the_scope_of_every_statement():
     }
 
 
+def test_references_ride_on_the_scope_walker():
+    """One walker decides what a statement is and where it runs, for every check."""
+
+    def core(text: str) -> list[tuple[str, str, bool]]:
+        owner = fragment_owner(text, "focus", "f1", COUNTRY)
+        return [(ref.value, ref.scope, ref.certain) for ref in owner.of("core_effect")]
+
+    # NOR is Norway, not a keyword.
+    assert core("123 = { NOR = { add_core_of = NOR } }") == [("NOR", COUNTRY, True)]
+    # ordered_ iterators are iterators.
+    owner = fragment_owner("ordered_owned_state = { add_core_of = GER add_ideas = fake_idea }", "focus", "f1")
+    assert [(ref.kind, ref.scope, ref.certain, ref.statement) for ref in owner.refs] == [
+        ("core_effect", STATE, True, True),
+        ("idea", STATE, True, True),
+    ]
+    # PREV, THIS and ROOT come from the scope stack.
+    assert core("123 = { PREV = { add_core_of = GER } }") == [("GER", COUNTRY, True)]
+    assert core("123 = { THIS = { add_core_of = GER } }") == [("GER", STATE, True)]
+    # An iterator's scope comes from the table, not from words in its name.
+    assert core("every_country_division = { add_core_of = GER }") == [("GER", UNKNOWN, False)]
+
+
+def test_a_bare_top_level_focus_is_a_focus():
+    found = file_references(
+        "common/national_focus/bare.txt", "common/national_focus/bare.txt",
+        "focus = { id = my_bare completion_reward = { add_core_of = GER } }", own=True,
+    )
+    assert [(owner.kind, owner.id, owner.scope) for owner in found.owners] == [
+        ("focus", "my_bare", COUNTRY)
+    ]
+    assert [(ref.scope, ref.certain) for _, ref in found.refs()] == [(COUNTRY, True)]
+
+
+def test_unit_leader_events_start_in_an_unknown_scope_for_every_check():
+    from hoi4.script_scopes import entry_scope
+
+    found = file_references(
+        "events/x.txt", "events/x.txt",
+        "unit_leader_event = { id = x.1 immediate = { add_core_of = GER } }", own=True,
+    )
+    assert entry_scope("unit_leader_event", "*") is None
+    assert [(owner.kind, owner.scope) for owner in found.owners] == [("event", UNKNOWN)]
+    assert [(ref.scope, ref.certain) for _, ref in found.refs()] == [(UNKNOWN, False)]
+
+
 def test_walk_never_reads_comments_or_quoted_text():
     owner = fragment_owner(
         '# add_ideas = commented\nlog = "add_ideas = quoted"\nadd_ideas = real # add_ideas = tail\n',

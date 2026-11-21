@@ -3,7 +3,8 @@ from hoi4.script_scopes import walk_script
 
 
 def test_logical_operators_do_not_become_country_tags(tmp_path):
-    script = "if = { limit = {\nNOT = {\nAND = {\nNOR = { has_war = yes } } } }\nZZZ = { add_political_power = 1 } }"
+    # NOR is not an operator: HOI4 documents AND, OR and NOT only, and NOR is Norway.
+    script = "if = { limit = {\nNOT = {\nAND = {\nOR = { has_war = yes } } } }\nZZZ = { add_political_power = 1 } }"
     findings = Mod(tmp_path).validate_effect(script)
     unknown = [f.message for f in findings if f.code == "unknown_country_scope"]
     assert len(unknown) == 1 and "'ZZZ'" in unknown[0]

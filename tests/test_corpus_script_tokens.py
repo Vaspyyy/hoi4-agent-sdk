@@ -91,14 +91,14 @@ def vocabulary(install: Path) -> GameScriptVocabulary:
 def test_every_block_of_the_game_walks_cleanly(install: Path, vocabulary: GameScriptVocabulary) -> None:
     findings = set()
     blocks = 0
-    for block in iter_script_blocks(install):
+    for path, block in iter_script_blocks(install):
         blocks += 1
         source = ScriptSource(
             "",
             block.kind,
             block.owner_kind,
             block.owner_id,
-            block.path.relative_to(install).as_posix(),
+            path.relative_to(install).as_posix(),
             block.scope,
             block.from_scope,
         )
