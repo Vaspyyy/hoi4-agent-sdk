@@ -1028,13 +1028,22 @@ def check_statement(
             or folded in custom.get(cast(ScriptTokenKind, other), ())
         ):
             # The most common mix-up: a condition where an action belongs, or
-            # the other way round. A look-alike name would only mislead.
-            hint = (
-                f" '{name}' is a trigger: it tests something and changes nothing."
-                if kind == "effect"
-                else f" '{name}' is an effect: it changes something and cannot be a condition."
+            # the other way round. The name is known, so "undocumented" or a
+            # look-alike name would only mislead.
+            return _finding(
+                source,
+                line,
+                code=f"unknown_{kind}_token",
+                severity="warning",
+                message=(
+                    f"{owner}uses '{name}' among effects. '{name}' is a trigger: "
+                    "it tests something and changes nothing."
+                    if kind == "effect"
+                    else f"{owner}uses '{name}' among triggers. '{name}' is an effect: "
+                    "it changes something and cannot be a condition."
+                ),
             )
-        elif suggestion is not None:
+        if suggestion is not None:
             hint = (
                 f" Did you mean '{suggestion}' "
                 f"({vocabulary.tokens(kind)[suggestion].usage_count} installed-game uses)?"

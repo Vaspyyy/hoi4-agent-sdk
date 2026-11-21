@@ -48,6 +48,12 @@ events that nothing fires yet. So a flag that is read and never set is not
 reported by `validate()` or `validate(stage="build")`; call
 `validate(stage="release")`.
 
+One more switch is independent of the stage: missing text. A focus
+without a name is always reported (`missing_localization`). The same check
+for events, ideas and countries runs with
+`validate(strict_localization=True)`, because a mod in progress has many
+objects whose texts are not written yet.
+
 ## What a complete country needs
 
 Five findings are not about what the game needs, but about what the SDK asks

@@ -21,11 +21,10 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 from .script_scopes import BlockKind, entry_scope
-from .syntax import Block, parse
-from .textio import read_text
+from .syntax import Block
 
 EVENT_TYPES = (
     "country_event",
@@ -113,23 +112,6 @@ def script_blocks(root: Block, relative: str, *, history: bool = False) -> Itera
     for owner in split_file(root, relative):
         if history or owner.kind not in HISTORY_OWNERS:
             yield from owner.blocks
-
-
-def iter_script_blocks(root: Path) -> Iterator[tuple[Path, CorpusBlock]]:
-    """Every checkable block of the script files under a content root, with its file."""
-
-    for top in ("events", "common"):
-        directory = root / top
-        if not directory.is_dir():
-            continue
-        for path in sorted(directory.rglob("*.txt")):
-            try:
-                document = parse(read_text(path))
-            except (OSError, ValueError):
-                continue
-            relative = path.relative_to(root).as_posix()
-            for block in script_blocks(document.root, relative):
-                yield path, block
 
 
 # ── per folder ────────────────────────────────────────────────────
