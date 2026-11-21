@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from .dynamic_modifiers import DynamicModifier
     from .ideologies import Ideology
     from .layers import ContentLayers
-    from .script_vocabulary import ScriptSource
     from .types import Country, Decision, DecisionCategory, Event, FocusTree, Idea
 
 
@@ -54,8 +53,6 @@ class LivenessSource(Protocol):
     _decisions: dict[str, Decision]
     _decision_categories: dict[str, DecisionCategory]
     _bookmarks: list[Bookmark]
-
-    def _semantic_script_sources(self) -> list[ScriptSource]: ...
 
     def _own_script_texts(
         self, tops: tuple[str, ...] = ("common", "events")

@@ -671,6 +671,56 @@ def test_a_character_of_a_base_mod_opens_a_scope_in_the_token_check(
     ]
 
 
+@pytest.mark.parametrize("how", ["file", "replace_path", "delete"])
+def test_a_hidden_character_of_the_game_is_no_scope(
+    game: Path, tmp_path: Path, how: str
+) -> None:
+    """The token check and the reference check use the same character names."""
+
+    mod_root = tmp_path / "mod"
+    event_file = mod_root / "events/hid.txt"
+    event_file.parent.mkdir(parents=True)
+    event_file.write_text(
+        "add_namespace = hid\n"
+        "country_event = {\n"
+        "\tid = hid.1\n"
+        "\tis_triggered_only = yes\n"
+        "\thidden = yes\n"
+        "\timmediate = {\n"
+        "\t\tGER_erwin_rommel = { add_skill_level = 1 }\n"
+        "\t}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    characters = mod_root / "common/characters"
+    characters.mkdir(parents=True)
+    if how == "file":
+        # A file with the name of a game file replaces it.
+        (characters / "GER.txt").write_text("characters = { }\n", encoding="utf-8")
+    elif how == "replace_path":
+        (mod_root / "descriptor.mod").write_text(
+            'name = "t"\nreplace_path = "common/characters"\n', encoding="utf-8"
+        )
+    else:
+        (characters / "GER.txt").write_text(
+            (game / "common/characters/GER.txt").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    mod = Mod(mod_root, hoi4_install=game)
+
+    def unknown() -> list[tuple[str, int | None]]:
+        return [
+            (item.code, item.line)
+            for item in mod.validate_script_vocabulary()
+            if item.severity != "info"
+        ]
+
+    if how == "delete":
+        assert unknown() == []
+        assert mod.delete_character("GER_erwin_rommel")
+    assert unknown() == [("unknown_effect_token", 7)]
+    assert "ger_erwin_rommel" not in mod.game_script_vocabulary().characters
+
+
 def test_a_definition_counts_before_it_is_saved(game: Path, tmp_path: Path) -> None:
     mod_root = tmp_path / "mod"
     ideas = mod_root / "common/ideas/test.txt"

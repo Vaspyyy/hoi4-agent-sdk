@@ -219,7 +219,7 @@ class GameScriptVocabulary:
         scripted_effects: Iterable[str] = (),
         scripted_triggers: Iterable[str] = (),
         ideology_ids: Iterable[str] = (),
-        characters: Iterable[str] = (),
+        characters: Iterable[str] | None = None,
         pending: Mapping[Path, str | None] | None = None,
     ) -> GameScriptVocabulary:
         """Add what mods define: modifier family members, modifier definitions and more names.
@@ -231,8 +231,12 @@ class GameScriptVocabulary:
         after a save (``None``: the file will be deleted); it wins over the
         disk, so definitions made through the API count before ``save()``.
         The keyword arguments add names the caller already has: scripted
-        effects and triggers, ideologies and character ids, including pending
-        edits that are not on disk yet.
+        effects and triggers and ideologies, including pending edits that are
+        not on disk yet. ``characters`` is different: when given, it is the
+        whole set of character ids that script may use as a scope, and it
+        replaces the install's. A mod can hide a character of the game
+        (``replace_path``, a file of the same name, ``delete_character()``),
+        and such a name is no scope any more.
         """
 
         extra = _read_definitions(
@@ -251,10 +255,17 @@ class GameScriptVocabulary:
         new_modifiers = _expand_templates(self.modifier_templates, members)
         for name, source in extra.modifier_definitions.items():
             new_modifiers.setdefault(name, (("country",), source))
-        characters = frozenset(name.lower() for name in characters)
+        known_characters = (
+            self.characters
+            if characters is None
+            else frozenset(name.lower() for name in characters)
+        )
         family_triggers = _family_triggers(members)
         new_family = any(name not in self.triggers for name in family_triggers)
-        if not (effects or triggers or new_modifiers or characters or new_family):
+        if (
+            not (effects or triggers or new_modifiers or new_family)
+            and known_characters == self.characters
+        ):
             return self
 
         def merged(
@@ -286,7 +297,7 @@ class GameScriptVocabulary:
                 },
             ),
             modifiers=merged("modifier", new_modifiers),
-            characters=self.characters | characters,
+            characters=known_characters,
             modifier_templates=self.modifier_templates,
             family_members=MappingProxyType(
                 {key: MappingProxyType(value) for key, value in members.items()}

@@ -359,8 +359,9 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             scripted_effects=custom.get("effect", ()),
             scripted_triggers=custom.get("trigger", ()),
             ideology_ids=self._ideologies,
-            # The characters of the game, the base mods and the mod, unsaved
-            # ones included: the same set the reference checks use.
+            # The characters the game will load from the install, the base
+            # mods and the mod, unsaved ones included and hidden or deleted
+            # ones left out: the same set the reference checks use.
             characters=self._character_scope_names(),
             pending=self._pending_script_texts(),
         )

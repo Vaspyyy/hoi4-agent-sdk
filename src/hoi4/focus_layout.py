@@ -97,21 +97,43 @@ def _condition(text: str) -> str:
         elif index + 1 < len(tokens) and tokens[index + 1] in ("=", "<", ">"):
             tokens[index] = token.lower()
     condition = " ".join(tokens)
-    return "" if condition == "always = yes" else condition
+    return "" if condition.lower() == "always = yes" else condition
 
 
-def _has_allow_branch(focus: Focus) -> bool:
-    """Whether a focus has an ``allow_branch`` block, an empty one included.
+def _own_condition(focus: Focus) -> str | None:
+    """The ``allow_branch`` condition of a focus, as ``save()`` will write it.
 
-    An empty block still counts: with it the focus checks only itself, so it
-    stays visible when its prerequisites are hidden.
+    ``None``: the focus has no ``allow_branch`` block. ``""``: it has one that
+    always holds. An empty block still counts: with it the focus checks only
+    itself, so it stays visible when its prerequisites are hidden.
+
+    ``focus.allow_branch`` is what the reader took from the first block
+    spelled ``allow_branch``, or what the caller set. The file may hold more
+    than that: an empty block, or one spelled in another case
+    (``ALLOW_BRANCH``, which the game reads all the same and ``save()`` keeps).
     """
 
     if focus.allow_branch.strip():
-        return True
+        return _condition(focus.allow_branch)
     if "allow_branch" not in focus.raw_block.lower():
-        return False
-    return bool(parse(focus.raw_block).root.blocks("allow_branch", fold=True))
+        return None
+    found: str | None = None
+    read = False
+    for item in parse(focus.raw_block).root.assignments("allow_branch", fold=True):
+        block = item.block
+        if block is None:
+            continue
+        body = block.body.strip()
+        if item.name == "allow_branch" and not read:
+            read = True
+            if body:
+                # The reader put this body into ``focus.allow_branch``, which
+                # is empty now: the block was cleared through the API, and
+                # ``save()`` removes it.
+                continue
+        if found is None:
+            found = _condition(body)
+    return found
 
 
 class FocusBranches:
@@ -200,8 +222,8 @@ class FocusBranches:
             focus = self._by_id.get(current)
             found: set[str] = set()
             if focus is not None:
-                if _has_allow_branch(focus):
-                    own = _condition(focus.allow_branch)
+                own = _own_condition(focus)
+                if own is not None:
                     if own:
                         found.add(own)
                 else:

@@ -487,6 +487,61 @@ def test_a_branch_whose_conditions_the_other_needs_too_is_shown_with_it():
     ) == []
 
 
+def _focus_file(*focuses: str) -> str:
+    body = "\n".join(f"\tfocus = {{ {focus} cost = 5 }}" for focus in focuses)
+    return f"focus_tree = {{\n\tid = test_tree\n\tcountry = {{ factor = 0 }}\n{body}\n}}\n"
+
+
+def test_allow_branch_cleared_through_the_api_counts_before_save(tmp_path):
+    """Before save() and after it, the same answer."""
+
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/national_focus/t.txt",
+        _focus_file(
+            'id = A x = 0 y = 0 allow_branch = { has_dlc = "X" }',
+            'id = B x = 0 y = 1 prerequisite = { focus = A } allow_branch = { has_dlc = "Y" }',
+            'id = D x = 0 y = 1 allow_branch = { has_dlc = "Z" }',
+            # An empty block is kept by save(): E checks only itself.
+            "id = E x = 5 y = 1 prerequisite = { focus = A } allow_branch = { }",
+            'id = F x = 5 y = 1 allow_branch = { has_dlc = "Z" }',
+        ),
+    )
+
+    def overlaps(mod: Mod) -> list[str]:
+        return [f.focus_id for f in codes(mod.validate(stage="build"), "visual_overlap")]
+
+    mod = Mod(root)
+    assert overlaps(mod) == ["F"]
+    # Without its own allow_branch, B is hidden with A: B hangs on X, D on Z.
+    assert mod.update_focus("test_tree", "B", allow_branch="")
+    assert mod.update_focus("test_tree", "E", cost=7)
+    assert overlaps(mod) == ["F"]
+    mod.save()
+    saved = (root / "common/national_focus/t.txt").read_text()
+    assert 'has_dlc = "Y"' not in saved and "allow_branch = { }" in saved
+    assert overlaps(Mod(root)) == ["F"]
+
+
+def test_allow_branch_is_read_in_any_case(tmp_path):
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/national_focus/t.txt",
+        _focus_file(
+            'id = A x = 0 y = 0 ALLOW_BRANCH = { has_dlc = "X" }',
+            'id = B x = 0 y = 0 Allow_Branch = { has_dlc = "Y" }',
+            'id = C x = 3 y = 0 ALLOW_BRANCH = { has_dlc = "X" }',
+            "id = D x = 3 y = 0 allow_branch = { HAS_DLC = X }",
+            "id = E x = 6 y = 0 allow_branch = { always = YES }",
+            'id = F x = 6 y = 0 allow_branch = { has_dlc = "X" }',
+        ),
+    )
+    findings = codes(Mod(root).validate(stage="build"), "visual_overlap")
+    assert [f.focus_id for f in findings] == ["D", "F"]
+
+
 def test_an_offset_block_that_moves_nothing_excuses_nothing():
     findings = validate_focus_tree(
         tree(

@@ -230,7 +230,7 @@ def _assigned_idea_line(history: str, idea_id: str) -> int | None:
     """The line of ``idea_id`` in a direct ``add_ideas`` of a country history text."""
 
     document = parse(history)
-    for assignment in document.root.assignments("add_ideas"):
+    for assignment in document.root.assignments("add_ideas", fold=True):
         value = assignment.value
         tokens = value.values() if type(value) is Block else [value]
         for token in tokens:
