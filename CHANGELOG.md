@@ -148,7 +148,11 @@ All notable changes to this project are documented here. The format follows
   A value with a byte-order mark inside, or with text right after inline
   maths (`@[x]y`), is written in quotes too: the reader ends a word there.
   The effect builders `effect_add_building` and `effect_add_tech_bonus` and
-  the flags of `create_decision_chain` follow the same rule.
+  the flags of `create_decision_chain` follow the same rule. `effect_block`
+  and `scope_block` check their name, keys and scope, and `scope_block`,
+  `effect_start_civil_war` and `effect_division_template` check the script
+  they wrap. A comment in an effect given to `scope_block` no longer
+  swallows the closing brace.
   `tests/test_block_body_guard.py` tries thirteen attack texts on every text
   field of every model, on new and on loaded objects.
 - A state edit that only adds quote characters or a space at an end of a

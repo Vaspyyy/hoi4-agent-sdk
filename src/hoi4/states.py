@@ -11,6 +11,7 @@ import re
 import shutil
 import textwrap
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -390,8 +391,9 @@ def _scalar_text(value: str | int | float) -> str:
         # ``repr`` is the shortest exact spelling; avoid exponents like 1e-05.
         text = repr(value)
         if "e" in text or "E" in text:
-            text = format(value, "f").rstrip("0")
-            text = text + "0" if text.endswith(".") else text
+            # Every digit of the number, however small it is.
+            text = format(Decimal(text), "f")
+            text = text if "." in text else text + ".0"
         return text
     # Text is taken as it is: a space at an end is part of the value.
     return str(value)

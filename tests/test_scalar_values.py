@@ -455,3 +455,52 @@ def test_a_byte_order_mark_inside_a_value_does_not_split_it(tmp_path: Path) -> N
     )
     assert 'set_country_flag = "done﻿zz_loose"' in decisions[0].complete_effect
     assert 'clr_country_flag = "old﻿yes"' in decisions[0].complete_effect
+
+
+def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+    # What they always built is built as before.
+    assert mod.effect_block("set_politics", {"ruling_party": "fascism", "elections_allowed": False}) == (
+        "set_politics = { ruling_party = fascism elections_allowed = no }"
+    )
+    assert mod.scope_block("GER", "add_political_power = 1", "add_stability = 0.1") == (
+        "GER = { add_political_power = 1 add_stability = 0.1 }"
+    )
+    assert mod.scope_block(42, "add_manpower = 1") == "42 = { add_manpower = 1 }"
+
+    with pytest.raises(ParseError, match="one word as a key"):
+        mod.effect_block("foo", {"a = 1 } zz_breakout = 1 foo2 = { b": 1})
+    with pytest.raises(ParseError, match="one word as a key"):
+        mod.effect_block("foo = { } zz_breakout = 1 foo2", {"a": 1})
+    with pytest.raises(ParseError, match="one word as a key"):
+        mod.scope_block("GER = { } zz_breakout = 1 GER", "add_political_power = 1")
+    with pytest.raises(ParseError):
+        mod.scope_block("GER", "} zz_breakout = 1 GER = {")
+    with pytest.raises(ParseError):
+        mod.effect_start_civil_war("fascism", effects=["} zz_breakout = 1 x = {"])
+    with pytest.raises(ParseError):
+        mod.effect_division_template("Infantry", "infantry = { x = 0 y = 0 } } zz_breakout = 1 x = {")
+    with pytest.raises(ValueError, match="cannot hold a comment"):
+        mod.effect_division_template("Infantry", "infantry = { x = 0 y = 0 } # the line")
+
+    # A comment in an effect does not swallow the closing brace.
+    commented = mod.scope_block("GER", "add_political_power = 1 # a gift")
+    assert commented == "GER = { add_political_power = 1 # a gift\n}"
+    assert _names(commented) == ["GER", "add_political_power"]
+
+
+def test_a_very_small_state_number_keeps_its_digits() -> None:
+    from hoi4.states import _scalar_text
+
+    assert _scalar_text(1e-7) == "0.0000001"
+    assert _scalar_text(1.5e-10) == "0.00000000015"
+    assert _scalar_text(1e20) == "100000000000000000000.0"
+    assert _scalar_text(0.5) == "0.5"
+    assert _scalar_text(2000) == "2000"
+
+
+def test_an_empty_namespace_removes_the_line_like_none_does() -> None:
+    from hoi4.events import serialize_events_file
+
+    assert serialize_events_file("", [], "add_namespace = old\n").strip() == ""
+    assert serialize_events_file("", []).strip() == ""

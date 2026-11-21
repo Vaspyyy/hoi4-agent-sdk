@@ -298,9 +298,8 @@ def serialize_events_file(namespace: Optional[str], events: list[Event], origina
     if original:
         text = original
         if parse(text).root.scalar("add_namespace") != namespace:
-            text = set_scalar(
-                text, "add_namespace", None if namespace is None else quote(namespace)
-            )
+            # No namespace (``None`` or ``""``) means no ``add_namespace`` line.
+            text = set_scalar(text, "add_namespace", quote(namespace) if namespace else None)
         current = {event.id: event for event in events}
         spans: list[tuple[str, AssignmentSpan]] = []
         for item in parse(text).root.assignments():

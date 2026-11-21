@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from ._scalar import needs_quotes as _needs_quotes
+from .syntax import parse, require_key, require_well_formed
 
 
 def normalize_block_body(body: str) -> str:
@@ -45,19 +46,37 @@ def pdx_string(value: object) -> str:
 
 
 def effect_block(name: str, fields: Mapping[str, object] | None = None, **kwargs: object) -> str:
-    """Build ``name = { key = value ... }`` without f-string brace escaping."""
+    """Build ``name = { key = value ... }`` without f-string brace escaping.
+
+    The name and every key have to be one word; a value is written as one
+    scalar. Anything else would not stay inside the block.
+    """
     data: dict[str, object] = {}
     if fields:
         data.update(fields)
     data.update(kwargs)
-    body = " ".join(f"{key} = {pdx_value(value)}" for key, value in data.items())
+    name = require_key(name, "the name of an effect block")
+    body = " ".join(
+        f"{require_key(key, f'a field of {name}')} = {pdx_value(value)}"
+        for key, value in data.items()
+    )
     return f"{name} = {{ {body} }}"
 
 
 def scope_block(scope: str | int, *effects: str) -> str:
-    """Build ``scope = { effect... }`` without f-string brace escaping."""
-    body = " ".join(effect.strip() for effect in effects if effect and effect.strip())
-    return f"{scope} = {{ {body} }}"
+    """Build ``scope = { effect... }`` without f-string brace escaping.
+
+    The scope has to be one word and every effect well formed on its own, so
+    that nothing lands outside the block.
+    """
+    scope = require_key(scope, "a scope")
+    parts = [effect.strip() for effect in effects if effect and effect.strip()]
+    for part in parts:
+        require_well_formed(part, f"an effect in the scope '{scope}'")
+    body = " ".join(parts)
+    # A comment runs to the end of its line: the closing brace goes below it.
+    closing = "\n}" if parse(body).comments else " }"
+    return f"{scope} = {{ {body}{closing}"
 
 
 def validate_script_syntax(script: str) -> list[str]:

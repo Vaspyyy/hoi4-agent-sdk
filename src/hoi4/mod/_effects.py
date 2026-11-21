@@ -17,7 +17,7 @@ from ..script import (
     pdx_value,
     scope_block,
 )
-from ..syntax import quote
+from ..syntax import parse, quote, require_well_formed
 from ._core import CoreLayer
 from ._shared import (
     _join_script_parts,
@@ -311,6 +311,9 @@ class EffectsLayer(CoreLayer):
                 raise ValueError("Civil-war capital must be a positive state ID")
             parts.append(f"capital = {capital}")
         nested = [effect.strip() for effect in effects or () if effect and effect.strip()]
+        for effect in nested:
+            # A stray brace would end the civil war block early.
+            require_well_formed(effect, "an effect of start_civil_war")
         if not nested:
             return f"start_civil_war = {{ {' '.join(parts)} }}"
         body = "\n".join(
@@ -470,12 +473,19 @@ class EffectsLayer(CoreLayer):
         support: str = "",
         division_names_group: str = "",
     ) -> str:
+        regiments = normalize_block_body(regiments)
+        support = normalize_block_body(support)
+        # A stray brace or a comment would end a block of the template early.
+        for label, body in (("regiments", regiments), ("support", support)):
+            require_well_formed(body, f"the {label} of a division template")
+            if parse(body).comments:
+                raise ValueError(f"The {label} of a division template cannot hold a comment")
         fields = [
             f"name = {pdx_string(name)}",
-            f"regiments = {{ {normalize_block_body(regiments)} }}",
+            f"regiments = {{ {regiments} }}",
         ]
         if support:
-            fields.append(f"support = {{ {normalize_block_body(support)} }}")
+            fields.append(f"support = {{ {support} }}")
         if division_names_group:
             fields.append(f"division_names_group = {pdx_string(division_names_group)}")
         return f"division_template = {{ {' '.join(fields)} }}"
