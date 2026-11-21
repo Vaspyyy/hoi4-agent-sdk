@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .types import ValidationError
+from .validation import COUNTRY_PACKAGE_REQUIREMENT_CODES
 
 
 @dataclass(frozen=True)
@@ -36,10 +37,24 @@ class CountryPackageReport:
         )
 
     @property
+    def unmet_requirements(self) -> tuple[ValidationError, ...]:
+        """Findings about what the SDK asks of a complete country.
+
+        The game accepts a country without them (they are warnings), but the
+        package is not complete while one is open.
+        """
+
+        return tuple(
+            finding
+            for finding in self.findings
+            if finding.code in COUNTRY_PACKAGE_REQUIREMENT_CODES
+        )
+
+    @property
     def complete(self) -> bool:
         """Whether every structural package requirement passes."""
 
-        return not self.errors
+        return not self.errors and not self.unmet_requirements
 
     @property
     def structurally_complete(self) -> bool:

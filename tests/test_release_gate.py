@@ -154,3 +154,36 @@ def test_release_gate_blocks_an_incomplete_sdk_created_country(
     assert "missing_country_activation" in {
         issue.code for issue in report.validation_issues
     }
+
+
+def test_release_gate_fails_on_a_half_built_country_although_it_is_a_warning(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    from hoi4 import ValidationError
+
+    mod_root = tmp_path / "source_stability_mod"
+    shutil.copytree(FIXTURE, mod_root)
+    report = run_release_gate(mod_root, budget=DiffBudget(max_changed_lines=20, max_files=2))
+    assert report.success, format_report(report)
+    assert report.incomplete_country_count == 0
+
+    # The game accepts a country without an army, so this is a warning; a mod
+    # with a half-built country is still not ready for release.
+    half_built = replace(
+        report,
+        validation_issues=[
+            *report.validation_issues,
+            ValidationError(
+                message="Starting country 'ABC' has no unambiguous land OOB.",
+                severity="warning",
+                code="missing_land_oob",
+                country_tag="ABC",
+            ),
+        ],
+    )
+    assert half_built.validation_error_count == report.validation_error_count
+    assert half_built.incomplete_country_count == 1
+    assert not half_built.success
+    assert half_built.to_dict()["validation"]["incomplete_countries"] == 1  # type: ignore[index]

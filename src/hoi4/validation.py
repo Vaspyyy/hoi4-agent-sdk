@@ -22,7 +22,7 @@ from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
 from .syntax import parse as parse_script
 from .script import validate_script_syntax
-from .syntax import Assignment, parse
+from .syntax import Assignment, Block, Tagged, parse
 from .textio import read_text
 from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationError
 
@@ -359,6 +359,20 @@ VALIDATION_CODES: dict[str, str] = {
     "map_building_unknown_province": "A buildings.txt line names a province that does not exist.",
 }
 
+# What the SDK asks of a complete country beyond what the game needs. The
+# game loads a country without a leader, advisors, generals, an army or a core
+# on its capital, so these are warnings and can be hidden. A country package
+# is still not complete while one of them is open, and the release gate fails.
+COUNTRY_PACKAGE_REQUIREMENT_CODES: frozenset[str] = frozenset(
+    {
+        "missing_country_leader",
+        "insufficient_political_advisors",
+        "insufficient_military_commanders",
+        "missing_land_oob",
+        "capital_not_cored",
+    }
+)
+
 _ERROR_CODES = {
     "load_failure",
     "runtime_recruit_character",
@@ -406,16 +420,12 @@ _ERROR_CODES = {
     "stale_game_log",
     "country_colors_parse",
     "missing_country_flag",
-    "missing_country_leader",
     "missing_character_portrait",
     "missing_character_portrait_gfx",
     "missing_character_portrait_texture",
-    "insufficient_political_advisors",
-    "insufficient_military_commanders",
     "undefined_recruited_character",
     "unrecruited_character",
     "missing_character_localization",
-    "missing_land_oob",
     "empty_land_oob",
     "missing_oob_reference",
     "oob_kind_mismatch",
@@ -460,7 +470,6 @@ _ERROR_CODES = {
     "runtime_capital_not_cored",
     "no_owned_territory",
     "capital_not_owned",
-    "capital_not_cored",
     "missing_country_name_pool",
     "missing_character_small_portrait",
     "invalid_country_tag",
@@ -831,6 +840,36 @@ def _script_warnings(
     return errors
 
 
+def _written_color_channels(definition: str) -> tuple[list[float], int] | None:
+    """The channels of ``color = { r g b }`` as a definition file writes them, and the line.
+
+    ``None`` when there is no such colour or it is not three plain numbers
+    (``hsv`` colours use other ranges).
+    """
+
+    if "color" not in definition:
+        return None
+    document = parse(definition)
+    for item in document.root.assignments("color"):
+        value = item.value
+        if type(value) is Tagged:
+            if value.tag.value.lower() != "rgb":
+                return None
+            block = value.block
+        elif type(value) is Block:
+            block = value
+        else:
+            return None
+        try:
+            channels = [float(scalar.value) for scalar in block.values()]
+        except ValueError:
+            return None
+        if len(channels) != 3 or len(channels) != len(block.items):
+            return None
+        return channels, document.line_col(item.start)[0]
+    return None
+
+
 def validate_country(
     country: Country,
     *,
@@ -943,6 +982,25 @@ def validate_country(
                 code="leader_party_mismatch",
                 country_tag=country.tag,
                 file_path=file_path,
+            )
+        )
+
+    # The reader clamps a file's channels to 0..255, so a file that says 314
+    # arrives here as 255: look at what the definition file really holds.
+    written = _written_color_channels(country.raw_definition)
+    if written is not None and any(not 0 <= channel <= 255 for channel in written[0]):
+        shown = " ".join(f"{channel:g}" for channel in written[0])
+        errors.append(
+            ValidationError(
+                message=(
+                    f"Country '{country.tag}' has the color {{ {shown} }} in its definition "
+                    "file; every channel has to be between 0 and 255"
+                ),
+                severity="error",
+                code="invalid_country_color",
+                country_tag=country.tag,
+                file_path=str(country.definition_path) if country.definition_path else None,
+                line=written[1],
             )
         )
 

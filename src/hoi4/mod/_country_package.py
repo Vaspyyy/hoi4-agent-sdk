@@ -378,6 +378,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     f"Country '{tag}' has no recruited character with a "
                     "country_leader role."
                 ),
+                severity="warning",
             )
 
         advisor_ids = {
@@ -404,6 +405,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     f"Country '{tag}' has {len(advisor_ids)} recruited political "
                     "advisor(s); create and recruit at least 2."
                 ),
+                severity="warning",
             )
         if len(commander_ids) < 2:
             issue(
@@ -412,6 +414,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     f"Country '{tag}' has {len(commander_ids)} recruited army "
                     "commander(s); create and recruit at least 2."
                 ),
+                severity="warning",
             )
 
         sprite_textures = self._known_sprite_textures()
@@ -586,6 +589,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                         "Use create_oob(..., assign=True), or explicitly load one "
                         "tag-owned OOB from scenario script."
                     ),
+                    severity="warning",
                 )
         if package_oob is not None:
             if not package_oob.templates or not package_oob.divisions:
@@ -638,6 +642,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                         f"{country.capital} is not cored by {tag}."
                     ),
                     state_id=country.capital,
+                    severity="warning",
                 )
 
         if (

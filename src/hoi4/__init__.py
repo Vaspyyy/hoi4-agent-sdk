@@ -136,6 +136,7 @@ from .types import (
     ValidationError,
 )
 from .validation import (
+    COUNTRY_PACKAGE_REQUIREMENT_CODES,
     VALIDATION_CODES,
     VALIDATION_ERROR_CODES,
     VALIDATION_INFO_CODES,
@@ -272,6 +273,7 @@ __all__ = [
     "pdx_string",
     "scope_block",
     "validate_script_syntax",
+    "COUNTRY_PACKAGE_REQUIREMENT_CODES",
     "VALIDATION_CODES",
     "VALIDATION_ERROR_CODES",
     "VALIDATION_INFO_CODES",

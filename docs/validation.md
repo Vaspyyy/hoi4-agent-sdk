@@ -48,6 +48,21 @@ events that nothing fires yet. So a flag that is read and never set is not
 reported by `validate()` or `validate(stage="build")`; call
 `validate(stage="release")`.
 
+## What a complete country needs
+
+Five findings are not about what the game needs, but about what the SDK asks
+of a complete country: `missing_country_leader`,
+`insufficient_political_advisors`, `insufficient_military_commanders`,
+`missing_land_oob` and `capital_not_cored`
+(`hoi4.COUNTRY_PACKAGE_REQUIREMENT_CODES`). The game loads a country without
+a leader (it makes one up), without advisors, generals or an army, and with
+a capital that is not a core. So these are warnings, and you can hide them
+like any warning if you want a country with one general.
+
+They still count where completeness is the question:
+`mod.validate_country_package(tag).complete` is `False` while one of them is
+open (`report.unmet_requirements` lists them), and the release gate fails.
+
 ## Hiding findings
 
 `suppress=` hides warnings and advice by code. An entry is either a code,
@@ -62,7 +77,7 @@ mod.validate(suppress=["missing_localization:TAG_secret_focus"])
 mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
 ```
 
-- Errors cannot be suppressed.
+- Errors cannot be suppressed: an error code in `suppress=` raises `ValueError`.
 - An unknown code raises `ValueError`, so a typo does not silently hide
   nothing. Suppressing by message text is no longer supported.
 - `suppress_warnings=` is the older name of the same list and means the same.
@@ -104,7 +119,6 @@ the content checks read them the way the game does:
 | Code | Severity | Meaning |
 | --- | --- | --- |
 | `bookmark_randomize_weather_missing` | error | A bookmark is missing its obligatory randomize_weather effect. |
-| `capital_not_cored` | error | A country's capital state is not cored by that country. |
 | `capital_not_owned` | error | A country's capital state is not owned by that country. |
 | `capital_ref` | error | A country history capital points to a missing state. |
 | `country_colors_parse` | error | A country colors table changed after loading and could not be parsed during validation. |
@@ -132,8 +146,6 @@ the content checks read them the way the game does:
 | `equipment_variant_chassis_not_unlocked` | error | Country history creates an equipment variant before its chassis technology. |
 | `focus_cycle` | error | A focus tree contains a prerequisite cycle. |
 | `game_log_error` | error | HOI4 reported an engine error for a file owned by this mod. |
-| `insufficient_military_commanders` | error | A complete country needs at least two recruited army commanders. |
-| `insufficient_political_advisors` | error | A complete country needs at least two recruited political advisors. |
 | `invalid_bookmark_available` | error | A bookmark availability block is malformed. |
 | `invalid_bookmark_country_tag` | error | A bookmark country tag is invalid. |
 | `invalid_bookmark_date` | error | A bookmark date is invalid. |
@@ -185,7 +197,6 @@ the content checks read them the way the game does:
 | `missing_character_small_portrait` | error | An advisor character has no civilian small portrait. |
 | `missing_country_activation` | error | A generated country has neither scenario-start territory nor a runtime release/setup path. |
 | `missing_country_flag` | error | An SDK-created country is missing one or more required flag sizes. |
-| `missing_country_leader` | error | A country has no recruited character with a country-leader role. |
 | `missing_country_name_pool` | error | A country that needs generated names has no common/names entry. |
 | `missing_effect_target` | error | War goal or war declaration block is missing target = TAG. |
 | `missing_event_id` | error | An event has no id. |
@@ -194,7 +205,6 @@ the content checks read them the way the game does:
 | `missing_focus_mutually_exclusive` | error | A focus mutually_exclusive entry names a focus that does not exist. |
 | `missing_focus_prerequisite` | error | A focus prerequisite names a focus that does not exist. |
 | `missing_idea_id` | error | An idea has no id. |
-| `missing_land_oob` | error | A complete country has no unambiguous land order of battle. |
 | `missing_mtg_equipment_variant` | error | A hull-based ship refers to no compatible country-history variant. |
 | `missing_mtg_ship_variant_name` | error | A hull-based ship has no equipment variant name. |
 | `missing_oob_reference` | error | Country history refers to an OOB file that does not exist. |
@@ -243,6 +253,7 @@ the content checks read them the way the game does:
 | Code | Severity | Meaning |
 | --- | --- | --- |
 | `bookmark_default_country_missing` | warning | The default country has no bookmark entry. |
+| `capital_not_cored` | warning | A country's capital state is not cored by that country. |
 | `character_ref` | warning | A recruited character is not defined in mod or vanilla data. |
 | `civil_war_capital_ref` | warning | A civil-war capital is not a known state ID. |
 | `country_colors_shadow_vanilla` | warning | A mod colors.txt shadows vanilla country color entries that it does not repeat. |
@@ -258,10 +269,14 @@ the content checks read them the way the game does:
 | `flag_read_never_set` | warning | A scripted flag is read but never written by the mod or the game. Release stage only. |
 | `flag_set_never_read` | warning | A scripted flag is written but never read. Release stage only. |
 | `history_set_owner_in_effect` | warning | State history owner directive appears in runtime effect script. |
+| `insufficient_military_commanders` | warning | A complete country needs at least two recruited army commanders. |
+| `insufficient_political_advisors` | warning | A complete country needs at least two recruited political advisors. |
 | `invalid_idea_icon_key` | warning | Idea definitions must use a bare picture stem, not an icon assignment. |
+| `missing_country_leader` | warning | A country has no recruited character with a country-leader role. |
 | `missing_country_name` | warning | No name localisation exists for a country, in any ideology variant. |
 | `missing_event_description` | warning | A visible event has no description. |
 | `missing_event_title` | warning | A visible event has no title. |
+| `missing_land_oob` | warning | A complete country has no unambiguous land order of battle. |
 | `missing_localization` | warning | Shown text (a focus, event, idea, country or leader name) has a localization key that exists nowhere: not in the mod, a base mod or the game. |
 | `missing_state_owner` | warning | A state has no owner. |
 | `missing_translation` | warning | English localization keys are missing from another language the mod ships. |

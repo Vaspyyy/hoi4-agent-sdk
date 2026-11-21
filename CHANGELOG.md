@@ -276,6 +276,17 @@ All notable changes to this project are documented here. The format follows
   of the game's own files it went from about 13,000 false alarms to the 17
   real mistakes in the game. What it reads from the install is cached under
   `~/.cache/hoi4-sdk/script-vocabulary`.
+- Five findings about what a complete country needs are warnings now, not
+  errors: `missing_country_leader`, `insufficient_political_advisors`,
+  `insufficient_military_commanders`, `missing_land_oob` and
+  `capital_not_cored` (`hoi4.COUNTRY_PACKAGE_REQUIREMENT_CODES`). The game
+  loads a country without them, and an error cannot be hidden. They still
+  decide completeness: `validate_country_package(tag).complete` stays
+  `False` (see the new `unmet_requirements`), and the release gate fails
+  (`incomplete_country_count`).
+- `invalid_country_color` is reported for a country definition file whose
+  colour has a channel outside 0 to 255. The reader clamps such a value, so
+  the check never saw it.
 - A trigger used where an effect belongs (or the other way round) is named
   as such, instead of being answered with a look-alike name.
 - `docs/validation.md` says what each stage checks. The "is this ever
