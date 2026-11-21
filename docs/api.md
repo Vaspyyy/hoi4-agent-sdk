@@ -231,7 +231,9 @@ equipment variants.
 | `find_enclosed_foreign_states(tag, minimum_land_provinces=1, allowed_state_ids=()) -> tuple[TerritoryComponent, ...]` | Return foreign land components completely enclosed by the target country; requires the `map` extra |
 
 `CountryPackageReport.complete` is true only when it has no structural error
-findings. `analysis_scope == "structural"` and
+findings and no open requirement of a complete country (a leader, two
+advisors, two generals, a land army, a cored capital: these are warnings,
+listed by `report.unmet_requirements`; see `docs/validation.md`). `analysis_scope == "structural"` and
 `proves_dynamic_achievability == False` make the boundary machine-readable:
 the report does not solve popularity/variable arithmetic or prove a runtime
 branch can fire.
