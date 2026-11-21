@@ -93,6 +93,26 @@ def _shared_focuses_in(text: str) -> dict[str, tuple[frozenset[str], str | None]
     return found
 
 
+# A list of ``[id, prerequisites, condition]`` in the file's order. JSON keeps
+# ``null`` (no ``allow_branch``) apart from ``""`` (one that always holds).
+_SHARED_FOCUSES_ON_DISK: DiskAnalysis[dict[str, tuple[frozenset[str], str | None]]] = (
+    DiskAnalysis(
+        "shared_focuses",
+        lambda found: [
+            [focus_id, sorted(parents), condition]
+            for focus_id, (parents, condition) in found.items()
+        ],
+        lambda data: {
+            str(focus_id): (
+                frozenset(str(parent) for parent in parents),
+                None if condition is None else str(condition),
+            )
+            for focus_id, parents, condition in data
+        },
+    )
+)
+
+
 def _sprite_names(text: str) -> frozenset[str]:
     """The ``name = GFX_...`` of every sprite declared in a ``.gfx`` text."""
 
@@ -396,7 +416,8 @@ class CatalogsLayer(SourcesLayer):
         ``shared_focus = ID`` in a tree puts ``ID`` on its canvas, and with it
         the shared focuses below it; a focus of the tree that hangs below one
         is hidden with it. The mod's own come from the models (with pending
-        edits), the inherited ones from a scan of each file.
+        edits), the inherited ones from a scan of each file (kept on disk
+        for later processes).
         """
 
         parents: dict[str, frozenset[str]] = {}
@@ -412,7 +433,11 @@ class CatalogsLayer(SourcesLayer):
                     conditions[focus.id] = allow_branch_condition(focus)
         replaced = set(self._group_focus_trees_by_file(dirty_only=True))
         for _, found in self._effective_script_results(
-            "common/national_focus", "shared_focuses", _shared_focuses_in, skip=replaced
+            "common/national_focus",
+            "shared_focuses",
+            _shared_focuses_in,
+            _SHARED_FOCUSES_ON_DISK,
+            skip=replaced,
         ):
             for focus_id, (refs, condition) in found.items():
                 if focus_id not in parents:

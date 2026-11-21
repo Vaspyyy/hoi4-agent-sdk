@@ -40,8 +40,10 @@ from hoi4.map_topology import _decode_topology, _encode_topology
 from hoi4.mod._catalogs import (
     _PROVINCE_TYPES_ON_DISK,
     _REFERENCES_ON_DISK,
+    _SHARED_FOCUSES_ON_DISK,
     _TEXTURES_ON_DISK,
     _province_types,
+    _shared_focuses_in,
     _sprite_textures,
     _technology_unlocks,
 )
@@ -382,6 +384,7 @@ GAME_FILES = {
     ),
     "common/ideas/game_ideas.txt": "ideas = { country = { game_idea = { } } }\n",
     "common/characters/game_characters.txt": "characters = { GAM_leader = { name = GAM_leader } }\n",
+    "common/characters/game_upper.txt": "CHARACTERS = { GAM_upper = { name = GAM_upper } }\n",
     "common/country_tags/00_countries.txt": 'GAM = "countries/Game.txt"\n',
     "common/countries/Game.txt": "color = { 1 2 3 }\n",
     "history/countries/GAM - Game.txt": "capital = 1\n",
@@ -401,6 +404,9 @@ GAME_FILES = {
     "common/national_focus/game_focus.txt": (
         "focus_tree = { id = game_tree focus = { id = GAM_focus x = 0 y = 0 cost = 1 } }\n"
         "shared_focus = { id = GAM_shared x = 0 y = 0 cost = 1 }\n"
+        "shared_focus = { id = GAM_below x = 0 y = 1 cost = 1\n"
+        " prerequisite = { focus = GAM_shared } allow_branch = { has_war = yes } }\n"
+        "joint_focus = { id = GAM_joint x = 1 y = 0 cost = 1 allow_branch = { always = yes } }\n"
     ),
     "common/names/00_names.txt": "GAM = { male = { names = { A } } }\n",
     "common/units/infantry.txt": "sub_units = { infantry = { } }\n",
@@ -569,6 +575,7 @@ def every_catalog(mod: Mod) -> list[object]:
         sorted(mod._dynamic_country_tags()),
         sorted(mod._known_idea_categories()),
         sorted(mod._definitions_in("common/country_tag_aliases").tags),
+        mod._shared_focuses(),
         sorted(mod._declared_event_namespaces()),
         mod._has_loc("game_value"),
         mod.get_loc("STATE_1"),
@@ -707,16 +714,78 @@ def round_trip(analysis: DiskAnalysis, value: object) -> object:
         (_PROVINCE_TYPES_ON_DISK, {}),
         (_COUNTRY_LOC_ON_DISK, country_loc_entries('l_english:\n GAM: "A"\n GAM_ADJ: "B"\n')),
         (NAMES_ON_DISK, localisation_keys_in('l_english:\n A:0 "x"\n b: "y"\n')),
+        (
+            _SHARED_FOCUSES_ON_DISK,
+            _shared_focuses_in(GAME_FILES["common/national_focus/game_focus.txt"]),
+        ),
+        (_SHARED_FOCUSES_ON_DISK, {}),
     ],
     ids=[
         "names", "no names", "textures", "no textures", "state header", "state without owner",
         "no state", "localisation", "regions", "buildings", "topology", "unlock pairs",
         "no pairs", "province types", "no province types", "country names",
-        "localisation keys",
+        "localisation keys", "shared focuses", "no shared focuses",
     ],
 )
 def test_every_stored_shape_round_trips(analysis: DiskAnalysis, value: object) -> None:
     assert round_trip(analysis, value) == value
+
+
+def test_shared_focuses_keep_no_condition_apart_from_one_that_always_holds(
+    store: Path, tmp_path: Path, game: Path
+) -> None:
+    found = _shared_focuses_in(GAME_FILES["common/national_focus/game_focus.txt"])
+    expected = {
+        "GAM_shared": (frozenset(), None),
+        "GAM_below": (frozenset({"GAM_shared"}), "has_war = yes"),
+        "GAM_joint": (frozenset(), ""),
+    }
+    assert found == expected
+    assert list(found) == list(expected)
+    assert round_trip(_SHARED_FOCUSES_ON_DISK, found) == expected
+
+    cold = make_mod(tmp_path, game)._shared_focuses()
+    disk_cache.flush()
+    assert any(
+        key.endswith("\0shared_focuses") and "game_focus.txt" in key for key in stored_keys(store)
+    )
+    new_process()
+    warm = make_mod(tmp_path, game)._shared_focuses()
+    assert warm == cold
+    assert warm[1]["GAM_shared"] is None
+    assert warm[1]["GAM_joint"] == ""
+
+
+def test_country_tags_and_characters_come_from_the_store(
+    store: Path, tmp_path: Path, game: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tag files behind ``_defined_country_tags`` and every character file."""
+
+    cold = make_mod(tmp_path, game)
+    tags, characters = cold._defined_country_tags(), cold._known_character_ids()
+    assert "GAM" in tags
+    assert {"GAM_leader", "GAM_upper", "MOD_hero"} <= characters
+    disk_cache.flush()
+    new_process()
+    parsed: list[str] = []
+    original_definitions, original_characters = catalogs.definitions_of, catalogs._character_ids
+
+    def counted_definitions(document: object, label: str) -> object:
+        parsed.append(label)
+        return original_definitions(document, label)  # type: ignore[arg-type]
+
+    def counted_characters(text: str) -> frozenset[str]:
+        parsed.append(text)
+        return original_characters(text)
+
+    monkeypatch.setattr(catalogs, "definitions_of", counted_definitions)
+    monkeypatch.setattr(catalogs, "_character_ids", counted_characters)
+    warm = make_mod(tmp_path, game)
+    assert warm._defined_country_tags() == tags
+    assert warm._known_character_ids() == characters
+    # Only the mod's own character file is read again.
+    own = tmp_path / "mod" / "common" / "characters" / "mod_characters.txt"
+    assert parsed == [own.read_text(encoding="utf-8")]
 
 
 def test_localisation_entries_round_trip_through_the_store(store: Path, tmp_path: Path) -> None:
