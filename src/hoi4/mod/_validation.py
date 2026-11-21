@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Sequence
 
+from .._file_cache import cached_file_result
 from ..content_graph import ContentLivenessReport, analyze_content_liveness
 from ..content_validation import (
     validate_bookmark,
@@ -80,6 +83,150 @@ _LOC_KEY_INDEXES = ("validation_loc_keys", "validation_mod_loc_keys")
 _LOCALIZATION_HEADER_RE = re.compile(r"^l_[A-Za-z_]+\s*:")
 
 
+def _source_file_findings(
+    path: Path, relative: str, text: str
+) -> tuple[ValidationError, ...]:
+    """Syntax and layout errors of one script file of the mod."""
+
+    errors: list[ValidationError] = []
+    for issue in validate_script_syntax(text):
+        location = _ISSUE_LOCATION_RE.search(issue)
+        errors.append(
+            ValidationError(
+                message=f"{path}: {issue}",
+                severity="error",
+                code="script_syntax",
+                file_path=str(path),
+                line=int(location.group(1)) if location else None,
+                column=int(location.group(2)) if location else None,
+            )
+        )
+    try:
+        has_unsupported_dynamic_ideas = any(
+            span.key == "dynamic_country_ideas"
+            for span in top_level_assignments(text)
+        )
+    except ValueError:
+        has_unsupported_dynamic_ideas = False
+    if has_unsupported_dynamic_ideas:
+        errors.append(
+            ValidationError(
+                message=(
+                    f"{path}: dynamic_country_ideas is not a HOI4 construct. "
+                    "Migrate this content to common/dynamic_modifiers and use "
+                    "add_dynamic_modifier/remove_dynamic_modifier effects."
+                ),
+                severity="error",
+                code="unsupported_dynamic_country_ideas",
+                file_path=str(path),
+            )
+        )
+
+    try:
+        if relative.startswith("common/characters/"):
+            for characters_body, characters_start, _ in iter_assignment_blocks(
+                text, "characters"
+            ):
+                body_offset = text.find("{", characters_start) + 1
+                for character_span in top_level_assignments(characters_body):
+                    if (
+                        not character_span.is_block
+                        or character_span.body_start is None
+                        or character_span.body_end is None
+                    ):
+                        continue
+                    character_body = characters_body[
+                        character_span.body_start : character_span.body_end
+                    ]
+                    for role_span in top_level_assignments(character_body):
+                        if role_span.key != "roles":
+                            continue
+                        absolute = body_offset + character_span.body_start + role_span.start
+                        errors.append(
+                            ValidationError(
+                                message=(
+                                    f"{path}: character '{character_span.key}' uses "
+                                    "unsupported top-level 'roles ='. Declare "
+                                    "country_leader, advisor, corps_commander, or "
+                                    "another role block directly."
+                                ),
+                                severity="error",
+                                code="invalid_character_roles_key",
+                                file_path=str(path),
+                                line=text.count("\n", 0, absolute) + 1,
+                            )
+                        )
+
+        if relative.startswith("common/decisions/") and not relative.startswith(
+            "common/decisions/categories/"
+        ):
+            for category_span in top_level_assignments(text):
+                if (
+                    not category_span.is_block
+                    or category_span.body_start is None
+                    or category_span.body_end is None
+                ):
+                    continue
+                category_body = text[
+                    category_span.body_start : category_span.body_end
+                ]
+                metadata = next(
+                    (
+                        span
+                        for span in top_level_assignments(category_body)
+                        if span.key in {"icon", "allowed", "visible"}
+                    ),
+                    None,
+                )
+                if metadata is None:
+                    continue
+                absolute = category_span.body_start + metadata.start
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"{path}: decision category '{category_span.key}' "
+                            f"declares '{metadata.key}' beside its decisions. Move "
+                            "category metadata to common/decisions/categories."
+                        ),
+                        severity="error",
+                        code="invalid_decision_category_layout",
+                        file_path=str(path),
+                        line=text.count("\n", 0, absolute) + 1,
+                    )
+                )
+
+        for politics_body, politics_start, _ in iter_assignment_blocks(
+            text, "set_politics"
+        ):
+            invalid = next(
+                (
+                    span
+                    for span in top_level_assignments(politics_body)
+                    if span.key == "elections_frequency"
+                ),
+                None,
+            )
+            if invalid is None:
+                continue
+            body_offset = text.find("{", politics_start) + 1
+            errors.append(
+                ValidationError(
+                    message=(
+                        f"{path}: set_politics does not support "
+                        "elections_frequency in current HOI4."
+                    ),
+                    severity="error",
+                    code="invalid_set_politics_field",
+                    file_path=str(path),
+                    line=text.count("\n", 0, body_offset + invalid.start) + 1,
+                )
+            )
+    except ValueError:
+        # The syntax failure above already reports malformed source.
+        pass
+    return tuple(errors)
+
+
 def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
     """Validate script and localization files even when no model loader owns them."""
 
@@ -96,143 +243,15 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
         script_paths.add(descriptor)
 
     for path in sorted(script_paths):
-        text = read_text(path)
-        for issue in validate_script_syntax(text):
-            location = _ISSUE_LOCATION_RE.search(issue)
-            errors.append(
-                ValidationError(
-                    message=f"{path}: {issue}",
-                    severity="error",
-                    code="script_syntax",
-                    file_path=str(path),
-                    line=int(location.group(1)) if location else None,
-                    column=int(location.group(2)) if location else None,
-                )
-            )
-        try:
-            has_unsupported_dynamic_ideas = any(
-                span.key == "dynamic_country_ideas"
-                for span in top_level_assignments(text)
-            )
-        except ValueError:
-            has_unsupported_dynamic_ideas = False
-        if has_unsupported_dynamic_ideas:
-            errors.append(
-                ValidationError(
-                    message=(
-                        f"{path}: dynamic_country_ideas is not a HOI4 construct. "
-                        "Migrate this content to common/dynamic_modifiers and use "
-                        "add_dynamic_modifier/remove_dynamic_modifier effects."
-                    ),
-                    severity="error",
-                    code="unsupported_dynamic_country_ideas",
-                    file_path=str(path),
-                )
-            )
-
         relative = path.relative_to(mod_root).as_posix()
-        try:
-            if relative.startswith("common/characters/"):
-                for characters_body, characters_start, _ in iter_assignment_blocks(
-                    text, "characters"
-                ):
-                    body_offset = text.find("{", characters_start) + 1
-                    for character_span in top_level_assignments(characters_body):
-                        if (
-                            not character_span.is_block
-                            or character_span.body_start is None
-                            or character_span.body_end is None
-                        ):
-                            continue
-                        character_body = characters_body[
-                            character_span.body_start : character_span.body_end
-                        ]
-                        for role_span in top_level_assignments(character_body):
-                            if role_span.key != "roles":
-                                continue
-                            absolute = body_offset + character_span.body_start + role_span.start
-                            errors.append(
-                                ValidationError(
-                                    message=(
-                                        f"{path}: character '{character_span.key}' uses "
-                                        "unsupported top-level 'roles ='. Declare "
-                                        "country_leader, advisor, corps_commander, or "
-                                        "another role block directly."
-                                    ),
-                                    severity="error",
-                                    code="invalid_character_roles_key",
-                                    file_path=str(path),
-                                    line=text.count("\n", 0, absolute) + 1,
-                                )
-                            )
-
-            if relative.startswith("common/decisions/") and not relative.startswith(
-                "common/decisions/categories/"
-            ):
-                for category_span in top_level_assignments(text):
-                    if (
-                        not category_span.is_block
-                        or category_span.body_start is None
-                        or category_span.body_end is None
-                    ):
-                        continue
-                    category_body = text[
-                        category_span.body_start : category_span.body_end
-                    ]
-                    metadata = next(
-                        (
-                            span
-                            for span in top_level_assignments(category_body)
-                            if span.key in {"icon", "allowed", "visible"}
-                        ),
-                        None,
-                    )
-                    if metadata is None:
-                        continue
-                    absolute = category_span.body_start + metadata.start
-                    errors.append(
-                        ValidationError(
-                            message=(
-                                f"{path}: decision category '{category_span.key}' "
-                                f"declares '{metadata.key}' beside its decisions. Move "
-                                "category metadata to common/decisions/categories."
-                            ),
-                            severity="error",
-                            code="invalid_decision_category_layout",
-                            file_path=str(path),
-                            line=text.count("\n", 0, absolute) + 1,
-                        )
-                    )
-
-            for politics_body, politics_start, _ in iter_assignment_blocks(
-                text, "set_politics"
-            ):
-                invalid = next(
-                    (
-                        span
-                        for span in top_level_assignments(politics_body)
-                        if span.key == "elections_frequency"
-                    ),
-                    None,
-                )
-                if invalid is None:
-                    continue
-                body_offset = text.find("{", politics_start) + 1
-                errors.append(
-                    ValidationError(
-                        message=(
-                            f"{path}: set_politics does not support "
-                            "elections_frequency in current HOI4."
-                        ),
-                        severity="error",
-                        code="invalid_set_politics_field",
-                        file_path=str(path),
-                        line=text.count("\n", 0, body_offset + invalid.start) + 1,
-                    )
-                )
-        except ValueError:
-            # The syntax failure above already reports malformed source.
-            pass
+        # The findings depend only on the file's text: reuse them while the
+        # file is unchanged. They are copied because callers may edit them.
+        found = cached_file_result(
+            f"source_file_findings:{relative}",
+            path,
+            partial(_source_file_findings, path, relative),
+        )
+        errors.extend(dataclasses.replace(finding) for finding in found)
 
     localization = mod_root / "localisation"
     if localization.is_dir():

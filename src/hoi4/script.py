@@ -97,8 +97,19 @@ def _ends_in_comment(text: str) -> bool:
     return bool(comments) and comments[-1][1] == len(text)
 
 
+# Parser repairs that mean validate_script_syntax has something to report.
+_STRUCTURE_PROBLEMS = frozenset({"unclosed_block", "stray_close", "unterminated_string"})
+
+
 def validate_script_syntax(script: str) -> list[str]:
     """Return human-readable syntax issues for a raw PDX snippet."""
+    # The syntax tree reads comments, strings and braces exactly like the
+    # scan below, so a file it did not have to repair has no issues. Inline
+    # maths (``@[ ... ]``) is one word to the tree but not to the scan.
+    if "@[" not in script and not any(
+        problem.kind in _STRUCTURE_PROBLEMS for problem in parse(script).problems
+    ):
+        return []
     issues: list[str] = []
     stack: list[tuple[int, int]] = []
     line = 1
