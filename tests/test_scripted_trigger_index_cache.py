@@ -1,7 +1,7 @@
 import pytest
 
 from hoi4 import Mod
-import hoi4.mod as mod_module
+from hoi4.patching import set_block
 import hoi4.parser as parser_module
 
 
@@ -35,10 +35,10 @@ def test_repeated_noop_overwrites_parse_existing_file_once_and_keep_comments(tmp
         assert mod.save().no_changes
 
 
-def test_append_does_not_parse_or_patch_growing_text_and_rolls_back(tmp_path, monkeypatch):
+def test_append_does_not_parse_or_patch_growing_text_and_rolls_back(tmp_path, monkeypatch, patch_mod_helper):
     mod = Mod(tmp_path)
     actual_parse = parser_module.parse_pdx
-    actual_set = mod_module.set_block
+    actual_set = set_block
     parsed = []
     patched = []
 
@@ -51,7 +51,7 @@ def test_append_does_not_parse_or_patch_growing_text_and_rolls_back(tmp_path, mo
         return actual_set(text, key, body)
 
     monkeypatch.setattr(parser_module, "parse_pdx", counting_parse)
-    monkeypatch.setattr(mod_module, "set_block", counting_set)
+    patch_mod_helper(set_block, counting_set)
     with mod.transaction():
         for i in range(50):
             mod.create_scripted_trigger(f"trigger_{i}", "always = yes")

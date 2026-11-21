@@ -1,7 +1,7 @@
 import pytest
 
 from hoi4 import Mod
-import hoi4.mod as mod_module
+from hoi4.states import build_state_index
 
 
 def write_state(directory, filename, state_id, owner="AAA"):
@@ -13,19 +13,19 @@ def write_state(directory, filename, state_id, owner="AAA"):
     return path
 
 
-def test_inherited_paths_are_scanned_once_and_resolve_content_not_filename(tmp_path, monkeypatch):
+def test_inherited_paths_are_scanned_once_and_resolve_content_not_filename(tmp_path, patch_mod_helper):
     game, target = tmp_path / "game", tmp_path / "mod"
     one = write_state(game, "2 - StaleFilename.txt", 1)
     two = write_state(game, "1-NoSpace.txt", 2)
     mod = Mod(target, hoi4_install=game)
-    actual = mod_module.build_state_index
+    actual = build_state_index
     calls = []
 
     def counting_index(directory):
         calls.append(directory)
         return actual(directory)
 
-    monkeypatch.setattr(mod_module, "build_state_index", counting_index)
+    patch_mod_helper(build_state_index, counting_index)
     assert mod.get_state(2).id == 2
     assert mod.get_state(2).path == two
     assert mod.get_state(1).id == 1

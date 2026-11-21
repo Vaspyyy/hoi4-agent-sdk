@@ -5,14 +5,46 @@ from __future__ import annotations
 import fnmatch
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable
+from pathlib import Path
+from typing import TYPE_CHECKING, Iterable, Protocol
 
 from .localisation import parse_localization_dir
 from .parser import strip_comments
 from .types import ValidationError
 
 if TYPE_CHECKING:
-    from .mod import Mod
+    from .bookmarks import Bookmark
+    from .characters import Character
+    from .dynamic_modifiers import DynamicModifier
+    from .ideologies import Ideology
+    from .layers import ContentLayers
+    from .script_vocabulary import ScriptSource
+    from .types import Country, Decision, DecisionCategory, Event, FocusTree, Idea
+
+
+class LivenessSource(Protocol):
+    """What the liveness analysis reads from a loaded mod. ``Mod`` satisfies it."""
+
+    mod_root: Path
+    hoi4_install: Path | None
+    _content_layers: ContentLayers | None
+    _scan_cache: dict[str, set[str]]
+    _vanilla_tags: set[str]
+    _loc_entries: dict[str, str]
+    _loc_sources: dict[str, Path]
+    _dirty_loc_keys: set[str]
+    _countries: dict[str, Country]
+    _characters: dict[str, Character]
+    _focus_trees: dict[str, FocusTree]
+    _events: dict[str, Event]
+    _ideas: dict[str, Idea]
+    _ideologies: dict[str, Ideology]
+    _dynamic_modifiers: dict[str, DynamicModifier]
+    _decisions: dict[str, Decision]
+    _decision_categories: dict[str, DecisionCategory]
+    _bookmarks: list[Bookmark]
+
+    def _semantic_script_sources(self) -> list[ScriptSource]: ...
 
 
 _EVENT_CALL_RE = re.compile(
@@ -125,7 +157,7 @@ class ContentLivenessReport:
 
 
 def analyze_content_liveness(
-    mod: Mod,
+    mod: LivenessSource,
     *,
     flag_allowlist: Iterable[str] = (),
     localization_allowlist: Iterable[str] = (),
@@ -305,7 +337,7 @@ def analyze_content_liveness(
     )
 
 
-def _all_script_text(mod: Mod) -> str:
+def _all_script_text(mod: LivenessSource) -> str:
     flattened = [
         source.text
         for source in mod._semantic_script_sources()
@@ -324,7 +356,7 @@ def _all_script_text(mod: Mod) -> str:
     return "\n".join(strip_comments(text) for text in flattened)
 
 
-def _installed_flag_usage(mod: Mod) -> tuple[set[str], set[str]]:
+def _installed_flag_usage(mod: LivenessSource) -> tuple[set[str], set[str]]:
     """Return flags written/read by vanilla for cross-content liveness."""
 
     if mod.hoi4_install is None:
@@ -353,7 +385,7 @@ def _installed_flag_usage(mod: Mod) -> tuple[set[str], set[str]]:
     return set(written), set(read)
 
 
-def _authored_localization_keys(mod: Mod) -> set[str]:
+def _authored_localization_keys(mod: LivenessSource) -> set[str]:
     """Keep inherited lookup vocabulary outside the authored-content audit.
 
     Layered localization sources are retargeted to prospective top-mod paths,
@@ -368,7 +400,7 @@ def _authored_localization_keys(mod: Mod) -> set[str]:
     return {key.split(":", 1)[0] for key in authored if key in mod._loc_entries}
 
 
-def _known_localization_uses(mod: Mod) -> set[str]:
+def _known_localization_uses(mod: LivenessSource) -> set[str]:
     result: set[str] = set()
     for tree in mod._focus_trees.values():
         for focus in tree.focuses:

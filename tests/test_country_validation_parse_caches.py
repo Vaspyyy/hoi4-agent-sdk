@@ -1,15 +1,15 @@
 from hoi4 import Mod
-import hoi4.mod as module
+from hoi4.parser import iter_assignment_blocks, parse_pdx
 
 
-def test_runtime_exact_body_cache_keeps_evidence_and_reacts_to_edits(tmp_path, monkeypatch):
+def test_runtime_exact_body_cache_keeps_evidence_and_reacts_to_edits(tmp_path, monkeypatch, patch_mod_helper):
     mod = Mod(tmp_path)
     original = "AAA = { transfer_state = 1 } 1 = { add_core_of = AAA } release = BBB"
     mod.create_event("test.1", immediate=original)
     mod.create_event("test.2", immediate=original)
     for event_id in ("test.1", "test.2"):
         mod.get_event(event_id).path = tmp_path / "events/test_events.txt"
-    actual_parse = module.parse_pdx
+    actual_parse = parse_pdx
     parses = []
     displays = []
     actual_display = mod._display_path
@@ -22,7 +22,7 @@ def test_runtime_exact_body_cache_keeps_evidence_and_reacts_to_edits(tmp_path, m
         displays.append(path)
         return actual_display(path)
 
-    monkeypatch.setattr(module, "parse_pdx", parse)
+    patch_mod_helper(parse_pdx, parse)
     monkeypatch.setattr(mod, "_display_path", display)
     first = mod._country_runtime_activation_evidence("AAA")
     assert first[:3] == ({1}, {1}, set())
@@ -47,7 +47,7 @@ def test_runtime_exact_body_cache_keeps_evidence_and_reacts_to_edits(tmp_path, m
     assert parses.count(original) == 2
 
 
-def test_sprite_exact_text_cache_refreshes_pending_and_disk_definitions(tmp_path, monkeypatch):
+def test_sprite_exact_text_cache_refreshes_pending_and_disk_definitions(tmp_path, patch_mod_helper):
     interface = tmp_path / "interface"
     interface.mkdir()
     disk = interface / "disk.gfx"
@@ -58,7 +58,7 @@ def test_sprite_exact_text_cache_refreshes_pending_and_disk_definitions(tmp_path
         texture.write_bytes(b"test texture source")
     mod = Mod(tmp_path)
     mod.write_portrait_gfx("ABC", "leader", portrait_path="gfx/a.dds", sprite_name="GFX_PENDING")
-    actual = module.iter_assignment_blocks
+    actual = iter_assignment_blocks
     parses = []
 
     def blocks(text, key):
@@ -66,7 +66,7 @@ def test_sprite_exact_text_cache_refreshes_pending_and_disk_definitions(tmp_path
             parses.append(text)
         return actual(text, key)
 
-    monkeypatch.setattr(module, "iter_assignment_blocks", blocks)
+    patch_mod_helper(iter_assignment_blocks, blocks)
     initial = mod._known_sprite_textures()
     assert initial == {"GFX_DISK": "gfx/a.dds", "GFX_PENDING": "gfx/a.dds"}
     assert mod._known_sprite_textures() == initial
