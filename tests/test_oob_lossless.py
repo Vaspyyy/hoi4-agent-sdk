@@ -466,3 +466,25 @@ def test_a_copy_placed_before_its_original_leaves_the_original_block_alone(tmp_p
     )
     # "First" keeps its block and its bytes; both copies are added after the others.
     assert path.read_text(encoding="utf-8") == LAND[: -len("}\n")] + block + block + "}\n"
+
+
+def test_a_changed_original_still_keeps_its_block_when_a_copy_comes_first(tmp_path: Path) -> None:
+    """Both the copy and the original differ from the file: the closer one owns the block."""
+
+    path = _write(tmp_path / "history/units/ABC_1936.txt", LAND)
+    mod = Mod(tmp_path)
+    divisions = copy.deepcopy(mod.get_oob("ABC_1936").divisions)
+    twin = copy.deepcopy(divisions[0])
+    twin.name = "Copy"
+    twin.location = 555
+    divisions[0].location = 200
+    assert mod.update_oob("ABC_1936", divisions=[twin, *divisions])
+    mod.save(require_changes=True)
+
+    assert path.read_text(encoding="utf-8") == LAND.replace(
+        "\t\tlocation = 100\n", "\t\tlocation = 200\n"
+    )[: -len("}\n")] + (
+        "\tdivision = {\n\t\tname = \"Copy\"\n\t\tlocation = 555\n"
+        "\t\tdivision_template = \"Infantry\"\n"
+        "\t\tstart_experience_factor = 0.30 # veterans\n\t\tfuture_field = keep\n\t}\n}\n"
+    )

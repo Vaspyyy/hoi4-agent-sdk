@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import textwrap
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable, Literal, Sequence, TypeVar
 
@@ -1334,9 +1335,10 @@ def _source_owners(
     """Which item owns each source block, and which items are new.
 
     When several items name the same block (a loaded item and copies of it),
-    the block belongs to the one that still says what the block says, or else
-    to the first. The others are new items: they are written after the rest
-    and never replace the one they were copied from.
+    the block belongs to the one that changes it least: the item that still
+    says what the block says, or the one with the fewest changed lines. The
+    others are new items: they are written after the rest and never replace
+    the one they were copied from.
     """
 
     named: dict[int, list[_T]] = {}
@@ -1348,14 +1350,24 @@ def _source_owners(
     for index, group in named.items():
         owner = group[0]
         if len(group) > 1:
-            for item in group:
-                raw: str = getattr(item, "raw_block")
-                if patch(raw, item) == raw:
-                    owner = item
-                    break
+            owner = min(group, key=lambda item: _changed_lines(getattr(item, "raw_block"), patch, item))
         owners[index] = owner
     owned = {id(owner) for owner in owners.values()}
     return owners, [item for item in items if id(item) not in owned]
+
+
+def _changed_lines(raw: str, patch: Callable[[str, _T], str], item: _T) -> int:
+    """How many lines of its source block ``item`` would change."""
+
+    patched = patch(raw, item)
+    if patched == raw:
+        return 0
+    before, after = raw.split("\n"), patched.split("\n")
+    same = sum(
+        block.size
+        for block in SequenceMatcher(None, before, after, autojunk=False).get_matching_blocks()
+    )
+    return max(len(before), len(after)) - same
 
 
 def _patch_templates(
