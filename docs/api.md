@@ -182,6 +182,13 @@ keep their place in the file. A copy of a loaded item (`copy.deepcopy`) passed
 next to its original is appended after the existing items, wherever it sits
 in the passed list: the block stays with the original, the item that was
 copied fewer times.
+The SDK tells them apart by how often an item was copied with `copy.copy` or
+`copy.deepcopy`; a twin made with `dataclasses.replace` counts as an original.
+Copy items you fetched with `get_oob` after the last `transaction()` that was
+not saved: such a dry run restores the mod's own items from a copy, so an
+item fetched before it and copied once is no longer told apart from them.
+When the SDK cannot tell, the item that changes fewer lines keeps the block;
+every item is written with the right fields either way.
 
 An inherited OOB with unbalanced braces (the game ships some) is read the way
 the game reads it. When it becomes a mod override it is written with balanced

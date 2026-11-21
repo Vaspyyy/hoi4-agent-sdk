@@ -417,23 +417,32 @@ def test_an_option_effect_that_would_end_the_option_early_is_refused(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "create",
+    "create, where",
     [
-        lambda mod: mod.create_event(
-            "t.2", title="t.2.t", immediate="add_stability = 0.1 }\ncountry_event = {"
+        (
+            lambda mod: mod.create_event(
+                "t.2", title="t.2.t", immediate="add_stability = 0.1 }\ncountry_event = {"
+            ),
+            "in the immediate of event 't.2'",
         ),
-        lambda mod: mod.create_event(
-            "t.2", title="t.2.t",
-            options=[EventOption(name="t.2.a", effect="add_stability = 0.1 }\noption = {")],
+        (
+            lambda mod: mod.create_event(
+                "t.2", title="t.2.t",
+                options=[EventOption(name="t.2.a", effect="add_stability = 0.1 }\noption = {")],
+            ),
+            "in the effect of an event option",
         ),
-        lambda mod: mod.add_event_option(
-            "t.1", EventOption(name="t.1.d", trigger="has_war = yes }\noption = {")
+        (
+            lambda mod: mod.add_event_option(
+                "t.1", EventOption(name="t.1.d", trigger="has_war = yes }\noption = {")
+            ),
+            "in the trigger of an event option",
         ),
     ],
 )
-def test_new_events_and_options_with_a_stray_brace_are_refused(tmp_path, create):
+def test_new_events_and_options_with_a_stray_brace_are_refused(tmp_path, create, where):
     mod, path = make_mod(tmp_path, ONE_LINE_OPTIONS)
     create(mod)
-    with pytest.raises(ValueError, match="event"):
+    with pytest.raises(ValueError, match=where):
         mod.save()
     assert path.read_text(encoding="utf-8") == ONE_LINE_OPTIONS
