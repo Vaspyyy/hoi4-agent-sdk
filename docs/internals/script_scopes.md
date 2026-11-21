@@ -173,7 +173,10 @@ Names are looked up without regard to case (`GameScriptVocabulary.lookup`).
 define: their family definitions and `common/modifier_definitions` (read
 from the mod folders, with the `pending` texts of files `save()` will write
 in place of the disk), plus names the caller passes (scripted effects and
-triggers, ideologies, characters, including pending edits).
+triggers, ideologies, including pending edits). `characters=` is the
+whole set of character ids and replaces the install's: a mod can hide a
+character of the game (`replace_path`, a file of the same name,
+`delete_character()`), and then its id is no scope.
 `Mod.game_script_vocabulary()` caches the install's vocabulary per `Mod` and
 extends it on every call, so a building made with `create_definition()`
 counts before `save()`.
