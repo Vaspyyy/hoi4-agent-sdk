@@ -151,6 +151,29 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **`Mod(root)` is fast, and `save()` no longer reloads the whole mod.**
+  Content now loads one section at a time (events, states, countries,
+  localisation and so on) the first time it is used, so an agent that edits
+  one event reads only the events. After `save()` and `discard()`, only the
+  sections that had edits, whose files were written or changed on disk, or
+  that are built from those load again on next use; everything else stays in
+  memory. On a large mod (11,297 files, 157 MB) construction went from about
+  15 s to 0.2 s, and saving one event edit from about 15 s to 0.3 s.
+  `strict_loading=True` still loads everything at construction, and
+  `load_diagnostics` loads what is missing and lists diagnostics in the same
+  order as before. `reload()` still reloads everything, and so does
+  `discard()` for a mod with base mods (the inherited layers can change on
+  disk too).
+- **Much less memory for the external-change check.** `Mod` no longer keeps a
+  copy of the bytes of every text file of the mod. It records each file's size
+  and modification time, and a digest of the text it read. A file whose time
+  changed but whose text did not (a `touch`) can still be overwritten; any
+  other change behind the SDK's back still raises `ExternalModificationError`.
+- A load failure in a file that was changed or broken after `Mod(...)` was
+  built, but before its section was first used, is now reported as a load
+  diagnostic (`load_failure` in `validate()`), like any file that fails to load.
+- `transaction()` copies only the sections that are loaded; a section first
+  loaded inside the transaction is unloaded again on rollback.
 - **An edit to one field now changes only that field.** Focus trees, events,
   on-actions, ideas, ideologies, dynamic modifiers, decisions, bookmarks,
   countries, characters, country tags, states and orders of battle are read

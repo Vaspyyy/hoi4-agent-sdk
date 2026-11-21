@@ -38,7 +38,20 @@ If no config file exists, use `Mod()` directly with explicit paths:
 mod = Mod("/path/to/my_mod", hoi4_install="/path/to/hoi4")
 ```
 
-Loader failures are available through `mod.load_diagnostics`. Pass `strict_loading=True` to `Mod(...)` when malformed discovered files should abort construction instead of being skipped with a diagnostic.
+`Mod(...)` reads no content yet. Each kind of content (countries, characters,
+OOBs, states, focus trees, events, on-actions, decisions, ideas, ideologies,
+dynamic modifiers, bookmarks, localisation) loads the first time something
+uses it, so a script that edits one event reads only the event files.
+
+Loader failures are available through `mod.load_diagnostics`; reading it loads
+every kind of content that is not loaded yet. Pass `strict_loading=True` to
+`Mod(...)` when malformed discovered files should abort construction instead of
+being skipped with a diagnostic: it loads everything at construction.
+
+After `save()`, only the content whose files were written (and what is built
+from it) loads again on next use. `discard()` drops every unsaved edit and
+picks up files changed on disk the same way: what had no edits and whose files
+did not change stays in memory. `reload()` reloads everything.
 
 A script file in the mod's own folder with unbalanced braces (or another
 syntax problem) is a load failure. Files from the game or a base mod are read
@@ -1056,8 +1069,9 @@ its severity. Stages are:
 Pass `validate_icons=True` to scan real interface `.gfx` files and warn about
 missing focus and idea icons. Pass `strict_localization=True` for a final audit
 of event, idea, country, and leader localization. Icon/reference and installed
-vocabulary scans are cached per `Mod` instance; call `reload()` (or the
-equivalent `discard()`) to discard queued edits and refresh from disk.
+vocabulary scans are cached per `Mod` instance; call `reload()` (or
+`discard()`, which also drops these caches) to discard queued edits and
+refresh from disk.
 
 With `hoi4_install` configured, `game_script_vocabulary()` exposes documented
 effect, trigger, and modifier tokens, installed-game usage counts by domain,
@@ -1108,7 +1122,7 @@ It is deliberately structural. `analysis_scope` is `"structural"` and
 prove that popularity thresholds, variables, or mutually dependent triggers
 are achievable in an actual campaign.
 
-`preview()` and `save()` compare every target source file with the byte snapshot captured when `Mod` loaded. If a legacy Studio writer or another worker changes one, they raise `ExternalModificationError` instead of overwriting it. Use one `Mod` per operation/thread; on this exception, call `reload()` and deliberately reapply the edit.
+`preview()` and `save()` check every target source file against the state recorded when `Mod` loaded (or last saved, discarded or reloaded): its size and modification time, and a digest of the text the SDK read. If a legacy Studio writer or another worker changes one, they raise `ExternalModificationError` instead of overwriting it. A file whose modification time changed but whose text did not (a `touch`) is not a change. Use one `Mod` per operation/thread; on this exception, call `reload()` and deliberately reapply the edit.
 
 Long validations expose phase progress and cooperative cancellation:
 
@@ -1890,8 +1904,9 @@ The fallback uses a private temporary content snapshot under
 otherwise. It excludes executables, music, and packed DLC. Asset-heavy installs
 can require substantial space on filesystems without reflinks. Never hardlink
 snapshot content to game files. `reload()`/`discard()` rebuild the snapshot to
-observe changed dependencies; temporary snapshots are automatically cleaned up
-with their instance. SDK writes remain exclusively inside the writable mod.
+observe changed dependencies (`save()` keeps it, since it writes only to the
+writable mod); temporary snapshots are automatically cleaned up with their
+instance. SDK writes remain exclusively inside the writable mod.
 
 
 ### Support script imports and scripted triggers

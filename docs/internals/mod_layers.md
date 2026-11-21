@@ -26,7 +26,9 @@ docstring. `tests/test_mod_layers.py` checks the structure.
 ## What the rule does not cover
 
 All shared state (the loaded models, the dirty sets, the caches) is declared in
-`CoreLayer.__init__`, and every layer can read and write it. The layering
+`CoreLayer`, and every layer can read and write it. The loaded models and their
+dirty sets are grouped into sections that load on first use; see
+[`mod_sections.md`](mod_sections.md). The layering
 controls which methods may call which. It does not yet stop one layer from
 touching another content type's data directly.
 
