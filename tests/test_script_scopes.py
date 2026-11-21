@@ -267,6 +267,22 @@ def test_dotted_and_prefixed_scopes(game: Path) -> None:
     ]
 
 
+def test_links_behind_a_typed_prefix_count(game: Path) -> None:
+    right = """
+    state:123.owner = { add_political_power = 10 }
+    country:GER.capital_scope = { add_core_of = GER }
+    character:GER_erwin_rommel.owner = { add_political_power = 10 }
+    mio:GER_krupp_organization.owner = { add_political_power = 10 }
+    state:123.my_variable = { add_political_power = 10 }
+    """
+    assert check(game, right) == []
+    wrong = "state:123.owner = { add_core_of = GER }\ncountry:GER.capital_scope = { add_political_power = 10 }"
+    assert [(item.code, item.line) for item in check(game, wrong)] == [
+        ("unsupported_effect_scope", 1),
+        ("unsupported_effect_scope", 2),
+    ]
+
+
 def test_from_is_unknown_unless_the_source_says(game: Path) -> None:
     assert check(game, "FROM = { add_stability = 1 }") == []
     findings = check(game, "FROM = { add_stability = 1 }", from_scope="STATE")

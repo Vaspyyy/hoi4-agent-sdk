@@ -685,6 +685,7 @@ class _Walker:
         depth = len(stack) - 1  # index of THIS
         current: str | None = stack[-1]
         used_from = 0
+        typed = False
         for position, part in enumerate(parts):
             folded = part.lower()
             if folded == "root":
@@ -702,11 +703,16 @@ class _Walker:
                 current = SCOPE_LINKS[folded]
                 depth = -1
             elif ":" in part:
-                # ``var:ETH.host_nation``: the rest of the key names the variable.
-                prefix = part.split(":", 1)[0].lower()
+                prefix, _, name = part.partition(":")
+                prefix = prefix.lower()
                 if prefix not in SCOPE_PREFIXES:
                     return _NOT_A_SCOPE
-                return SCOPE_PREFIXES[prefix]
+                target = SCOPE_PREFIXES[prefix]
+                if target is None or ":" in name:
+                    # ``var:ETH.host_nation``: the rest of the key names the variable.
+                    return None
+                # ``state:123.owner``: the links behind a typed prefix still count.
+                current, depth, typed = target, -1, True
             elif _TAG_RE.match(part) and part not in _KEYWORDS:
                 current = "COUNTRY"
                 depth = -1
@@ -716,6 +722,9 @@ class _Walker:
             elif folded in self.characters:
                 current = "CHARACTER"
                 depth = -1
+            elif typed:
+                # A word behind ``state:123`` that is no link may name a variable.
+                return None
             else:
                 return _NOT_A_SCOPE
         return current
