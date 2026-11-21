@@ -17,6 +17,8 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Iterable
 
+from ._disk_cache import DiskAnalysis
+from ._file_cache import cached_files_result
 from .layers import ContentView, as_view
 from .map_render import parse_definition_csv
 from .textio import read_text
@@ -51,24 +53,7 @@ def find_country_territory_components(
 
     if minimum_land_provinces < 1:
         raise ValueError("minimum_land_provinces must be at least 1")
-    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
-    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
-    adjacency_path = _optional_effective_map_file(
-        mod_root,
-        hoi4_install,
-        "adjacencies.csv",
-    )
-    fingerprints = (
-        provinces_path.stat().st_mtime_ns,
-        definition_path.stat().st_mtime_ns,
-        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
-    )
-    land_provinces, graph, _coastal_land_provinces = _load_province_topology(
-        provinces_path,
-        definition_path,
-        adjacency_path,
-        fingerprints,
-    )
+    land_provinces, graph, _coastal_land_provinces = _effective_topology(mod_root, hoi4_install)
 
     owned_states = {
         state.id: state
@@ -159,24 +144,7 @@ def find_enclosed_foreign_components(
 
     if minimum_land_provinces < 1:
         raise ValueError("minimum_land_provinces must be at least 1")
-    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
-    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
-    adjacency_path = _optional_effective_map_file(
-        mod_root,
-        hoi4_install,
-        "adjacencies.csv",
-    )
-    fingerprints = (
-        provinces_path.stat().st_mtime_ns,
-        definition_path.stat().st_mtime_ns,
-        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
-    )
-    land_provinces, graph, coastal_land_provinces = _load_province_topology(
-        provinces_path,
-        definition_path,
-        adjacency_path,
-        fingerprints,
-    )
+    land_provinces, graph, coastal_land_provinces = _effective_topology(mod_root, hoi4_install)
     effective_states = tuple(states)
     state_by_id = {state.id: state for state in effective_states}
     province_to_state = {
@@ -236,16 +204,83 @@ def find_enclosed_foreign_components(
     )
 
 
+_Topology = tuple[frozenset[int], dict[int, set[int]], frozenset[int]]
+
+
+def _encode_topology(topology: _Topology) -> dict[str, list]:
+    land, graph, coastal = topology
+    return {
+        "land": sorted(land),
+        "graph": [[province, sorted(neighbours)] for province, neighbours in graph.items()],
+        "coastal": sorted(coastal),
+    }
+
+
+def _decode_topology(data: dict[str, list]) -> _Topology:
+    return (
+        frozenset(int(item) for item in data["land"]),
+        {int(province): {int(item) for item in neighbours} for province, neighbours in data["graph"]},
+        frozenset(int(item) for item in data["coastal"]),
+    )
+
+
+_TOPOLOGY_ON_DISK = DiskAnalysis("province_topology", _encode_topology, _decode_topology)
+
+
+def _effective_topology(mod_root: Path, hoi4_install: Path | ContentView | None) -> _Topology:
+    """Land provinces, the land adjacency graph and coastal land of the effective map.
+
+    Kept in memory while the map files are unchanged. When the mod has no
+    map files of its own, the result is also kept on disk for later
+    processes (``hoi4._disk_cache``).
+    """
+
+    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
+    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
+    adjacency_path = _optional_effective_map_file(mod_root, hoi4_install, "adjacencies.csv")
+    fingerprints = (
+        provinces_path.stat().st_mtime_ns,
+        definition_path.stat().st_mtime_ns,
+        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
+    )
+    paths = [provinces_path, definition_path]
+    if adjacency_path is not None:
+        paths.append(adjacency_path)
+    inherited = not any(path.is_relative_to(mod_root) for path in paths)
+    return _load_province_topology(
+        provinces_path, definition_path, adjacency_path, fingerprints, inherited
+    )
+
+
 @lru_cache(maxsize=4)
 def _load_province_topology(
     provinces_path: Path,
     definition_path: Path,
     adjacency_path: Path | None,
     fingerprints: tuple[int, int, int],
-) -> tuple[frozenset[int], dict[int, set[int]], frozenset[int]]:
+    on_disk: bool = False,
+) -> _Topology:
     # ``fingerprints`` is intentionally unused in the body: it forms part of
     # the cache key so replacing a map file invalidates the derived graph.
     del fingerprints
+    if on_disk:
+        paths = [provinces_path, definition_path]
+        if adjacency_path is not None:
+            paths.append(adjacency_path)
+        return cached_files_result(
+            "province_topology",
+            paths,
+            lambda: _compute_province_topology(provinces_path, definition_path, adjacency_path),
+            _TOPOLOGY_ON_DISK,
+        )
+    return _compute_province_topology(provinces_path, definition_path, adjacency_path)
+
+
+def _compute_province_topology(
+    provinces_path: Path,
+    definition_path: Path,
+    adjacency_path: Path | None,
+) -> _Topology:
     try:
         np = import_module("numpy")
         image_module = import_module("PIL.Image")
@@ -394,20 +429,7 @@ def load_land_adjacency(
     contribute edges. Raises like :func:`load_province_grid`.
     """
 
-    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
-    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
-    adjacency_path = _optional_effective_map_file(mod_root, hoi4_install, "adjacencies.csv")
-    fingerprints = (
-        provinces_path.stat().st_mtime_ns,
-        definition_path.stat().st_mtime_ns,
-        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
-    )
-    _land, graph, _coastal = _load_province_topology(
-        provinces_path,
-        definition_path,
-        adjacency_path,
-        fingerprints,
-    )
+    _land, graph, _coastal = _effective_topology(mod_root, hoi4_install)
     return graph
 
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import re
 from collections.abc import Collection
 from pathlib import Path
 
+from .._disk_cache import NAMES_ON_DISK, DiskAnalysis
 from .._file_cache import cached_file_result
 from ..characters import AdvisorRole
 from ..events import VALID_EVENT_TYPES
@@ -23,7 +25,9 @@ from ..patching import (
 from ..script_references import (
     Definitions,
     FileReferences,
+    decode_file_references,
     definitions_of,
+    encode_file_references,
     file_references,
     resolve_equipment,
 )
@@ -36,24 +40,9 @@ from ._sources import SourcesLayer
 _LOC_VALUE_RE = re.compile(r"\[\?([A-Za-z_@][A-Za-z0-9_.@]*)")
 # Folders whose script the game reads as effects, triggers and definitions.
 _CORPUS_DIRECTORIES = ("common", "events", "history")
-
-
-def _inherited_references(path: Path, relative: str) -> FileReferences | None:
-    """The references of an inherited file, kept until the file changes.
-
-    A second Mod over the same game, or a second validation, does not parse
-    the whole game again.
-    """
-
-    key = str(path)
-    try:
-        return cached_file_result(
-            f"file_references:{relative}",
-            path,
-            lambda text: file_references(key, relative, text, own=False),
-        )
-    except (OSError, ValueError):
-        return None
+_REFERENCES_ON_DISK = DiskAnalysis(
+    "file_references", encode_file_references, decode_file_references
+)
 
 
 _FOCUS_KEYS = ("focus", "shared_focus", "joint_focus")
@@ -173,8 +162,59 @@ def _character_ids(text: str) -> frozenset[str]:
     )
 
 
+def _sprite_textures(text: str) -> dict[str, str]:
+    """``name -> texturefile`` of every ``spriteType`` in a ``.gfx`` text."""
+
+    parsed: dict[str, str] = {}
+    for body, _, _ in iter_assignment_blocks(text, "spriteType"):
+        assignments = {
+            span.key: span
+            for span in top_level_assignments(body)
+            if not span.is_block
+        }
+        name_span = assignments.get("name")
+        texture_span = assignments.get("texturefile")
+        if name_span is None or texture_span is None:
+            continue
+        name = body[name_span.value_start : name_span.value_end].strip().strip('"')
+        texture = (
+            body[texture_span.value_start : texture_span.value_end]
+            .strip()
+            .strip('"')
+            .replace("\\", "/")
+        )
+        if name and texture:
+            parsed[name] = texture
+    return parsed
+
+
+_TEXTURES_ON_DISK: DiskAnalysis[dict[str, str]] = DiskAnalysis("sprite_textures", dict, dict)
+
+
 class CatalogsLayer(SourcesLayer):
     """Catalogs of known identifiers (ideas, events, technologies, equipment, sprites)."""
+
+    def _inherited_references(self, path: Path, relative: str) -> FileReferences | None:
+        """The references of an inherited file, kept until the file changes.
+
+        A second Mod over the same game, or a second validation, does not
+        parse the whole game again; a later process reads them from disk.
+        """
+
+        key = str(path)
+        try:
+            found = self._cached_result(
+                f"file_references:{relative}",
+                path,
+                lambda text: file_references(key, relative, text, own=False),
+                _REFERENCES_ON_DISK,
+            )
+        except (OSError, ValueError):
+            return None
+        if found.path != key:
+            # Stored by a process that read the same file at another path.
+            found = dataclasses.replace(found, path=key)
+        return found
 
     def _definitions_in(self, relative: str, *, skip: Collection[Path] = ()) -> Definitions:
         """What the effective files of one folder define, read from the tree.
@@ -436,8 +476,8 @@ class CatalogsLayer(SourcesLayer):
         for relative, path in sorted(sources.items()):
             if not relative.endswith(".txt"):
                 continue
-            if not path.is_relative_to(self.mod_root):
-                found = _inherited_references(path, relative)
+            if not self._in_mod_root(path):
+                found = self._inherited_references(path, relative)
                 if found is not None:
                     corpus.append(found)
                 continue
@@ -488,7 +528,7 @@ class CatalogsLayer(SourcesLayer):
         replaced.update(self._script_file_updates)
         for relative in ("common/ideas", "common/national_ideas"):
             for _, found in self._effective_script_results(
-                relative, "idea_ids", _idea_ids, skip=replaced
+                relative, "idea_ids", _idea_ids, NAMES_ON_DISK, skip=replaced
             ):
                 ids |= found
         return ids
@@ -506,7 +546,7 @@ class CatalogsLayer(SourcesLayer):
         ids = set(self._characters)
         replaced = set(self._group_characters_by_file(dirty_only=True))
         for _, found in self._effective_script_results(
-            "common/characters", "character_ids", _character_ids, skip=replaced
+            "common/characters", "character_ids", _character_ids, NAMES_ON_DISK, skip=replaced
         ):
             ids |= found
         return ids
@@ -535,31 +575,9 @@ class CatalogsLayer(SourcesLayer):
     def _known_sprite_textures(self) -> dict[str, str]:
         def scan_text(text: str, textures: dict[str, str]) -> None:
             cached = self._sprite_text_parse_cache.get(text)
-            if cached is not None:
-                textures.update(cached)
-                return
-            parsed: dict[str, str] = {}
-            for body, _, _ in iter_assignment_blocks(text, "spriteType"):
-                assignments = {
-                    span.key: span
-                    for span in top_level_assignments(body)
-                    if not span.is_block
-                }
-                name_span = assignments.get("name")
-                texture_span = assignments.get("texturefile")
-                if name_span is None or texture_span is None:
-                    continue
-                name = body[name_span.value_start : name_span.value_end].strip().strip('"')
-                texture = (
-                    body[texture_span.value_start : texture_span.value_end]
-                    .strip()
-                    .strip('"')
-                    .replace("\\", "/")
-                )
-                if name and texture:
-                    parsed[name] = texture
-            self._sprite_text_parse_cache[text] = parsed
-            textures.update(parsed)
+            if cached is None:
+                cached = self._sprite_text_parse_cache[text] = _sprite_textures(text)
+            textures.update(cached)
 
         def scan(base: ContentView, textures: dict[str, str]) -> None:
             for path in base.rglob("interface", "*.gfx").values():
@@ -572,7 +590,15 @@ class CatalogsLayer(SourcesLayer):
         if self._sprite_texture_cache is None:
             vanilla: dict[str, str] = {}
             if self._base_content is not None:
-                scan(self._base_content, vanilla)
+                # The game's sprites are kept on disk for later processes.
+                for path in self._base_content.rglob("interface", "*.gfx").values():
+                    try:
+                        found: dict[str, str] = self._cached_result(
+                            "sprite_textures", path, _sprite_textures, _TEXTURES_ON_DISK
+                        )
+                    except (OSError, ValueError):
+                        continue
+                    vanilla.update(found)
             self._sprite_texture_cache = vanilla
         textures = dict(self._sprite_texture_cache)
         scan(FolderView(self.mod_root), textures)

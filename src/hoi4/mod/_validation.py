@@ -9,6 +9,7 @@ from functools import partial
 from pathlib import Path
 from typing import Sequence
 
+from .. import _disk_cache
 from .._file_cache import cached_file_result
 from ..content_graph import ContentLivenessReport, analyze_content_liveness
 from ..content_validation import (
@@ -561,6 +562,8 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         finally:
             if outer:
                 self._validation_run = None
+                # Keep what was read from the game's files for later processes.
+                _disk_cache.flush()
 
     def _validate_once(
         self,

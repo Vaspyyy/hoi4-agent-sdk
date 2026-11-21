@@ -21,6 +21,7 @@ import dataclasses
 from collections import defaultdict
 from typing import Iterable
 
+from .._disk_cache import NAMES_ON_DISK
 from ..oob import (
     OOBReference,
     OrderOfBattle,
@@ -220,7 +221,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
             names |= _division_template_names(country.raw_history)
         for relative in _TEMPLATE_SCRIPT_DIRS:
             for _, found in self._effective_script_results(
-                relative, "division_template_names", _division_template_names
+                relative, "division_template_names", _division_template_names, NAMES_ON_DISK
             ):
                 names |= found
         return names

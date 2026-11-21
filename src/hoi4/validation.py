@@ -674,19 +674,28 @@ def collect_character_ids(*roots: Path | ContentView | None) -> set[str]:
             continue
         for path in view.glob("common/characters", "*.txt").values():
             try:
-                text = read_text(path)
-                for body, _, _ in iter_assignment_blocks(text, "characters"):
-                    character_ids.update(
-                        span.key
-                        for span in top_level_assignments(body)
-                        if span.is_block
-                    )
+                character_ids.update(character_ids_in(read_text(path)))
             except (OSError, ValueError):
                 # Source syntax/read failures are surfaced by the source-tree
                 # validation pass; do not turn one malformed catalog into a
                 # validation crash here.
                 continue
     return character_ids
+
+
+def character_ids_in(text: str) -> frozenset[str]:
+    """The IDs of the characters one ``common/characters`` file defines.
+
+    A file that stops making sense keeps the IDs found before that point.
+    """
+
+    found: set[str] = set()
+    try:
+        for body, _, _ in iter_assignment_blocks(text, "characters"):
+            found.update(span.key for span in top_level_assignments(body) if span.is_block)
+    except ValueError:
+        pass
+    return frozenset(found)
 
 
 def validate_country_history_references(

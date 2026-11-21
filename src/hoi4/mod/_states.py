@@ -62,7 +62,9 @@ class StatesLayer(CoreLayer):
         for source, base in zip(("mod", "vanilla"), self._data_views()):
             if source == "vanilla" and not include_vanilla:
                 continue
-            for entry in build_state_index(base.glob("history/states", "*.txt").values()):
+            for entry in build_state_index(
+                base.glob("history/states", "*.txt").values(), header=self._state_index_header
+            ):
                 if source == "vanilla" and self._is_shadowed_by_mod(base, Path(entry["path"])):
                     continue
                 item = dict(entry)
@@ -152,7 +154,8 @@ class StatesLayer(CoreLayer):
             vanilla_entries: dict[str, str] = {}
             if self._base_content is not None:
                 loaded, _ = parse_localization_files(
-                    self._base_content.rglob("localisation/english", "*.yml").values()
+                    self._base_content.rglob("localisation/english", "*.yml").values(),
+                    file_entries=self._localisation_file_entries,
                 )
                 vanilla_entries = {
                     key: value for key, value in loaded.items() if key.startswith("STATE_")
@@ -213,7 +216,7 @@ class StatesLayer(CoreLayer):
             assert self._base_content is not None
             paths: dict[int, Path] = {}
             files = list(self._base_content.glob("history/states", "*.txt").values())
-            for entry in build_state_index(files):
+            for entry in build_state_index(files, header=self._state_index_header):
                 if self._is_shadowed_by_mod(self._base_content, Path(entry["path"])):
                     continue
                 paths.setdefault(entry["id"], Path(entry["path"]))

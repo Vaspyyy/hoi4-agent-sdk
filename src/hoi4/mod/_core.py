@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Optional, Sequence, TypeVar
 
+from .._disk_cache import DiskAnalysis
+from .._file_cache import cached_file_result
 from ..bookmarks import (
     Bookmark,
 )
@@ -25,6 +27,7 @@ from ..focus import load_focus_trees
 from ..ideas import read_ideas_file
 from ..ideologies import Ideology
 from ..layers import ContentLayers, ContentView, FolderView, relative_content_path, replace_paths
+from ..localisation import LOCALISATION_ON_DISK, _localization_entries, _read_localization
 from ..on_actions import load_on_actions_file
 from ..oob import (
     OrderOfBattle,
@@ -38,6 +41,7 @@ from ..paths import (
 from ..script_vocabulary import (
     GameScriptVocabulary,
 )
+from ..states import state_index_header
 from ..syntax import require_well_formed
 from ..tags import (
     load_vanilla_tags,
@@ -57,6 +61,20 @@ from ..types import (
     OnAction,
     State,
 )
+
+_STATE_HEADERS_ON_DISK: DiskAnalysis[tuple[int, str, str | None] | None] = DiskAnalysis(
+    "state_index_header",
+    lambda header: list(header) if header is not None else None,
+    lambda data: (int(data[0]), str(data[1]), data[2]) if data is not None else None,
+)
+
+def _path_under(path: Path, root: Path) -> bool:
+    """``path.is_relative_to(root)``, compared as text (much faster)."""
+
+    base = os.path.normcase(os.fspath(root))
+    text = os.path.normcase(os.fspath(path))
+    return text == base or text.startswith(os.path.join(base, ""))
+
 
 _InheritedModel = TypeVar("_InheritedModel", FocusTree, Event, Idea)
 _Built = TypeVar("_Built")
@@ -1063,3 +1081,48 @@ class CoreLayer:
         if self._base_content is not None:
             views.append(self._base_content)
         return views
+
+    def _cached_result(
+        self,
+        purpose: str,
+        path: Path,
+        compute: Callable[[str], _Built],
+        disk: DiskAnalysis[_Built],
+        *,
+        read: Callable[[Path], str] = read_text,
+    ) -> _Built:
+        """``compute(text of path)``, kept until the file changes.
+
+        For a file the mod inherits (the game or a base mod), the result is
+        also kept on disk for later processes. A file of the mod itself is
+        kept in memory only.
+        """
+
+        if self._in_mod_root(path):
+            return cached_file_result(purpose, path, compute, read=read)
+        return cached_file_result(purpose, path, compute, read=read, disk=disk)
+
+    def _in_mod_root(self, path: Path) -> bool:
+        """``path.is_relative_to(self.mod_root)``, by text.
+
+        ``Path.is_relative_to`` builds and searches every parent of the path,
+        which shows when it runs for each of the game's thousands of files.
+        """
+
+        return _path_under(path, self.mod_root)
+
+    def _localisation_file_entries(self, path: Path) -> dict[str, str]:
+        """The entries of one ``.yml`` file; the game's are kept on disk."""
+
+        return self._cached_result(
+            "localisation_entries",
+            path,
+            _localization_entries,
+            LOCALISATION_ON_DISK,
+            read=_read_localization,
+        )
+
+    def _state_index_header(self, path: Path) -> tuple[int, str, str | None] | None:
+        """``(id, name, owner)`` of one state file; the game's are kept on disk."""
+
+        return self._cached_result("state_index_header", path, state_index_header, _STATE_HEADERS_ON_DISK)

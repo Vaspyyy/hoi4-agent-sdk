@@ -48,7 +48,9 @@ class LocalisationLayer(CoreLayer):
         if self._content_layers is not None:
             inherited = self._content_layers.rglob(Path("localisation") / language, "*.yml")
             relatives = {source: relative for relative, source in inherited.items()}
-            entries, sources = parse_localization_files(inherited.values())
+            entries, sources = parse_localization_files(
+                inherited.values(), file_entries=self._localisation_file_entries
+            )
             loc_entries.update(entries)
             for key, source in sources.items():
                 target = self.mod_root / relatives[source]

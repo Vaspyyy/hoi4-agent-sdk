@@ -7,8 +7,11 @@ import re
 import textwrap
 import warnings
 from pathlib import Path
-from typing import Any, Sequence
+from collections.abc import Callable
+from functools import partial
+from typing import Any, Sequence, TypeVar
 
+from .._disk_cache import DiskAnalysis
 from ..map_editing import (
     BUILDINGS_FILE,
     MAX_RAILWAY_LEVEL,
@@ -21,6 +24,10 @@ from ..map_editing import (
     StrategicRegion,
     add_supply_node_text,
     append_line,
+    decode_map_buildings,
+    decode_strategic_regions,
+    encode_map_buildings,
+    encode_strategic_regions,
     append_province_buildings,
     dated_history_province_references,
     join_victory_points,
@@ -62,6 +69,18 @@ from ..types import (
 from ._catalogs import CatalogsLayer
 from ._states import StatesLayer
 from ..textio import read_text
+
+_T = TypeVar("_T")
+
+
+def _parse_regions(text: str, *, path: str) -> list[StrategicRegion]:
+    return parse_strategic_regions(text, path)
+
+
+_REGIONS_ON_DISK = DiskAnalysis(
+    "strategic_regions", encode_strategic_regions, decode_strategic_regions
+)
+_BUILDINGS_ON_DISK = DiskAnalysis("map_buildings", encode_map_buildings, decode_map_buildings)
 
 
 class MapLayer(StatesLayer, CatalogsLayer):
@@ -497,6 +516,28 @@ class MapLayer(StatesLayer, CatalogsLayer):
             self._queue_map_text(BUILDINGS_FILE, remove_lines(text, indices))
         return len(indices)
 
+    def _map_result(
+        self,
+        relative: str,
+        purpose: str,
+        compute: Callable[[str], _T],
+        disk: DiskAnalysis[_T],
+    ) -> _T | None:
+        """``compute`` of a map file's pending or effective text; ``None`` when absent.
+
+        The result for an inherited file is kept on disk for later processes.
+        """
+
+        if relative in self._map_file_updates:
+            return compute(self._map_file_updates[relative])
+        source = self.content_source(relative)
+        if source is None or (
+            not source.is_relative_to(self.mod_root)
+            and self._mod_hides_inherited(Path(relative))
+        ):
+            return None
+        return self._cached_result(purpose, source, compute, disk)
+
     def _map_text(self, relative: str) -> str | None:
         """Pending or effective text of a map file; ``None`` when absent."""
 
@@ -865,11 +906,16 @@ class MapLayer(StatesLayer, CatalogsLayer):
         if region_files:
             regions = []
             for relative in region_files:
-                text = self._map_text(relative)
-                if text is None:
-                    continue
                 try:
-                    regions.extend(parse_strategic_regions(text, relative))
+                    found = self._map_result(
+                        relative,
+                        f"strategic_regions:{relative}",
+                        partial(_parse_regions, path=relative),
+                        _REGIONS_ON_DISK,
+                    )
+                    if found is None:
+                        continue
+                    regions.extend(found)
                 except ParseError as error:
                     errors.append(
                         ValidationError(
@@ -881,7 +927,9 @@ class MapLayer(StatesLayer, CatalogsLayer):
                     )
         supply_text = self._map_text(SUPPLY_NODES_FILE)
         railway_text = self._map_text(RAILWAYS_FILE)
-        buildings_text = self._map_text(BUILDINGS_FILE)
+        buildings = self._map_result(
+            BUILDINGS_FILE, "map_buildings", parse_map_buildings, _BUILDINGS_ON_DISK
+        )
         adjacency = None
         if railway_text is not None and (
             RAILWAYS_FILE in self._map_file_updates
@@ -899,7 +947,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
                     else [province for _, province in parse_supply_nodes(supply_text)]
                 ),
                 railways=None if railway_text is None else parse_railways(railway_text),
-                buildings=None if buildings_text is None else parse_map_buildings(buildings_text),
+                buildings=buildings,
                 land_adjacency=adjacency,
                 railway_path=RAILWAYS_FILE,
                 supply_path=SUPPLY_NODES_FILE,
