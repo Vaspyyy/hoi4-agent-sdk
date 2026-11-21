@@ -137,8 +137,15 @@ class EquipmentLayer(CatalogsLayer):
         return errors
 
     def _special_project_unlocks(self) -> dict[str, tuple[str, ...]]:
-        """Equipment that special projects enable, as ``sp:<project>``."""
+        """Equipment that special projects enable, as ``sp:<project>``.
 
+        The country package check asks once per country; within one
+        validate() run the files do not change, so they are read once.
+        """
+
+        return dict(self._run_cached("special_project_unlocks", self._read_special_project_unlocks))
+
+    def _read_special_project_unlocks(self) -> dict[str, tuple[str, ...]]:
         unlocks: dict[str, list[str]] = {}
         for _, pairs in self._effective_script_results(
             "common/special_projects/projects",

@@ -882,10 +882,15 @@ class CoreLayer:
             if self.hoi4_install is not None:
                 hidden_paths = replace_paths(self.mod_root)
                 if not any(relative.is_relative_to(hidden) for hidden in hidden_paths):
+                    # ``is_relative_to`` as a text test: the replace paths are
+                    # normalised relative paths, never empty.
+                    hidden_names = {hidden.as_posix() for hidden in hidden_paths}
+                    hidden_prefixes = tuple(name + "/" for name in hidden_names)
                     for path in (self.hoi4_install / relative).rglob("*"):
                         if path.is_file():
                             path_relative = path.relative_to(self.hoi4_install)
-                            if not any(path_relative.is_relative_to(hidden) for hidden in hidden_paths):
+                            name = path_relative.as_posix()
+                            if name not in hidden_names and not name.startswith(hidden_prefixes):
                                 files[str(path_relative)] = path
         for path in (self.mod_root / relative).rglob("*"):
             if path.is_file():
