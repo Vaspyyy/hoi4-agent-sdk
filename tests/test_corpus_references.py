@@ -179,8 +179,8 @@ def test_liveness_findings_on_the_game_are_confirmed_by_a_text_search(
             ):
                 refuted.append(f"{code} {name}: {found[:3]}")
         elif code == "flag_set_never_read":
-            if any("has_" in line or "[?" in line for line in found):
+            if any(re.search(r"\bhas_\w*_flag\s*=", line) or "[?" in line for line in found):
                 refuted.append(f"{code} {name}: {found[:3]}")
         elif any(re.search(r"\b(?:set|modify)_\w*flag\b", line) for line in found):
             refuted.append(f"{code} {name}: {found[:3]}")
-    assert refuted == []
+    assert refuted == [], "\n".join(refuted)
