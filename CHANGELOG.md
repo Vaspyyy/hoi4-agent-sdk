@@ -161,9 +161,18 @@ All notable changes to this project are documented here. The format follows
   15 s to 0.2 s, and saving one event edit from about 15 s to 0.3 s.
   `strict_loading=True` still loads everything at construction, and
   `load_diagnostics` loads what is missing and lists diagnostics in the same
-  order as before. `reload()` still reloads everything, and so does
-  `discard()` for a mod with base mods (the inherited layers can change on
-  disk too).
+  order as before. `reload()` still reloads everything.
+- **Base mods are read where they are, not copied.** With `base_mod_paths`,
+  `Mod` used to clone every content file of the game and the base mods into a
+  temporary folder (about 39,000 files and 4.3 GB for the game) on every
+  `Mod()`, `discard()` and `reload()`. Now `hoi4.layers.ContentLayers` answers
+  each read from the winning source file, with the same precedence,
+  `replace_path` and results. With a mod on top of a base mod: construction
+  went from about 8 s to 0.03 s, `discard()` from about 9.5 s to 0.15 s, the
+  first `validate()` from about 22 s to 18 s, and nothing is copied. `discard()` and `save()` reload only what changed, as
+  without base mods, unless a text file of a base mod changed on disk. Paths
+  in models, reports and `get_country_context()` now name the real game or
+  base-mod file instead of a file in the temporary copy.
 - **Much less memory for the external-change check.** `Mod` no longer keeps a
   copy of the bytes of every text file of the mod. It records each file's size
   and modification time, and a digest of the text it read. A file whose time

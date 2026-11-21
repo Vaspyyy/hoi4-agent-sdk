@@ -69,9 +69,10 @@ reads `_countries`). The rest of the code reads `self._events` as before.
 All edit buffers are emptied, derived caches (`_scan_cache`, sprite and
 trigger indexes, the country context cache, ...) are cleared, and
 `_original_files` keeps only the texts owned by sections that are still
-loaded. With base mods, `save()` keeps the snapshot of the inherited layers
-and only updates its list of mod files (`ContentLayers.refresh_top`);
-`discard()` and `reload()` rebuild it and unload everything.
+loaded. With base mods, the inherited content is read where it is (see
+[`mod_layers.md`](mod_layers.md)), so nothing needs rebuilding after a save. A
+base mod's text files have fingerprints too (`_base_fingerprints`): when one
+changed, appeared or went away, `save()` and `discard()` reload everything.
 
 ## External changes: fingerprints
 

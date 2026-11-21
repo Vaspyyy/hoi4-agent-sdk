@@ -1874,7 +1874,8 @@ Without base mods, `content_source()` and `content_files()` apply the writable
 descriptor's replacement paths to vanilla fallback files as well. Writable
 files remain visible within replaced directories. In this unlayered mode,
 these two discovery methods reread `descriptor.mod` on each call; with base
-mods, call `reload()` after changing a descriptor to rebuild the layer snapshot.
+mods, the descriptors are read when the `Mod` is built: call `reload()` after
+changing one.
 
 `write_mod_descriptors(..., dependencies=["Magna Europa"])` (and the
 `generate_mod_descriptor` wrapper) writes dependency names into both descriptors;
@@ -1899,14 +1900,16 @@ this does not infer filesystem paths or replacement policy.
   writable facade's model lists. A clean facade validation is therefore not a
   full audit of all inherited base script files.
 
-The fallback uses a private temporary content snapshot under
-`~/.cache/hoi4-sdk`, with copy-on-write clones where supported and safe copies
-otherwise. It excludes executables, music, and packed DLC. Asset-heavy installs
-can require substantial space on filesystems without reflinks. Never hardlink
-snapshot content to game files. `reload()`/`discard()` rebuild the snapshot to
-observe changed dependencies (`save()` keeps it, since it writes only to the
-writable mod); temporary snapshots are automatically cleaned up with their
-instance. SDK writes remain exclusively inside the writable mod.
+The fallback copies nothing: every read goes to the winning file in the game
+or base mod folder, where it is (`hoi4.layers.ContentLayers`). Only the runtime
+content folders are layered (`common`, `history`, `events`, `decisions`, `map`,
+`gfx`, `interface`, `localisation`, `localization`, `portraits`,
+`documentation`); executables, music and packed DLC are not. Building a `Mod`
+with base mods costs about the same as without them. `save()` and `discard()`
+reload only what changed, as without base mods; when a text file of a base mod
+changed, appeared or went away (found by size and modification time, like the
+mod's own files), they reload everything. The game folder is not watched.
+SDK writes remain exclusively inside the writable mod.
 
 
 ### Support script imports and scripted triggers
