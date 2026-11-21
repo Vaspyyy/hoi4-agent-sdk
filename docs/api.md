@@ -1066,10 +1066,17 @@ deliberately unknown. Explicit nested scopes are still checked with
 reachability, incoming event references, idea grants, flag reads/writes, and
 localization use. `flag_allowlist=` and `localization_allowlist=` accept glob
 patterns for deliberate bookkeeping and reserved/future content.
-Comments are ignored in authored script, country history, and installed-game
-flag references without changing stored source. Quoted hashes and escaped
-quotes are preserved. Matching remains regex-based: effect-shaped text inside
-quoted strings can still count as a reference.
+Every reference is read from the syntax tree of every script file the game
+reads: the mod's own files with their pending edits, and the game and base-mod
+files the mod does not override. Comments and quoted strings never count. An
+event counts as fired by an effect, an on-action (`events`, `random_events`)
+or a border war (`on_win`, `on_lose`, `on_cancel`); an idea counts as granted
+by an effect or country history, or as used when `show_ideas_tooltip` or a
+bookmark shows it; a flag also counts as read by a localisation text
+(`[?flag:days_left]`). A name the game builds while running
+(`flag_[ROOT.GetTag]`) is matched as a pattern. Findings are only reported for
+content the mod defines, never for inherited content, and each comes with the
+file and line where it is defined or first used.
 It is deliberately structural. `analysis_scope` is `"structural"` and
 `proves_dynamic_achievability` is false because reference reachability cannot
 prove that popularity thresholds, variables, or mutually dependent triggers
@@ -1151,6 +1158,19 @@ Vocabulary and liveness warning codes are `unknown_effect_token`,
 `unsupported_modifier_scope`, `unreachable_focus`, `unfired_event`,
 `ungranted_idea`, `flag_set_never_read`, `flag_read_never_set`, and
 `unused_localization`.
+
+Reference checks read the syntax tree too and name the scope each statement
+runs in, so `country_scope_core_effect` only fires when `add_core_of` or
+`remove_core_of` certainly runs in a country (`GER = { add_core_of = 64 }`, or
+bare in a focus reward), never inside a state id, a state iterator, `var:`,
+`FROM` or a scripted effect. `unknown_country_scope` knows the tags of
+`common/country_tags`, the aliases of `common/country_tag_aliases` (`SOU`,
+`SPD`, `VIC`, ...) and dynamic tags. Advice is reported with severity `info`:
+`faction_scope_footgun` (only `add_to_faction` inside a country iterator),
+`civil_war_scope_footgun`, `civil_war_focus_tree_missing`,
+`bad_idea_tooltip_pattern` (only removals and additions a tooltip shows),
+`idea_mutation_collision`, `resistance_on_core_state` and
+`revolt_state_already_owned`.
 
 Structural reference checks use `tag_definition`, `capital_ref`, `character_ref`,
 and `focus_cycle`. Undefined recruited characters are warnings; missing tag
