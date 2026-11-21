@@ -913,6 +913,10 @@ def _count_files(root_text: str, paths: list[str]) -> tuple[dict[str, int], dict
 
 # ── validation ────────────────────────────────────────────────────
 
+#: Core effects in a country scope: one mistake, reported once, by the
+#: reference check (``country_scope_core_effect``).
+_CORE_EFFECTS = frozenset({"add_core_of", "remove_core_of"})
+
 
 def validate_script_sources(
     sources: Iterable[ScriptSource],
@@ -1044,6 +1048,10 @@ def check_statement(
             ),
         )
     if statement.scope is not None and _unsupported_scope(statement.scope, info.supported_scopes):
+        if kind == "effect" and statement.scope == "COUNTRY" and folded in _CORE_EFFECTS:
+            # The reference check reports this mistake as
+            # ``country_scope_core_effect``, with the state-scoped fix.
+            return None
         return _finding(
             source,
             line,

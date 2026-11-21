@@ -94,11 +94,12 @@ def test_references_ride_on_the_scope_walker():
 
     # NOR is Norway, not a keyword.
     assert core("123 = { NOR = { add_core_of = NOR } }") == [("NOR", COUNTRY, True)]
-    # ordered_ iterators are iterators.
+    # HOI4 has no ordered_ iterators (its documentation and script have none):
+    # the token check reports the name, and its block is data, as the game reads it.
     owner = fragment_owner("ordered_owned_state = { add_core_of = GER add_ideas = fake_idea }", "focus", "f1")
     assert [(ref.kind, ref.scope, ref.certain, ref.statement) for ref in owner.refs] == [
-        ("core_effect", STATE, True, True),
-        ("idea", STATE, True, True),
+        ("core_effect", UNKNOWN, False, False),
+        ("idea", UNKNOWN, False, False),
     ]
     # PREV, THIS and ROOT come from the scope stack.
     assert core("123 = { PREV = { add_core_of = GER } }") == [("GER", COUNTRY, True)]

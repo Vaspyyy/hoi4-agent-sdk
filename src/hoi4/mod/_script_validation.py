@@ -265,6 +265,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         script_token_allowlist: Sequence[str] = (),
         scope: str | None = "COUNTRY",
         advice: bool = True,
+        suppress: Sequence[str] = (),
     ) -> list[ValidationError]:
         """Check one piece of effect script and return what is wrong with it.
 
@@ -276,10 +277,11 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
 
         ``advice`` (default ``True``) keeps the ``"info"`` findings, because
         one script is being looked at; pass ``False`` to get only errors and
-        warnings, like ``validate()``. ``suppress_warnings`` hides warnings
-        and advice by code (``"code"`` or ``"code:ID"``); errors cannot be
-        hidden. Every finding has the severity its code is registered with
-        (see ``docs/validation.md``).
+        warnings, like ``validate()``. ``suppress`` hides warnings and advice
+        by code (``"code"`` or ``"code:ID"``), as in ``validate()``;
+        ``suppress_warnings`` is its older name. Errors cannot be hidden.
+        Every finding has the severity its code is registered with (see
+        ``docs/validation.md``).
         """
 
         probe = Event(
@@ -329,6 +331,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         return _filter_validation_errors(
             errors,
             suppress_warnings=suppress_warnings,
+            suppress=suppress,
             advice=advice,
         )
 

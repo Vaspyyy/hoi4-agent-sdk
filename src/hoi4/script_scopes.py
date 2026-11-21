@@ -38,13 +38,17 @@ CommandKind = Literal["effect", "trigger", "modifier"]
 
 # ── the language tables ───────────────────────────────────────────
 
+#: The words iterators start with. HOI4 has no ``ordered_`` iterators: its
+#: documentation lists none and its script uses none.
+_ITERATOR_WORDS = ("every", "random", "any", "all")
+
 #: Where an iterator leads. Names are folded to lower case. An iterator
 #: missing here still works (see ``ITERATOR_PREFIXES``), its scope is just not
 #: known for sure.
 ITERATOR_SCOPES: Mapping[str, str | None] = {
     **{
         f"{prefix}_{suffix}": "COUNTRY"
-        for prefix in ("every", "random", "any", "all", "ordered")
+        for prefix in _ITERATOR_WORDS
         for suffix in (
             "allied_country",
             "country",
@@ -69,7 +73,7 @@ ITERATOR_SCOPES: Mapping[str, str | None] = {
     },
     **{
         f"{prefix}_{suffix}": "STATE"
-        for prefix in ("every", "random", "any", "all", "ordered")
+        for prefix in _ITERATOR_WORDS
         for suffix in (
             "controlled_state",
             "core_state",
@@ -83,7 +87,7 @@ ITERATOR_SCOPES: Mapping[str, str | None] = {
     },
     **{
         f"{prefix}_{suffix}": "CHARACTER"
-        for prefix in ("every", "random", "any", "all", "ordered")
+        for prefix in _ITERATOR_WORDS
         for suffix in (
             "active_scientist",
             "army_leader",
@@ -98,17 +102,17 @@ ITERATOR_SCOPES: Mapping[str, str | None] = {
     },
     **{
         f"{prefix}_military_industrial_organization": "INDUSTRIAL_ORG"
-        for prefix in ("every", "random", "any", "all", "ordered")
+        for prefix in _ITERATOR_WORDS
     },
     **{
         f"{prefix}_{suffix}": "PURCHASE_CONTRACT"
-        for prefix in ("every", "random", "any", "all", "ordered")
+        for prefix in _ITERATOR_WORDS
         for suffix in ("purchase_contract", "purchase_contracts")
     },
     # Divisions and collection elements have no documented scope name.
     **{
         f"{prefix}_{suffix}": None
-        for prefix in ("every", "random", "any", "all", "ordered")
+        for prefix in _ITERATOR_WORDS
         for suffix in (
             "country_division",
             "state_division",
@@ -131,7 +135,7 @@ NOT_ITERATORS = frozenset(
     }
 )
 
-ITERATOR_PREFIXES = ("every_", "random_", "any_", "all_", "ordered_")
+ITERATOR_PREFIXES = tuple(f"{word}_" for word in _ITERATOR_WORDS)
 
 #: Arguments every iterator may take (data, never commands); ``limit`` is
 #: read as triggers.

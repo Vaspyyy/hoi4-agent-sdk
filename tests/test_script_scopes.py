@@ -276,7 +276,8 @@ def test_links_behind_a_typed_prefix_count(game: Path) -> None:
     state:123.my_variable = { add_political_power = 10 }
     """
     assert check(game, right) == []
-    wrong = "state:123.owner = { add_core_of = GER }\ncountry:GER.capital_scope = { add_political_power = 10 }"
+    # (add_core_of in a country is reported by the reference check instead.)
+    wrong = "state:123.owner = { set_state_flag = x }\ncountry:GER.capital_scope = { add_political_power = 10 }"
     assert [(item.code, item.line) for item in check(game, wrong)] == [
         ("unsupported_effect_scope", 1),
         ("unsupported_effect_scope", 2),
@@ -345,6 +346,31 @@ def test_a_scripted_trigger_is_not_an_effect(game: Path) -> None:
     assert "'my_trig' is a trigger" in message
     [message] = findings("my_eff = yes", "trigger")
     assert "'my_eff' is an effect" in message
+
+
+def test_ordered_iterators_do_not_exist_in_hoi4(game: Path) -> None:
+    # Neither the game's documentation nor its script has an ordered_ iterator.
+    findings = check(game, "ordered_owned_state = { set_state_flag = x add_politcal_power = 1 }")
+    assert [(item.code, "ordered_owned_state" in item.message) for item in findings] == [
+        ("unknown_effect_token", True)
+    ]
+
+
+def test_a_country_scope_core_effect_is_one_finding(game: Path, tmp_path: Path) -> None:
+    mod = Mod(tmp_path / "mod", hoi4_install=game)
+    found = [item.code for item in mod.validate_effect("add_core_of = SCL") if item.severity != "info"]
+    assert found == ["country_scope_core_effect"]
+    assert [
+        item for item in mod.validate_effect("add_core_of = SCL", suppress=["country_scope_core_effect"])
+        if item.severity != "info"
+    ] == []
+    assert [
+        item
+        for item in mod.validate_effect(
+            "add_core_of = SCL", suppress_warnings=["country_scope_core_effect"]
+        )
+        if item.severity != "info"
+    ] == []
 
 
 def test_weight_blocks_are_not_modifiers(game: Path) -> None:
