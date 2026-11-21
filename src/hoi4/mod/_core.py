@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 from collections.abc import Callable
-from typing import Optional, Sequence, TypeVar
+from typing import TYPE_CHECKING, Optional, Sequence, TypeVar
 
 from ..bookmarks import (
     Bookmark,
@@ -40,6 +40,9 @@ from ..tags import (
     load_vanilla_tags,
 )
 from ..textio import read_text
+
+if TYPE_CHECKING:
+    from ..script_references import FileReferences
 from ..types import (
     Country,
     Decision,
@@ -152,6 +155,9 @@ class CoreLayer:
             load_vanilla_tags(self._base_content_root) if self._base_content_root else set()
         )
         self._scan_cache: dict[str, set[str]] = {}
+        # The references of each of the mod's own script files, with the text
+        # they were read from; a changed text is read again.
+        self._own_reference_cache: dict[Path, tuple[str, FileReferences]] = {}
         # Data built once per validate() call and shared by its checks; None
         # outside a run, because edits between runs change it.
         self._validation_run: dict[str, object] | None = None

@@ -774,6 +774,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         self._original_files.clear()
         self._dirty.clear()
         self._scan_cache.clear()
+        self._own_reference_cache.clear()
         self._equipment_unlock_cache = None
         self._sprite_texture_cache = None
         self._sprite_text_parse_cache.clear()

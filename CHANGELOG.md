@@ -330,6 +330,13 @@ All notable changes to this project are documented here. The format follows
 - The catalogs read from a folder of the game and the mod (advisor idea
   tokens, technologies, equipment, name pools, scripted effects and
   triggers) skip the inherited files that the mod's `replace_path` hides.
+- A second `validate()` sees unsaved API edits: a deleted event, focus tree,
+  character or idea is unknown at once, and a created character and its
+  advisor idea token are known before `save()`. Every catalog reads the
+  mod's own content from the loaded models and keeps only per-file scans,
+  which follow the files on disk, so `save()` and `discard()` leave none
+  stale. A file's top-level focus container is no longer taken for a focus
+  tree id.
 - Adding an event to an on-action merged its repeated `events` blocks into
   one and dropped the comments inside them. Event lists are now edited entry
   by entry.

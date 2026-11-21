@@ -1073,7 +1073,9 @@ class TestAgentFacingApis:
         assert "bad_idea_tooltip_pattern" in codes
         assert mod.suggest_focus_icon("navy") == "GFX_custom_navy_goal"
 
-    def test_focus_icon_scan_is_cached_but_discard_refreshes(self, tmp_mod):
+    def test_focus_icon_scan_follows_the_files_on_disk(self, tmp_mod):
+        """The scan is kept per file until the file changes, so it is never stale."""
+
         mod = tmp_mod.mod
         interface_dir = tmp_mod.root / "interface"
         interface_dir.mkdir(parents=True, exist_ok=True)
@@ -1082,10 +1084,7 @@ class TestAgentFacingApis:
 
         assert "GFX_cached_icon" in mod._known_focus_icons()
         icon_file.write_text('spriteType = { name = "GFX_refreshed_icon" }', encoding="utf-8")
-        assert "GFX_cached_icon" in mod._known_focus_icons()
-        assert "GFX_refreshed_icon" not in mod._known_focus_icons()
-
-        mod.discard()
+        assert "GFX_cached_icon" not in mod._known_focus_icons()
         assert "GFX_refreshed_icon" in mod._known_focus_icons()
 
     def test_validation_warns_on_focus_event_idea_mutation_collision(self, tmp_mod):

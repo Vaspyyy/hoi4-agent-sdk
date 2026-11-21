@@ -5,11 +5,13 @@ from __future__ import annotations
 import csv
 import io
 import re
+from collections.abc import Collection
 from pathlib import Path
 
 from .._file_cache import cached_file_result
-from ..events import scan_event_ids_file
-from ..ideas import scan_idea_ids_file
+from ..characters import AdvisorRole
+from ..events import VALID_EVENT_TYPES
+from ..ideas import idea_ids_in_text
 from ..parser import (
     iter_assignment_blocks,
 )
@@ -26,9 +28,6 @@ from ..script_references import (
 from ..syntax import parse
 from ..tags import load_all_tags
 from ..textio import decode_text, read_text
-from ..validation import (
-    collect_character_ids,
-)
 from ._sources import SourcesLayer
 
 # ``[?name]`` in a localisation text reads a variable or a flag
@@ -36,6 +35,8 @@ from ._sources import SourcesLayer
 _LOC_VALUE_RE = re.compile(r"\[\?([A-Za-z_@][A-Za-z0-9_.@]*)")
 # Folders whose script the game reads as effects, triggers and definitions.
 _CORPUS_DIRECTORIES = ("common", "events", "history")
+
+
 def _inherited_references(path: Path, relative: str) -> FileReferences | None:
     """The references of an inherited file, kept until the file changes.
 
@@ -76,7 +77,7 @@ def _focus_ids(text: str) -> frozenset[str]:
     return frozenset(ids)
 
 
-def _sprite_names(text: str) -> set[str]:
+def _sprite_names(text: str) -> frozenset[str]:
     """The ``name = GFX_...`` of every sprite declared in a ``.gfx`` text."""
 
     names: set[str] = set()
@@ -86,22 +87,86 @@ def _sprite_names(text: str) -> set[str]:
         name = assignment.scalar
         if name is not None and name.startswith("GFX_"):
             names.add(name)
-    return names
+    return frozenset(names)
+
+
+def _name_pool_tags(text: str) -> frozenset[str]:
+    """Tags (and ``default``) with a name pool block in a ``common/names`` file."""
+
+    return frozenset(
+        span.key
+        for span in top_level_assignments(text)
+        if span.is_block and (span.key == "default" or re.fullmatch(r"[A-Z0-9]{3}", span.key))
+    )
+
+
+def _sub_unit_types(text: str) -> frozenset[str]:
+    """The sub-unit types the ``sub_units`` blocks of a units file define."""
+
+    return frozenset(
+        span.key
+        for body, _, _ in iter_assignment_blocks(text, "sub_units")
+        for span in top_level_assignments(body)
+        if span.is_block
+    )
+
+
+def _idea_ids(text: str) -> frozenset[str]:
+    """The id of every idea in an ideas file."""
+
+    return frozenset(idea_ids_in_text(text))
+
+
+def _event_ids(text: str) -> frozenset[str]:
+    """The id of every event an event file defines.
+
+    A top-level block counts when its key is an event type the game knows or
+    ends in ``_event``, like the loader reads it.
+    """
+
+    doc = parse(text)
+    ids = {
+        event_id
+        for item in doc.root.assignments()
+        if item.block is not None
+        and (item.name in VALID_EVENT_TYPES or item.name.endswith("_event"))
+        and (event_id := item.block.scalar("id"))
+    }
+    ids.update(definitions_of(doc, "events/file.txt").events)
+    return frozenset(ids)
+
+
+def _character_ids(text: str) -> frozenset[str]:
+    """The id of every character in the ``characters = { ... }`` blocks of a file."""
+
+    return frozenset(
+        character.name
+        for container in parse(text).root.blocks("characters")
+        for character in container.assignments()
+        if character.block is not None
+    )
 
 
 class CatalogsLayer(SourcesLayer):
     """Catalogs of known identifiers (ideas, events, technologies, equipment, sprites)."""
 
-    def _definitions_in(self, relative: str) -> Definitions:
-        """What the effective files of one folder define, read from the tree."""
+    def _definitions_in(self, relative: str, *, skip: Collection[Path] = ()) -> Definitions:
+        """What the effective files of one folder define, read from the tree.
 
+        Each file is read once while it is unchanged (``hoi4._file_cache``);
+        a file with a pending import is read from its pending text. ``skip``
+        leaves out mod files whose content the loaded models hold.
+        """
+
+        # definitions_of routes by folder, so any file name inside it works.
+        label = f"{relative}/file.txt"
         merged = Definitions()
-        for path, text in self._effective_script_texts(relative):
-            try:
-                inner = path.relative_to(self.mod_root).as_posix()
-            except ValueError:
-                inner = f"{relative}/{path.name}"
-            found = definitions_of(parse(text), inner)
+        for _, found in self._effective_script_results(
+            relative,
+            f"definitions:{relative}",
+            lambda text: definitions_of(parse(text), label),
+            skip=skip,
+        ):
             merged.events.update(found.events)
             merged.ideas.update(found.ideas)
             merged.advisor_ideas |= found.advisor_ideas
@@ -113,24 +178,35 @@ class CatalogsLayer(SourcesLayer):
             merged.organizations |= found.organizations
         return merged
 
-    def _cached_names(self, key: str, relative: str, pick: str) -> set[str]:
-        cached = self._scan_cache.get(key)
-        if cached is None:
-            cached = set(getattr(self._definitions_in(relative), pick))
-            self._scan_cache[key] = cached
-        return set(cached)
+    # Every catalog below has one shape. The mod's own content comes from the
+    # loaded models, which hold unsaved creations, edits and deletions. The
+    # files of the game and the base mods, and the mod's files whose content
+    # no model edit replaces (also files that failed to load), come from a
+    # scan that hoi4._file_cache keeps per file until the file changes. A
+    # mod file with unsaved model edits is not scanned, so a deleted id does
+    # not come back, and nothing about the mod's content is kept in
+    # _scan_cache, so save() and discard() never leave a catalog stale.
 
     def _known_advisor_idea_ids(self) -> set[str]:
         """``idea_token`` of every advisor: hired, removed and checked as ideas."""
 
-        return self._cached_names("advisor_ideas", "common/characters", "advisor_ideas")
+        tokens = {
+            role.idea_token
+            for character in self._characters.values()
+            for role in (
+                *character.roles,
+                *(role for instance in character.instances for role in instance.roles),
+            )
+            if isinstance(role, AdvisorRole) and role.idea_token
+        }
+        replaced = set(self._group_characters_by_file(dirty_only=True))
+        tokens |= self._definitions_in("common/characters", skip=replaced).advisor_ideas
+        return tokens
 
     def _known_organization_ids(self) -> set[str]:
         """Military-industrial organizations; ``show_ideas_tooltip`` can name them."""
 
-        return self._cached_names(
-            "organizations", "common/military_industrial_organization", "organizations"
-        )
+        return set(self._definitions_in("common/military_industrial_organization").organizations)
 
     def _known_country_tags(self) -> set[str]:
         """Every tag a script may scope into.
@@ -142,15 +218,20 @@ class CatalogsLayer(SourcesLayer):
         """
 
         tags = set(load_all_tags(self._base_content_root, self.mod_root))
-        tags |= self._cached_names("tag_aliases", "common/country_tag_aliases", "tags")
+        tags |= self._definitions_in("common/country_tag_aliases").tags
         tags.update(self._countries)
         return tags
 
     def _known_focus_tree_ids(self) -> set[str]:
-        """Focus trees of the mod (with pending edits) and the ones it inherits."""
+        """Focus trees of the mod (with pending edits) and the ones it inherits.
 
-        trees = set(self._focus_trees)
-        trees |= self._cached_names("focus_trees", "common/national_focus", "focus_trees")
+        The container of a file's top-level focuses (``kind == "file"``) is
+        not a tree the game knows.
+        """
+
+        trees = {tree_id for tree_id, tree in self._focus_trees.items() if tree.kind != "file"}
+        replaced = set(self._group_focus_trees_by_file(dirty_only=True))
+        trees |= self._definitions_in("common/national_focus", skip=replaced).focus_trees
         return trees
 
     def _known_focus_ids(self) -> set[str]:
@@ -250,9 +331,7 @@ class CatalogsLayer(SourcesLayer):
                 relative = path.relative_to(self.mod_root).as_posix()
                 if relative.split("/", 1)[0] in _CORPUS_DIRECTORIES:
                     sources[relative] = path
-        cache: dict[Path, tuple[str, FileReferences]] = self.__dict__.setdefault(
-            "_own_reference_cache", {}
-        )
+        cache = self._own_reference_cache
         corpus: list[FileReferences] = []
         for relative, path in sorted(sources.items()):
             if not relative.endswith(".txt"):
@@ -280,82 +359,55 @@ class CatalogsLayer(SourcesLayer):
 
     def _known_idea_ids(self) -> set[str]:
         ids = set(self._ideas)
-        # Dirty files will be serialized from their surviving models. Never
-        # recover deleted IDs from their on-disk contents (or a warmed scan).
+        # Dirty files will be serialized from their surviving models, and an
+        # imported idea file is loaded into them. Never recover deleted IDs
+        # from their on-disk contents.
         replaced = set(self._group_ideas_by_file(dirty_only=True))
         replaced.update(self._script_file_updates)
-        files: dict[Path, Path] = {}
-        for base in reversed(self._data_roots()):
-            for rel in ("common/ideas", "common/national_ideas"):
-                for source in (base / rel).glob("*.txt"):
-                    files[self.mod_root / source.relative_to(base)] = source
-        for target, source in files.items():
-            if target in replaced:
-                continue
-            # Cache file contributions separately so replacing one file does
-            # not hide a legitimate definition of the same ID in another.
-            key = f"ideas:{source}"
-            scanned = self._scan_cache.get(key)
-            if scanned is None:
-                try:
-                    scanned = scan_idea_ids_file(source)
-                except (OSError, ValueError):
-                    continue
-                self._scan_cache[key] = scanned
-            ids.update(scanned)
+        for relative in ("common/ideas", "common/national_ideas"):
+            for _, found in self._effective_script_results(
+                relative, "idea_ids", _idea_ids, skip=replaced
+            ):
+                ids |= found
         return ids
 
     def _known_event_ids(self) -> set[str]:
         ids = set(self._events)
-        cached = self._scan_cache.get("events")
-        if cached is not None:
-            ids.update(cached)
-            return ids
-        scanned: set[str] = set()
-        for base in self._data_roots():
-            events_dir = base / "events"
-            if not events_dir.exists():
-                continue
-            for path in events_dir.rglob("*.txt"):
-                try:
-                    scanned.update(scan_event_ids_file(path))
-                    text = read_text(path)
-                except (OSError, ValueError):
-                    continue
-                scanned.update(definitions_of(parse(text), "events/" + path.name).events)
-        self._scan_cache["events"] = scanned
-        ids.update(scanned)
+        replaced = set(self._group_events_by_file(dirty_only=True)[0])
+        for _, found in self._effective_script_results(
+            "events", "event_ids", _event_ids, skip=replaced
+        ):
+            ids |= found
         return ids
 
     def _known_character_ids(self) -> set[str]:
-        cached = self._scan_cache.get("characters")
-        if cached is not None:
-            return set(cached)
-        character_ids = collect_character_ids(self.mod_root, self._base_content_root)
-        self._scan_cache["characters"] = character_ids
-        return set(character_ids)
+        ids = set(self._characters)
+        replaced = set(self._group_characters_by_file(dirty_only=True))
+        for _, found in self._effective_script_results(
+            "common/characters", "character_ids", _character_ids, skip=replaced
+        ):
+            ids |= found
+        return ids
 
     def _known_focus_icons(self) -> set[str]:
-        cached = self._scan_cache.get("focus_icons")
-        if cached is None:
-            cached = set()
-            for base in self._data_roots():
-                interface_dir = base / "interface"
-                if not interface_dir.exists():
-                    continue
-                for path in interface_dir.rglob("*.gfx"):
-                    try:
-                        text = read_text(path)
-                    except Exception:
-                        continue
-                    cached.update(_sprite_names(text))
-            self._scan_cache["focus_icons"] = cached
-        icons = set(cached)
-        # Staged sprite declarations are visible before save; they are not cached.
+        """Every ``GFX_`` sprite of the effective ``interface/*.gfx`` files.
+
+        A staged sprite file (not saved yet) replaces the file on disk.
+        """
+
+        icons: set[str] = set()
+        for name, source in self.content_files("interface").items():
+            if not name.lower().endswith(".gfx"):
+                continue
+            if self.mod_root / name in self._pending_asset_writes:
+                continue
+            try:
+                icons |= cached_file_result("sprite_names", source, _sprite_names)
+            except (OSError, ValueError):
+                continue
         for path, content in self._pending_asset_writes.items():
             if path.suffix.lower() == ".gfx":
-                text = decode_text(content)
-                icons.update(_sprite_names(text))
+                icons |= _sprite_names(decode_text(content))
         return icons
 
     def _known_sprite_textures(self) -> dict[str, str]:
@@ -419,12 +471,7 @@ class CatalogsLayer(SourcesLayer):
         ) or (self.mod_root / normalized) in self._pending_asset_writes
 
     def _known_technology_ids(self) -> set[str]:
-        cached = self._scan_cache.get("technologies")
-        if cached is not None:
-            return set(cached)
-        ids = set(self._definitions_in("common/technologies").technologies)
-        self._scan_cache["technologies"] = ids
-        return ids
+        return set(self._definitions_in("common/technologies").technologies)
 
     def _equipment_unlock_technologies(self) -> dict[str, tuple[str, ...]]:
         if self._equipment_unlock_cache is not None:
@@ -449,53 +496,33 @@ class CatalogsLayer(SourcesLayer):
         return dict(self._equipment_unlock_cache)
 
     def _known_equipment_ids(self) -> set[str]:
-        cached = self._scan_cache.get("equipment")
-        if cached is not None:
-            return set(cached)
         found = self._definitions_in("common/units/equipment")
-        ids = resolve_equipment(found.equipment, found.equipment_copies)
-        self._scan_cache["equipment"] = ids
-        return ids
+        return set(resolve_equipment(found.equipment, found.equipment_copies))
 
     def _known_country_name_pool_tags(self) -> set[str]:
-        cached = self._scan_cache.get("country_name_pools")
-        if cached is not None:
-            return set(cached)
+        """Tags with a name pool; the pending ``set_country_name_pool`` edits count."""
+
         tags: set[str] = set()
-        for _, text in self._effective_script_texts("common/names"):
-            try:
-                tags.update(
-                    span.key
-                    for span in top_level_assignments(text)
-                    if span.is_block
-                    and (span.key == "default" or re.fullmatch(r"[A-Z0-9]{3}", span.key))
-                )
-            except ValueError:
-                continue
-        self._scan_cache["country_name_pools"] = tags
-        return set(tags)
+        for _, found in self._effective_script_results(
+            "common/names", "name_pool_tags", _name_pool_tags
+        ):
+            tags |= found
+        return tags
 
     def _known_sub_unit_types(self) -> set[str]:
-        cached = self._scan_cache.get("sub_units")
-        if cached is not None:
-            return set(cached)
+        """Sub-unit types of ``common/units/*.txt`` (not its sub-folders)."""
+
+        units = self.mod_root / "common" / "units"
+        nested = {
+            target
+            for target, _, _ in self._effective_script_files("common/units")
+            if target.parent != units
+        }
         result: set[str] = set()
-        for root in self._data_roots():
-            directory = root / "common" / "units"
-            if not directory.is_dir():
-                continue
-            for path in directory.glob("*.txt"):
-                try:
-                    text = read_text(path)
-                    for body, _, _ in iter_assignment_blocks(text, "sub_units"):
-                        result.update(
-                            span.key
-                            for span in top_level_assignments(body)
-                            if span.is_block
-                        )
-                except (OSError, ValueError):
-                    continue
-        self._scan_cache["sub_units"] = result
+        for _, found in self._effective_script_results(
+            "common/units", "sub_unit_types", _sub_unit_types, skip=nested
+        ):
+            result |= found
         return result
 
     def _effective_province_types(self) -> dict[int, str]:

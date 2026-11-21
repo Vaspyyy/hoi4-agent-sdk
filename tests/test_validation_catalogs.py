@@ -172,3 +172,135 @@ def test_an_unsaved_focus_deletion_is_not_undone_by_the_file_scan(tmp_path):
     mod.remove_focus("a_tree", "A_one")
     findings = codes(mod.validate(stage="build"), "missing_focus_prerequisite")
     assert [f.focus_id for f in findings] == ["B_one"]
+
+
+# ── Unsaved API edits reach a second validate() ─────────────────────
+
+
+def references(findings: list[ValidationError], code: str) -> list[str]:
+    return sorted(f.message for f in codes(findings, code))
+
+
+def test_a_deleted_event_is_unknown_in_the_next_run(tmp_path):
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "events/e_ev.txt",
+        "add_namespace = e_ev\ncountry_event = {\n id = e_ev.1\n is_triggered_only = yes\n"
+        " title = e_ev.1.t\n desc = e_ev.1.d\n option = { name = e_ev.1.a }\n}\n"
+        "country_event = {\n id = e_ev.2\n title = e_ev.2.t\n desc = e_ev.2.d\n"
+        " option = { name = e_ev.2.a }\n}\n",
+    )
+    write(
+        root,
+        "common/national_focus/e.txt",
+        "focus_tree = {\n id = e_tree\n focus = {\n  id = E_fire x = 0 y = 0\n"
+        "  completion_reward = { country_event = e_ev.1 country_event = e_ev.999 }\n }\n}\n",
+    )
+    mod = Mod(root)
+    first = codes(mod.validate(stage="release"), "unknown_event_reference")
+    assert ["e_ev.999" in f.message for f in first] == [True]
+    assert mod.delete_event("e_ev.1")
+    second = codes(mod.validate(stage="release"), "unknown_event_reference")
+    assert sorted("e_ev.1'" in f.message for f in second) == [False, True]
+
+
+def test_a_deleted_focus_tree_is_unknown_in_the_next_run(tmp_path):
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/national_focus/e_tree.txt",
+        "focus_tree = {\n id = e_tree\n focus = { id = E_one x = 0 y = 0 }\n}\n",
+    )
+    write(
+        root,
+        "common/national_focus/e_tree2.txt",
+        "focus_tree = {\n id = e_tree2\n focus = {\n  id = E_load x = 0 y = 0\n"
+        "  completion_reward = { load_focus_tree = { tree = e_tree } }\n }\n}\n",
+    )
+    mod = Mod(root)
+    assert not codes(mod.validate(stage="release"), "unknown_focus_tree_reference")
+    assert mod.delete_focus_tree("e_tree")
+    findings = codes(mod.validate(stage="release"), "unknown_focus_tree_reference")
+    assert [f.focus_id for f in findings] == ["E_load"]
+
+
+def test_a_created_advisor_is_known_before_save(tmp_path):
+    from hoi4.characters import AdvisorRole, Character
+
+    root = mod_root(tmp_path)
+    write(root, "common/country_tags/00_countries.txt", 'CCH = "countries/Cch.txt"\n')
+    write(root, "common/countries/Cch.txt", "color = { 1 2 3 }\n")
+    write(
+        root,
+        "history/countries/CCH - Cch.txt",
+        "capital = 1\nrecruit_character = CCH_adv\n",
+    )
+    write(
+        root,
+        "common/national_focus/c.txt",
+        "focus_tree = {\n id = c_tree\n focus = {\n  id = C_hire x = 0 y = 0\n"
+        "  completion_reward = { add_ideas = cch_adv_tok }\n }\n}\n",
+    )
+    mod = Mod(root)
+    first = mod.validate(stage="release")
+    assert codes(first, "character_ref")
+    assert codes(first, "unknown_idea_reference")
+    mod.create_character(
+        "CCH",
+        Character(
+            id="CCH_adv",
+            name="CCH_adv",
+            roles=[AdvisorRole(slot="political_advisor", idea_token="cch_adv_tok")],
+        ),
+        recruit=False,
+    )
+    second = mod.validate(stage="release")
+    assert not codes(second, "character_ref")
+    assert not codes(second, "unknown_idea_reference")
+
+
+def test_a_deleted_character_stays_deleted_and_save_keeps_the_catalogs_fresh(tmp_path):
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/characters/c.txt",
+        "characters = {\n CCH_a = {\n  name = CCH_a\n"
+        "  advisor = { slot = political_advisor idea_token = cch_a_tok }\n }\n}\n",
+    )
+    mod = Mod(root)
+    assert "CCH_a" in mod._known_character_ids()
+    assert "cch_a_tok" in mod._known_advisor_idea_ids()
+    assert mod.delete_character("CCH_a")
+    assert "CCH_a" not in mod._known_character_ids()
+    assert "cch_a_tok" not in mod._known_advisor_idea_ids()
+    mod.save()
+    assert "CCH_a" not in mod._known_character_ids()
+    assert "cch_a_tok" not in mod._known_advisor_idea_ids()
+
+
+def test_a_deleted_idea_does_not_come_back_after_save(tmp_path):
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/ideas/i.txt",
+        "ideas = {\n country = {\n  I_keep = { }\n  I_drop = { }\n }\n}\n",
+    )
+    mod = Mod(root)
+    assert {"I_keep", "I_drop"} <= mod._known_idea_ids()
+    assert mod.delete_idea("I_drop")
+    assert "I_drop" not in mod._known_idea_ids()
+    mod.save()
+    assert "I_drop" not in mod._known_idea_ids()
+    assert "I_keep" in mod._known_idea_ids()
+
+
+def test_discard_forgets_the_references_of_the_mods_files(tmp_path):
+    root = mod_root(tmp_path)
+    write(root, "common/scripted_effects/e.txt", "my_effect = { add_political_power = 1 }\n")
+    mod = Mod(root)
+    mod.validate(stage="release")
+    assert mod._own_reference_cache
+    mod.discard()
+    assert not mod._own_reference_cache
+
