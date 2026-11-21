@@ -232,7 +232,9 @@ def scalar_values_equivalent(left: str, right: str) -> bool:
         return False
 
 
-_PLAIN_NUMBER = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?")
+# Every spelling of a number the game reads: ``5``, ``-5``, ``+5``, ``0.5``,
+# ``.5``, ``5.``, ``1e3``.
+_PLAIN_NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 
 
 def plain_values_equivalent(left: str, right: str) -> bool:
@@ -241,7 +243,9 @@ def plain_values_equivalent(left: str, right: str) -> bool:
     Unlike :func:`scalar_values_equivalent` this takes text as a model holds
     it, not as a file spells it: nothing is trimmed and no quotes are taken
     off, so ``"A"`` with quote characters, or ``A`` with a space behind it, is
-    not ``A``. Only two numbers compare by value (``2000`` and ``2000.0``).
+    not ``A``. Only two numbers compare by value (``2000`` and ``2000.0``,
+    ``.5`` and ``0.5``). Use it for fields that hold a number; a name such as
+    ``001`` is text and is compared with ``==``.
     """
 
     if left == right:

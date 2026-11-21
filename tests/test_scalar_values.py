@@ -254,6 +254,44 @@ def test_a_state_number_spelled_another_way_is_no_change(tmp_path: Path) -> None
     assert path.read_text(encoding="utf-8") == source
 
 
+@pytest.mark.parametrize(
+    ("in_file", "given"),
+    [
+        ("0.5", ".5"), (".5", 0.5), ("0.5", "0.50"), ("5.", 5), ("5", "5.0"), ("1e3", 1000),
+        ("1000", "1e3"), ("+5", 5), ("-0", 0), ('"0.5"', 0.5), ("0.5", "5e-1"),
+    ],
+)
+def test_every_spelling_of_one_number_is_no_change(
+    tmp_path: Path, in_file: str, given: str | float
+) -> None:
+    source = STATE.replace(
+        "manpower = 1\n",
+        f"manpower = 1\n\tlocal_supplies = {in_file}\n\tbuildings_max_level_factor = {in_file}\n"
+        f"\tresources = {{ steel = {in_file} }}\n",
+    )
+    path = _write(tmp_path, "history/states/1-Test.txt", source)
+    mod = Mod(tmp_path)
+    mod.set_state_properties(
+        1, local_supplies=given, buildings_max_level_factor=given, resources={"steel": given}
+    )
+    assert mod.preview() == ""
+    mod.save()
+    assert path.read_text(encoding="utf-8") == source
+
+
+@pytest.mark.parametrize(("in_file", "given"), [("1", "001"), ("001", "1"), ("1.0", "1"), ("5", "+5")])
+def test_a_state_name_that_looks_like_a_number_is_text(
+    tmp_path: Path, in_file: str, given: str
+) -> None:
+    path = _write(tmp_path, "history/states/1-Test.txt", STATE.replace('"STATE_1"', in_file))
+    mod = Mod(tmp_path)
+    assert mod.get_state(1).name == in_file
+    mod.set_state_properties(1, name=given)
+    mod.save()
+    assert f"name = {given}\n" in path.read_text(encoding="utf-8")
+    assert Mod(tmp_path).get_state(1).name == given
+
+
 def test_a_resource_value_with_quote_characters_is_written(tmp_path: Path) -> None:
     source = STATE.replace("manpower = 1\n", "manpower = 1\n\tresources = { steel = 10 }\n")
     path = _write(tmp_path, "history/states/1-Test.txt", source)

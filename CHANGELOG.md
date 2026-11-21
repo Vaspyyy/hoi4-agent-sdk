@@ -152,8 +152,9 @@ All notable changes to this project are documented here. The format follows
 - A state edit that only adds quote characters or a space at an end of a
   name, a category or a resource value is written. It used to be taken for
   "no change", because the new text was compared the way file text is
-  compared. Two spellings of one number (`2000` and `2000.0`) are still no
-  change.
+  compared. Two spellings of one number (`2000` and `2000.0`, `.5` and
+  `0.5`) are still no change in a field that holds a number; a name such
+  as `001` is text.
 - In an on-action's `random_events`, a statement that is not a
   `weight = event` pair (such as `chance_to_fire = 25`) reads as one list
   entry holding the whole statement, and in `events` any assignment does.

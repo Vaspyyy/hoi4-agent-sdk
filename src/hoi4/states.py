@@ -377,6 +377,10 @@ def _replace_body(text: str, span: AssignmentSpan, body: str) -> str:
     return text[: span.body_start] + body + text[span.body_end :]
 
 
+# State properties that hold text, not a number.
+_TEXT_SCALARS = frozenset({"name", "state_category"})
+
+
 def _scalar_text(value: str | int | float) -> str:
     """Spell a state property for script; numbers may be ``int`` or ``float``."""
 
@@ -703,10 +707,14 @@ def _patch_existing_state(state: State) -> str:
         "state_category": ("manpower", "name", "id"),
     }
     for key, value in scalar_fields.items():
-        # Compare by meaning: ``2000`` given for a file's ``2000.0`` is no
-        # change. Text is compared as it is: a name with quote characters or
-        # with a space at its end is another name.
-        if plain_values_equivalent(value, original_scalars[key]):
+        # A number is compared by value: ``2000`` given for a file's
+        # ``2000.0`` is no change. Text is compared as it is: a name with
+        # quote characters or a space at its end is another name, and so is
+        # ``001`` for ``1``.
+        if value == original_scalars[key] or (
+            key not in _TEXT_SCALARS
+            and plain_values_equivalent(value, original_scalars[key])
+        ):
             continue
         rendered_value: str | None = value
         if key in {"local_supplies", "buildings_max_level_factor"} and not value:
