@@ -148,6 +148,12 @@ def set_block(text: str, key: str, body: str | None, *, comments: bool = False) 
     current = text[first.body_start : first.body_end]
     if same_block_body(current, cleaned, comments=comments):
         return text
+    if cleaned and not current.strip() and "\n" in current:
+        # An empty block that spans lines: the first statements go one level
+        # deeper than its closing brace.
+        return replace_assignment_body(
+            text, first, _fill_empty_body(current, cleaned, _line_ending(text))
+        )
     indent = _line_indent(text, first.start)
     synced = _sync_or_spread(current, cleaned, indent, comments, _line_ending(text))
     if synced is None:

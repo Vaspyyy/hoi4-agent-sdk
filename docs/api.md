@@ -179,8 +179,9 @@ Removing the last wing retains the enclosing blocks and their unmodeled content.
 `update_oob` writes what the passed items say, by comparing each one with the
 block it was loaded from: one changed field changes one value. Items that stay
 keep their place in the file. A copy of a loaded item (`copy.deepcopy`) passed
-next to its original is added as a new item, wherever it sits in the list: the
-block stays with the original, the item that was copied fewer times.
+next to its original is appended after the existing items, wherever it sits
+in the passed list: the block stays with the original, the item that was
+copied fewer times.
 
 An inherited OOB with unbalanced braces (the game ships some) is read the way
 the game reads it. When it becomes a mod override it is written with balanced

@@ -228,7 +228,8 @@ block would comment out the closing brace), it returns `None`. `set_block`
 then lays the body out with one statement per line
 (`one_statement_per_line`, every statement and comment keeps its bytes) and
 edits that. Only if that fails too (malformed text) is the body written as a
-whole.
+whole. An empty block that spans lines gets its first statements one level
+deeper than its closing brace.
 
 Comments: they are compared as soon as the new body has any. A changed, added
 or dropped comment is then written. A new body without comments says nothing
@@ -236,6 +237,18 @@ about the comments in the file, so they are left alone; pass `comments=True`
 to remove them too. `same_block_body(current, new)` answers "would this edit
 change anything?" by the same rule, and is what the content modules use to
 decide whether a text field changed.
+
+Two limits, both about a guess the patcher cannot make:
+
+- A statement that moves and gets a new value in the same edit is a new
+  statement to the patcher: the comment on its line, and the comments inside
+  it if it is a block, go with the old one.
+- Several statements with the same key (`add_ideas = a`, `add_ideas = b`): when
+  one is removed and another changed so that they could be paired either way,
+  the comment may stay with the other one or be removed.
+
+Text that is read, changed in one place and written back never meets these
+limits, because its comments are in the new text and are compared one by one.
 
 `one_statement_per_line(body, indent)` lays a body out with one statement per
 line, each with its bytes and the comment on its line. It is the layout that

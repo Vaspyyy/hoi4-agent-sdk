@@ -390,3 +390,10 @@ def test_a_body_with_a_stray_brace_is_refused() -> None:
 
 def test_an_appended_statement_leaves_the_spaces_of_the_last_line_alone() -> None:
     assert append_assignment("\n\ta = 1 \n", "b = 2") == "\n\ta = 1 \n\tb = 2\n"
+
+
+def test_the_first_statement_of_an_empty_block_with_lines_is_indented() -> None:
+    assert set_block("x = {\n\t\n}\n", "x", "a = 1") == "x = {\n\t\n\ta = 1\n}\n"
+    assert set_block("\tx = {\n\t}\n", "x", "a = 1\nb = { c = 2 }") == (
+        "\tx = {\n\t\ta = 1\n\t\tb = { c = 2 }\n\t}\n"
+    )

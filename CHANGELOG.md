@@ -120,6 +120,9 @@ All notable changes to this project are documented here. The format follows
   leaves the comments in the file alone (pass `comments=True` to
   `set_block` to remove them). A statement that is removed takes the
   comment on its line with it.
+  Two limits: a statement that moves and gets a new value in the same edit
+  loses its comments, and so can one of several statements with the same
+  key when one is removed and another changed.
 - Setting an event's plain `title` or `description`, or an option's plain
   `name`, no longer removes the conditional alternatives. Pass
   `conditional_titles=[]` (or `conditional_descriptions=[]`,
@@ -200,9 +203,9 @@ All notable changes to this project are documented here. The format follows
   of the same decisions file into `common/decisions/categories/`.
 - A copy of a loaded division, template, ship or air wing that was passed
   to `update_oob` next to its original replaced the original. It is now
-  added as a new item, wherever it sits in the list and whether or not the
-  original was changed in the same call: the source block stays with the
-  original.
+  appended after the existing items, wherever it sits in the passed list and
+  whether or not the original was changed in the same call: the source
+  block stays with the original.
 - A focus statement added after one that sits in the middle of a line with
   a trailing comment was put between that statement and its comment. It
   now gets its own line below.
