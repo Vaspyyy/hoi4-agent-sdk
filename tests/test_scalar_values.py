@@ -480,13 +480,40 @@ def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Pat
         mod.effect_start_civil_war("fascism", effects=["} zz_breakout = 1 x = {"])
     with pytest.raises(ParseError):
         mod.effect_division_template("Infantry", "infantry = { x = 0 y = 0 } } zz_breakout = 1 x = {")
-    with pytest.raises(ValueError, match="cannot hold a comment"):
-        mod.effect_division_template("Infantry", "infantry = { x = 0 y = 0 } # the line")
 
-    # A comment in an effect does not swallow the closing brace.
+    # A comment in an effect swallows neither the closing brace nor the next effect.
+    commented = mod.scope_block("GER", "add_political_power = 1 # a gift", "add_stability = 0.1")
+    assert commented == "GER = { add_political_power = 1 # a gift\nadd_stability = 0.1\n}"
+    assert _names(commented) == ["GER", "add_political_power", "add_stability"]
     commented = mod.scope_block("GER", "add_political_power = 1 # a gift")
     assert commented == "GER = { add_political_power = 1 # a gift\n}"
     assert _names(commented) == ["GER", "add_political_power"]
+
+    # A division template keeps comments, in the middle and at the end.
+    template = mod.effect_division_template(
+        "Test",
+        regiments="infantry = { x = 0 y = 0 } # first\nartillery = { x = 1 y = 0 }",
+    )
+    assert template == (
+        'division_template = { name = "Test" regiments = { infantry = { x = 0 y = 0 } # first\n'
+        "artillery = { x = 1 y = 0 }\n} }"
+    )
+    assert _names(template) == [
+        "division_template", "name", "regiments", "infantry", "x", "y", "artillery", "x", "y",
+    ]
+    template = mod.effect_division_template(
+        "Test",
+        regiments="infantry = { x = 0 y = 0 } # only",
+        support="engineer = { x = 0 y = 0 } # last",
+        division_names_group="ZZ_INF",
+    )
+    assert _names(template) == [
+        "division_template", "name", "regiments", "infantry", "x", "y",
+        "support", "engineer", "x", "y", "division_names_group",
+    ]
+    assert mod.effect_division_template("Test", "infantry = { x = 0 y = 0 }") == (
+        'division_template = { name = "Test" regiments = { infantry = { x = 0 y = 0 } } }'
+    )
 
 
 def test_a_very_small_state_number_keeps_its_digits() -> None:

@@ -73,10 +73,18 @@ def scope_block(scope: str | int, *effects: str) -> str:
     parts = [effect.strip() for effect in effects if effect and effect.strip()]
     for part in parts:
         require_well_formed(part, f"an effect in the scope '{scope}'")
-    body = " ".join(parts)
-    # A comment runs to the end of its line: the closing brace goes below it.
-    closing = "\n}" if parse(body).comments else " }"
-    return f"{scope} = {{ {body}{closing}"
+    # A comment runs to the end of its line: the next effect goes below it.
+    separator = "\n" if any(parse(part).comments for part in parts) else " "
+    return f"{scope} = {braced(separator.join(parts))}"
+
+
+def braced(body: str) -> str:
+    """Return ``{ body }``; the closing brace goes on a new line below a comment.
+
+    A comment runs to the end of its line, so a brace behind it on the same
+    line would be part of the comment.
+    """
+    return f"{{ {body}\n}}" if parse(body).comments else f"{{ {body} }}"
 
 
 def validate_script_syntax(script: str) -> list[str]:
