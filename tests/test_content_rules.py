@@ -367,6 +367,24 @@ def test_an_offset_block_does_not_excuse_two_focuses_that_are_always_drawn():
     assert [f.focus_id for f in codes(findings, "visual_overlap")] == ["D"]
 
 
+def test_two_branches_behind_the_same_condition_are_shown_together():
+    def pair(first: str, second: str) -> list[str]:
+        findings = validate_focus_tree(
+            tree(
+                Focus(id="G1", x=0, y=0, allow_branch=first),
+                Focus(id="G2", x=4, y=0, allow_branch=second),
+                Focus(id="A", x=2, y=1, prerequisites=[["G1"]]),
+                Focus(id="B", x=2, y=1, prerequisites=[["G2"]]),
+            )
+        )
+        return [f.focus_id for f in codes(findings, "visual_overlap")]
+
+    # Two gate focuses, one condition: when it holds, both branches appear.
+    assert pair("has_country_flag = f", "has_country_flag  =  f") == ["B"]
+    assert pair("always = yes", "always = yes") == ["B"]
+    assert pair("has_country_flag = f", "NOT = { has_country_flag = f }") == []
+
+
 def test_an_offset_block_that_moves_nothing_excuses_nothing():
     findings = validate_focus_tree(
         tree(

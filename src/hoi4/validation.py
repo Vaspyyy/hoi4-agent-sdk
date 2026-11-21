@@ -1090,18 +1090,45 @@ def focus_search_filters_from_sprites(sprite_names: Collection[str]) -> set[str]
     return {name[4:] for name in sprite_names if name.startswith("GFX_") and len(name) > 4}
 
 
+def _pulled_in_focuses(
+    shared_focuses: Collection[str], parents: Mapping[str, Collection[str]]
+) -> set[str]:
+    """The focuses of other files that ``shared_focus = ID`` puts on a tree's canvas.
+
+    Each ``ID``, and every shared focus that has one of them among its
+    prerequisites, directly or through other shared focuses.
+    """
+
+    canvas = set(shared_focuses)
+    grew = True
+    while grew:
+        grew = False
+        for focus_id, refs in parents.items():
+            if focus_id not in canvas and not canvas.isdisjoint(refs):
+                canvas.add(focus_id)
+                grew = True
+    return canvas
+
+
 def validate_focus_tree(
     tree: FocusTree,
     known_focus_ids: set[str] | None = None,
     known_state_ids: set[int] | None = None,
     *,
     known_search_filters: Collection[str] | None = None,
+    shared_focus_parents: Mapping[str, Collection[str]] | None = None,
 ) -> list[ValidationError]:
     """Check one focus tree.
 
     ``known_search_filters`` are the filter names that have a ``GFX_<filter>``
     sprite; ``None`` uses the filters of the base game
     (``DEFAULT_FOCUS_SEARCH_FILTERS``).
+
+    ``shared_focus_parents`` maps every shared or joint focus of any file to
+    its prerequisites. With it, a focus of this tree may be placed relative
+    to exactly the shared focuses the tree pulls in (``shared_focus = ID``
+    and the shared focuses below ``ID``). Without it, any known focus of
+    another file is taken once the tree pulls in a shared focus.
     """
 
     errors: list[ValidationError] = []
@@ -1122,12 +1149,14 @@ def validate_focus_tree(
         while anchor in by_id and anchor not in seen:
             seen.add(anchor)
             anchor = by_id[anchor].relative_position_id
-        if (
-            anchor not in by_id
-            and anchor in all_known
-            and (tree.kind == "file" or tree.shared_focuses)
-        ):
-            continue
+        if anchor not in by_id and anchor in all_known:
+            if tree.kind == "file":
+                continue
+            if tree.shared_focuses and (
+                shared_focus_parents is None
+                or anchor in _pulled_in_focuses(tree.shared_focuses, shared_focus_parents)
+            ):
+                continue
         errors.append(
             ValidationError(
                 message=f"Focus '{focus_id}' position unresolved: {reason}",

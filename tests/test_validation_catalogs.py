@@ -438,21 +438,37 @@ def test_a_deleted_country_is_an_unknown_tag_in_the_next_run(tmp_path):
 # ── Focus trees and the container of a file's shared focuses ────────
 
 
-def test_a_focus_of_a_tree_may_anchor_to_a_shared_focus_of_the_game(tmp_path):
+def test_a_focus_of_a_tree_may_anchor_to_the_shared_focuses_the_tree_pulls_in(tmp_path):
     game = focus_game(tmp_path)
+    # A shared focus below the one the tree pulls in comes with it.
+    write(
+        game,
+        "common/national_focus/congo_more.txt",
+        "shared_focus = {\n id = CONGO_child\n prerequisite = { focus = CONGO_free_state }\n"
+        " relative_position_id = CONGO_free_state\n x = 0 y = 1\n}\n"
+        "shared_focus = { id = OTHER_shared x = 9 y = 0 }\n",
+    )
     root = mod_root(tmp_path)
     write(
         root,
         "common/national_focus/tree.txt",
         "focus_tree = {\n id = my_test_tree\n shared_focus = CONGO_free_state\n"
-        " focus = {\n  id = MOD_tree_focus\n  prerequisite = { focus = CONGO_free_state }\n"
+        " focus = {\n  id = MOD_on_shared\n  prerequisite = { focus = CONGO_free_state }\n"
         "  relative_position_id = CONGO_free_state\n  x = 0 y = 1\n }\n"
+        " focus = { id = MOD_on_child relative_position_id = CONGO_child x = 0 y = 1 }\n"
+        # Known focuses, but none of them is on this tree's canvas.
+        " focus = { id = MOD_on_other_tree relative_position_id = army_effort x = 0 y = 1 }\n"
+        " focus = { id = MOD_on_other_shared relative_position_id = OTHER_shared x = 0 y = 1 }\n"
         " focus = { id = MOD_lost relative_position_id = MOD_nowhere x = 0 y = 1 }\n}\n",
     )
     findings = codes(
         Mod(root, hoi4_install=game).validate(stage="build"), "unresolved_focus_position"
     )
-    assert [f.focus_id for f in findings] == ["MOD_lost"]
+    assert sorted(f.focus_id for f in findings) == [
+        "MOD_lost",
+        "MOD_on_other_shared",
+        "MOD_on_other_tree",
+    ]
 
 
 def test_load_focus_tree_cannot_name_the_container_of_a_files_shared_focuses(tmp_path):

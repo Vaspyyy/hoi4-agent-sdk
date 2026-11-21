@@ -418,20 +418,6 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 continue
         return categories
 
-    def _country_tag_aliases(self) -> set[str]:
-        """Alias tags of ``common/country_tag_aliases``, usable wherever a tag is."""
-
-        aliases: set[str] = set()
-        for path in self.content_files("common/country_tag_aliases").values():
-            if path.suffix.lower() != ".txt":
-                continue
-            try:
-                document = parse(read_text(path))
-            except (OSError, ValueError):
-                continue
-            aliases.update(item.name for item in document.root.assignments() if item.block)
-        return aliases
-
     def _declared_event_namespaces(self) -> set[str]:
         """Every namespace an ``add_namespace`` declares, as the game sees them.
 
@@ -719,8 +705,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         errors.extend(_validate_source_tree(self.mod_root))
 
         begin_phase("catalogs", "Resolving referenced game and mod catalogs")
-        known_tags = self._defined_country_tags()
-        known_tags.update(self._country_tag_aliases())
+        known_tags = self._known_country_tags()
         # Country history may name an idea the mod does not define; the
         # reference checks load their catalogs themselves when a name is
         # not among the mod's own objects.
@@ -938,12 +923,23 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             if diagnostic.error_type == "DuplicateIdentifierError"
             and diagnostic.section == "focus"
         }
+        # Which focuses of other files a tree has on its canvas is read only
+        # when a tree with shared focuses anchors to a focus it does not hold.
+        shared_parents: dict[str, frozenset[str]] | None = None
         for tree in self._focus_trees.values():
+            if tree.kind != "file" and tree.shared_focuses and shared_parents is None:
+                own = {focus.id for focus in tree.focuses}
+                if any(
+                    focus.relative_position_id and focus.relative_position_id not in own
+                    for focus in tree.focuses
+                ):
+                    shared_parents = self._shared_focus_parents()
             tree_errors = validate_focus_tree(
                 tree,
                 known_focus_ids=all_focus_ids,
                 known_state_ids=known_state_ids if known_state_ids else None,
                 known_search_filters=search_filters,
+                shared_focus_parents=shared_parents,
             )
             errors.extend(
                 error

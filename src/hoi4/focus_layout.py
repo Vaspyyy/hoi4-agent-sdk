@@ -92,7 +92,9 @@ class FocusBranches:
     So two focuses may share a spot when an ``offset`` block moves one of
     them and not the other and ``allow_branch`` can hide at least one of
     them, or when each of them is hidden behind an ``allow_branch`` condition
-    the other does not depend on. The game's own trees use both forms for
+    the other does not depend on (a condition is its text: two focuses that
+    each write ``allow_branch = { has_dlc = "X" }`` appear together). The
+    game's own trees use both forms for
     variant branches: Ethiopia's Italian branch steps aside by an ``offset``
     on its first focus when the exile branch appears. Two focuses behind the
     same condition are shown together when it holds, two focuses moved by
@@ -221,8 +223,17 @@ class FocusBranches:
             return True
         if not (self.conditional(first) and self.conditional(second)):
             return False
+        # Each has to hang on a condition the other does not: two gate
+        # focuses with the same ``allow_branch`` text appear together.
         first_gates, second_gates = self.gates(first), self.gates(second)
-        return bool(first_gates - second_gates) and bool(second_gates - first_gates)
+        first_only = self._conditions(first_gates - second_gates)
+        second_only = self._conditions(second_gates - first_gates)
+        return bool(first_only - second_only) and bool(second_only - first_only)
+
+    def _conditions(self, gates: frozenset[str]) -> set[str]:
+        """The ``allow_branch`` texts of some gate focuses, spacing aside."""
+
+        return {" ".join(self._by_id[gate].allow_branch.split()) for gate in gates}
 
 
 def continuous_focus_position_issue(

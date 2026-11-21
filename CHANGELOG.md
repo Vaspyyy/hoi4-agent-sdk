@@ -325,9 +325,10 @@ All notable changes to this project are documented here. The format follows
   may share a position only when the game never draws both there, because
   an `offset` block moves one and not the other (its own, or one on a focus
   it is placed relative to) while `allow_branch` can hide at least one of
-  them, or each hangs on an `allow_branch` focus the other does not depend
-  on. Mutually exclusive focuses are both drawn, so they must not share a
-  position.
+  them, or each hangs on an `allow_branch` condition the other does not
+  depend on (two focuses with the same `allow_branch` text appear
+  together). Mutually exclusive focuses are both drawn, so they must not
+  share a position.
 - `validate()` and `validate_effect()` load a catalog of the game (ideas,
   events, technologies, equipment) only when a name is not among the mod's
   own objects, and then only once.
@@ -369,9 +370,10 @@ All notable changes to this project are documented here. The format follows
   battle checks).
 - `load_focus_tree` cannot name the container the SDK keeps a file's
   top-level shared focuses in (`unknown_focus_tree_reference`).
-- A focus of a tree that pulls in shared focuses (`shared_focus = ID`) may
-  be placed relative to a focus of another file without
-  `unresolved_focus_position`.
+- A focus of a tree may be placed relative to the shared focuses the tree
+  pulls in (`shared_focus = ID`, and the shared focuses below `ID`) without
+  `unresolved_focus_position`. `validate_focus_tree` takes
+  `shared_focus_parents=` for that.
 - `ALL` and `ANY` are country tags when a mod defines them, not keywords.
 - The roles inside a character's `instance = { ... }` blocks and the
   `available` block of a bookmark country are checked like other script.

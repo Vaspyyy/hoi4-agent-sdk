@@ -130,16 +130,19 @@ the content checks read them the way the game does:
   or value anywhere in the mod's own script files or interface `.gui` files.
 - A focus search filter is known when a sprite named `GFX_<filter>` is
   declared in an `interface/*.gfx` file of the game, a base mod or the mod.
-- Two focuses may share a position only when the game never draws both
-  there. The game draws every focus of a tree, both sides of a mutually
-  exclusive choice included, so exclusivity is no reason. A pair may share
-  a position when an `offset` block moves one of them and not the other
-  (a focus moves while the trigger of its own `offset` block holds, or of
-  one on a focus it is placed relative to) and `allow_branch` can hide at
-  least one of them, or when `allow_branch` can hide each of them
-  (it has `allow_branch`, or every chain of prerequisites from it up to a
-  focus without prerequisites passes one that has) and each depends on a
-  focus with `allow_branch` that the other does not depend on. Two
+- Two focuses may share a position only when the script gives the game a
+  way to keep one of them off it. The game draws every focus of a tree,
+  both sides of a mutually exclusive choice included, so exclusivity is no
+  reason. `allow_branch` can hide a focus: it has `allow_branch`, or every
+  chain of prerequisites from it up to a focus without prerequisites passes
+  one that has. A pair may share a position in two cases. One: an `offset`
+  block moves one of them and not the other (a focus moves while the
+  trigger of its own `offset` block holds, or of one on a focus it is
+  placed relative to; an offset of 0 0 moves nothing), and `allow_branch`
+  can hide at least one of them. Two: `allow_branch` can hide each of them,
+  and each depends on a focus whose `allow_branch` condition (its text) the
+  other does not depend on. The SDK does not work out whether two
+  conditions can hold at the same time. Two
   focuses behind the same `allow_branch` focuses are shown together.
 - Hidden events (`hidden = yes`) need no title, description or option.
 - Tag aliases from `common/country_tag_aliases` count as country tags, and

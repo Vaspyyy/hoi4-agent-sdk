@@ -76,6 +76,28 @@ def _focus_ids(text: str) -> frozenset[str]:
     return frozenset(ids)
 
 
+def _shared_focus_parents_in(text: str) -> dict[str, frozenset[str]]:
+    """The prerequisites of every top-level focus of a focus file, by id.
+
+    These are the ``shared_focus`` and ``joint_focus`` blocks (and a bare
+    ``focus``) that a tree pulls in with ``shared_focus = ID``.
+    """
+
+    parents: dict[str, frozenset[str]] = {}
+    root = parse(text).root
+    for key in _FOCUS_KEYS:
+        for block in root.blocks(key, fold=True):
+            focus_id = block.scalar("id", fold=True)
+            if focus_id:
+                parents[focus_id] = frozenset(
+                    item.scalar
+                    for group in block.blocks("prerequisite", fold=True)
+                    for item in group.assignments("focus", fold=True)
+                    if item.scalar
+                )
+    return parents
+
+
 def _sprite_names(text: str) -> frozenset[str]:
     """The ``name = GFX_...`` of every sprite declared in a ``.gfx`` text."""
 
@@ -259,6 +281,29 @@ class CatalogsLayer(SourcesLayer):
         replaced = set(self._group_focus_trees_by_file(dirty_only=True))
         trees |= self._definitions_in("common/national_focus", skip=replaced).focus_trees
         return trees
+
+    def _shared_focus_parents(self) -> dict[str, frozenset[str]]:
+        """The prerequisites of every shared or joint focus the game will know.
+
+        ``shared_focus = ID`` in a tree puts ``ID`` on its canvas, and with it
+        the shared focuses below it. The mod's own come from the models (with
+        pending edits), the inherited ones from a scan of each file.
+        """
+
+        parents: dict[str, frozenset[str]] = {
+            focus.id: frozenset(ref for group in focus.prerequisites for ref in group)
+            for tree in self._focus_trees.values()
+            if tree.kind == "file"
+            for focus in tree.focuses
+            if focus.id
+        }
+        replaced = set(self._group_focus_trees_by_file(dirty_only=True))
+        for _, found in self._effective_script_results(
+            "common/national_focus", "shared_focus_parents", _shared_focus_parents_in, skip=replaced
+        ):
+            for focus_id, refs in found.items():
+                parents.setdefault(focus_id, refs)
+        return parents
 
     def _own_focus_tree_ids(self) -> set[str]:
         """The mod's own focus trees, with pending edits.
