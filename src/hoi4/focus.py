@@ -671,17 +671,26 @@ def _set_block_at(text: str, span: AssignmentSpan, body: str) -> str:
 def _insert_after(text: str, span: AssignmentSpan, statement: str) -> str:
     """Insert ``statement`` after the statement at ``span``.
 
-    When that statement starts its own line, the new one gets a line of its
-    own below it with the same indentation. Whatever follows on the old line
+    When that statement starts its own line, or a comment ends its line, the
+    new one gets a line of its own below it. Whatever follows on the old line
     (a comment, or more statements such as ``x = 1``) stays where it is, so a
-    trailing comment keeps describing the line it was written for.
+    trailing comment keeps describing the statement it was written for.
     """
 
     line_start = text.rfind("\n", 0, span.start) + 1
     prefix = text[line_start : span.start]
     line_end = text.find("\n", span.end)
-    if not prefix.strip() and line_end >= 0 and _line_ends_at_depth_zero(text, span.end, line_end):
-        rendered = "".join(prefix + line + "\n" if line else "\n" for line in statement.splitlines())
+    own_line = not prefix.strip()
+    commented = line_end >= 0 and any(
+        span.end <= start < line_end for start, _ in parse(text).comments
+    )
+    if (
+        (own_line or commented)
+        and line_end >= 0
+        and _line_ends_at_depth_zero(text, span.end, line_end)
+    ):
+        indent = prefix if own_line else _indent_below(text, line_start, line_end)
+        rendered = "".join(indent + line + "\n" if line else "\n" for line in statement.splitlines())
         return text[: line_end + 1] + rendered + text[line_end + 1 :]
     if prefix.strip() or line_end >= 0:
         # A one-line block, or a block that opens later on this line and runs
@@ -691,6 +700,24 @@ def _insert_after(text: str, span: AssignmentSpan, statement: str) -> str:
     lines = statement.splitlines()
     rendered = "\n".join(prefix + line if line else line for line in lines)
     return text[: span.end] + "\n" + rendered + text[span.end :]
+
+
+def _indent_below(text: str, line_start: int, line_end: int) -> str:
+    """The indentation for a new line after the line at ``line_start``.
+
+    That line's own indentation. The line of the opening brace has none inside
+    the body: then the indentation of the next line with content, or one level
+    more than the closing brace.
+    """
+
+    if line_start > 0:
+        line = text[line_start:line_end]
+        return line[: len(line) - len(line.lstrip(" \t"))]
+    rest = text[line_end + 1 :].split("\n")
+    for line in rest:
+        if line.strip():
+            return line[: len(line) - len(line.lstrip(" \t"))]
+    return rest[-1] + "\t"
 
 
 def _line_ends_at_depth_zero(text: str, start: int, line_end: int) -> bool:

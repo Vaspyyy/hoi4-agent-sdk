@@ -763,3 +763,42 @@ def test_new_focus_and_tree_quote_strings_when_needed() -> None:
     assert (loaded.id, loaded.icon, loaded.will_lead_to_war_with) == ("f 1", "GFX a#b", "G R")
     assert loaded.prerequisites == [["f 0", "f2"]]
     assert loaded.mutually_exclusive == [["f#3"]]
+
+
+def test_new_prerequisite_leaves_the_comment_with_a_statement_in_mid_line(tmp_path: Path) -> None:
+    """The old prerequisite does not start its line: the comment still stays with it."""
+
+    text = _prerequisite_focus("\t\tx = 0 prerequisite = { focus = f0 } # note\n")
+    path = _write(tmp_path, text)
+    mod = Mod(tmp_path)
+    mod.update_focus("t1", "f1", prerequisites=[["f0"], ["f2"]])
+    mod.save()
+    assert path.read_text() == text.replace(
+        "# note\n", "# note\n\t\tprerequisite = { focus = f2 }\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "focus, expected",
+    [
+        (
+            "\tfocus = { id = f1 prerequisite = { focus = f0 } # note\n\t\tx = 0 y = 1\n\t}\n",
+            "\tfocus = { id = f1 prerequisite = { focus = f0 } # note\n"
+            "\t\tprerequisite = { focus = f2 }\n\t\tx = 0 y = 1\n\t}\n",
+        ),
+        (
+            "\tfocus = { id = f1 x = 0 y = 1 prerequisite = { focus = f0 } # note\n\t}\n",
+            "\tfocus = { id = f1 x = 0 y = 1 prerequisite = { focus = f0 } # note\n"
+            "\t\tprerequisite = { focus = f2 }\n\t}\n",
+        ),
+    ],
+)
+def test_new_prerequisite_after_a_comment_on_the_line_of_the_opening_brace(
+    tmp_path: Path, focus: str, expected: str
+) -> None:
+    head = "focus_tree = {\n\tid = t1\n\tfocus = { id = f0 }\n\tfocus = { id = f2 }\n"
+    path = _write(tmp_path, head + focus + "}\n")
+    mod = Mod(tmp_path)
+    mod.update_focus("t1", "f1", prerequisites=[["f0"], ["f2"]])
+    mod.save()
+    assert path.read_text() == head + expected + "}\n"

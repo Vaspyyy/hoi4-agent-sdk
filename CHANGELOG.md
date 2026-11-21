@@ -175,6 +175,12 @@ All notable changes to this project are documented here. The format follows
 - A broken state file in the mod made the SDK edit the game's state of the
   same id and write it as a second file for that state.
 - An air base's `ace = { ... }` block was read as an air wing named `ace`.
+- A copy of a loaded division, template, ship or air wing that was passed
+  to `update_oob` next to its original replaced the original. It is now
+  added as a new item.
+- A focus statement added after one that sits in the middle of a line with
+  a trailing comment was put between that statement and its comment. It
+  now gets its own line below.
 - An event `picture` with a space or `#` was written without quotes.
 - `PdxNode.set_value` kept a comparison operator (`a > 1` became `a > 2`).
 - The map renderer read country colours and tag files with a regular

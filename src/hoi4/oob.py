@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal, TypeVar
+from typing import Callable, Literal, Sequence, TypeVar
 
 from .patching import (
     AssignmentSpan,
@@ -1327,15 +1328,30 @@ def _patch_air_wing_body(
     return _patch_equipment_fields(body, wing, all_fields=all_fields)
 
 
+def _source_owners(items: Sequence[_T]) -> tuple[dict[int, _T], list[_T]]:
+    """Which item owns each source block, and which items are new.
+
+    A source block belongs to the first item that names it. A later item that
+    names the same block (a copy of a loaded item) is a new item: it is written
+    after the others and never replaces the one it was copied from.
+    """
+
+    owners: dict[int, _T] = {}
+    new: list[_T] = []
+    for item in items:
+        index: int = getattr(item, "source_index")
+        if index >= 0 and index not in owners:
+            owners[index] = item
+        else:
+            new.append(item)
+    return owners, new
+
+
 def _patch_templates(
     text: str,
     templates: list[DivisionTemplate],
 ) -> str:
-    source = {
-        template.source_index: template
-        for template in templates
-        if template.source_index >= 0
-    }
+    source, new_templates = _source_owners(templates)
     spans = [
         span
         for span in top_level_assignments(text)
@@ -1357,9 +1373,8 @@ def _patch_templates(
             span,
             _patch_template_body(body, template),
         )
-    for template in templates:
-        if template.source_index < 0:
-            text = append_assignment(text, serialize_division_template(template))
+    for template in new_templates:
+        text = append_assignment(text, serialize_division_template(template))
     return text
 
 
@@ -1375,11 +1390,7 @@ def _patch_divisions(
         )
         return set_block(text, "units", units_body or None)
     units_body = text[units.body_start : units.body_end]
-    source = {
-        division.source_index: division
-        for division in divisions
-        if division.source_index >= 0
-    }
+    source, new_divisions = _source_owners(divisions)
     spans = [
         span
         for span in top_level_assignments(units_body)
@@ -1401,12 +1412,8 @@ def _patch_divisions(
             span,
             _patch_division_body(body, division),
         )
-    for division in divisions:
-        if division.source_index < 0:
-            units_body = append_assignment(
-                units_body,
-                serialize_division_unit(division),
-            )
+    for division in new_divisions:
+        units_body = append_assignment(units_body, serialize_division_unit(division))
     return replace_assignment_body(text, units, units_body)
 
 
@@ -1459,7 +1466,7 @@ def _patch_air_wings(text: str, air_wings: list[AirWing]) -> str:
         if child.key.isdigit() and child.is_block
         and child.body_start is not None and child.body_end is not None
     ]
-    source = {wing.source_index: wing for wing in air_wings if wing.source_index >= 0}
+    source, _ = _source_owners(air_wings)
     # Indices are global across location occurrences, including repeated locations.
     children_by_location = []
     source_index = 0
@@ -1474,7 +1481,7 @@ def _patch_air_wings(text: str, air_wings: list[AirWing]) -> str:
                 wing.source_location_index == location_index
                 and wing.location == int(location.key)
             ):
-                retained.add(source_index)
+                retained.add(id(wing))
             else:
                 wing = None
             children.append((child, wing))
@@ -1485,7 +1492,7 @@ def _patch_air_wings(text: str, air_wings: list[AirWing]) -> str:
     # existing occurrences never move just because the supplied list is reordered.
     pending: dict[int, list[AirWing]] = {}
     for wing in air_wings:
-        if wing.source_index not in retained:
+        if id(wing) not in retained:
             pending.setdefault(wing.location, []).append(wing)
     first_location: dict[int, int] = {}
     for index, location in enumerate(locations):
@@ -1542,11 +1549,7 @@ def _patch_repeated_blocks(
     existing_keys: set[str] | None = None,
 ) -> str:
     item_keys = {key(item) for item in items}
-    source = {
-        getattr(item, "source_index"): item
-        for item in items
-        if getattr(item, "source_index") >= 0
-    }
+    source, new_items = _source_owners(items)
     spans = [
         span
         for span in top_level_assignments(body)
@@ -1567,9 +1570,8 @@ def _patch_repeated_blocks(
         assert span.body_end is not None
         child = body[span.body_start : span.body_end]
         body = replace_assignment_body(body, span, patch(child, item))
-    for item in items:
-        if getattr(item, "source_index") < 0:
-            body = append_assignment(body, render(item))
+    for item in new_items:
+        body = append_assignment(body, render(item))
     return body
 
 
@@ -1782,9 +1784,14 @@ def _infer_oob_kind(
 def _wrap_block(key: str, body: str, indent: int) -> str:
     prefix = "\t" * indent
     inner_prefix = "\t" * (indent + 1)
-    inner = "\n".join(
-        inner_prefix + line.rstrip() for line in body.strip().splitlines()
-    )
+    lines = textwrap.dedent(body).strip().splitlines()
+    later = [line for line in lines[1:] if line.strip()]
+    if later:
+        # A body cut out of a file: its first line lost the indentation that
+        # the other lines still carry.
+        margin = min(len(line) - len(line.lstrip(" \t")) for line in later)
+        lines = [lines[0], *(line[margin:] if line.strip() else line for line in lines[1:])]
+    inner = "\n".join(inner_prefix + line.rstrip() for line in lines)
     if inner:
         return f"{prefix}{key} = {{\n{inner}\n{prefix}}}"
     return f"{prefix}{key} = {{\n{prefix}}}"

@@ -400,3 +400,51 @@ def test_an_ace_block_is_not_an_air_wing(tmp_path: Path) -> None:
     assert mod.update_oob("ITA_air", air_wings=[wing])
     mod.save(require_changes=True)
     assert path.read_text(encoding="utf-8") == ACE.replace("amount = 12", "amount = 24")
+
+
+def test_a_copy_of_a_loaded_division_is_added_and_never_replaces_the_original(
+    tmp_path: Path,
+) -> None:
+    path = _write(tmp_path / "history/units/ABC_1936.txt", LAND)
+    mod = Mod(tmp_path)
+    divisions = copy.deepcopy(mod.get_oob("ABC_1936").divisions)
+    extra = copy.deepcopy(divisions[0])
+    extra.name = "Third"
+    divisions.append(extra)
+    assert mod.update_oob("ABC_1936", divisions=divisions)
+    mod.save(require_changes=True)
+
+    # The copy keeps the unknown key and the comment of the block it came from.
+    assert path.read_text(encoding="utf-8") == LAND[: -len("}\n")] + (
+        "\tdivision = {\n\t\tname = \"Third\"\n\t\tlocation = 100\n"
+        "\t\tdivision_template = \"Infantry\"\n"
+        "\t\tstart_experience_factor = 0.30 # veterans\n\t\tfuture_field = keep\n\t}\n}\n"
+    )
+    names = [division.name for division in Mod(tmp_path).get_oob("ABC_1936").divisions]
+    assert names[0] == "First" and names[-1] == "Third" and len(names) == 3
+
+
+def test_copies_of_templates_ships_and_air_wings_are_added_too(tmp_path: Path) -> None:
+    path = _write(tmp_path / "history/units/ABC_1936.txt", LAND)
+    air = _write(
+        tmp_path / "history/units/ABC_air.txt",
+        "air_wings = {\n\t100 = {\n\t\tfighter_equipment_0 = { owner = \"ABC\" amount = 10 }\n\t}\n}\n",
+    )
+    mod = Mod(tmp_path)
+    templates = copy.deepcopy(mod.get_oob("ABC_1936").templates)
+    twin = copy.deepcopy(templates[0])
+    twin.name = "Guards"
+    assert mod.update_oob("ABC_1936", templates=[*templates, twin])
+    wings = copy.deepcopy(mod.get_oob("ABC_air").air_wings)
+    more = copy.deepcopy(wings[0])
+    more.amount = 20
+    assert mod.update_oob("ABC_air", air_wings=[*wings, more])
+    mod.save(require_changes=True)
+
+    reloaded = Mod(tmp_path)
+    assert [template.name for template in reloaded.get_oob("ABC_1936").templates] == [
+        "Infantry", "Cavalry", "Guards",
+    ]
+    assert [wing.amount for wing in reloaded.get_oob("ABC_air").air_wings] == [10, 20]
+    assert LAND.split("\nunits = {")[0].rstrip("\n") in path.read_text(encoding="utf-8")
+    assert "fighter_equipment_0 = { owner = \"ABC\" amount = 10 }" in air.read_text(encoding="utf-8")
