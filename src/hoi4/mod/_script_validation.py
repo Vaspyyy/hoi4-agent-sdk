@@ -405,8 +405,10 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             sources.extend(script_sources(root, relative, str(path)))
         return sources
 
-    def _own_script_texts(self) -> list[tuple[Path, str, str]]:
-        """``(path, relative, text)`` of every script file of the mod itself.
+    def _own_script_texts(
+        self, tops: tuple[str, ...] = ("common", "events")
+    ) -> list[tuple[Path, str, str]]:
+        """``(path, relative, text)`` of every script file of the mod itself in ``tops``.
 
         The text is what the file will hold after ``save()``: pending edits
         count, and a file that ``save()`` deletes is left out.
@@ -414,7 +416,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
 
         pending = self._pending_texts()
         paths: dict[str, Path] = {}
-        for top in ("common", "events"):
+        for top in tops:
             folder = self.mod_root / top
             if folder.is_dir():
                 for path in folder.rglob("*.txt"):
@@ -422,7 +424,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         for path in pending:
             if path.is_relative_to(self.mod_root):
                 relative = path.relative_to(self.mod_root).as_posix()
-                if relative.split("/", 1)[0] in ("common", "events") and relative.endswith(".txt"):
+                if relative.split("/", 1)[0] in tops and relative.endswith(".txt"):
                     paths[relative] = path
         found: list[tuple[Path, str, str]] = []
         for relative, path in sorted(paths.items()):

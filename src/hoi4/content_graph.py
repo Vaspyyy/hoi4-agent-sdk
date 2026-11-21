@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Protocol
 
-from .localisation import parse_localization_dir
+from ._file_cache import cached_file_result
+from .localisation import YML_ENTRY_RE, normalize_localization_key, parse_localization_dir
 from .script_references import (
     COUNTRY,
     Definitions,
@@ -18,6 +19,7 @@ from .script_references import (
     name_pattern,
 )
 from .syntax import Scalar, parse
+from .textio import read_text
 from .types import ValidationError
 
 if TYPE_CHECKING:
@@ -35,6 +37,7 @@ class LivenessSource(Protocol):
 
     mod_root: Path
     hoi4_install: Path | None
+    base_mod_paths: tuple[Path, ...]
     _content_layers: ContentLayers | None
     _scan_cache: dict[str, set[str]]
     _vanilla_tags: set[str]
@@ -53,6 +56,10 @@ class LivenessSource(Protocol):
     _bookmarks: list[Bookmark]
 
     def _semantic_script_sources(self) -> list[ScriptSource]: ...
+
+    def _own_script_texts(
+        self, tops: tuple[str, ...] = ("common", "events")
+    ) -> list[tuple[Path, str, str]]: ...
 
     def _reference_corpus(self, *, inherited: bool = True) -> list[FileReferences]: ...
 
@@ -96,9 +103,54 @@ def _script_tokens(fragments: Iterable[str]) -> set[str]:
 
 
 def _localization_keys_in_script(keys: Iterable[str], tokens: set[str]) -> set[str]:
-    """The localization keys that appear as a key or value in script."""
+    """The localization keys that name something the script defines or mentions.
 
-    return {key for key in keys if key in tokens}
+    ``X_desc`` counts when ``X`` does: the game shows it as the description
+    of whatever ``X`` is (an idea, a dynamic modifier, a trait, ...).
+    """
+
+    return {
+        key
+        for key in keys
+        if key in tokens or (key.endswith("_desc") and key[: -len("_desc")] in tokens)
+    }
+
+
+def _inherited_localization_keys(mod: LivenessSource) -> set[str]:
+    """Every English localisation key of the game and the base mods.
+
+    Files the mod hides (same name, ``replace_path``) count too: the game
+    shows those texts, and the mod's key replaces them.
+    """
+
+    roots = [*mod.base_mod_paths]
+    if mod.hoi4_install is not None:
+        roots.append(mod.hoi4_install)
+    keys: set[str] = set()
+    for root in roots:
+        folder = Path(root) / "localisation"
+        if not folder.is_dir():
+            continue
+        for path in folder.rglob("*.yml"):
+            relative = path.relative_to(folder).as_posix().lower()
+            if "english" not in relative:
+                continue
+            try:
+                keys |= cached_file_result("localisation_keys", path, _yml_keys)
+            except (OSError, ValueError):
+                continue
+    return keys
+
+
+def _yml_keys(text: str) -> frozenset[str]:
+    """The keys of a localisation file, read the way the game finds them."""
+
+    found: set[str] = set()
+    for line in text.splitlines():
+        match = YML_ENTRY_RE.match(line)
+        if match is not None:
+            found.add(normalize_localization_key(match.group(1)))
+    return frozenset(found)
 
 
 @dataclass(frozen=True)
@@ -255,6 +307,9 @@ def analyze_content_liveness(
     used_localization.update(
         _localization_keys_in_script(localization_keys, _script_tokens(_script_fragments(mod)))
     )
+    # A key the game or a base mod defines too is shown by the game already:
+    # the mod overrides its text (``localisation/english/replace``).
+    used_localization.update(authored_localization & _inherited_localization_keys(mod))
     allowed_localization = tuple(localization_allowlist)
     unused_localization = {
         key
@@ -372,13 +427,21 @@ def analyze_content_liveness(
 
 
 def _script_fragments(mod: LivenessSource) -> list[str]:
-    """The script of the mod, for the localization use check."""
+    """The script of the mod, for the localization use check.
 
-    fragments = [
-        source.text
-        for source in mod._semantic_script_sources()
-        if source.kind != "modifier"
-    ]
+    That is every script file of the mod itself (``common``, ``events``,
+    ``history``, with pending edits), its interface files and the history of
+    its countries: a key named anywhere there is used.
+    """
+
+    fragments = [text for _, _, text in mod._own_script_texts(("common", "events", "history"))]
+    interface = mod.mod_root / "interface"
+    if interface.is_dir():
+        for path in sorted(interface.rglob("*.gui")):
+            try:
+                fragments.append(read_text(path))
+            except (OSError, ValueError):
+                continue
     for country in mod._countries.values():
         fragments.append(country.raw_history)
     return fragments

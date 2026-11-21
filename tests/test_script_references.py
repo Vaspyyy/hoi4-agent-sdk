@@ -481,6 +481,25 @@ def test_unfired_event_fires_for_the_mods_event_only(tmp_path):
     assert [(f.event_id, f.file_path, f.line) for f in found] == [("tst.3", str(path), 4)]
 
 
+def test_unused_localization_spares_overrides_and_named_definitions(tmp_path):
+    game = tmp_path / "game"
+    write(
+        game, "localisation/english/game_l_english.yml",
+        'l_english:\n compliance_15:0 "Compliance"\n brilliant_strategist:0 "Brilliant"\n'
+        ' infantry_equipment_1:0 "Rifle"\n',
+    )
+    mod_root = tmp_path / "mod"
+    write(mod_root, "common/resistance_compliance_modifiers/my.txt", "my_compliance = { }\n")
+    write(
+        mod_root, "localisation/english/replace/my_l_english.yml",
+        'l_english:\n my_compliance:0 "Mine"\n my_compliance_desc:0 "About mine"\n'
+        ' compliance_15:0 "Ours"\n brilliant_strategist:0 "Ours"\n infantry_equipment_1:0 "Ours"\n'
+        ' my_leftover:0 "Nobody shows this"\n',
+    )
+    found = liveness(Mod(mod_root, hoi4_install=game), "unused_localization")
+    assert [finding.message.split("'")[1] for finding in found] == ["my_leftover"]
+
+
 def test_ungranted_idea_fires_unless_granted_or_shown(tmp_path):
     path = write(
         tmp_path, "common/ideas/t.txt",
