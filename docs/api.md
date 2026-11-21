@@ -2068,8 +2068,8 @@ explain the syntax tree, span patching and byte-exact file I/O in detail.
 | `hoi4.textio.read_text(path)` / `decode_text(data)` | File to text with `"\n"` line endings, no byte-order mark, no byte dropped. |
 | `hoi4.textio.encode_text(text, *, like=None, bom=None)` / `write_text(path, text, *, like=None, bom=None)` | Text back to bytes in the format of `like` (encoding, byte-order mark, line endings). |
 | `hoi4.parse_pdx(text, *, strict=True) -> PdxNode` | Editable tree. Raises `ParseError` on malformed input unless `strict=False`. `PdxNode.key_quoted` says whether the key was quoted, `PdxNode.tag` holds `rgb` for a typed block. |
-| `hoi4.focus.load_focus_tree(path, text=None, *, tree_id=None)` | The first tree of a focus file, or the one with `tree_id` (the file stem selects the shared-focus container). `load_focus_trees(path, text=None)` returns all of them. |
-| `hoi4.ideas.read_ideas_text(text, path=None) -> tuple[list[Idea], str]` | Every idea of an ideas file and the container name (`ideas` or `country_ideas`). |
+| `hoi4.focus.load_focus_tree(path, text=None, *, tree_id=None)` | The first tree of a focus file, or the one with `tree_id` (the file stem selects the shared-focus container). `load_focus_trees(path, text=None, *, document=None)` returns all of them; `document` is the text already parsed with `hoi4.syntax.parse`. |
+| `hoi4.ideas.read_ideas_text(text, path=None, *, document=None) -> tuple[list[Idea], str]` | Every idea of an ideas file and the container name (`ideas` or `country_ideas`). Pass `document` when the text is already parsed. |
 | `hoi4.ideologies.load_ideologies_text(text, path=None, *, is_vanilla=False)` | Every ideology of a file's text. |
 | `hoi4.dynamic_modifiers.load_dynamic_modifiers_text(text, path=None)` | Every top-level dynamic modifier of a file's text. |
 | `hoi4.countries.color_from_value(value)` | RGB of a colour value from the syntax tree (`rgb`, plain, `hsv`, `hsv360`), or `None`. |

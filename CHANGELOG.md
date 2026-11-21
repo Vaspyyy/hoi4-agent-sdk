@@ -12,7 +12,9 @@ All notable changes to this project are documented here. The format follows
   base mods): references, division templates, sprites, characters, states,
   map data and localisation. A new process reads the stored results instead
   of parsing the game again, so the first `validate()` of a process on a
-  small mod takes about 3 to 4 seconds instead of about 40. It lives in
+  small mod takes about 3 to 4 seconds instead of about 40. The catalogs'
+  per-file scans of the inherited files (definitions, focus, event and idea
+  ids, localisation keys and more) are stored too. It lives in
   `~/.cache/hoi4-sdk/file-results/` (or under `$XDG_CACHE_HOME` or
   `$HOI4_SDK_CACHE_DIR`), holds only results for inherited files, and is
   rebuilt for a file whose size or modification time changed and for any new
@@ -161,6 +163,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **The first `validate()` of a large mod is about twice as fast.** On a mod
+  with 397 countries the warm first `validate()` went from about 65 s to
+  about 34 s, and a second `validate()` in the same process from about 45 s
+  to about 14 s (rough, on a busy machine). The country package check no
+  longer repeats work for every country: the runtime activation evidence of
+  all effects, the province ownership of the whole map and the special
+  project unlocks are built once per `validate()` run, and the enclosed
+  territory search starts at the country's own border. A section's first
+  load reads and parses each file once instead of up to three reads and two
+  parses. `discard()` keeps the cached references of the mod's files that
+  did not change.
 - **`Mod(root)` is fast, and `save()` no longer reloads the whole mod.**
   Content now loads one section at a time (events, states, countries,
   localisation and so on) the first time it is used, so an agent that edits
