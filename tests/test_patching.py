@@ -312,3 +312,10 @@ def test_the_first_statement_of_an_empty_block_gets_its_own_line() -> None:
 
 def test_removing_a_statement_leaves_no_line_of_spaces() -> None:
     assert set_scalar("a = 1\nb = 2   \nc = 3\n", "b", None) == "a = 1\nc = 3\n"
+
+
+def test_an_appended_statement_leaves_the_spaces_that_end_the_last_line() -> None:
+    source = "reward = {\n\ta = 1\t\t\n\tb = 2 \n}\n"
+    assert set_block(source, "reward", "a = 1\nb = 2\nc = 3") == (
+        "reward = {\n\ta = 1\t\t\n\tb = 2 \n\tc = 3\n}\n"
+    )

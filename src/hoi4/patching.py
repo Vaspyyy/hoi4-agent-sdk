@@ -515,6 +515,12 @@ def _insert_segments(
         # The only content sits on the line of the opening brace.
         indent = text[end:].rpartition("\n")[2] + "\t"
     lines = [_reindented(new_text, segment.start, segment.full_end, indent) for segment in added]
+    # Spaces that end the last line stay on that line: it keeps its bytes.
+    line_end = end
+    while line_end < len(text) and text[line_end] in " \t":
+        line_end += 1
+    if line_end < len(text) and text[line_end] in "\r\n":
+        end = line_end
     return text[:end] + "".join(newline + indent + line for line in lines) + text[end:]
 
 
