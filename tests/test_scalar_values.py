@@ -119,3 +119,86 @@ def test_a_key_has_to_be_one_word(tmp_path: Path) -> None:
     with pytest.raises(ParseError, match="one word as a key"):
         mod.create_country("ZZZ", "Zzz", popularities={"zz_breakout = 1 #": 100})
         mod.preview()
+
+
+# ── plain model text reads back exactly as it was given ──────────────
+
+
+def test_an_icon_with_quote_characters_survives_an_unrelated_edit(tmp_path: Path) -> None:
+    """The writer quotes model text itself; it never guesses that text which
+    starts and ends with a quote character is already script."""
+
+    mod = Mod(tmp_path)
+    mod.create_idea("zz_idea", icon='"foo"')
+    mod.save()
+
+    reloaded = Mod(tmp_path)
+    assert reloaded.get_idea("zz_idea").icon == '"foo"'
+    reloaded.update_idea("zz_idea", modifier={"political_power_gain": 0.1})
+    reloaded.save()
+
+    assert Mod(tmp_path).get_idea("zz_idea").icon == '"foo"'
+
+
+@pytest.mark.parametrize("source_name", ['"STATE_1"', "STATE_1"])
+def test_a_state_name_with_quote_characters_reads_back(tmp_path: Path, source_name: str) -> None:
+    _write(tmp_path, "history/states/1-Test.txt", STATE.replace('"STATE_1"', source_name))
+    mod = Mod(tmp_path)
+    mod.set_state_properties(1, name='"Big"')
+    mod.save()
+    assert Mod(tmp_path).get_state(1).name == '"Big"'
+
+
+def test_spaces_at_the_ends_of_a_value_are_kept(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_character(
+        "ZZZ",
+        Character(id="ZZZ_person", name="Person", portraits=[CharacterPortrait(large="GFX_foo ")]),
+        recruit=False,
+    )
+    mod.save()
+    assert Mod(tmp_path).get_character("ZZZ_person").portraits[0].large == "GFX_foo "
+
+
+def test_a_new_state_writes_a_resource_value_once(tmp_path: Path) -> None:
+    from hoi4.states import read_state, serialize_state
+    from hoi4.types import State
+
+    text = serialize_state(
+        State(
+            id=99, name="Test", manpower=100, state_category="town", owner="GER",
+            provinces=[1], resources={"steel": "10 foo", "oil": 4},
+        )
+    )
+    assert 'steel = "10 foo"' in text
+    assert read_state(tmp_path / "99-Test.txt", text=text).resources == {"steel": "10 foo", "oil": 4}
+
+
+def test_victory_points_have_to_be_numbers(tmp_path: Path) -> None:
+    path = _write(tmp_path, "history/states/1-Test.txt", STATE)
+    mod = Mod(tmp_path)
+    with pytest.raises(ValueError, match="have to be numbers"):
+        mod.set_state_properties(1, victory_points="1 10}}}zz_breakout=1{state={history={1")
+        mod.preview()
+    assert path.read_text(encoding="utf-8") == STATE
+
+    mod = Mod(tmp_path)
+    mod.set_state_properties(1, victory_points="1 10")
+    mod.save()
+    assert Mod(tmp_path).get_state(1).victory_points == "1 10"
+
+
+def test_a_party_set_on_a_history_without_politics_stays_one_value(tmp_path: Path) -> None:
+    _write(tmp_path, "common/country_tags/00_countries.txt", 'ZZZ = "countries/Zzz.txt"\n')
+    _write(tmp_path, "common/countries/Zzz.txt", "color = { 1 2 3 }\n")
+    history = _write(tmp_path, "history/countries/ZZZ - Zzz.txt", "capital = 1\n")
+    mod = Mod(tmp_path)
+    mod.update_country("ZZZ", ruling_party="democratic zz_breakout = 1")
+    try:
+        mod.save()
+    except ValueError:
+        return  # refused is fine too
+    from hoi4.syntax import parse
+
+    names = [item.name for item, _ in parse(history.read_text(encoding="utf-8")).root.walk()]
+    assert "zz_breakout" not in names

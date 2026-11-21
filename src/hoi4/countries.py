@@ -36,9 +36,10 @@ from .syntax import (
     Scalar,
     Tagged,
     Value,
-    as_scalar,
     parse,
+    quote,
     require_entry,
+    require_key,
 )
 from .tags import (
     add_country_tag,
@@ -818,16 +819,18 @@ def serialize_country_files(
     definition = country.raw_definition
     if not definition:
         definition = (
-            f"graphical_culture = {as_scalar(country.graphical_culture)}\n"
-            f"graphical_culture_2d = {as_scalar(country.graphical_culture_2d)}\n"
+            f"graphical_culture = {quote(country.graphical_culture)}\n"
+            f"graphical_culture_2d = {quote(country.graphical_culture_2d)}\n"
             f"color = {{ {r} {g} {b} }}\n"
         )
     else:
         if "*" in country.touched_fields or "graphical_culture" in country.touched_fields:
-            definition = set_scalar(definition, "graphical_culture", country.graphical_culture)
+            definition = set_scalar(
+                definition, "graphical_culture", quote(country.graphical_culture)
+            )
         if "*" in country.touched_fields or "graphical_culture_2d" in country.touched_fields:
             definition = set_scalar(
-                definition, "graphical_culture_2d", country.graphical_culture_2d
+                definition, "graphical_culture_2d", quote(country.graphical_culture_2d)
             )
         if "*" in country.touched_fields or "color" in country.touched_fields:
             definition = set_color(definition, "color", (r, g, b))
@@ -850,7 +853,7 @@ def serialize_country_files(
         )
     )
     recruitment_lines = "".join(
-        require_entry("recruit_character", character_id, "a recruited character") + "\n"
+        f"recruit_character = {quote(character_id)}\n"
         for character_id in recruited_characters
     )
     elections = "yes" if country.elections_allowed else "no"
@@ -858,7 +861,7 @@ def serialize_country_files(
     ideas_block = ""
     if country.ideas:
         ideas_lines = "\n".join(
-            f" {as_scalar(idea)}" for idea in country.ideas
+            f" {quote(idea)}" for idea in country.ideas
         )
         ideas_block = f"\nadd_ideas = {{\n{ideas_lines}\n}}\n"
     research_slots = (
@@ -903,7 +906,7 @@ def serialize_country_files(
         f"}}\n"
         f"\n"
         f"set_politics = {{\n"
-        f" ruling_party = {as_scalar(country.ruling_party)}\n"
+        f" ruling_party = {quote(country.ruling_party)}\n"
         f' last_election = "1936.1.1"\n'
         f" elections_allowed = {elections}\n"
         f"}}\n"
@@ -960,7 +963,7 @@ def serialize_country_files(
             history = _patch_politics(history, country.ruling_party, elections)
         if "*" in touched or "ideas" in touched:
             history = set_block(
-                history, "add_ideas", "\n".join(as_scalar(idea) for idea in country.ideas) if country.ideas else None
+                history, "add_ideas", "\n".join(quote(idea) for idea in country.ideas) if country.ideas else None
             )
             history = set_block(history, "remove_ideas", None)
     files[hist_path] = history
@@ -971,18 +974,18 @@ def serialize_country_files(
         portrait_key = ld.portrait_slug or ld.character_id.removeprefix(f"{tag}_")
         generated_character = (
             f"characters = {{\n"
-            f" {ld.character_id} = {{\n"
+            f" {require_key(ld.character_id, 'a character id')} = {{\n"
             f"  name = {pdx_string(ld.name)}\n"
             f"\n"
             f"  portraits = {{\n"
             f"   civilian = {{\n"
-            f"    large = GFX_portrait_{tag}_{portrait_key}\n"
+            f"    large = {quote(f'GFX_portrait_{tag}_{portrait_key}')}\n"
             f"   }}\n"
             f"  }}\n"
             f"\n"
             f"  country_leader = {{\n"
-            f"   ideology = {ld.ideology}\n"
-            f"   desc = {ld.character_id}_desc\n"
+            f"   ideology = {quote(ld.ideology)}\n"
+            f"   desc = {quote(ld.character_id + '_desc')}\n"
             f'   expire = "1965.1.1"\n'
             f"   traits = {{ }}\n"
             f"  }}\n"
@@ -1021,14 +1024,14 @@ def _patch_politics(history: str, ruling_party: str, elections: str) -> str:
             "set_politics",
             "\n".join(
                 [
-                    f"ruling_party = {ruling_party}",
+                    f"ruling_party = {quote(ruling_party)}",
                     'last_election = "1936.1.1"',
                     f"elections_allowed = {elections}",
                 ]
             ),
         )
     body = history[span.body_start : span.body_end]
-    patched = set_scalar(body, "ruling_party", ruling_party)
+    patched = set_scalar(body, "ruling_party", quote(ruling_party))
     patched = set_scalar(patched, "elections_allowed", elections)
     if patched == body:
         return history
@@ -1058,7 +1061,7 @@ def _patch_repeated_scalars(text: str, key: str, values: list[str]) -> str:
             text = replace_assignment(text, span, None)
     for value in desired:
         if value not in seen:
-            text = append_assignment(text, f"{key} = {as_scalar(value)}")
+            text = append_assignment(text, f"{key} = {quote(value)}")
     return text
 
 
@@ -1173,7 +1176,7 @@ def _patch_character(
 
 
 def _patch_character_portrait(body: str, tag: str, portrait_slug: str) -> str:
-    portrait_key = f"GFX_portrait_{tag}_{portrait_slug}"
+    portrait_key = quote(f"GFX_portrait_{tag}_{portrait_slug}")
     portraits = next(
         (span for span in top_level_assignments(body) if span.key == "portraits"),
         None,

@@ -521,7 +521,7 @@ def _patch_role_body(
     if isinstance(role, CountryLeaderRole):
         fields = {"ideology", "expire", "traits", "id"} if all_fields else role.touched_fields
         if "ideology" in fields:
-            body = set_scalar(body, "ideology", role.ideology or None)
+            body = set_scalar(body, "ideology", _quote_or_none(role.ideology))
         if "expire" in fields:
             body = set_scalar(body, "expire", _string_like(body, "expire", role.expire))
         if "traits" in fields:
@@ -548,8 +548,7 @@ def _patch_role_body(
         )
         for key in ("slot", "idea_token", "ledger"):
             if key in fields:
-                value = str(getattr(role, key))
-                body = set_scalar(body, key, value or None)
+                body = set_scalar(body, key, _quote_or_none(str(getattr(role, key))))
         if "traits" in fields:
             body = _set_list_block(body, "traits", role.traits)
         if "cost" in fields:
@@ -710,14 +709,14 @@ def _patch_portraits(body: str, portraits: list[CharacterPortrait]) -> str:
         assert span.body_start is not None
         assert span.body_end is not None
         channel_body = patched[span.body_start : span.body_end]
-        channel_body = set_scalar(channel_body, "large", model.large or None)
-        channel_body = set_scalar(channel_body, "small", model.small or None)
+        channel_body = set_scalar(channel_body, "large", _quote_or_none(model.large))
+        channel_body = set_scalar(channel_body, "small", _quote_or_none(model.small))
         patched = replace_assignment_body(patched, span, channel_body)
     for channel, candidates in wanted.items():
         for portrait in candidates[seen.get(channel, 0) :]:
             channel_body = ""
-            channel_body = set_scalar(channel_body, "large", portrait.large or None)
-            channel_body = set_scalar(channel_body, "small", portrait.small or None)
+            channel_body = set_scalar(channel_body, "large", _quote_or_none(portrait.large))
+            channel_body = set_scalar(channel_body, "small", _quote_or_none(portrait.small))
             patched = append_assignment(
                 patched,
                 _wrap_block(require_key(portrait.channel, "a portrait channel"), channel_body, 0),
@@ -760,6 +759,12 @@ def _patch_characters_body(characters: list[Character], body: str) -> str:
 
 def _scalar_value(body: str, key: str) -> str:
     return parse(body).root.scalar(key) or ""
+
+
+def _quote_or_none(value: str) -> str | None:
+    """Spell plain model text as one scalar; an empty text removes the statement."""
+
+    return quote(value) if value else None
 
 
 def _string_like(body: str, key: str, value: str) -> str | None:

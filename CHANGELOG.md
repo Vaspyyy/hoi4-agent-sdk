@@ -143,7 +143,8 @@ All notable changes to this project are documented here. The format follows
   string. A name that is written as a key (a modifier, an event type, an
   idea category, an equipment type) has to be one word and is refused
   otherwise. List entries are quoted where needed.
-  `tests/test_block_body_guard.py` tries eight attack texts on every text
+  A state's victory points have to be numbers.
+  `tests/test_block_body_guard.py` tries eleven attack texts on every text
   field of every model, on new and on loaded objects.
 - In an on-action's `random_events`, a statement that is not a
   `weight = event` pair (such as `chance_to_fire = 25`) reads as one list

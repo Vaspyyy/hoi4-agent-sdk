@@ -87,6 +87,11 @@ PAYLOADS = {
     "balanced": "a = { } zz_breakout = 1 b",
     "statement": "zz_breakout = 1",
     "braced": "{ zz_breakout = 1 }",
+    # No spaces, and an even number of words: for fields that split their
+    # text into words or pairs.
+    "tight": "x}zz_breakout=1{y",
+    "pair": "1 10}zz_breakout=1{1",
+    "deep": "1 10}}}zz_breakout=1{a={b={1",
 }
 Shape = Callable[[str], Any]
 
@@ -762,7 +767,7 @@ def test_the_probe_covers_every_writer() -> None:
     """Guard the guard: the case list must stay broad."""
 
     names = {recipe.name for recipe in RECIPES}
-    assert len(CASES) > 3000
+    assert len(CASES) > 6000
     assert {"focus", "event", "idea", "decision", "state", "country", "character"} <= names
 
 

@@ -377,7 +377,7 @@ def serialize_ideologies_file(
 
 def _mapping_body(values: dict[str, str]) -> str:
     return "\n".join(
-        require_entry(key, value, f"the entry '{key}'") for key, value in values.items()
+        require_entry(key, pdx_value(value), f"the entry '{key}'") for key, value in values.items()
     )
 
 

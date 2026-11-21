@@ -252,17 +252,21 @@ checks the text it was given:
 
 - `require_well_formed(body)` for the body of a block: refused when it is
   not well formed on its own;
-- `as_scalar(value)` for a value written after `key =`: one word or one
-  quoted string stays as it is, anything else (several words, a brace, a
-  `#`, an unescaped quote) becomes one quoted string. `set_scalar` does this
-  for every caller, so a name with a space keeps working and is quoted;
+- `quote(text)` for plain text from a model that is written after `key =`
+  or as a list entry: quotes are added when the text needs them (a space, a
+  brace, a `#`, a quote of its own), and the text reads back exactly as it
+  was given;
+- `as_scalar(script)` as the last net in `set_scalar` and the mapping
+  writers, for values a caller has already spelled: one word or one quoted
+  string stays as it is, anything else becomes one quoted string. It never
+  guesses whether plain text is "already quoted"; that is the caller's job;
 - `require_key(name)` for a name written as a key (a modifier, an event
   type, an idea category): it has to be one word;
 - `require_entry(key, value)` for a `key = value` line built from a mapping:
   the two rules above together;
-- `quote(entry)` for the entries of a list.
+- numbers only for a state's victory points.
 
-`tests/test_block_body_guard.py` tries eight attack texts (a closing brace,
+`tests/test_block_body_guard.py` tries eleven attack texts (a closing brace,
 an unescaped quote, a `#`, a statement where a word belongs, and so on) in
 every text field of every model class, read from the dataclasses themselves,
 on an object that is created with the field, on a new object and on one that

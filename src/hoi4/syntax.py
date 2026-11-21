@@ -620,16 +620,18 @@ def _is_one_scalar(text: str) -> bool:
 
 
 def as_scalar(value: object) -> str:
-    """Spell ``value`` so that it is exactly one scalar.
+    """Return script text that is exactly one scalar.
 
-    Text that already is one bare word or one quoted string (``GER``,
-    ``0.5``, ``1936.1.1``, ``"two words"``) comes back as it is. Any other
-    text (several words, a brace, a ``#``, an unescaped quote) comes back as
-    one quoted string. A writer that puts a value after ``key =`` uses this,
-    so the value can never end early and spill into the script around it.
+    ``value`` is script text a writer has already spelled (``GER``, ``0.5``,
+    ``"two words"``). Text that is one bare word or one quoted string comes
+    back as it is. Any other text (several words, a brace, a ``#``) comes
+    back as one quoted string, so a value can never end early and spill into
+    the script around it. This is a safety net, not a way to spell values: a
+    writer that holds plain text from a model spells it with :func:`quote`,
+    which also keeps quote characters and spaces at the ends of the text.
     """
 
-    text = str(value).strip()
+    text = str(value)
     return text if _is_one_scalar(text) else quote(text, force=True)
 
 

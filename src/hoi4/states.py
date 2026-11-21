@@ -27,7 +27,6 @@ from .patching import (
 from .syntax import (
     Assignment,
     Block,
-    as_scalar,
     parse,
     quote,
     require_entry,
@@ -394,10 +393,9 @@ def _scalar_text(value: str | int | float) -> str:
 
 
 def _quote_like(existing: str, value: str) -> str:
-    if existing.startswith('"') and existing.endswith('"'):
-        return quote(value, force=True)
-    # Several words, or a brace, would not stay one value.
-    return as_scalar(value)
+    # ``value`` is plain model text: quotes are added when the file has them
+    # or the text needs them (a space, a brace, a quote of its own).
+    return quote(value, force=existing.startswith('"') and existing.endswith('"'))
 
 
 def _set_direct_scalar(
@@ -426,7 +424,7 @@ def _set_direct_scalar(
             return text
         return text[: span.value_start] + replacement + text[span.value_end :]
     return _insert_statement(
-        text, f"{key} = {as_scalar(value)}", layout,
+        text, f"{key} = {quote(value)}", layout,
         after_keys=after_keys, first=first, before_dated=before_dated,
     )
 
@@ -478,10 +476,18 @@ def _set_direct_block(
     return _replace_body(text, span, lines + "\n" + child.outer)
 
 
+_VICTORY_POINT_NUMBER = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
+
+
 def _victory_point_pairs(value: str) -> list[tuple[str, str]]:
     values = value.split()
     if len(values) % 2:
         raise ValueError("Victory points require province/value pairs")
+    for item in values:
+        # A province id and its points are numbers; anything else (a brace,
+        # an operator) would not stay inside the victory_points block.
+        if not _VICTORY_POINT_NUMBER.fullmatch(item):
+            raise ValueError(f"Victory points have to be numbers, found {item!r}")
     return list(zip(values[::2], values[1::2]))
 
 
@@ -545,7 +551,7 @@ def _set_repeated_scalars(
     for value in values[len(spans) :]:
         result = _insert_statement(
             result,
-            f"{key} = {as_scalar(value)}",
+            f"{key} = {quote(value)}",
             layout,
             after_keys=(key, *after_keys),
             before_dated=True,
@@ -586,7 +592,7 @@ def _set_resources(
 
 def _render_resources(resources: dict[str, str | int | float]) -> str:
     return "\n".join(
-        require_entry(key, _scalar_text(value), f"the resource '{key}'")
+        require_entry(key, quote(_scalar_text(value)), f"the resource '{key}'")
         for key, value in resources.items()
     )
 
@@ -814,7 +820,7 @@ def _replace_resources(block: PdxNode, resources: dict[str, str | int | float]) 
     node = PdxNode(key="resources")
     for key, value in resources.items():
         node.children.append(
-            PdxNode(key=require_key(key, "a resource name"), value=as_scalar(value))
+            PdxNode(key=require_key(key, "a resource name"), value=str(value))
         )
     for i, child in enumerate(block.children):
         if child.key == "resources":

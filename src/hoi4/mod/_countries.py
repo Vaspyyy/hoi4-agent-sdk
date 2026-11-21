@@ -29,7 +29,7 @@ from ..script import (
     pdx_string,
     pdx_value,
 )
-from ..syntax import repair
+from ..syntax import repair, require_entry
 from ..textio import read_text
 from ..types import (
     Country,
@@ -203,7 +203,7 @@ class CountriesLayer(CoreLayer):
         if not ({"*", "technologies"} & country.touched_fields):
             return
         body = "\n".join(
-            f"{technology} = {pdx_value(level)}"
+            require_entry(technology, pdx_value(level), f"the technology '{technology}'")
             for technology, level in country.technologies.items()
         )
         history = set_block(

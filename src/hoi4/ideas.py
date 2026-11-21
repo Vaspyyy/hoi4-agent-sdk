@@ -244,6 +244,13 @@ def read_ideas_file(path: Path) -> tuple[list[Idea], str]:
     return read_ideas_text(read_text(path), path)
 
 
+def _picture(icon: str) -> str | None:
+    """The ``picture`` value of an idea icon, spelled as one scalar."""
+
+    name = normalize_idea_icon(icon)
+    return quote(name) if name else None
+
+
 def serialize_idea(idea: Idea, indent: int = 1) -> str:
     tab = "\t" * indent
     if idea.raw_block:
@@ -275,7 +282,7 @@ def serialize_idea(idea: Idea, indent: int = 1) -> str:
         lines.append(f"{tab}\tresearch_bonus = {{")
         for key, value in idea.research_bonus.items():
             lines.append(
-                f"{tab}\t\t" + require_entry(key, value, f"the research bonus '{key}'")
+                f"{tab}\t\t" + require_entry(key, pdx_value(value), f"the research bonus '{key}'")
             )
         lines.append(f"{tab}\t}}")
     if idea.ai_will_do:
@@ -389,7 +396,7 @@ def _patch_idea_body(idea: Idea, body: str) -> str:
     if picture_spans:
         # Any touched idea is a write boundary, so repair prefixed values even
         # when the caller changed a different modeled field.
-        body = set_scalar(body, "picture", normalize_idea_icon(idea.icon) or None)
+        body = set_scalar(body, "picture", _picture(idea.icon))
     fields = idea.touched_fields or {
         "icon",
         "removal_cost",
@@ -402,11 +409,9 @@ def _patch_idea_body(idea: Idea, body: str) -> str:
     if "icon" in fields:
         picture_spans = assignment_spans(body, "picture")
         if picture_spans:
-            body = set_scalar(
-                body, "picture", normalize_idea_icon(idea.icon) or None
-            )
+            body = set_scalar(body, "picture", _picture(idea.icon))
         elif idea.icon and normalize_idea_icon(idea.icon) != DEFAULT_IDEA_ICON:
-            body = set_scalar(body, "picture", normalize_idea_icon(idea.icon))
+            body = set_scalar(body, "picture", _picture(idea.icon))
     if "removal_cost" in fields:
         body = set_scalar(
             body,

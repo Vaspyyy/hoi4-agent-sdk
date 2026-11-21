@@ -412,7 +412,9 @@ def serialize_oob_assignment(reference: OOBReference) -> str:
         required_dlc=reference.required_dlc,
         excluded_dlc=reference.excluded_dlc,
     )
-    return _wrap_block(reference.date, effect, 0) if reference.date else effect
+    if not reference.date:
+        return effect
+    return _wrap_block(require_key(reference.date, "an OOB date"), effect, 0)
 
 
 def remove_oob_reference(
@@ -1163,7 +1165,7 @@ def _patch_template_body(
         body = _set_scalar(
             body,
             "division_names_group",
-            template.division_names_group or None,
+            pdx_value(template.division_names_group) if template.division_names_group else None,
         )
     if "battalions" in fields:
         body = _set_block(

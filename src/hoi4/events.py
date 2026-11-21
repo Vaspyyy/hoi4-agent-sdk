@@ -45,7 +45,6 @@ from .syntax import (
     Block,
     Scalar,
     Tagged,
-    as_scalar,
     parse,
     quote,
     require_key,
@@ -260,7 +259,7 @@ def serialize_event(event: Event) -> str:
 
     parts: list[str] = []
     parts.append(f"{event_type} = {{")
-    parts.append(f"\tid = {as_scalar(event.id)}")
+    parts.append(f"\tid = {quote(event.id)}")
 
     for line in _render_text_entries("title", event.title, event.conditional_titles):
         parts.append(f"\t{line}")

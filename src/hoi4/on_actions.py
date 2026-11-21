@@ -66,9 +66,11 @@ def _require_entries(key: str, values: list[str]) -> None:
     """Refuse a list entry with a stray brace: it would change the script around it."""
 
     for value in values:
-        items = require_well_formed(str(value), f"an entry of '{key}'").root.items
-        # One id, or one ``key = value`` statement: the list cannot hold a block.
-        if len(items) != 1 or not (
+        document = require_well_formed(str(value), f"an entry of '{key}'")
+        items = document.root.items
+        # One id, or one ``key = value`` statement: the list cannot hold a block
+        # or a comment.
+        if document.comments or len(items) != 1 or not (
             type(items[0]) is Scalar
             or (type(items[0]) is Assignment and type(items[0].value) is Scalar)
         ):
