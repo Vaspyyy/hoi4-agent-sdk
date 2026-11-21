@@ -250,16 +250,26 @@ through a value (`owner = ok } x = 1 {`) or a key that is written bare. Only
 the writer knows where its block or value was meant to end, so each one
 checks the text it was given:
 
-- `require_well_formed(body)` for the body of a block;
-- `require_value(value)` for a value written after `key =` (one word, one
-  quoted string or one block); `set_scalar` does this for every caller;
-- `require_entry(key, value)` for a `key = value` line built from a mapping;
-- `require_statement(text)` for a whole statement that must stay one.
+- `require_well_formed(body)` for the body of a block: refused when it is
+  not well formed on its own;
+- `as_scalar(value)` for a value written after `key =`: one word or one
+  quoted string stays as it is, anything else (several words, a brace, a
+  `#`, an unescaped quote) becomes one quoted string. `set_scalar` does this
+  for every caller, so a name with a space keeps working and is quoted;
+- `require_key(name)` for a name written as a key (a modifier, an event
+  type, an idea category): it has to be one word;
+- `require_entry(key, value)` for a `key = value` line built from a mapping:
+  the two rules above together;
+- `quote(entry)` for the entries of a list.
 
-`tests/test_block_body_guard.py` tries a stray brace in every text field of
-every model class, read from the dataclasses themselves, on an object that is
-created with the field, on a new object and on one that was saved and loaded
-again. A new field is covered without touching the test.
+`tests/test_block_body_guard.py` tries eight attack texts (a closing brace,
+an unescaped quote, a `#`, a statement where a word belongs, and so on) in
+every text field of every model class, read from the dataclasses themselves,
+on an object that is created with the field, on a new object and on one that
+was saved and loaded again. A new field is covered without touching the test.
+It also works out where each field's text belongs: a field that holds script
+may put statements into its own block or deeper, a field that holds one value
+may never produce a statement.
 
 Two limits, both about a guess the patcher cannot make:
 

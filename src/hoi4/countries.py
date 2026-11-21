@@ -36,9 +36,9 @@ from .syntax import (
     Scalar,
     Tagged,
     Value,
+    as_scalar,
     parse,
     require_entry,
-    require_value,
 )
 from .tags import (
     add_country_tag,
@@ -818,8 +818,8 @@ def serialize_country_files(
     definition = country.raw_definition
     if not definition:
         definition = (
-            f"graphical_culture = {country.graphical_culture}\n"
-            f"graphical_culture_2d = {country.graphical_culture_2d}\n"
+            f"graphical_culture = {as_scalar(country.graphical_culture)}\n"
+            f"graphical_culture_2d = {as_scalar(country.graphical_culture_2d)}\n"
             f"color = {{ {r} {g} {b} }}\n"
         )
     else:
@@ -858,7 +858,7 @@ def serialize_country_files(
     ideas_block = ""
     if country.ideas:
         ideas_lines = "\n".join(
-            f" {require_value(idea, 'an entry of add_ideas')}" for idea in country.ideas
+            f" {as_scalar(idea)}" for idea in country.ideas
         )
         ideas_block = f"\nadd_ideas = {{\n{ideas_lines}\n}}\n"
     research_slots = (
@@ -903,7 +903,7 @@ def serialize_country_files(
         f"}}\n"
         f"\n"
         f"set_politics = {{\n"
-        f" ruling_party = {require_value(country.ruling_party, 'ruling_party')}\n"
+        f" ruling_party = {as_scalar(country.ruling_party)}\n"
         f' last_election = "1936.1.1"\n'
         f" elections_allowed = {elections}\n"
         f"}}\n"
@@ -960,7 +960,7 @@ def serialize_country_files(
             history = _patch_politics(history, country.ruling_party, elections)
         if "*" in touched or "ideas" in touched:
             history = set_block(
-                history, "add_ideas", "\n".join(country.ideas) if country.ideas else None
+                history, "add_ideas", "\n".join(as_scalar(idea) for idea in country.ideas) if country.ideas else None
             )
             history = set_block(history, "remove_ideas", None)
     files[hist_path] = history
@@ -1058,7 +1058,7 @@ def _patch_repeated_scalars(text: str, key: str, values: list[str]) -> str:
             text = replace_assignment(text, span, None)
     for value in desired:
         if value not in seen:
-            text = append_assignment(text, f"{key} = {value}")
+            text = append_assignment(text, f"{key} = {as_scalar(value)}")
     return text
 
 

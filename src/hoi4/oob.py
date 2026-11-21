@@ -21,7 +21,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_string, pdx_value
-from .syntax import parse, require_entry, require_value
+from .syntax import as_scalar, parse, require_entry, require_key
 from .textio import read_text
 from .types import ValidationError
 
@@ -631,7 +631,7 @@ def serialize_ship_equipment(
         equipment,
         all_fields=not equipment.raw_block,
     )
-    return _wrap_block(equipment.equipment_type, body, indent)
+    return _wrap_block(require_key(equipment.equipment_type, "a ship equipment type"), body, indent)
 
 
 def serialize_ship(ship: Ship, *, indent: int = 0) -> str:
@@ -1100,9 +1100,8 @@ def _set_scalar(body: str, key: str, value: str | None) -> str:
     """``patching.set_scalar`` that keeps a block written on one line on one line."""
 
     if value is not None and "\n" not in body and not assignment_spans(body, key):
-        require_value(value, f"the value of '{key}'")
         content = body.rstrip()
-        return f"{content} {key} = {value}" + (body[len(content):] or " ")
+        return f"{content} {key} = {as_scalar(value)}" + (body[len(content):] or " ")
     return set_scalar(body, key, value)
 
 
@@ -1499,7 +1498,7 @@ def _serialize_air_wings(air_wings: list[AirWing]) -> str:
     for location, wings in grouped.items():
         children = "\n\n".join(
             _wrap_block(
-                wing.equipment_type,
+                require_key(wing.equipment_type, "an air wing equipment type"),
                 _patch_air_wing_body(
                     wing.raw_block,
                     wing,
@@ -1634,7 +1633,7 @@ def _patch_repeated_blocks(
 
 def _serialize_battalions(battalions: list[Battalion]) -> str:
     return "\n".join(
-        f"{battalion.unit_type} = {{ x = {battalion.x} y = {battalion.y} }}"
+        f"{require_key(battalion.unit_type, 'a battalion type')} = {{ x = {battalion.x} y = {battalion.y} }}"
         for battalion in battalions
     )
 

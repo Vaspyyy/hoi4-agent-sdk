@@ -32,7 +32,7 @@ from .patching import (
     sync_body,
 )
 from .script import normalize_block_body
-from .syntax import Assignment, Block, Scalar, parse, require_well_formed
+from .syntax import Assignment, Block, ParseError, Scalar, parse, require_well_formed
 from .textio import read_text, write_text
 from .types import OnAction
 
@@ -66,7 +66,13 @@ def _require_entries(key: str, values: list[str]) -> None:
     """Refuse a list entry with a stray brace: it would change the script around it."""
 
     for value in values:
-        require_well_formed(str(value), f"an entry of '{key}'")
+        items = require_well_formed(str(value), f"an entry of '{key}'").root.items
+        # One id, or one ``key = value`` statement: the list cannot hold a block.
+        if len(items) != 1 or not (
+            type(items[0]) is Scalar
+            or (type(items[0]) is Assignment and type(items[0].value) is Scalar)
+        ):
+            raise ParseError(f"An entry of '{key}' has to be one id or one statement: {value!r}")
 
 
 def serialize_on_action(action: OnAction) -> str:

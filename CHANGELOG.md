@@ -138,11 +138,13 @@ All notable changes to this project are documented here. The format follows
 - Text handed to a writer cannot land outside the place it is written to.
   Script text for a block (an effect, a trigger, a reward) that is not well
   formed on its own, for example `} x = 1 {`, which would end the block
-  early, is refused with a `ParseError`. A value or a key that is written
-  bare has to be one word (or one quoted string, or one block): a tag, an
-  ideology, a modifier name or a list entry with a brace or a space in it is
-  refused or written in quotes. `tests/test_block_body_guard.py` tries this
-  on every text field of every model, on new and on loaded objects.
+  early, is refused with a `ParseError`. A value that is not one word (it
+  has a space, a brace, a `#` or a quote in it) is written as one quoted
+  string. A name that is written as a key (a modifier, an event type, an
+  idea category, an equipment type) has to be one word and is refused
+  otherwise. List entries are quoted where needed.
+  `tests/test_block_body_guard.py` tries eight attack texts on every text
+  field of every model, on new and on loaded objects.
 - In an on-action's `random_events`, a statement that is not a
   `weight = event` pair (such as `chance_to_fire = 25`) reads as one list
   entry holding the whole statement, and in `events` any assignment does.

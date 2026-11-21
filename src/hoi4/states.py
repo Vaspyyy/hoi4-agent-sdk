@@ -24,7 +24,16 @@ from .patching import (
     set_block,
     top_level_assignments,
 )
-from .syntax import Assignment, Block, parse, require_value, require_well_formed
+from .syntax import (
+    Assignment,
+    Block,
+    as_scalar,
+    parse,
+    quote,
+    require_entry,
+    require_key,
+    require_well_formed,
+)
 from .textio import encode_text, read_text
 from .types import State
 
@@ -386,9 +395,9 @@ def _scalar_text(value: str | int | float) -> str:
 
 def _quote_like(existing: str, value: str) -> str:
     if existing.startswith('"') and existing.endswith('"'):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    return value
+        return quote(value, force=True)
+    # Several words, or a brace, would not stay one value.
+    return as_scalar(value)
 
 
 def _set_direct_scalar(
@@ -409,8 +418,6 @@ def _set_direct_scalar(
         for span in reversed(spans):
             result = replace_assignment(result, span, None)
         return result
-    # A value of several words, or one with a brace, would not stay the value.
-    require_value(value, f"the value of '{key}'")
     if spans:
         span = spans[0]
         existing = text[span.value_start : span.value_end]
@@ -419,7 +426,7 @@ def _set_direct_scalar(
             return text
         return text[: span.value_start] + replacement + text[span.value_end :]
     return _insert_statement(
-        text, f"{key} = {value}", layout,
+        text, f"{key} = {as_scalar(value)}", layout,
         after_keys=after_keys, first=first, before_dated=before_dated,
     )
 
@@ -526,8 +533,6 @@ def _set_repeated_scalars(
     spans = [
         span for span in top_level_assignments(text) if span.key == key and not span.is_block
     ]
-    for value in values:
-        require_value(value, f"a value of '{key}'")
     result = text
     for index in range(len(spans) - 1, -1, -1):
         span = spans[index]
@@ -540,7 +545,7 @@ def _set_repeated_scalars(
     for value in values[len(spans) :]:
         result = _insert_statement(
             result,
-            f"{key} = {value}",
+            f"{key} = {as_scalar(value)}",
             layout,
             after_keys=(key, *after_keys),
             before_dated=True,
@@ -566,6 +571,8 @@ def _set_resources(
         )
     body = _assignment_body(text, span)
     child = _child_layout(text, span, layout)
+    for key in updated:
+        require_key(key, "a resource name")
     for key in original:
         if key not in updated:
             body = _set_direct_scalar(body, key, None, child)
@@ -578,7 +585,10 @@ def _set_resources(
 
 
 def _render_resources(resources: dict[str, str | int | float]) -> str:
-    return "\n".join(f"{key} = {_scalar_text(value)}" for key, value in resources.items())
+    return "\n".join(
+        require_entry(key, _scalar_text(value), f"the resource '{key}'")
+        for key, value in resources.items()
+    )
 
 
 def _render_new_state(state: State) -> str:
@@ -803,7 +813,9 @@ def _replace_resources(block: PdxNode, resources: dict[str, str | int | float]) 
         return
     node = PdxNode(key="resources")
     for key, value in resources.items():
-        node.children.append(PdxNode(key=key, value=str(value)))
+        node.children.append(
+            PdxNode(key=require_key(key, "a resource name"), value=as_scalar(value))
+        )
     for i, child in enumerate(block.children):
         if child.key == "resources":
             block.children[i] = node

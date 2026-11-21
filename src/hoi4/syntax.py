@@ -41,12 +41,13 @@ __all__ = [
     "Scalar",
     "Tagged",
     "Value",
+    "as_scalar",
     "parse",
     "quote",
     "repair",
     "require_entry",
+    "require_key",
     "require_statement",
-    "require_value",
     "require_well_formed",
     "unquote",
 ]
@@ -601,22 +602,61 @@ def require_statement(statement: str, source: str | None = None) -> str:
     return statement
 
 
-def require_value(value: object, source: str | None = None) -> str:
-    """Return ``value`` as text if it is exactly one value.
+def _is_one_scalar(text: str) -> bool:
+    """Whether ``text`` is exactly one bare word or one quoted string."""
 
-    One value is a bare word, a quoted string or one block. Anything else
-    would not stay the value of the key it is written after.
+    if not text:
+        return False
+    doc = parse(text)
+    items = doc.root.items
+    return (
+        not doc.problems
+        and not doc.comments
+        and len(items) == 1
+        and type(items[0]) is Scalar
+        and items[0].start == 0
+        and items[0].end == len(text)
+    )
+
+
+def as_scalar(value: object) -> str:
+    """Spell ``value`` so that it is exactly one scalar.
+
+    Text that already is one bare word or one quoted string (``GER``,
+    ``0.5``, ``1936.1.1``, ``"two words"``) comes back as it is. Any other
+    text (several words, a brace, a ``#``, an unescaped quote) comes back as
+    one quoted string. A writer that puts a value after ``key =`` uses this,
+    so the value can never end early and spill into the script around it.
     """
 
-    text = str(value)
-    require_statement(f"value = {text}", source)
+    text = str(value).strip()
+    return text if _is_one_scalar(text) else quote(text, force=True)
+
+
+def require_key(key: object, source: str | None = None) -> str:
+    """Return ``key`` if it is exactly one bare word or quoted string.
+
+    A key is the name of a statement or of a block (a modifier, an event
+    type, an idea category). Raises :class:`ParseError` for anything else:
+    ``a = 1 } x = 1 { b`` or ``x = 1 #`` as a key would become a statement of
+    its own.
+    """
+
+    text = str(key)
+    if not _is_one_scalar(text):
+        where = f" in {source}" if source else ""
+        raise ParseError(f"Expected one word as a key{where}, found {text[:80]!r}")
     return text
 
 
 def require_entry(key: object, value: object, source: str | None = None) -> str:
-    """Return ``key = value`` if that is exactly one well-formed statement."""
+    """Return ``key = value`` as exactly one statement.
 
-    return require_statement(f"{key} = {value}", source)
+    The key has to be one word (:func:`require_key`); the value is written as
+    one scalar (:func:`as_scalar`).
+    """
+
+    return f"{require_key(key, source)} = {as_scalar(value)}"
 
 
 def repair(text: str) -> str:

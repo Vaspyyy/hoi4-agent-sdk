@@ -20,7 +20,7 @@ from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 
 from .parser import ParseError, TokenType, tokenize
-from .syntax import Assignment, Block, Tagged, parse, require_statement, require_well_formed
+from .syntax import Assignment, Block, Tagged, as_scalar, parse, require_well_formed
 
 
 @dataclass(frozen=True)
@@ -94,9 +94,9 @@ def set_scalar(text: str, key: str, value: str | None) -> str:
     spans = assignment_spans(text, key)
     if value is None:
         return _remove_assignments(text, spans)
-    # A value of several words, or one with a stray brace, would not stay the
-    # value of ``key``. (The key itself may be one that needs quotes.)
-    require_statement(f"value = {value}", f"the value of '{key}'")
+    # A value of several words, or one with a brace, would not stay the value
+    # of ``key``: it is written as one quoted string instead.
+    value = as_scalar(value)
     if not spans:
         return append_assignment(text, f"{key} = {value}")
     first = spans[0]
@@ -445,7 +445,11 @@ def _comment_shape(text: str, item: object) -> tuple[object, ...]:
     """
 
     start, end = item.start, item.end  # type: ignore[attr-defined]
-    block = item.block if type(item) is Assignment else item if type(item) is Block else None
+    block: Block | None = None
+    if isinstance(item, (Assignment, Tagged)):
+        block = item.block
+    elif isinstance(item, Block):
+        block = item
     inner = None
     if block is not None and block.closed:
         inner = _segments(text[block.body_start : block.body_end], True, ())

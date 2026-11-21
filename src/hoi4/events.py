@@ -40,7 +40,17 @@ from .patching import (
     sync_body,
 )
 from .script import normalize_block_body
-from .syntax import Assignment, Block, Scalar, Tagged, parse, quote, require_well_formed
+from .syntax import (
+    Assignment,
+    Block,
+    Scalar,
+    Tagged,
+    as_scalar,
+    parse,
+    quote,
+    require_key,
+    require_well_formed,
+)
 from .textio import read_text, write_text
 from .types import Event, EventOption, EventText
 
@@ -243,13 +253,14 @@ def _render_text_entries(key: str, plain: str, conditional: list[EventText]) -> 
 
 
 def serialize_event(event: Event) -> str:
+    event_type = require_key(event.event_type, f"the type of event '{event.id}'")
     if event.raw_block:
         body = _patch_event_body(event, event.raw_block)
-        return f"{event.event_type} = {{\n{_indent(body, 1)}\n}}"
+        return f"{event_type} = {{\n{_indent(body, 1)}\n}}"
 
     parts: list[str] = []
-    parts.append(f"{event.event_type} = {{")
-    parts.append(f"\tid = {event.id}")
+    parts.append(f"{event_type} = {{")
+    parts.append(f"\tid = {as_scalar(event.id)}")
 
     for line in _render_text_entries("title", event.title, event.conditional_titles):
         parts.append(f"\t{line}")

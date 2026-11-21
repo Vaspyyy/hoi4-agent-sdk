@@ -3,16 +3,24 @@
 ``} zz_breakout = 1 {`` is balanced once it sits inside a block, so the file
 it lands in still parses: the block closes early, the statement escapes into
 the surrounding script and a new block opens. The same works through a value
-(``ok } zz_breakout = 1 { x = 1``) or a key that is written bare. Only the
-writer knows where its block or value was meant to end, so each one has to
-refuse the text or quote it.
+(``ok } zz_breakout = 1 { x = 1``), an unescaped quote, a ``#`` that comments
+out the rest of a line, or a key that is written bare. Only the writer knows
+where its block or value was meant to end, so each one has to refuse the text
+or quote it.
 
 The cases are not a hand-written list. Every text field of every model class
-is tried, read from the dataclasses themselves, in three situations: the
-object is created with the field, the field is set on a new object, and the
-field is set on an object that was saved and loaded again. A new field or a
-new model is covered without touching this file; a new ``create_*`` method
-needs one recipe below.
+is tried, read from the dataclasses themselves, with every attack text in
+``PAYLOADS``, in three situations: the object is created with the field, the
+field is set on a new object, and the field is set on an object that was
+saved and loaded again. A new field or a new model is covered without
+touching this file; a new ``create_*`` method needs one recipe below.
+
+Where text is meant to land is not written down either. Each field is first
+given the harmless statement ``zz_marker = 1``. A field that holds script (an
+effect, a trigger) writes it as a statement, and the blocks around it are the
+field's place: an attack may put ``zz_breakout`` there or deeper, never
+outside. A field that holds one value never writes a statement at all, so
+for it any ``zz_breakout`` statement is an escape.
 
 Run this file as a script to see what each case does:
 ``PYTHONPATH=src python tests/test_block_body_guard.py``.
@@ -69,9 +77,22 @@ from hoi4.definitions import DEFINITION_KINDS
 from hoi4.syntax import parse
 from hoi4.textio import read_text
 
-BLOCK = "} zz_breakout = 1 {"
-SCALAR = "ok } zz_breakout = 1 { x = 1"
-KEY = "a = 1 } zz_breakout = 1 { b"
+MARKER = "zz_marker = 1"
+PAYLOADS = {
+    "close": "} zz_breakout = 1 {",
+    "value": "ok } zz_breakout = 1 { x = 1",
+    "key": "a = 1 } zz_breakout = 1 { b",
+    "quote": 'x" } zz_breakout = 1 { a = "',
+    "comment": "zz_breakout = 1 #",
+    "balanced": "a = { } zz_breakout = 1 b",
+    "statement": "zz_breakout = 1",
+    "braced": "{ zz_breakout = 1 }",
+}
+Shape = Callable[[str], Any]
+
+
+def _text(payload: str) -> Any:
+    return payload
 
 _SCRIPT_SUFFIXES = {".txt", ".gfx", ".gui", ".asset"}
 # Fields that hold what was read from the file, not what is written.
@@ -84,39 +105,43 @@ _SOURCE_FIELDS = {
 }
 
 
-def _values(annotation: object) -> list[Any]:
-    """Texts worth trying for a field or parameter of this type."""
+def _shapes(annotation: object) -> list[Shape]:
+    """How a payload is handed to a field or parameter of this type."""
 
     text = str(annotation).replace("typing.", "").replace("Optional[", "").lower()
     text = text.strip("'\"")
     if text.startswith(("dict[str", "mapping[str")):
-        return [{"zz_key": BLOCK}, {"zz_key": SCALAR}, {KEY: 1}]
+        return [lambda payload: {"zz_key": payload}, lambda payload: {payload: 1}]
     if "list[list[str]]" in text:
-        return [[[BLOCK]], [[SCALAR]]]
+        return [lambda payload: [[payload]]]
     if "list[str]" in text or "sequence[str]" in text:
-        return [[BLOCK], [SCALAR]]
+        return [lambda payload: [payload]]
     if "tuple[str, ...]" in text:
-        return [(BLOCK,), (SCALAR,)]
+        return [lambda payload: (payload,)]
     if any(container in text for container in ("list[", "dict[", "tuple[", "sequence[", "set[")):
         return []
-    return [BLOCK, SCALAR] if re.search(r"\bstr\b", text) else []
+    return [_text] if re.search(r"\bstr\b", text) else []
 
 
-def _fields(cls: type, skip: frozenset[str] = frozenset()) -> list[tuple[str, Any]]:
-    cases = []
+def _fields(
+    cls: type, skip: frozenset[str] = frozenset(), also: tuple[str, ...] = ()
+) -> list[tuple[str, Shape]]:
+    """Every text field of ``cls`` (``also`` names text fields typed otherwise)."""
+
+    cases: list[tuple[str, Shape]] = [(name, _text) for name in also]
     for field in dataclasses.fields(cls):
-        if field.name in _SOURCE_FIELDS or field.name in skip:
+        if field.name in _SOURCE_FIELDS or field.name in skip or field.name in also:
             continue
-        cases.extend((field.name, value) for value in _values(field.type))
+        cases.extend((field.name, shape) for shape in _shapes(field.type))
     return cases
 
 
-def _parameters(function: Callable[..., object], skip: frozenset[str]) -> list[tuple[str, Any]]:
-    cases = []
+def _parameters(function: Callable[..., object], skip: frozenset[str]) -> list[tuple[str, Shape]]:
+    cases: list[tuple[str, Shape]] = []
     for parameter in list(inspect.signature(function).parameters.values())[1:]:
         if parameter.name in skip or parameter.kind is parameter.VAR_KEYWORD:
             continue
-        cases.extend((parameter.name, value) for value in _values(parameter.annotation))
+        cases.extend((parameter.name, shape) for shape in _shapes(parameter.annotation))
     return cases
 
 
@@ -165,11 +190,12 @@ class Recipe:
 
     ``create`` makes a plain valid object. ``update`` sets one field of it.
     ``create_with`` makes it with one field already set. ``cases`` are the
-    ``(field, value)`` pairs to try.
+    fields to try, each with the shape its value takes (a text, a list holding
+    the text, a mapping with the text as key or as value).
     """
 
     name: str
-    cases: list[tuple[str, Any]]
+    cases: list[tuple[str, Shape]]
     create: Callable[[Mod], object] | None = None
     update: Callable[[Mod, str, Any], object] | None = None
     create_with: Callable[[Mod, str, Any], object] | None = None
@@ -260,9 +286,11 @@ RECIPES: list[Recipe] = [
     Recipe(
         "event conditional text",
         [
-            (kind, EventText(**{"text": "zz.1.t2", "trigger": "always = yes", field: value}))
+            (kind, lambda payload, field=field: EventText(  # type: ignore[misc]
+                **{"text": "zz.1.t2", "trigger": "always = yes", field: payload}
+            ))
             for kind in ("conditional_titles", "conditional_descriptions")
-            for field, value in _fields(EventText)
+            for field, _ in _fields(EventText)
         ],
         create=_new_event,
         update=lambda mod, field, value: mod.update_event("zz.1", **{field: [value]}),
@@ -273,8 +301,10 @@ RECIPES: list[Recipe] = [
     Recipe(
         "event option conditional name",
         [
-            ("conditional_names", EventText(**{"text": "zz.1.a2", "trigger": "always = yes", field: value}))
-            for field, value in _fields(EventText)
+            ("conditional_names", lambda payload, field=field: EventText(  # type: ignore[misc]
+                **{"text": "zz.1.a2", "trigger": "always = yes", field: payload}
+            ))
+            for field, _ in _fields(EventText)
         ],
         create=_new_event,
         update=lambda mod, field, value: mod.update_event_option("zz.1", 0, **{field: [value]}),
@@ -315,7 +345,11 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "sub-ideology",
-        [("name", BLOCK), ("name", SCALAR)],
+        [("name", _text)],
+        create=lambda mod: mod.create_ideology("zz_ideology"),
+        update=lambda mod, field, value: mod.update_ideology(
+            "zz_ideology", types=[SubIdeology(value)]
+        ),
         create_with=lambda mod, field, value: mod.create_ideology(
             "zz_ideology", types=[SubIdeology(value)]
         ),
@@ -342,7 +376,7 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "bookmark name",
-        [("name", BLOCK), ("name", SCALAR)],
+        [("name", _text)],
         create_with=lambda mod, field, value: mod.create_bookmark(value),
     ),
     Recipe(
@@ -360,8 +394,7 @@ RECIPES: list[Recipe] = [
         "country",
         [
             *_fields(Country),
-            *((name, value) for name in ("leader_name", "leader_ideology", "leader_portrait_slug")
-              for value in (BLOCK, SCALAR)),
+            *((name, _text) for name in ("leader_name", "leader_ideology", "leader_portrait_slug")),
         ],
         create=lambda mod: mod.create_country("ZZZ", "Zzz"),
         update=lambda mod, field, value: mod.update_country("ZZZ", **{field: value}),
@@ -372,9 +405,8 @@ RECIPES: list[Recipe] = [
     Recipe(
         "country name pool",
         [
-            (name, value)
+            (name, lambda payload: [payload])
             for name in ("male_names", "surnames", "female_names", "callsigns")
-            for value in ([BLOCK], [SCALAR])
         ],
         create_with=lambda mod, field, value: mod.set_country_name_pool(
             "ZZZ", **{"male_names": ["A"], "surnames": ["B"], field: value}
@@ -389,9 +421,13 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "character portrait",
-        _fields(CharacterPortrait),
+        _fields(CharacterPortrait, also=("channel",)),
+        create=_new_character,
+        update=lambda mod, field, value: mod.update_character(
+            "ZZZ_person", portraits=[CharacterPortrait(**{"large": "GFX_zz", field: value})]
+        ),
         create_with=lambda mod, field, value: _new_character(
-            mod, portraits=[CharacterPortrait(**{field: value})]
+            mod, portraits=[CharacterPortrait(**{"large": "GFX_zz", field: value})]
         ),
     ),
     Recipe(
@@ -420,7 +456,7 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "on_action random event",
-        [("random_events", ["10", BLOCK]), ("random_events", ["10", SCALAR])],
+        [("random_events", lambda payload: ["10", payload])],
         create=lambda mod: mod.create_on_action("on_startup", random_events=["5", "zz.1"]),
         update=lambda mod, field, value: mod.update_on_action("on_startup", **{field: value}),
         create_with=lambda mod, field, value: mod.create_on_action(
@@ -429,7 +465,7 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "state",
-        _fields(State, frozenset({"name"})),
+        _fields(State),
         update=lambda mod, field, value: mod.set_state_properties(1, **{field: value}),
         make_mod=_map_mod,
     ),
@@ -451,7 +487,7 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "map building",
-        [("building", BLOCK), ("building", SCALAR)],
+        [("building", _text)],
         create_with=lambda mod, field, value: mod.add_map_building(1, value, 1.0, 1.0, 1.0, 0.0),
         make_mod=_map_mod,
     ),
@@ -548,21 +584,20 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "definition",
-        [(kind, value) for kind in DEFINITION_KINDS for value in (BLOCK, SCALAR)],
+        [(kind, _text) for kind in DEFINITION_KINDS],
         create_with=lambda mod, field, value: mod.create_definition(field, "zz_definition", value),
     ),
     Recipe(
         "definition id",
-        [(kind, value) for kind in DEFINITION_KINDS for value in (BLOCK, SCALAR)],
+        [(kind, _text) for kind in DEFINITION_KINDS],
         create_with=lambda mod, field, value: mod.create_definition(field, value, "x = 1"),
     ),
     Recipe(
         "ai strategy",
         [
             *_parameters(Mod.create_ai_strategy, frozenset({"path", "plan_id", "strategies"})),
-            *(("strategies", [entry]) for entry in (
-                (BLOCK, "GER", 1), (SCALAR, "GER", 1), ("alliance", BLOCK, 1), ("alliance", SCALAR, 1),
-            )),
+            ("strategies", lambda payload: [(payload, "GER", 1)]),
+            ("strategies", lambda payload: [("alliance", payload, 1)]),
         ],
         create_with=lambda mod, field, value: mod.create_ai_strategy(
             **{"plan_id": "zz_plan", "strategies": [("alliance", "GER", 1)], field: value}
@@ -571,15 +606,15 @@ RECIPES: list[Recipe] = [
     Recipe(
         "scripted localisation",
         [
-            ("entries", [(BLOCK, "KEY")]), ("entries", [(SCALAR, "KEY")]),
-            ("entries", [("always = yes", BLOCK)]), ("entries", [("always = yes", SCALAR)]),
+            ("entries", lambda payload: [(payload, "KEY")]),
+            ("entries", lambda payload: [("always = yes", payload)]),
         ],
         create_with=lambda mod, field, value: mod.create_scripted_localisation("zz_text", value),
     ),
     Recipe(
         "static modifier",
-        _values("dict[str, str]"),  # type: ignore[arg-type]
-        create_with=lambda mod, field, value: mod.create_static_modifier("zz_static", field),
+        [("modifiers", shape) for shape in _shapes("dict[str, str]")],
+        create_with=lambda mod, field, value: mod.create_static_modifier("zz_static", value),
     ),
     Recipe(
         "wargoal effect",
@@ -590,31 +625,28 @@ RECIPES: list[Recipe] = [
         ),
     ),
 ]
-# The static modifier recipe keeps its payload in the "field" slot.
-RECIPES = [
-    dataclasses.replace(recipe, cases=[(value, value) for value in recipe.cases])
-    if recipe.name == "static modifier"
-    else recipe
-    for recipe in RECIPES
-]
-
 MODES = ("created with", "set on new", "set after reload")
 
 
-def _cases() -> Iterator[tuple[str, Recipe, str, str, Any]]:
+def _cases() -> Iterator[tuple[str, Recipe, str, str, Shape, str]]:
     for recipe in RECIPES:
-        for index, (field, value) in enumerate(recipe.cases):
+        for index, (field, shape) in enumerate(recipe.cases):
             for mode in MODES:
                 if mode == "created with" and recipe.create_with is None:
                     continue
-                if mode != "created with" and (recipe.create is None or recipe.update is None):
-                    if not (mode == "set on new" and recipe.create is None and recipe.update):
-                        continue
-                label = f"{recipe.name}: {field if isinstance(field, str) else 'value'} #{index} ({mode})"
-                yield label, recipe, mode, field, value
+                if mode != "created with" and recipe.update is None:
+                    continue
+                if mode == "set after reload" and recipe.create is None:
+                    continue
+                for payload in PAYLOADS:
+                    label = f"{recipe.name}: {field} #{index} {payload} ({mode})"
+                    yield label, recipe, mode, field, shape, payload
 
 
-CASES = {label: (recipe, mode, field, value) for label, recipe, mode, field, value in _cases()}
+CASES = {
+    label: (recipe, mode, field, shape, payload)
+    for label, recipe, mode, field, shape, payload in _cases()
+}
 
 
 def _not_applicable(error: BaseException) -> bool:
@@ -629,8 +661,8 @@ def _not_applicable(error: BaseException) -> bool:
     )
 
 
-def run_case(root: Path, recipe: Recipe, mode: str, field: Any, value: Any) -> tuple[str, str]:
-    """Return ``(outcome, detail)``: refused, written, skipped, or escaped."""
+def _apply(root: Path, recipe: Recipe, mode: str, field: str, value: Any) -> tuple[str, str]:
+    """Make the edit and save. Return ``(outcome, detail)`` without judging the files."""
 
     mod = recipe.make_mod(root)
     try:
@@ -649,31 +681,78 @@ def run_case(root: Path, recipe: Recipe, mode: str, field: Any, value: Any) -> t
         mod.save()
     except (ValueError, RuntimeError) as error:
         # ParseError is a ValueError; the last check before saving raises
-        # RuntimeError. Either way nothing escaped.
-        outcome = ("refused", f"{type(error).__name__}: {str(error)[:90]}")
+        # RuntimeError. Either way nothing was written.
+        return "refused", f"{type(error).__name__}: {str(error)[:90]}"
     except Exception as error:  # noqa: BLE001 - reported by the test
         if _not_applicable(error):
             return "skipped", str(error)[:90]
         return "crashed", f"{type(error).__name__}: {str(error)[:160]}"
-    else:
-        outcome = ("written", "")
+    return "written", ""
+
+
+def _landings(root: Path, name: str) -> tuple[set[tuple[str, tuple[str, ...]]], str]:
+    """Where statements called ``name`` sit: ``(file, names of the blocks around)``.
+
+    Also returns the first file that no longer parses, or ``""``.
+    """
+
+    found: set[tuple[str, tuple[str, ...]]] = set()
+    broken = ""
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in _SCRIPT_SUFFIXES:
             continue
         document = parse(read_text(path))
         relative = path.relative_to(root).as_posix()
-        if any(item.name == "zz_breakout" for item, _ in document.root.walk()):
-            return "escaped", relative
-        if document.problems:
-            return "escaped", f"{relative} no longer parses: {document.problems[0].message}"
-    return outcome
+        if document.problems and not broken:
+            broken = f"{relative} no longer parses: {document.problems[0].message}"
+        for item, parents in document.root.walk():
+            if item.name == name:
+                found.add((relative, tuple(parent.name for parent in parents)))
+    return found, broken
+
+
+_PLACES: dict[tuple[str, str, str, int], set[tuple[str, tuple[str, ...]]]] = {}
+
+
+def _place(recipe: Recipe, mode: str, field: str, shape: Shape) -> set[tuple[str, tuple[str, ...]]]:
+    """Where this field writes a harmless statement, if it writes statements at all."""
+
+    key = (recipe.name, mode, field, id(shape))
+    if key not in _PLACES:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "mod"
+            outcome, _ = _apply(root, recipe, mode, field, shape(MARKER))
+            _PLACES[key] = _landings(root, "zz_marker")[0] if outcome == "written" else set()
+    return _PLACES[key]
+
+
+def run_case(
+    root: Path, recipe: Recipe, mode: str, field: str, shape: Shape, payload: str
+) -> tuple[str, str]:
+    """Return ``(outcome, detail)``: refused, written, skipped, crashed or escaped."""
+
+    outcome, detail = _apply(root, recipe, mode, field, shape(PAYLOADS[payload]))
+    if outcome in {"skipped", "crashed"}:
+        return outcome, detail
+    landings, broken = _landings(root, "zz_breakout")
+    if broken:
+        return "escaped", broken
+    place = _place(recipe, mode, field, shape) if landings else set()
+    for file, parents in sorted(landings):
+        inside = any(
+            file == place_file and parents[: len(place_parents)] == place_parents
+            for place_file, place_parents in place
+        )
+        if not inside:
+            return "escaped", f"{file}: zz_breakout inside {' > '.join(parents) or 'the file'}"
+    return outcome, detail
 
 
 @pytest.mark.filterwarnings("ignore::RuntimeWarning", "ignore::DeprecationWarning")
 @pytest.mark.parametrize("label", sorted(CASES))
 def test_text_never_escapes_where_it_is_written(tmp_path: Path, label: str) -> None:
-    recipe, mode, field, value = CASES[label]
-    outcome, detail = run_case(tmp_path / "mod", recipe, mode, field, value)
+    recipe, mode, field, shape, payload = CASES[label]
+    outcome, detail = run_case(tmp_path / "mod", recipe, mode, field, shape, payload)
     if outcome == "skipped":
         pytest.skip(detail)
     assert outcome in {"refused", "written"}, f"{outcome}: {detail}"
@@ -683,16 +762,16 @@ def test_the_probe_covers_every_writer() -> None:
     """Guard the guard: the case list must stay broad."""
 
     names = {recipe.name for recipe in RECIPES}
-    assert len(CASES) > 900
+    assert len(CASES) > 3000
     assert {"focus", "event", "idea", "decision", "state", "country", "character"} <= names
 
 
 if __name__ == "__main__":
     counts: dict[str, int] = {}
     for label in sorted(CASES):
-        recipe, mode, field, value = CASES[label]
+        recipe, mode, field, shape, payload = CASES[label]
         with tempfile.TemporaryDirectory() as folder:
-            outcome, detail = run_case(Path(folder) / "mod", recipe, mode, field, value)
+            outcome, detail = run_case(Path(folder) / "mod", recipe, mode, field, shape, payload)
         counts[outcome] = counts.get(outcome, 0) + 1
         if outcome in {"escaped", "crashed"} or "-v" in sys.argv:
             print(f"{outcome:8} {label}  {detail}")

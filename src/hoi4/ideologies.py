@@ -23,7 +23,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_value
-from .syntax import Assignment, Block, parse, require_entry
+from .syntax import Assignment, Block, parse, quote, require_entry, require_key
 from .textio import read_text
 
 VANILLA_AI_BEHAVIORS = ("democratic", "communist", "fascist", "neutral")
@@ -278,7 +278,7 @@ def _patch_field(body: str, ideology: Ideology, field_name: str) -> str:
         return replace_assignment_body(body, span, modifier_body)
     if field_name in {"dynamic_faction_names", "effects"}:
         values = getattr(ideology, field_name)
-        return set_block(body, field_name, " ".join(values) or None)
+        return set_block(body, field_name, " ".join(quote(value) for value in values) or None)
     if field_name == "ai_behavior":
         for behavior in VANILLA_AI_BEHAVIORS:
             value = "yes" if ideology.ai_behavior == behavior else None
@@ -430,7 +430,9 @@ def _patch_subideology_body(subtype: SubIdeology) -> str:
 
 
 def _serialize_subideology(subtype: SubIdeology) -> str:
-    return _wrap_block(subtype.name, _patch_subideology_body(subtype), 0)
+    return _wrap_block(
+        require_key(subtype.name, "a sub-ideology name"), _patch_subideology_body(subtype), 0
+    )
 
 
 def _patch_mapping_assignment(body: str, key: str, values: dict[str, str]) -> str:

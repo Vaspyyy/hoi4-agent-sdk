@@ -223,17 +223,30 @@ def test_set_value_turns_a_comparison_into_an_assignment():
     assert serialize_pdx(node) == "a = 2\n"
 
 
-def test_require_statement_value_and_entry():
-    from hoi4.syntax import ParseError, require_entry, require_statement, require_value
+def test_one_scalar_one_key_one_entry():
+    from hoi4.syntax import ParseError, as_scalar, require_entry, require_key, require_statement
+
+    # What already is one scalar stays as it is.
+    for value in ("GER", "0.5", "-0.15", "1936.1.1", "yes", '"two words"', "@my_var", "var:x", "foo?0"):
+        assert as_scalar(value) == value
+    # Anything else becomes one quoted string, so it cannot spill over.
+    assert as_scalar("New York") == '"New York"'
+    assert as_scalar("} x = 1 {") == '"} x = 1 {"'
+    assert as_scalar("fascism # oops") == '"fascism # oops"'
+    assert as_scalar('x" } y = 1 { a = "') == '"x\\" } y = 1 { a = \\""'
+    assert as_scalar("{ y = 1 }") == '"{ y = 1 }"'
+    assert as_scalar("") == '""'
+
+    assert require_key("stability_factor") == "stability_factor"
+    for bad in ("a = 1 } x = 1 { b", "x = 1 #", "a b", "a = { } x = 1 b", "", "{ }"):
+        with pytest.raises(ParseError):
+            require_key(bad)
+
+    assert require_entry("stability_factor", 0.1) == "stability_factor = 0.1"
+    assert require_entry("custom_tooltip", "My Tip") == 'custom_tooltip = "My Tip"'
+    with pytest.raises(ParseError):
+        require_entry("x = 1 #", 100)
 
     assert require_statement("owner = GER") == "owner = GER"
-    assert require_value('"two words"') == '"two words"'
-    assert require_value("rgb { 1 2 3 }") == "rgb { 1 2 3 }"
-    assert require_entry("stability_factor", 0.1) == "stability_factor = 0.1"
-    for bad in ("a b", "} x = 1 {", "ok } x = 1 { y = 2", "", "a\nb = 2"):
-        with pytest.raises(ParseError):
-            require_value(bad)
-    with pytest.raises(ParseError):
-        require_entry("a = 1 } x = 1 { b", 1)
     with pytest.raises(ParseError):
         require_statement("a = 1 b = 2")

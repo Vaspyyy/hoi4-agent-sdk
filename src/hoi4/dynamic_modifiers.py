@@ -15,7 +15,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_value
-from .syntax import Block, Scalar, parse, require_well_formed
+from .syntax import Block, Scalar, parse, require_entry, require_well_formed
 from .textio import read_text
 
 _RESERVED_SCALARS = {"icon", "attacker_modifier"}
@@ -103,7 +103,8 @@ def serialize_dynamic_modifier(modifier: DynamicModifier) -> str:
             f"attacker_modifier = {pdx_value(modifier.attacker_modifier)}"
         )
     lines.extend(
-        f"{key} = {pdx_value(value)}" for key, value in modifier.modifier.items()
+        require_entry(key, pdx_value(value), f"the modifier '{key}'")
+        for key, value in modifier.modifier.items()
     )
     return _wrap_block(modifier.id, "\n".join(lines))
 

@@ -1950,9 +1950,10 @@ explain the syntax tree, span patching and byte-exact file I/O in detail.
 |----------|-------------|
 | `hoi4.syntax.parse(text) -> Document` | Lossless syntax tree with exact offsets. Never raises; repairs are in `Document.problems`. |
 | `hoi4.syntax.require_well_formed(text, source=None) -> Document` | Same, but raises `ParseError` on any problem. |
+| `hoi4.syntax.as_scalar(value) -> str` | Spells a value as exactly one scalar: one word or one quoted string stays as it is, any other text becomes one quoted string. Writers use it for values they put after `key =`. |
+| `hoi4.syntax.require_key(name, source=None) -> str` | Returns `name` if it is one word (or one quoted string), else raises `ParseError`. For names written as keys. |
+| `hoi4.syntax.require_entry(key, value, source=None) -> str` | Returns `key = value` with the key checked by `require_key` and the value spelled by `as_scalar`. |
 | `hoi4.syntax.require_statement(text, source=None) -> str` | Returns `text` if it is exactly one well-formed statement, else raises `ParseError`. |
-| `hoi4.syntax.require_value(value, source=None) -> str` | Returns `value` as text if it is one word, one quoted string or one block. Writers use it for values they put after `key =`. |
-| `hoi4.syntax.require_entry(key, value, source=None) -> str` | Returns `key = value` if that is exactly one statement. |
 | `hoi4.syntax.repair(text) -> str` | Adds missing closing braces and removes stray ones, the way the game reads the file. |
 | `hoi4.patching.top_level_assignments(text, *, comparisons=False) -> list[AssignmentSpan]` | Depth-zero statements with their spans. `AssignmentSpan.operator` is the operator; `AssignmentSpan.tag` is `"rgb"` for `color = rgb { ... }`. |
 | `hoi4.patching.set_scalar(text, key, value)` / `set_block(text, key, body)` | Replace one statement's value; `None` removes it. |

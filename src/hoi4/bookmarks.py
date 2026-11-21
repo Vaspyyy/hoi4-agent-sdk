@@ -22,7 +22,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_string, pdx_value
-from .syntax import Scalar, parse, unquote
+from .syntax import Scalar, parse, quote, unquote
 from .textio import read_text
 
 _COUNTRY_TAG = re.compile(r"^[A-Z0-9]{3}$")
@@ -237,7 +237,7 @@ def _patch_country_body(
             body = set_block(body, field_name, country.available or None)
         elif field_name in {"ideas", "focuses"}:
             values = getattr(country, field_name)
-            body = set_block(body, field_name, " ".join(values) or None)
+            body = set_block(body, field_name, " ".join(quote(value) for value in values) or None)
         else:
             raise ValueError(f"Unknown bookmark country field: {field_name}")
     return body

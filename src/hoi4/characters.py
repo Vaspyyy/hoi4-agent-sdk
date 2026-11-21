@@ -23,7 +23,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_string
-from .syntax import Block, Scalar, parse, quote
+from .syntax import Block, Scalar, parse, quote, require_key
 from .textio import read_text
 
 PortraitChannel = Literal["civilian", "army", "navy"]
@@ -720,7 +720,7 @@ def _patch_portraits(body: str, portraits: list[CharacterPortrait]) -> str:
             channel_body = set_scalar(channel_body, "small", portrait.small or None)
             patched = append_assignment(
                 patched,
-                _wrap_block(portrait.channel, channel_body, 0),
+                _wrap_block(require_key(portrait.channel, "a portrait channel"), channel_body, 0),
             )
     if wrapper is None:
         return set_block(body, "portraits", patched or None)
@@ -828,7 +828,7 @@ def _set_list_block(body: str, key: str, values: list[str]) -> str:
     """Write a list block; an empty list keeps an existing (empty) block."""
 
     if values:
-        return set_block(body, key, " ".join(values))
+        return set_block(body, key, " ".join(quote(value) for value in values))
     return set_block(body, key, "" if _has_block(body, key) else None)
 
 

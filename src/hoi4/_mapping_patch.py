@@ -12,7 +12,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_value
-from .syntax import require_entry, require_value
+from .syntax import as_scalar, require_entry
 
 
 def patch_scalar_entries(
@@ -47,7 +47,7 @@ def patch_scalar_entries(
                 edits.extend((span, None) for span in spans)
             continue
         last = spans[-1]
-        rendered = require_value(render(values[key]), f"the value of '{key}'")
+        rendered = as_scalar(render(values[key]))
         if not scalar_values_equivalent(text[last.value_start : last.value_end], rendered):
             edits.append((last, rendered))
     result = text

@@ -35,7 +35,7 @@ from .patching import (
     set_scalar,
 )
 from .script import pdx_string, pdx_value
-from .syntax import Assignment, Block, parse, quote, require_entry, require_well_formed
+from .syntax import Assignment, Block, parse, quote, require_entry, require_key, require_well_formed
 from .textio import read_text, write_text
 from .types import Idea
 
@@ -333,7 +333,7 @@ def serialize_ideas_file(
 def _serialize_category(category: str, ideas: list[Idea], indent: int) -> str:
     prefix = "\t" * indent
     settings = next((idea.category_raw_block for idea in ideas if idea.category_raw_block), "")
-    lines = [f"{prefix}{category} = {{"]
+    lines = [f"{prefix}{require_key(category, 'an idea category')} = {{"]
     if settings.strip():
         lines.append(_indent(settings, indent + 1))
     for idea in ideas:
@@ -428,7 +428,7 @@ def _patch_idea_body(idea: Idea, body: str) -> str:
             body, "research_bonus", idea.research_bonus, merge=False, render=pdx_value
         )
     if "traits" in fields:
-        body = set_block(body, "traits", " ".join(idea.traits) or None)
+        body = set_block(body, "traits", " ".join(quote(trait) for trait in idea.traits) or None)
     if "ai_will_do" in fields:
         body = set_block(body, "ai_will_do", idea.ai_will_do or None)
     return body
@@ -453,7 +453,10 @@ def _patch_mapping_block(
     if not spans:
         if not values:
             return body
-        rendered = "\n".join(f"{name} = {render(value)}" for name, value in values.items())
+        rendered = "\n".join(
+            require_entry(name, render(value), f"the entry '{name}' of '{key}'")
+            for name, value in values.items()
+        )
         return set_block(body, key, rendered)
     span = spans[0]
     assert span.body_start is not None and span.body_end is not None
