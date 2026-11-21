@@ -389,7 +389,8 @@ def _scalar_text(value: str | int | float) -> str:
             text = format(value, "f").rstrip("0")
             text = text + "0" if text.endswith(".") else text
         return text
-    return str(value).strip()
+    # Text is taken as it is: a space at an end is part of the value.
+    return str(value)
 
 
 def _quote_like(existing: str, value: str) -> str:

@@ -233,6 +233,17 @@ def test_a_state_edit_that_only_adds_quotes_or_spaces_is_written(
     assert getattr(Mod(tmp_path).get_state(1), field) == value
 
 
+def test_a_resource_value_keeps_a_space_at_its_end(tmp_path: Path) -> None:
+    source = STATE.replace("manpower = 1\n", "manpower = 1\n\tresources = { steel = 10 }\n")
+    path = _write(tmp_path, "history/states/1-Test.txt", source)
+    mod = Mod(tmp_path)
+    mod.set_state_properties(1, resources={"steel": "10 "})
+    mod.save()
+    # Written as given. (The reader turns text that is a number into a number,
+    # so it reads back as 10.)
+    assert 'steel = "10 "' in path.read_text(encoding="utf-8")
+
+
 def test_a_state_number_spelled_another_way_is_no_change(tmp_path: Path) -> None:
     source = STATE.replace("manpower = 1\n", "manpower = 2000.0\n\tresources = { steel = 10 }\n")
     path = _write(tmp_path, "history/states/1-Test.txt", source)
