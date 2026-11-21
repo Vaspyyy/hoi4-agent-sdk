@@ -336,6 +336,21 @@ def test_strict_localisation_reads_names_the_way_the_game_does(tmp_path, game):
     assert ("t.1.a", "warning") in missing
 
 
+def test_plain_text_and_bracket_commands_need_no_key(tmp_path):
+    root = mod_root(tmp_path)
+    mod = Mod(root)
+    mod.create_event(
+        "t.1",
+        title="[TST_dynamic_title]",
+        description="Plain text the game shows as written.",
+        options=[EventOption(name="t.1.missing_key", effect="x = 1")],
+    )
+    findings = codes(
+        mod.validate(stage="build", strict_localization=True), "missing_localization"
+    )
+    assert [f.message.split("'")[3] for f in findings] == ["t.1.missing_key"]
+
+
 # ── Severity model and suppression ──────────────────────────────────
 
 

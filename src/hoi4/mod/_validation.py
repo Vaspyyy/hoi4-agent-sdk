@@ -465,7 +465,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         if not focus.id:
             return []
         text_key = ""
-        if focus.raw_block:
+        if focus.raw_block and "text" in focus.raw_block.lower():
             text_key = parse(focus.raw_block).root.scalar("text", fold=True) or ""
         name_keys = [key for key in (text_key, focus.id) if key]
         file_path = str(tree.path) if tree.path else None

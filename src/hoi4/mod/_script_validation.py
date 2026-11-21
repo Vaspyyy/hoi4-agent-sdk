@@ -1077,6 +1077,13 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         key = normalize_localization_key(key)
         if not key:
             return False
+        # A value with spaces is plain text the game shows as written, and a
+        # bracket command (``[GetName]``, ``[CZE_title_dynamic]``) is
+        # resolved at runtime by scripted localisation.
+        if any(character.isspace() for character in key) or (
+            key.startswith("[") and key.endswith("]")
+        ):
+            return True
         if key in self._loc_entries:
             return True
         inherited = self._scan_cache.get("validation_loc_keys")

@@ -1712,7 +1712,8 @@ def validate_event(
 def event_is_hidden(event: Event) -> bool:
     """Return whether the event says ``hidden = yes`` (keys in any case)."""
 
-    if not event.raw_block:
+    # Most events never mention the key; skip parsing them.
+    if not event.raw_block or "hidden" not in event.raw_block.lower():
         return False
     value = parse(event.raw_block).root.scalar("hidden", fold=True)
     return (value or "").lower() == "yes"
