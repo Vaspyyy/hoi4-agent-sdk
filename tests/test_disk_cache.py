@@ -13,7 +13,7 @@ import os
 import pathlib
 import re
 import threading
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 import pytest
@@ -849,3 +849,148 @@ def test_the_stored_shapes_cover_every_field() -> None:
         "events", "ideas", "advisor_ideas", "focus_trees", "technologies", "equipment",
         "equipment_copies", "tags", "organizations",
     ]
+
+
+# ── PR3's newer readers with lazy sections, base mods and the store ──
+
+
+def prepare(mode: str, build: Callable[[], object], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Leave the store ``cold``, ``warm`` (after ``build()``) or ``off``."""
+
+    if mode == "warm":
+        build()
+        disk_cache.flush()
+        new_process()
+    elif mode == "off":
+        monkeypatch.setenv("HOI4_SDK_DISK_CACHE", "off")
+        new_process()
+
+
+SHARED = (
+    "shared_focus = {{ id = {p}_root x = 0 y = 0 cost = 1 }}\n"
+    "shared_focus = {{ id = {p}_gated x = 0 y = 1 cost = 1\n"
+    " prerequisite = {{ focus = {p}_root }} allow_branch = {{ has_war = yes }} }}\n"
+    # An empty allow_branch: checks only itself, so it is drawn even when
+    # the focus above it is hidden. Without the block it would be hidden too.
+    "shared_focus = {{ id = {p}_free x = 1 y = 2 cost = 1\n"
+    " prerequisite = {{ focus = {p}_gated }} allow_branch = {{ }} }}\n"
+)
+
+
+@pytest.mark.parametrize("mode", ["cold", "warm", "off"])
+@pytest.mark.parametrize("where", ["game", "base"])
+def test_shared_focuses_of_other_files_with_lazy_sections(
+    store: Path, tmp_path: Path, game: Path, monkeypatch: pytest.MonkeyPatch, where: str, mode: str
+) -> None:
+    prefix = "GSF" if where == "game" else "BSF"
+    base = tmp_path / "base"
+    write(base, "descriptor.mod", 'name = "base"\n')
+    write(game if where == "game" else base, f"common/national_focus/{prefix}.txt", SHARED.format(p=prefix))
+    make_mod(tmp_path, game)  # writes the mod's own files
+    write(
+        tmp_path / "mod",
+        "common/national_focus/t.txt",
+        "focus_tree = {\n id = t_tree\n country = { factor = 0 }\n"
+        f" shared_focus = {prefix}_root\n"
+        # Hidden with the gated parent; H1 hangs on another condition.
+        f" focus = {{ id = F1 x = 5 y = 5 cost = 1 prerequisite = {{ focus = {prefix}_gated }} }}\n"
+        ' focus = { id = H1 x = 5 y = 5 cost = 1 allow_branch = { has_dlc = "Y" } }\n'
+        # Below the always-drawn one: drawn together with H2.
+        f" focus = {{ id = F2 x = 8 y = 8 cost = 1 prerequisite = {{ focus = {prefix}_free }} }}\n"
+        ' focus = { id = H2 x = 8 y = 8 cost = 1 allow_branch = { has_dlc = "Y" } }\n'
+        "}\n",
+    )
+
+    def new_mod() -> Mod:
+        return make_mod(tmp_path, game, base_mod_paths=[base])
+
+    def overlaps(mod: Mod) -> list[str]:
+        return [
+            str(f.focus_id)
+            for f in mod.validate(stage="build")
+            if f.code == "visual_overlap"
+        ]
+
+    prepare(mode, lambda: overlaps(new_mod()), monkeypatch)
+    mod = new_mod()
+    # Nothing is loaded yet: the focus section loads for the check.
+    with pytest.raises(ValueError, match="H2"):
+        mod.assert_no_visual_overlap("t_tree")
+    assert overlaps(mod) == ["H2"]
+    # The focus section reloads after an edit and a discard.
+    assert mod.update_focus("t_tree", "H1", cost=2)
+    mod.discard()
+    assert overlaps(mod) == ["H2"]
+    with pytest.raises(ValueError, match="H2"):
+        mod.assert_no_visual_overlap("t_tree")
+
+
+@pytest.mark.parametrize("mode", ["cold", "warm", "off"])
+def test_dotted_event_namespaces_with_lazy_sections_and_a_base_mod(
+    store: Path, tmp_path: Path, game: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    base = tmp_path / "base"
+    write(base, "descriptor.mod", 'name = "base"\n')
+    write(base, "events/base_events.txt", "add_namespace = base.news\n")
+    make_mod(tmp_path, game)
+    write(
+        tmp_path / "mod",
+        "events/borrowed.txt",
+        "country_event = { id = base.news.9 hidden = yes }\n"
+        "country_event = { id = base.8 hidden = yes }\n",
+    )
+
+    def new_mod() -> Mod:
+        return make_mod(tmp_path, game, base_mod_paths=[base])
+
+    def undeclared(mod: Mod) -> list[str]:
+        return sorted(
+            str(f.event_id)
+            for f in mod.validate(stage="build")
+            if f.code == "undeclared_event_namespace"
+        )
+
+    prepare(mode, lambda: undeclared(new_mod()), monkeypatch)
+    mod = new_mod()
+    # Created before the events section is loaded.
+    mod.create_event("mine.topic.1", title="t", description="d")
+    # "base" is not declared, only "base.news".
+    assert undeclared(mod) == ["base.8"]
+    mod.save()
+    written = (mod.mod_root / "events" / "mine.topic_events.txt").read_text(encoding="utf-8")
+    assert "add_namespace = mine.topic\n" in written
+    mod.discard()
+    assert "mine.topic" in mod._declared_event_namespaces()
+    assert "base.news" in mod._declared_event_namespaces()
+    assert undeclared(mod) == undeclared(new_mod())
+    assert "mine.topic.1" not in undeclared(mod)
+    assert "base.news.9" not in undeclared(mod)
+
+
+@pytest.mark.parametrize("mode", ["cold", "warm", "off"])
+def test_the_vocabulary_characters_are_the_mods_set(
+    store: Path, tmp_path: Path, game: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """``extended(characters=)`` replaces the install's names with the mod's set."""
+
+    base = tmp_path / "base"
+    write(base, "descriptor.mod", 'name = "base"\n')
+    write(base, "common/characters/base.txt", "characters = { BAS_hero = { name = BAS_hero } }\n")
+    make_mod(tmp_path, game)
+
+    def new_mod() -> Mod:
+        return make_mod(tmp_path, game, base_mod_paths=[base])
+
+    def names(mod: Mod) -> set[str]:
+        return set(mod.game_script_vocabulary().characters) & {
+            "gam_leader", "gam_upper", "bas_hero", "mod_hero"
+        }
+
+    everyone = {"gam_leader", "gam_upper", "bas_hero", "mod_hero"}
+    prepare(mode, lambda: names(new_mod()), monkeypatch)
+    mod = new_mod()
+    assert names(mod) == everyone
+    assert mod.delete_character("MOD_hero")
+    assert names(mod) == everyone - {"mod_hero"}
+    mod.discard()
+    assert names(mod) == everyone
