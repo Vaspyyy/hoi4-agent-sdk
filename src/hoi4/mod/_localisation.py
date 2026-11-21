@@ -22,6 +22,7 @@ from ..localisation import (
 from ..paths import (
     resolve_mod_output_path,
 )
+from ..textio import read_text
 from ..types import (
     Country,
 )
@@ -51,7 +52,7 @@ class LocalisationLayer(CoreLayer):
                 target = self.mod_root / source.relative_to(self._base_content_root)
                 loc_sources[key] = target
                 if target not in self._original_files:
-                    self._original_files[target] = source.read_text(encoding="utf-8-sig", errors="ignore")
+                    self._original_files[target] = read_text(source)
         loc_dir = self.mod_root / "localisation" / language
         if not loc_dir.exists():
             return
@@ -63,9 +64,7 @@ class LocalisationLayer(CoreLayer):
         # from an empty baseline and silently discard its existing content.
         for path in loc_dir.rglob("*.yml"):
             if path.is_file():
-                self._original_files[path] = path.read_text(
-                    encoding="utf-8-sig", errors="ignore"
-                )
+                self._original_files[path] = read_text(path)
 
     @property
     def default_loc_file(self) -> Path:

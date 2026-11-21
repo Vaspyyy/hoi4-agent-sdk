@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from ._scalar import needs_quotes as _needs_quotes
+from .syntax import parse, require_key, require_well_formed
 
 
 def normalize_block_body(body: str) -> str:
@@ -33,7 +34,10 @@ def pdx_value(value: object) -> str:
         if _needs_quotes(value):
             return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
         return value
-    return str(value)
+    if isinstance(value, (int, float)):
+        return str(value)
+    # Any other object (a path, a decimal) is written as its text.
+    return pdx_value(str(value))
 
 
 def pdx_string(value: object) -> str:
@@ -45,19 +49,52 @@ def pdx_string(value: object) -> str:
 
 
 def effect_block(name: str, fields: Mapping[str, object] | None = None, **kwargs: object) -> str:
-    """Build ``name = { key = value ... }`` without f-string brace escaping."""
+    """Build ``name = { key = value ... }`` without f-string brace escaping.
+
+    The name and every key have to be one word; a value is written as one
+    scalar. Anything else would not stay inside the block.
+    """
     data: dict[str, object] = {}
     if fields:
         data.update(fields)
     data.update(kwargs)
-    body = " ".join(f"{key} = {pdx_value(value)}" for key, value in data.items())
+    name = require_key(name, "the name of an effect block")
+    body = " ".join(
+        f"{require_key(key, f'a field of {name}')} = {pdx_value(value)}"
+        for key, value in data.items()
+    )
     return f"{name} = {{ {body} }}"
 
 
 def scope_block(scope: str | int, *effects: str) -> str:
-    """Build ``scope = { effect... }`` without f-string brace escaping."""
-    body = " ".join(effect.strip() for effect in effects if effect and effect.strip())
-    return f"{scope} = {{ {body} }}"
+    """Build ``scope = { effect... }`` without f-string brace escaping.
+
+    The scope has to be one word and every effect well formed on its own, so
+    that nothing lands outside the block.
+    """
+    scope = require_key(str(scope).strip(), "a scope")
+    parts = [effect.strip() for effect in effects if effect and effect.strip()]
+    body = ""
+    for part in parts:
+        require_well_formed(part, f"an effect in the scope '{scope}'")
+        # A comment runs to the end of its line: the next effect goes below it.
+        body += ("\n" if _ends_in_comment(body) else " " if body else "") + part
+    return f"{scope} = {braced(body)}"
+
+
+def braced(body: str) -> str:
+    """Return ``{ body }``; the closing brace goes on a new line if ``body`` ends in a comment.
+
+    A comment runs to the end of its line, so a brace behind it on the same
+    line would be part of the comment.
+    """
+    return f"{{ {body}\n}}" if _ends_in_comment(body) else f"{{ {body} }}"
+
+
+def _ends_in_comment(text: str) -> bool:
+    """Whether anything put behind ``text`` on the same line would land in a comment."""
+    comments = parse(text).comments
+    return bool(comments) and comments[-1][1] == len(text)
 
 
 def validate_script_syntax(script: str) -> list[str]:

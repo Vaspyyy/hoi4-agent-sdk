@@ -182,8 +182,11 @@ def test_every_new_field_round_trips_through_update(tmp_path: Path) -> None:
 
     reloaded = Mod(tmp_path)
     mission = reloaded.get_decision("TST_hold_line")
+    # The changed statement keeps the comment on its line.
+    assert mission.timeout_effect == "add_stability = -0.1 # penalty"
     for key, value in changes.items():
-        assert getattr(mission, key) == value, key
+        if key != "timeout_effect":
+            assert getattr(mission, key) == value, key
     pressure = reloaded.get_decision("TST_pressure")
     expected = dict(targeted, targets=["FRA", "ENG", "SOV"])
     for key, value in expected.items():

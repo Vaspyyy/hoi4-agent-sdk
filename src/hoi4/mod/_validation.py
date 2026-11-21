@@ -43,6 +43,8 @@ from ..script_vocabulary import (
 from ..tags import (
     load_all_tags,
 )
+from ..syntax import require_well_formed
+from ..textio import read_text
 from ..types import (
     Event,
     EventOption,
@@ -95,7 +97,7 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
         script_paths.add(descriptor)
 
     for path in sorted(script_paths):
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = read_text(path)
         for issue in validate_script_syntax(text):
             location = _ISSUE_LOCATION_RE.search(issue)
             errors.append(
@@ -324,12 +326,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
         def parse_tags(path: Path) -> tuple[set[str] | None, ValidationError | None]:
             try:
-                return (
-                    country_color_tags(
-                        path.read_text(encoding="utf-8", errors="ignore")
-                    ),
-                    None,
-                )
+                text = read_text(path)
+                if path.is_relative_to(self.mod_root):
+                    require_well_formed(text)
+                return country_color_tags(text), None
             except Exception as error:
                 return (
                     None,
@@ -560,6 +560,19 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                             ),
                             severity="error",
                             code="missing_oob_reference",
+                            country_tag=country.tag,
+                        )
+                    )
+                    continue
+                except (OSError, ValueError) as error:
+                    errors.append(
+                        ValidationError(
+                            message=(
+                                f"Could not read {reference.kind} OOB "
+                                f"'{reference.name}' of country '{country.tag}': {error}"
+                            ),
+                            severity="error",
+                            code="oob_load_error",
                             country_tag=country.tag,
                         )
                     )

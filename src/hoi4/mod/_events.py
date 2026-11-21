@@ -13,6 +13,7 @@ from ..script import (
 from ..types import (
     Event,
     EventOption,
+    EventText,
 )
 from ._core import CoreLayer
 from ._shared import (
@@ -33,6 +34,26 @@ def _normalize_event_option(option: EventOption) -> EventOption:
     option.trigger = normalize_block_body(option.trigger)
     option.ai_chance = normalize_block_body(option.ai_chance)
     return option
+
+
+_EVENT_TEXT_LISTS = ("conditional_titles", "conditional_descriptions")
+
+
+def _normalize_conditional_texts(kwargs: dict, lists: tuple[str, ...]) -> None:
+    """Turn the entries of a conditional text list into ``EventText`` objects."""
+
+    for conditional in lists:
+        if conditional in kwargs:
+            kwargs[conditional] = [_event_text(entry) for entry in kwargs[conditional] or ()]
+
+
+def _event_text(entry: EventText | tuple[str, str] | dict) -> EventText:
+    if isinstance(entry, EventText):
+        return EventText(entry.text, normalize_block_body(entry.trigger))
+    if isinstance(entry, dict):
+        return EventText(str(entry["text"]), normalize_block_body(str(entry.get("trigger", ""))))
+    text, trigger = entry
+    return EventText(text, normalize_block_body(trigger))
 
 
 class EventsLayer(CoreLayer):
@@ -62,7 +83,15 @@ class EventsLayer(CoreLayer):
         mean_time_to_happen: str = "",
         options: list[EventOption] | None = None,
         overwrite: bool = False,
+        conditional_titles: list[EventText] | None = None,
+        conditional_descriptions: list[EventText] | None = None,
     ) -> Event:
+        """Create an event.
+
+        ``conditional_titles``/``conditional_descriptions`` add
+        ``title = { text = ... trigger = { ... } }`` entries, shown before the
+        plain ``title``/``description`` fallback.
+        """
         event_id = require_script_id(event_id, label="event ID")
         existing = self._events.get(event_id)
         if existing is not None and not overwrite:
@@ -88,6 +117,10 @@ class EventsLayer(CoreLayer):
             ],
             path=existing.path if existing is not None else None,
             touched=True,
+            conditional_titles=[_event_text(entry) for entry in conditional_titles or ()],
+            conditional_descriptions=[
+                _event_text(entry) for entry in conditional_descriptions or ()
+            ],
         )
         self._events[event_id] = event
         self._event_namespaces[event_id] = (
@@ -107,6 +140,13 @@ class EventsLayer(CoreLayer):
         return self.create_event(event_id, **kwargs)
 
     def update_event(self, event_id: str, **kwargs) -> bool:
+        """Patch fields of an event; only the changed fields are rewritten on save.
+
+        ``title`` and ``description`` are the plain keys the game falls back
+        to. Setting one leaves the conditional alternatives alone; change
+        those with ``conditional_titles`` / ``conditional_descriptions``
+        (an empty list removes them).
+        """
         event = self._events.get(event_id)
         if event is None:
             return False
@@ -125,6 +165,7 @@ class EventsLayer(CoreLayer):
                 kwargs[key] = normalize_block_body(kwargs[key])
         if "options" in kwargs and isinstance(kwargs["options"], list):
             kwargs["options"] = [_normalize_event_option(option) for option in kwargs["options"]]
+        _normalize_conditional_texts(kwargs, _EVENT_TEXT_LISTS)
         _set_fields(event, kwargs, allow_path=True)
         event.touched_fields.update(kwargs)
         event.touched = True
@@ -202,6 +243,7 @@ class EventsLayer(CoreLayer):
         for key in ("trigger", "ai_chance"):
             if key in kwargs and isinstance(kwargs[key], str):
                 kwargs[key] = normalize_block_body(kwargs[key])
+        _normalize_conditional_texts(kwargs, ("conditional_names",))
         assert event_option is not None
         _set_fields(event_option, kwargs)
         _normalize_event_option(event_option)

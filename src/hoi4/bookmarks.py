@@ -12,11 +12,18 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .parser import find_assignment_block, strip_comments
-from .patching import append_assignment, replace_assignment, set_block, set_scalar
-from .patching import top_level_assignments
+from .patching import (
+    AssignmentSpan,
+    append_assignment,
+    replace_assignment,
+    replace_assignment_body,
+    set_block,
+    set_scalar,
+    top_level_assignments,
+)
 from .script import pdx_string, pdx_value
-
+from .syntax import Scalar, parse, quote, unquote
+from .textio import read_text
 
 _COUNTRY_TAG = re.compile(r"^[A-Z0-9]{3}$")
 BOOKMARK_OTHER_COUNTRY = "---"
@@ -54,24 +61,46 @@ class Bookmark:
     source_index: int | None = None
 
 
+def _block_body(text: str, span: AssignmentSpan) -> str:
+    assert span.body_start is not None and span.body_end is not None
+    return text[span.body_start : span.body_end]
+
+
+def _container_spans(text: str) -> list[AssignmentSpan]:
+    """Return every top-level ``bookmarks = { ... }`` block, in source order."""
+
+    return [
+        span
+        for span in top_level_assignments(text)
+        if span.key == "bookmarks"
+        and span.is_block
+        and span.tag is None
+        and span.body_start is not None
+    ]
+
+
+def _bookmark_spans(container_body: str) -> list[AssignmentSpan]:
+    return [
+        span
+        for span in top_level_assignments(container_body)
+        if span.key == "bookmark" and span.is_block and span.body_start is not None
+    ]
+
+
 def load_bookmarks_file(path: Path) -> list[Bookmark]:
-    text = path.read_text(encoding="utf-8", errors="ignore")
-    outer = find_assignment_block(text, "bookmarks")
-    if outer is None:
-        return []
+    """Load every ``bookmark`` of every top-level ``bookmarks`` block.
+
+    ``source_index`` counts bookmarks across all ``bookmarks`` blocks of the
+    file, in source order.
+    """
+
+    text = read_text(path)
     result: list[Bookmark] = []
-    source_index = 0
-    for span in top_level_assignments(outer[0]):
-        if (
-            span.key != "bookmark"
-            or not span.is_block
-            or span.body_start is None
-            or span.body_end is None
-        ):
-            continue
-        body = outer[0][span.body_start : span.body_end]
-        result.append(_parse_bookmark(body, path, source_index))
-        source_index += 1
+    for container in _container_spans(text):
+        container_body = _block_body(text, container)
+        for span in _bookmark_spans(container_body):
+            body = _block_body(container_body, span)
+            result.append(_parse_bookmark(body, path, len(result)))
     return result
 
 
@@ -152,6 +181,17 @@ def _parse_country(tag: str, body: str, source_index: int) -> BookmarkCountry:
     )
 
 
+def _same_as_source(value: object, source_value: object, present: bool) -> bool:
+    """Whether writing ``value`` would only spell out what the source already says.
+
+    Such a field is left alone, so setting a field to its current value (an
+    empty ``ideas = { }`` included) changes no bytes. A value that only
+    matches the reader's default for a missing key is still written.
+    """
+
+    return value == source_value and (present or not value)
+
+
 def serialize_bookmark_country(country: BookmarkCountry, indent: int = 0) -> str:
     body = _patch_country_body(country.raw_block, country)
     if not country.raw_block:
@@ -173,6 +213,16 @@ def _patch_country_body(
         "ideas",
         "focuses",
     } if all_fields else country.touched_fields
+    if not all_fields and body:
+        source = _parse_country(country.tag, body, 0)
+        present = {span.key for span in top_level_assignments(body)}
+        fields = {
+            name
+            for name in fields
+            if not _same_as_source(
+                getattr(country, name), getattr(source, name), name in present
+            )
+        }
     for field_name in sorted(fields):
         if field_name == "history":
             value = getattr(country, field_name)
@@ -187,7 +237,7 @@ def _patch_country_body(
             body = set_block(body, field_name, country.available or None)
         elif field_name in {"ideas", "focuses"}:
             values = getattr(country, field_name)
-            body = set_block(body, field_name, " ".join(values) or None)
+            body = set_block(body, field_name, " ".join(quote(value) for value in values) or None)
         else:
             raise ValueError(f"Unknown bookmark country field: {field_name}")
     return body
@@ -223,6 +273,18 @@ def _patch_bookmark_body(
         "picture": "picture",
         "default_country": "default_country",
     }
+    if not all_fields and body:
+        source = _parse_bookmark(body, bookmark.path or Path(), 0)
+        present = {span.key for span in top_level_assignments(body)}
+        fields = {
+            name
+            for name in fields
+            if not _same_as_source(
+                getattr(bookmark, name),
+                getattr(source, name),
+                scalar_keys.get(name, name) in present,
+            )
+        }
     for field_name in sorted(fields):
         if field_name in scalar_keys:
             value = getattr(bookmark, field_name)
@@ -277,7 +339,7 @@ def _patch_bookmark_countries(body: str, countries: list[BookmarkCountry]) -> st
             continue
         patched = _patch_country_body(country.raw_block, country)
         if country.raw_block:
-            body = body[: span.body_start] + patched + body[span.body_end :]
+            body = replace_assignment_body(body, span, patched)
         else:
             body = replace_assignment(body, span, serialize_bookmark_country(country, 0))
     for country in remaining:
@@ -289,24 +351,39 @@ def serialize_bookmarks_file(bookmarks: list[Bookmark], *, original: str = "") -
     if not original:
         body = "\n".join(serialize_bookmark(bookmark, 0) for bookmark in bookmarks)
         return _wrap_block("bookmarks", body, 0) + "\n"
-    outer = find_assignment_block(original, "bookmarks")
-    if outer is None:
+    containers = _container_spans(original)
+    if not containers:
         body = "\n".join(serialize_bookmark(bookmark, 0) for bookmark in bookmarks)
         return append_assignment(original, _wrap_block("bookmarks", body, 0))
-    body, start, end = outer
-    open_brace = original.find("{", start, end)
-    if open_brace < 0:
-        raise ValueError("Malformed bookmarks block")
     remaining = list(bookmarks)
-    spans = top_level_assignments(body)
-    for span in sorted(spans, key=lambda item: item.start, reverse=True):
-        if span.key != "bookmark" or not span.is_block:
-            continue
-        source_index = sum(
-            1
-            for prior in spans
-            if prior.key == "bookmark" and prior.is_block and prior.start < span.start
-        )
+    patched: list[tuple[AssignmentSpan, str]] = []
+    first_index = 0
+    for container_number, container in enumerate(containers):
+        body = _block_body(original, container)
+        spans = _bookmark_spans(body)
+        body = _patch_bookmark_container(body, spans, first_index, remaining)
+        first_index += len(spans)
+        if container_number == len(containers) - 1:
+            # New bookmarks go to the end of the last ``bookmarks`` block.
+            for bookmark in remaining:
+                body = append_assignment(body, serialize_bookmark(bookmark, 0))
+        patched.append((container, body))
+    text = original
+    for container, body in reversed(patched):
+        text = replace_assignment_body(text, container, body)
+    return text
+
+
+def _patch_bookmark_container(
+    body: str,
+    spans: list[AssignmentSpan],
+    first_index: int,
+    remaining: list[Bookmark],
+) -> str:
+    """Patch the bookmarks of one container body; matched ones leave ``remaining``."""
+
+    for offset, span in reversed(list(enumerate(spans))):
+        source_index = first_index + offset
         match_index = next(
             (i for i, bookmark in enumerate(remaining) if bookmark.source_index == source_index),
             None,
@@ -318,13 +395,10 @@ def serialize_bookmarks_file(bookmarks: list[Bookmark], *, original: str = "") -
         # Reconcile countries even when no surviving field was touched: the
         # list may have lost entries (including its final country). Untouched
         # country blocks are retained verbatim by the patcher.
-        if span.body_start is None or span.body_end is None:
-            continue
-        patched = _patch_bookmark_body(bookmark.raw_block, bookmark)
-        body = body[: span.body_start] + patched + body[span.body_end :]
-    for bookmark in remaining:
-        body = append_assignment(body, serialize_bookmark(bookmark, 0))
-    return original[: open_brace + 1] + body + original[end - 1 :]
+        body = replace_assignment_body(
+            body, span, _patch_bookmark_body(bookmark.raw_block, bookmark)
+        )
+    return body
 
 
 def patch_bookmark_dates_defines(
@@ -459,12 +533,11 @@ def require_bookmark_date(value: str, *, label: str = "bookmark date") -> str:
 
 
 def _bare_tokens(body: str) -> list[str]:
+    """Return the scalars of a list block body such as ``"DLC A" DLC_B``."""
+
     if not body:
         return []
-    tokens: list[str] = []
-    for part in re.findall(r'"(?:\\.|[^"\\])*"|\S+', strip_comments(body)):
-        tokens.append(_unquote(part))
-    return tokens
+    return [item.value for item in parse(body).root.items if type(item) is Scalar]
 
 
 def is_bookmark_country_key(value: str) -> bool:
@@ -502,10 +575,7 @@ def normalize_required_dlc(values: Iterable[str] | str | None) -> list[str]:
 
 
 def _unquote(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] == '"':
-        return value[1:-1]
-    return value
+    return unquote(value.strip())
 
 
 def _wrap_block(key: str, body: str, indent: int) -> str:

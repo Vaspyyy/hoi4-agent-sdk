@@ -55,10 +55,22 @@ def test_unrelated_edits_preserve_conditional_descriptions(tmp_path, operation):
         assert event.options[0].effect == "add_political_power = 2"
 
 
-@pytest.mark.parametrize("replacement", ["source.replacement", ""])
-def test_explicit_description_replaces_all_conditional_alternatives(tmp_path, replacement):
+def test_plain_description_keeps_the_conditional_alternatives(tmp_path):
     mod, path = make_mod(tmp_path)
-    mod.update_event("source.1", description=replacement)
+    mod.update_event("source.1", description="source.replacement")
+    mod.save(require_changes=True)
+    # The plain key is the fallback, so it goes after the conditional ones.
+    assert path.read_text() == SOURCE.replace(
+        "    desc = { trigger = { tag = FRA } text = source.french }\n",
+        "    desc = { trigger = { tag = FRA } text = source.french }\n"
+        "    desc = source.replacement\n",
+    )
+
+
+@pytest.mark.parametrize("replacement", ["source.replacement", ""])
+def test_an_empty_conditional_list_removes_the_alternatives(tmp_path, replacement):
+    mod, path = make_mod(tmp_path)
+    mod.update_event("source.1", description=replacement, conditional_descriptions=[])
     mod.save(require_changes=True)
     saved = path.read_text()
     assert "source.german" not in saved
@@ -77,11 +89,16 @@ def test_direct_scalar_description_change_is_serialized(tmp_path):
         ),
     )
     event = load_events_file(path)[1][0]
+    assert [entry.text for entry in event.conditional_descriptions] == ["source.french"]
     event.description = "source.changed"
     event.touched = True
     rendered = serialize_event(event)
     assert "desc = source.changed" in rendered
-    assert "source.french" not in rendered
+    # The serializer writes what the model says: the conditional entry is still
+    # in the model, so it stays. ``update_event(description=...)`` clears it.
+    assert "source.french" in rendered
+    event.conditional_descriptions = []
+    assert "source.french" not in serialize_event(event)
 
 
 OPTIONS_SOURCE = """add_namespace = source
@@ -221,11 +238,12 @@ def test_commented_trigger_update_preview_save_reload(tmp_path, newline):
     print(result)
     assert result.written_files == [path]
     saved = path.read_bytes().decode()
-    # Event loading already normalizes newlines through Path.read_text().
-    # The helper tests separately require CRLF preservation when given CRLF.
-    before, after = source.replace("\r\n", "\n").split(" always = yes ")
+    # Every untouched line keeps its bytes, and the new lines use the file's
+    # own line ending.
+    before, after = source.split(" always = yes ")
     assert saved.startswith(before)
     assert saved.endswith(after)
+    assert "\n" not in saved.replace(newline, "")
     event = Mod(tmp_path).get_event("source.1")
     assert "# explanation" in event.trigger
     assert "always = no # final comment" in event.trigger

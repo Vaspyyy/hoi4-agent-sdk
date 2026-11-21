@@ -8,7 +8,7 @@ import os
 from heapq import nlargest
 from typing import Sequence
 
-from ..focus import load_focus_tree
+from ..focus import load_focus_trees
 from ..idea_icons import (
     IDEA_SPRITE_PREFIX,
     normalize_idea_icon,
@@ -25,6 +25,7 @@ from ..paths import (
 from ..states import (
     read_state,
 )
+from ..textio import read_text
 from ..types import (
     State,
 )
@@ -79,7 +80,7 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
             if states_dir.exists():
                 for state_path in sorted(states_dir.glob("*.txt")):
                     try:
-                        state_text = state_path.read_text(encoding="utf-8", errors="ignore")
+                        state_text = read_text(state_path)
                     except Exception:
                         continue
                     if (
@@ -122,27 +123,24 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
             if focus_dir.exists():
                 for path in sorted(focus_dir.glob("*.txt")):
                     try:
-                        raw_focus_text = path.read_text(encoding="utf-8", errors="ignore")
+                        raw_focus_text = read_text(path)
                     except Exception:
                         continue
-                    focus_header = raw_focus_text.split("focus = {", 1)[0]
-                    if (
-                        f"tag = {tag}" not in focus_header
-                        and f"original_tag = {tag}" not in focus_header
-                    ):
-                        continue
+                    if tag not in raw_focus_text:
+                        continue  # cheap skip: the tag is not mentioned at all
                     try:
-                        tree = load_focus_tree(path, text=raw_focus_text)
+                        trees = load_focus_trees(path, text=raw_focus_text)
                     except Exception:
                         continue
-                    if tree and tree.country_tag == tag:
-                        context["focus_trees"].append(
-                            {
-                                "id": tree.id,
-                                "path": str(path),
-                                "focus_ids": [focus.id for focus in tree.focuses],
-                            }
-                        )
+                    for tree in trees:
+                        if tree.country_tag == tag:
+                            context["focus_trees"].append(
+                                {
+                                    "id": tree.id,
+                                    "path": str(path),
+                                    "focus_ids": [focus.id for focus in tree.focuses],
+                                }
+                            )
 
         for key, value in self._loc_entries.items():
             if key == tag or key.startswith(f"{tag}_"):

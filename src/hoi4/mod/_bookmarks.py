@@ -195,7 +195,7 @@ class BookmarksLayer(CoreLayer):
         end = require_bookmark_date(end_date, label="bookmark end date")
         target = resolve_mod_output_path(self.mod_root, path)
         if target not in self._original_files:
-            self._original_files[target] = self._read_bookmark_date_text(target)
+            self._original_files[target] = self._read_current_text(target)
         self._bookmark_date_defines = (target, start, end)
         self._dirty.add("bookmark_dates")
         return target

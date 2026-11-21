@@ -42,7 +42,7 @@ Good pre-game history edit:
 mod.set_state_owner(52, "BAY")
 ```
 
-For fragile vanilla state files where only owner/cores should change, queue the text-preserving patcher and save with the same `Mod` instance:
+Both state edits change only the statements they touch, so unrelated vanilla text such as unusual `victory_points` formatting stays as it was. To set the owner and several cores in one call, queue `patch_state_history()` and save with the same `Mod` instance:
 
 ```python
 mod.patch_state_history(52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"])
@@ -228,7 +228,48 @@ Category metadata and decisions are separate:
 - `common/decisions/*.txt`: the category block containing its decisions
 
 Use `create_decision_category()` and `create_decision()` rather than combining
-both shapes manually. Validation rejects combined pre-0.4.2 output.
+both shapes manually. Validation rejects combined pre-0.4.2 output
+(`invalid_decision_category_layout`).
+
+Editing a decision, or adding one to an existing category, does not write the
+category's presentation file, because an empty definition in the mod would
+replace the one the game or a base mod ships. The category definition in
+`common/decisions/categories/` is written only when the category itself
+changes: `create_decision_category()`, `update_decision_category()`,
+`create_decision()` for a category that does not exist yet, or
+`create_decision(..., path=...)`, which moves the category. Such a write also
+moves `icon`, `allowed` and `visible` out of a combined pre-0.4.2 block. A
+category may be split over several files or reopened in one file; its
+decisions are edited where they are.
+
+## Shared and Joint Focuses
+
+Top-level `shared_focus`, `joint_focus` and bare `focus` blocks are not inside
+a `focus_tree`. The SDK loads them into one container per file:
+
+```python
+tree = mod.get_focus_tree("shared_focuses")   # file common/national_focus/shared_focuses.txt
+tree.kind                                     # "file"
+mod.update_focus("shared_focuses", "SH_one", cost=3.5)
+```
+
+The container's ID is the file name without `.txt`. The game has no focus tree
+with that ID, so never pass it to `load_focus_tree` or put it in a country
+selector. Reference shared focuses from a real tree with
+`update_focus_tree(tree_id, shared_focuses=[...])`.
+
+## Conditional Event Titles
+
+```text
+title = { text = my.1.t.ger trigger = { tag = GER } }
+title = my.1.t
+```
+
+`Event.title` is `"my.1.t"`; the first line is in `Event.conditional_titles`
+as `EventText("my.1.t.ger", "tag = GER")`. The same holds for `desc`
+(`conditional_descriptions`) and option names (`conditional_names`).
+`update_event("my.1", title="my.1.t2")` changes only the plain key and
+keeps the conditional titles. To remove them, pass `conditional_titles=[]`.
 
 ## Revolts Need a Playable Baseline
 

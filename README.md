@@ -5,9 +5,23 @@ editing Hearts of Iron IV mods. It is designed for automation, desktop tools,
 and coding agents that must work safely with both generated files and large
 hand-authored mods.
 
-The SDK treats existing Paradox Script as source code: unchanged files round
-trip byte-for-byte, edited fields are patched locally, unknown keys and comments
-are retained, and writes are committed atomically.
+The SDK treats existing Paradox Script as source code:
+
+- A file the SDK did not change is never rewritten.
+- An edit to one field changes only that field's value. Everything else in the
+  file stays as it was, byte for byte: comments, spacing, keys the SDK does not
+  know, and repeated blocks.
+- Files keep their encoding, byte-order mark and line endings.
+- Files that the game ships with unbalanced braces are read the way the game
+  reads them. When such a file is copied into the mod as an override, the copy
+  is written with balanced braces.
+- A malformed file in the mod's own folder is a load failure that is reported
+  in `mod.load_diagnostics` and by `validate()`. The SDK does not guess what
+  the author meant.
+- Writes are committed atomically.
+
+There is one reader for script, a lossless syntax tree; see
+[docs/internals/parser.md](docs/internals/parser.md).
 
 ## Installation
 
@@ -255,6 +269,13 @@ python -m pytest tests/
 python -m ruff check src/ scripts/ tests/
 python -m mypy src/
 python -m build
+```
+
+Changes to the script reader or a loader also run the opt-in corpus test
+against a real game install:
+
+```bash
+HOI4_INSTALL_DIR="/path/to/Hearts of Iron IV" python -m pytest -m corpus -p no:cacheprovider -q
 ```
 
 See [docs/api.md](docs/api.md), [docs/models.md](docs/models.md), and

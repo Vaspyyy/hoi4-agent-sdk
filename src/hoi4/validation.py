@@ -14,17 +14,13 @@ from .focus_layout import resolve_focus_positions
 from .parser import iter_assignment_blocks
 from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
+from .syntax import parse as parse_script
 from .script import validate_script_syntax
+from .syntax import Assignment, parse
+from .textio import read_text
 from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationError
 
 TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
-_TAG_DEFINITION_RE = re.compile(
-    r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"(?:\s*#.*)?\s*$'
-)
-_CAPITAL_RE = re.compile(r"\bcapital\s*=\s*(\d+)\b")
-_RECRUIT_CHARACTER_RE = re.compile(
-    r'\brecruit_character\s*=\s*"?([A-Za-z0-9_.:%-]+)"?'
-)
 _UNSET = object()
 
 VALIDATION_CODES: dict[str, str] = {
@@ -106,6 +102,9 @@ VALIDATION_CODES: dict[str, str] = {
     "unknown_focus_tree_reference": "Effect script references a focus tree ID not loaded by the SDK.",
     "resistance_on_core_state": "Resistance effects target a state that is already a core of its owner.",
     "event_option_no_effect": "Triggered event option has no gameplay effect.",
+    "event_conditional_text_missing": (
+        "A conditional event title, description or option name has no text key."
+    ),
     "revolt_state_already_owned": "Revolt script transfers a state already owned by the target country.",
     "state_buildings_outside_history": "State buildings must be declared inside the history block.",
     "duplicate_country_tag": "A country tag is declared in more than one mod file.",
@@ -152,6 +151,7 @@ VALIDATION_CODES: dict[str, str] = {
     "unknown_oob_unit_type": "A division template uses an unknown sub-unit type.",
     "unknown_oob_province": "A starting division references an unknown province.",
     "oob_water_location": "A starting land division is placed in a water province.",
+    "oob_load_error": "An order of battle referenced by a country could not be read.",
     "oob_location_not_owned": "A starting division is placed outside its country's territory.",
     "oob_fleet_name": "A fleet has no name.",
     "duplicate_oob_fleet": "An OOB repeats a fleet name.",
@@ -317,6 +317,7 @@ _ERROR_CODES = {
     "unknown_oob_unit_type",
     "unknown_oob_province",
     "oob_water_location",
+    "oob_load_error",
     "oob_location_not_owned",
     "oob_fleet_name",
     "duplicate_oob_fleet",
@@ -372,12 +373,13 @@ def validate_tag_definition_targets(mod_root: Path) -> list[ValidationError]:
     if not tags_dir.is_dir():
         return issues
     for path in sorted(tags_dir.glob("*.txt")):
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        for line_number, line in enumerate(text.splitlines(), 1):
-            match = _TAG_DEFINITION_RE.match(line)
-            if match is None:
+        doc = parse(read_text(path))
+        for item in doc.root.assignments():
+            declared_path = item.scalar
+            if item.op != "=" or declared_path is None or not TAG_RE.match(item.name):
                 continue
-            tag, declared_path = match.groups()
+            tag = item.name
+            line_number = doc.line_col(item.start)[0]
             target = countries_dir / Path(declared_path).name
             if target.is_file():
                 continue
@@ -408,7 +410,7 @@ def collect_character_ids(*roots: Path | None) -> set[str]:
             continue
         for path in sorted(directory.glob("*.txt")):
             try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
+                text = read_text(path)
                 for body, _, _ in iter_assignment_blocks(text, "characters"):
                     character_ids.update(
                         span.key
@@ -436,60 +438,44 @@ def validate_country_history_references(
     if not histories_dir.is_dir():
         return issues
     for path in sorted(histories_dir.glob("*.txt")):
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        source = _mask_script_comments(text)
-        for match in _CAPITAL_RE.finditer(source):
-            state_id = int(match.group(1))
-            if state_id in known_state_ids:
+        doc = parse(read_text(path))
+        # Every depth: a capital or recruitment inside a date or ``if`` block
+        # is still a reference. Comments and strings are never statements.
+        statements = sorted(
+            (item for item, _ in doc.root.walk() if item.op == "="),
+            key=lambda item: item.start,
+        )
+        for item in statements:
+            value = item.scalar
+            if value is None:
                 continue
-            issues.append(
-                ValidationError(
-                    message=f"Capital state {state_id} does not exist",
-                    severity="error",
-                    code="capital_ref",
-                    file_path=str(path),
-                    state_id=state_id,
-                    line=source.count("\n", 0, match.start()) + 1,
+            if item.name == "capital" and value.isdigit():
+                state_id = int(value)
+                if state_id in known_state_ids:
+                    continue
+                issues.append(
+                    ValidationError(
+                        message=f"Capital state {state_id} does not exist",
+                        severity="error",
+                        code="capital_ref",
+                        file_path=str(path),
+                        state_id=state_id,
+                        line=doc.line_col(item.start)[0],
+                    )
                 )
-            )
-        for match in _RECRUIT_CHARACTER_RE.finditer(source):
-            character_id = match.group(1)
-            if character_id in known_character_ids:
-                continue
-            issues.append(
-                ValidationError(
-                    message=f"Character {character_id} is not defined",
-                    severity="warning",
-                    code="character_ref",
-                    file_path=str(path),
-                    line=source.count("\n", 0, match.start()) + 1,
+            elif item.name == "recruit_character" and value:
+                if value in known_character_ids:
+                    continue
+                issues.append(
+                    ValidationError(
+                        message=f"Character {value} is not defined",
+                        severity="warning",
+                        code="character_ref",
+                        file_path=str(path),
+                        line=doc.line_col(item.start)[0],
+                    )
                 )
-            )
     return issues
-
-
-def _mask_script_comments(text: str) -> str:
-    """Replace comment bytes with spaces while preserving offsets and newlines."""
-
-    chars = list(text)
-    in_quote = False
-    index = 0
-    while index < len(chars):
-        char = chars[index]
-        if char == "\\" and in_quote:
-            index += 2
-            continue
-        if char == '"':
-            in_quote = not in_quote
-            index += 1
-            continue
-        if char == "#" and not in_quote:
-            while index < len(chars) and chars[index] != "\n":
-                chars[index] = " "
-                index += 1
-            continue
-        index += 1
-    return "".join(chars)
 
 
 def _script_warnings(
@@ -790,7 +776,17 @@ def validate_focus_tree(
 
     seen_ids: set[str] = set()
     layout = resolve_focus_positions(tree)
+    by_id = {focus.id: focus for focus in tree.focuses}
     for focus_id, reason in layout.unresolved.items():
+        if tree.kind == "file":
+            # Top-level shared/joint focuses may anchor to a focus of the tree
+            # they are shared into; that is fine when the anchor exists.
+            anchor, seen = focus_id, set()
+            while anchor in by_id and anchor not in seen:
+                seen.add(anchor)
+                anchor = by_id[anchor].relative_position_id
+            if anchor not in by_id and anchor in all_known:
+                continue
         errors.append(
             ValidationError(
                 message=f"Focus '{focus_id}' position unresolved: {reason}",
@@ -841,7 +837,25 @@ def validate_focus_tree(
             )
         seen_ids.add(focus.id)
 
-        pos = layout.positions.get(focus.id)
+        expected_kind = focus.kind if tree.kind == "file" else "focus"
+        if focus.kind != expected_kind or focus.kind not in (
+            "focus", "shared_focus", "joint_focus"
+        ):
+            errors.append(
+                ValidationError(
+                    message=(
+                        f"Focus '{focus.id}' has kind '{focus.kind}', which is not allowed "
+                        f"in {tree.kind} '{tree.id}'"
+                    ),
+                    severity="error",
+                    focus_id=focus.id,
+                    file_path=str(tree.path) if tree.path else None,
+                )
+            )
+
+        # The top-level blocks of one file are placed into different trees,
+        # so their positions do not share one canvas.
+        pos = layout.positions.get(focus.id) if tree.kind != "file" else None
         if pos is not None and pos in seen_positions:
             errors.append(
                 ValidationError(
@@ -903,8 +917,17 @@ def validate_focus_tree(
             ]
         )
         if known_state_ids is not None:
-            for raw_id in re.findall(r"(?m)^\s*(\d+)\s*=\s*\{", script):
-                sid = int(raw_id)
+            # ``123 = { ... }`` at any depth is a state scope, except the
+            # weighted options of a ``random_list``.
+            state_scopes = [
+                item
+                for item, parents in parse_script(script).root.walk()
+                if item.name.isdigit()
+                and item.block is not None
+                and not (parents and parents[-1].name.lower() == "random_list")
+            ]
+            for item in sorted(state_scopes, key=lambda found: found.start):
+                sid = int(item.name)
                 if sid not in known_state_ids:
                     errors.append(
                         ValidationError(
@@ -1074,7 +1097,7 @@ def validate_event(
         )
         return errors
 
-    if not event.title:
+    if not event.title and not event.conditional_titles:
         errors.append(
             ValidationError(
                 message=f"Event '{event.id}' has no title",
@@ -1083,7 +1106,7 @@ def validate_event(
             )
         )
 
-    if not event.description:
+    if not event.description and not event.conditional_descriptions:
         errors.append(
             ValidationError(
                 message=f"Event '{event.id}' has no description",
@@ -1091,6 +1114,26 @@ def validate_event(
                 event_id=event.id,
             )
         )
+
+    conditional_texts = [
+        ("title", entry) for entry in event.conditional_titles
+    ] + [("description", entry) for entry in event.conditional_descriptions]
+    conditional_texts += [
+        (f"option '{option.name or '<unnamed>'}' name", entry)
+        for option in event.options
+        for entry in option.conditional_names
+    ]
+    for label, entry in conditional_texts:
+        if not entry.text:
+            errors.append(
+                ValidationError(
+                    message=f"Event '{event.id}' has a conditional {label} without text",
+                    severity="warning",
+                    code="event_conditional_text_missing",
+                    event_id=event.id,
+                    file_path=str(event.path) if event.path else None,
+                )
+            )
 
     if not event.options:
         errors.append(
@@ -1144,6 +1187,7 @@ def validate_event(
     effect_script = "\n".join(
         [event.trigger, event.immediate, event.mean_time_to_happen]
         + [opt.trigger + "\n" + opt.effect for opt in event.options]
+        + [entry.trigger for _, entry in conditional_texts]
     )
     errors.extend(
         _script_warnings(
@@ -1182,6 +1226,19 @@ def validate_event(
     return errors
 
 
+# Idea blocks that give the idea an effect besides ``modifier``.
+_IDEA_EFFECT_KEYS = frozenset({
+    "modifier",
+    "research_bonus",
+    "equipment_bonus",
+    "targeted_modifier",
+    "rule",
+    "on_add",
+    "on_remove",
+    "do_effect",
+})
+
+
 def validate_idea(idea: Idea) -> list[ValidationError]:
     errors: list[ValidationError] = []
 
@@ -1194,18 +1251,24 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
         )
         return errors
 
-    if not idea.modifier:
+    statements = (
+        [item for item in parse(idea.raw_block).root.items if type(item) is Assignment]
+        if idea.raw_block
+        else []
+    )
+    has_effect = bool(idea.modifier or idea.research_bonus) or any(
+        item.key.value in _IDEA_EFFECT_KEYS for item in statements
+    )
+    if not has_effect:
         errors.append(
             ValidationError(
-                message=f"Idea '{idea.id}' has no modifiers",
+                message=f"Idea '{idea.id}' has no modifiers or other effects",
                 severity="warning",
                 idea_id=idea.id,
             )
         )
 
-    if idea.raw_block and any(
-        span.key == "icon" for span in top_level_assignments(idea.raw_block)
-    ):
+    if any(item.op == "=" and item.key.value == "icon" for item in statements):
         errors.append(
             ValidationError(
                 message=(
@@ -1220,17 +1283,14 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
             )
         )
 
-    if idea.raw_block:
+    if statements:
         prefixed_picture = next(
             (
-                span
-                for span in top_level_assignments(idea.raw_block)
-                if span.key == "picture"
-                and not span.is_block
-                and idea.raw_block[span.value_start : span.value_end]
-                .strip()
-                .strip('"')
-                .startswith("GFX_idea_")
+                item
+                for item in statements
+                if item.op == "="
+                and item.key.value == "picture"
+                and (item.scalar or "").strip().startswith("GFX_idea_")
             ),
             None,
         )
@@ -1249,9 +1309,9 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
                 )
             )
 
-    if idea.raw_block and any(
-        span.key == "desc" and not span.is_block
-        for span in top_level_assignments(idea.raw_block)
+    if any(
+        item.op == "=" and item.key.value == "desc" and item.scalar is not None
+        for item in statements
     ):
         errors.append(
             ValidationError(

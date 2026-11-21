@@ -8,6 +8,36 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `hoi4.syntax`: one lossless syntax tree for Paradox script. Every node knows
+  its exact position in the source, so reading is a tree query and writing is
+  the replacement of one span. It understands typed blocks (`rgb { }`,
+  `hsv { }`), quoted keys and values, nested lists, `@variables`, every
+  comparison operator and inline maths, and it is as forgiving as the game: a
+  block still open at the end of a file is closed there and a stray closing
+  brace is skipped, each recorded as a `Problem`. `require_well_formed` and
+  `repair` build on that.
+- `hoi4.textio`: byte-exact file reading and writing. A saved file keeps its
+  encoding (UTF-8, Windows-1252 or any other bytes), its byte-order mark and
+  its line endings, and every line that did not change keeps its exact bytes,
+  also in a file that mixes line endings.
+- Shared and joint focuses: a file's top-level `focus`, `shared_focus` and
+  `joint_focus` blocks load into a per-file container tree (`FocusTree.kind ==
+  "file"`), with `Focus.kind` naming the block type. 51 of the game's 82 focus
+  files use them. Also `Focus.icon_blocks`, `Focus.icon_names()` and fractional
+  `Focus.cost`.
+- Conditional event text: `EventText`, `Event.conditional_titles`,
+  `Event.conditional_descriptions` and `EventOption.conditional_names`.
+- `Country.color_ui`, and colours read from `rgb { }`, plain `{ r g b }`,
+  `hsv`/`HSV` and `hsv360`.
+- `hoi4.patching.sync_body`: rewrites a block body statement by statement.
+  Statements the old and the new body share keep their exact bytes, a list
+  gets one more entry without losing the comments next to the others, and a
+  nested block that changed is edited the same way one level down.
+  `set_block` uses it for every block edit. Also `same_block_body`,
+  `statement_spans` and `one_statement_per_line`.
+- An opt-in corpus test (`pytest -m corpus` with `HOI4_INSTALL_DIR` set) that
+  checks the script core against every script file of a real game install.
+
 - Ordered directory-backed base mods, descriptor dependencies, effective-file
   provenance, and opt-in inherited focus/event/idea/on-action editing.
 - Transactional support-script imports, source-preserving scripted-trigger
@@ -64,6 +94,89 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **An edit to one field now changes only that field.** Focus trees, events,
+  on-actions, ideas, ideologies, dynamic modifiers, decisions, bookmarks,
+  countries, characters, country tags, states and orders of battle are read
+  from the syntax tree and written by replacing only the spans that differ
+  from the source. Comments, unknown keys, repeated blocks, conditional blocks
+  and the spelling of every untouched value survive.
+- Files inherited from the game or a base mod are read the way the game reads
+  them. The game ships files with unbalanced braces (Norway's history,
+  France's 1936 army, the Soviet ideas file); they load now. When such a file
+  becomes a mod override it is written out well formed.
+- A malformed file in the mod's own folder is still a load failure, reported
+  in `load_diagnostics` and by `validate()`, and `save()` now refuses to
+  rewrite any mod file that failed to load instead of replacing it from an
+  incomplete model.
+- `hoi4.parser` and `hoi4.patching` are rebuilt on the syntax tree.
+  `parse_pdx(strict=False)` reads the forgiving way. `PdxNode` gained
+  `key_quoted` and `tag`; `AssignmentSpan` gained `operator` and `tag`;
+  `top_level_assignments(comparisons=True)` also returns comparison
+  statements. `find_assignment_block` no longer fails on a block that is
+  open at the end of the text.
+- A block edit changes only the statements that differ, instead of writing
+  the whole block again. Comments count as soon as the new text has any: a
+  changed, added or dropped comment is written. A text without comments
+  leaves the comments in the file alone (pass `comments=True` to
+  `set_block` to remove them). A statement that is removed takes the
+  comment on its line with it.
+  Two limits: a statement that moves and gets a new value in the same edit
+  loses its comments, and so can one of several statements with the same
+  key when one is removed and another changed.
+- Setting an event's plain `title` or `description`, or an option's plain
+  `name`, no longer removes the conditional alternatives. Pass
+  `conditional_titles=[]` (or `conditional_descriptions=[]`,
+  `conditional_names=[]`) to remove them.
+- While a file in the mod's own folder fails to load, `save()` also refuses
+  to create a new override of a game file in that folder: the broken file
+  may already hold the mod's version of that content.
+- `preview()` shows the repaired form of a game file with unbalanced braces
+  that becomes a mod override, which is what `save()` writes.
+- `preview()` and `save()` refuse to write a script file that would get a
+  syntax problem it does not have now (an unclosed brace in script text
+  passed to an update, for example). Nothing is written in that case.
+- Text handed to a writer cannot land outside the place it is written to.
+  Script text for a block (an effect, a trigger, a reward) that is not well
+  formed on its own, for example `} x = 1 {`, which would end the block
+  early, is refused with a `ParseError`. A value that is not one word (it
+  has a space, a brace, a `#` or a quote in it) is written as one quoted
+  string. A name that is written as a key (a modifier, an event type, an
+  idea category, an equipment type) has to be one word and is refused
+  otherwise. List entries are quoted where needed.
+  A state's victory points have to be numbers (any spelling the game
+  reads, such as `.5` or `1e3`) or script constants (`@points`).
+  A value with a byte-order mark inside, or with text right after inline
+  maths (`@[x]y`), is written in quotes too: the reader ends a word there.
+  The effect builders `effect_add_building` and `effect_add_tech_bonus` and
+  the flags of `create_decision_chain` follow the same rule. `effect_block`
+  and `scope_block` check their name, keys and scope, and `scope_block`,
+  `effect_start_civil_war` and `effect_division_template` check the script
+  they wrap. A comment at the end of an effect given to `scope_block`, or
+  at the end of the regiments of a division template, no longer swallows
+  the closing brace or the effect after it: what follows goes on a new
+  line. `pdx_value` spells any object (a path, a decimal) as one scalar.
+  `tests/test_block_body_guard.py` tries thirteen attack texts on every text
+  field of every model, on new and on loaded objects.
+- A state edit that only adds quote characters or a space at an end of a
+  name, a category or a resource value is written. It used to be taken for
+  "no change", because the new text was compared the way file text is
+  compared. Two spellings of one number (`2000` and `2000.0`, `.5` and
+  `0.5`) are still no change in a field that holds a number; a name such
+  as `001` is text.
+- In an on-action's `random_events`, a statement that is not a
+  `weight = event` pair (such as `chance_to_fire = 25`) reads as one list
+  entry holding the whole statement, and in `events` any assignment does.
+- A comment that moves from one statement to another, with the same words,
+  counts as a change and is written, also inside nested blocks.
+- A decision edit writes only the file that holds the decision. Category
+  presentation that an old layout kept in the decisions file moves to
+  `common/decisions/categories/` only when the category itself is edited. A
+  category may be reopened in one file or spread over several files, and its
+  decisions are editable in place.
+- An edit to a vanilla country writes only the files it changed, and renaming
+  a vanilla country keeps its history file name.
+- `Idea.category_raw_block` holds only the category's own settings. Loading
+  every vanilla ideas file now peaks at 35 MB instead of 182 MB.
 - `hoi4/mod.py` (12,992 lines) is now the `hoi4/mod/` package: one module per
   content type, each defining one layer class, with `Mod` inheriting from all
   of them. A layer subclasses only the layers whose methods it calls, so its
@@ -86,6 +199,134 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Adding an event to an on-action merged its repeated `events` blocks into
+  one and dropped the comments inside them. Event lists are now edited entry
+  by entry.
+- Editing an event option's effect copied the option's comments, and the
+  copies doubled with every edit.
+- A comment-only change to an effect or trigger was silently ignored.
+- Adding a trait, an idea, a technology or any other entry to a list or
+  mapping block dropped the comments inside the block.
+- A multi-line statement that replaced another one was indented only on its
+  first line, and the first statement put into an empty multi-line block was
+  glued to the opening brace.
+- Removing a statement that was followed by spaces left a line of spaces.
+- A broken state file in the mod made the SDK edit the game's state of the
+  same id and write it as a second file for that state.
+- An air base's `ace = { ... }` block was read as an air wing named `ace`.
+- Putting a comment or a statement of several lines into a one-line event
+  option (`option = { name = x }`) wrote the closing brace into the comment,
+  and the event was gone after a reload. The option is now laid out with
+  one statement per line.
+- Changing the weight of a `random_events` entry dropped the comment on its
+  line, and inserting an event in the middle of a list merged the hook's
+  repeated blocks.
+- A `random_events` block with a statement that is not a `weight = event`
+  pair lost its pairing on the next edit: every entry after it was written
+  with the wrong weight.
+- Editing a decision in one legacy category and the presentation of another
+  category in the same file wrote a second definition of the first category
+  into `common/decisions/categories/`.
+- A localisation file without a byte-order mark gets one on save. A line of
+  it that mixed valid UTF-8 with other bytes was then read differently, so
+  its text changed although nobody edited it. Such a line is now written
+  again from its text.
+- Changing a state's `buildings` rewrote the whole block and lost its
+  comments, and a change of only a comment was not written.
+- A new event statement placed after one that shares its line with another
+  statement and a comment (`id = a.1 desc = a.1.d # note`) went between the
+  statement and its comment.
+- A statement added before one that shares the line of the opening brace
+  moved that statement to a new line. Reordering statements lost the
+  comments on their lines.
+- A block whose layout could not hold an edit in place (a reorder next to
+  the opening brace, a comment for a one-line block) was written again as
+  a whole, which dropped its comments. It is now laid out with one
+  statement per line first, each with its bytes and its comment, and then
+  edited.
+- Editing one decision category wrote a definition for every other category
+  of the same decisions file into `common/decisions/categories/`.
+- A copy of a loaded division, template, ship or air wing that was passed
+  to `update_oob` next to its original replaced the original. It is now
+  appended after the existing items, wherever it sits in the passed list and
+  whether or not the original was changed in the same call: the source
+  block stays with the original.
+- A focus statement added after one that sits in the middle of a line with
+  a trailing comment was put between that statement and its comment. It
+  now gets its own line below.
+- An event `picture` with a space or `#` was written without quotes.
+- `PdxNode.set_value` kept a comparison operator (`a > 1` became `a > 2`).
+- The map renderer read country colours and tag files with a regular
+  expression: a commented-out colour counted, and `hsv` colours did not.
+  The known-sprite list counted commented-out sprites.
+- Editing one field of a focus deleted its conditional `icon = { ... }` blocks
+  and truncated `cost = 7.2` to `7`.
+- Editing the `icon = { ... }` blocks of a focus that had no plain `icon`
+  added a stale `icon = GFX_...` line. The icon a block-only focus reports is
+  now never written back; a plain `icon` is written only when you set it, and
+  setting it to `""` removes it.
+- Adding a prerequisite, mutually exclusive group, icon block or
+  `shared_focus` after a line such as `prerequisite = { focus = A } # note`
+  moved the comment (or the rest of the line) onto the new statement. The new
+  statement now gets its own line below.
+- A `focus_tree` without its own `id` was written twice on save. Unnamed trees
+  are now known by the file name (`name`, then `name_2`, ...) both when
+  loading and when saving, and are patched in place.
+- Focus and focus-tree strings (icons, ids, `relative_position_id`,
+  `will_lead_to_war_with`, prerequisite and search filter entries,
+  `shared_focus`) were written without quotes, so a value with a space or a
+  `#` produced broken script. They are now quoted when they need it.
+- An event with conditional `title = { ... }` blocks read its title as `{`,
+  and any edit deleted the first block and duplicated other lines.
+- An idea with only `equipment_bonus`, `targeted_modifier`, `rule` or
+  `research_bonus` was not recognised and was duplicated when a sibling idea
+  was edited. A repeated category block in an ideas file lost its earlier
+  copy on any edit.
+- A decision took `cost` or `icon` from a nested block. A category reopened in
+  the same file lost its later decisions and blocked every save. Saving one
+  file of a category spread over several files deleted that category's
+  decisions from the saved file. A generated category file could take the name
+  of a game file and replace it.
+- A decision category spread over several `common/decisions` files kept only
+  the decisions of the last file, and a category edit left the old inline
+  `icon`, `allowed` and `visible` in the earlier files. The category now holds
+  the decisions of every file in load order, lists those files in the new
+  `DecisionCategory.paths`, and a category edit removes the inline copies from
+  each of them.
+- Decision and category strings were written without quotes, so
+  `update_decision("x", icon="a b")` wrote the invalid `icon = a b`. Every
+  string the decision code writes is now quoted when it needs quotes, and a
+  quoted category `icon` reads without its quotes.
+- A comment inside `traits = { ... }` became trait ids. Editing a typed colour
+  (`color = rgb { ... }`) left a dangling block. `colors.txt` values written
+  as `HSV { }` were ignored.
+- A state was found by any `id = N` in its file, including one in a comment.
+  A state file with a byte-order mark loaded empty. A one-field state edit
+  could produce broken indentation.
+- `update_oob` ignored edits made to copies of loaded divisions, templates and
+  air wings (and to the objects `get_oob` returned) and saved the file
+  unchanged. Each item is now compared with its source block and every field
+  that differs is written, and only those fields. Removing one division or ship
+  and adding another in the same call could overwrite a kept one.
+- Changing a state's owner split a `victory_points = { 1 5 2 10 }` block into
+  one block per pair. Victory points are now rewritten only when their value
+  changed or the caller passed them explicitly.
+- `set_state_properties(..., manpower=2000)` crashed at save with an integer or
+  float. `manpower`, `local_supplies`, `buildings_max_level_factor` and resource
+  amounts now accept `int` and `float`, and a number equal to the file's value
+  (`1.0` for `1.000`) keeps the file's spelling.
+- `validate()` crashed with `ValueError: Unbalanced braces` once a vanilla
+  country with an unbalanced order of battle was in the mod.
+- Saving rewrote Windows line endings as Unix ones in every line of the file,
+  dropped the byte-order mark, and silently deleted bytes that were not valid
+  UTF-8.
+- `serialize_pdx` dropped the quotes of bare list values and quoted keys,
+  flattened nested lists and typed blocks, and `PdxNode.set_value` on a block
+  wrote an empty block. `set_block` on an inline statement duplicated the
+  script before it, a `@variable` was mistaken for the field of the same name,
+  and `==` was scanned as an assignment.
+- On-actions: repeated `effect` blocks after the first were ignored, and
+  editing weighted `random_events` wrote `20 daily.2` instead of `20 = daily.2`.
 - Inherited state lookups now honor same-named mod files and the mod
   descriptor's `replace_path` when no base mods are configured, matching how
   the game resolves files. Province-list changes to existing state files now
@@ -122,6 +363,21 @@ All notable changes to this project are documented here. The format follows
   produce exact-path load diagnostics. Non-strict loading continues with
   unaffected country data instead of reparsing and crashing; strict loading
   still fails immediately.
+- One byte that was not valid UTF-8 made a whole file read as Windows-1252
+  (`München` became `MÃ¼nchen`), and an edit that added a character outside
+  the code page then re-encoded every line. Files are now read line by line,
+  and only edited lines are re-encoded.
+
+### Removed
+
+- Module-level regular expressions that read script from raw text and are no
+  longer used: `decisions.SCALAR_RE`, `countries.COLOR_RE`, `COLOR_FIELD_RE`,
+  `CAPITAL_RE`, `RESEARCH_SLOTS_RE`, `tags.TAG_FILE_RE`, `states.STATE_ID_RE`,
+  `STATE_NAME_RE` and `OWNER_RE`.
+- The automatic move of category presentation out of a decisions file on any
+  decision edit. It now happens only when the category itself is edited.
+- `parser.extract_braced_block`, a second brace scanner that nothing used any
+  more. Use `parser.find_assignment_block` or the syntax tree.
 
 ## [0.6.5] - 2026-08-01
 

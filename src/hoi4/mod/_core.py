@@ -33,10 +33,12 @@ from ..paths import (
 from ..script_vocabulary import (
     GameScriptVocabulary,
 )
+from ..syntax import require_well_formed
 from ..tags import (
     _parse_tag_file_mapping,
     load_vanilla_tags,
 )
+from ..textio import read_text
 from ..types import (
     Country,
     Decision,
@@ -140,6 +142,9 @@ class CoreLayer:
         self._pending_asset_baselines: dict[Path, bytes | None] = {}
         self._country_name_pool_updates: dict[str, str] = {}
         self._script_file_updates: dict[Path, str] = {}
+        # Bytes whose encoding, byte-order mark and line endings a staged file
+        # copies when it is written (an imported script keeps its source's).
+        self._format_donors: dict[Path, bytes] = {}
         self._dirty: set[str] = set()
         self._vanilla_tags: set[str] = (
             load_vanilla_tags(self._base_content_root) if self._base_content_root else set()
@@ -231,7 +236,7 @@ class CoreLayer:
         target = resolve_mod_output_path(self.mod_root, relative)
         if target in self._original_files:
             return
-        original = source.read_bytes().decode("utf-8")
+        original = read_text(source)
 
         def install(models: Sequence[_InheritedModel], destination: dict[str, _InheritedModel]) -> None:
             seen: set[str] = set()
@@ -305,17 +310,33 @@ class CoreLayer:
 
     @staticmethod
     def _read_current_text(path: Path) -> str:
-        return path.read_text(encoding="utf-8-sig", errors="ignore") if path.exists() else ""
+        return read_text(path) if path.exists() else ""
+
+    def _shadows_inherited(self, path: Path) -> bool:
+        """Whether a NEW mod file at ``path`` would replace a game or base-mod file.
+
+        The game loads a mod file instead of the inherited file of the same
+        name, so a generated file must not pick such a name by accident.
+        """
+
+        if path.exists():
+            return False
+        try:
+            source = self.content_source(path.relative_to(self.mod_root))
+        except ValueError:
+            return False
+        return source is not None and source != path
 
     @staticmethod
-    def _read_bookmark_date_text(path: Path) -> str:
-        # read_text() translates CRLF before the Lua patcher can preserve it.
-        return path.read_bytes().decode("utf-8-sig", errors="ignore") if path.exists() else ""
+    def _require_well_formed(path: Path) -> None:
+        """Refuse a malformed script file in the mod's own folder.
 
-    def _read_rendered_text(self, path: Path) -> str:
-        if self._bookmark_date_defines is not None and path == self._bookmark_date_defines[0]:
-            return self._read_bookmark_date_text(path)
-        return self._read_current_text(path)
+        Files inherited from the game or a base mod are read the way the game
+        reads them. A file the mod owns is the author's to fix, so a missing or
+        stray brace there is a load failure instead of a guess.
+        """
+
+        require_well_formed(read_text(path))
 
     def _snapshot(self) -> dict[str, object]:
         keys = [
@@ -385,6 +406,7 @@ class CoreLayer:
             "_pending_asset_baselines",
             "_country_name_pool_updates",
             "_script_file_updates",
+            "_format_donors",
             "_dirty",
             "_sprite_texture_cache",
             "_country_context_cache",

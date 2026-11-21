@@ -5,17 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ._mapping_patch import patch_scalar_entries
 from .patching import (
     append_assignment,
     replace_assignment,
     replace_assignment_body,
-    scalar_values_equivalent,
     set_block,
     set_scalar,
     top_level_assignments,
 )
 from .script import pdx_value
-
+from .syntax import Block, Scalar, parse, require_entry, require_well_formed
+from .textio import read_text
 
 _RESERVED_SCALARS = {"icon", "attacker_modifier"}
 
@@ -33,42 +34,50 @@ class DynamicModifier:
     touched_fields: set[str] = field(default_factory=set)
 
 
-def load_dynamic_modifiers_file(path: Path) -> list[DynamicModifier]:
-    text = path.read_text(encoding="utf-8", errors="ignore")
+def load_dynamic_modifiers_text(text: str, path: Path | None = None) -> list[DynamicModifier]:
+    """Read every ``id = { ... }`` definition at the top level of a file's text."""
+
     modifiers: list[DynamicModifier] = []
-    for span in top_level_assignments(text):
-        if not span.is_block or span.body_start is None or span.body_end is None:
+    for item in parse(text).root.assignments():
+        if item.op != "=" or type(item.value) is not Block:
             continue
-        body = text[span.body_start : span.body_end]
-        modifiers.append(_parse_dynamic_modifier(span.key, body, path))
+        modifiers.append(_parse_dynamic_modifier(item.key.value, item.value, path))
     return modifiers
+
+
+def load_dynamic_modifiers_file(path: Path) -> list[DynamicModifier]:
+    return load_dynamic_modifiers_text(read_text(path), path)
 
 
 def _parse_dynamic_modifier(
     modifier_id: str,
-    body: str,
-    path: Path,
+    block: Block,
+    path: Path | None,
 ) -> DynamicModifier:
     icon = ""
     enable = ""
     remove_trigger = ""
     attacker_modifier: bool | None = None
     modifier: dict[str, str | int | float | bool] = {}
-    for span in top_level_assignments(body):
-        if span.is_block and span.body_start is not None and span.body_end is not None:
-            block = body[span.body_start : span.body_end]
-            if span.key == "enable":
-                enable = block.strip()
-            elif span.key == "remove_trigger":
-                remove_trigger = block.strip()
+    for item in block.assignments():
+        if item.op != "=":
             continue
-        value = body[span.value_start : span.value_end].strip()
-        if span.key == "icon":
-            icon = _unquote(value)
-        elif span.key == "attacker_modifier":
-            attacker_modifier = value.lower() in {"yes", "true", "1"}
+        value = item.value
+        if type(value) is Block:
+            if item.key.value == "enable":
+                enable = value.body.strip()
+            elif item.key.value == "remove_trigger":
+                remove_trigger = value.body.strip()
+            continue
+        if type(value) is not Scalar:
+            continue
+        key = item.key.value
+        if key == "icon":
+            icon = value.value.strip()
+        elif key == "attacker_modifier":
+            attacker_modifier = value.value.strip().lower() in {"yes", "true", "1"}
         else:
-            modifier[span.key] = _coerce_scalar(value)
+            modifier[key] = _coerce_scalar(value.value)
     return DynamicModifier(
         id=modifier_id,
         icon=icon,
@@ -77,7 +86,7 @@ def _parse_dynamic_modifier(
         attacker_modifier=attacker_modifier,
         modifier=modifier,
         path=path,
-        raw_block=body,
+        raw_block=block.body,
     )
 
 
@@ -94,7 +103,8 @@ def serialize_dynamic_modifier(modifier: DynamicModifier) -> str:
             f"attacker_modifier = {pdx_value(modifier.attacker_modifier)}"
         )
     lines.extend(
-        f"{key} = {pdx_value(value)}" for key, value in modifier.modifier.items()
+        require_entry(key, pdx_value(value), f"the modifier '{key}'")
+        for key, value in modifier.modifier.items()
     )
     return _wrap_block(modifier.id, "\n".join(lines))
 
@@ -185,35 +195,11 @@ def _patch_modifier_scalars(
     body: str,
     values: dict[str, str | int | float | bool],
 ) -> str:
-    spans = [
-        span
-        for span in top_level_assignments(body)
-        if not span.is_block and span.key not in _RESERVED_SCALARS
-    ]
-    first_by_key = {span.key: span for span in spans[::-1]}
-    remaining = dict(values)
-    result = body
-    for span in reversed(spans):
-        if span.key not in values:
-            result = replace_assignment(result, span, None)
-            continue
-        if span != first_by_key[span.key]:
-            result = replace_assignment(result, span, None)
-            continue
-        rendered = pdx_value(values[span.key])
-        current = result[span.value_start : span.value_end]
-        if not scalar_values_equivalent(current, rendered):
-            result = (
-                result[: span.value_start] + rendered + result[span.value_end :]
-            )
-        remaining.pop(span.key, None)
-    for key, value in remaining.items():
-        result = append_assignment(result, f"{key} = {pdx_value(value)}")
-    return result
+    return patch_scalar_entries(body, values, skip=_RESERVED_SCALARS)
 
 
 def _coerce_scalar(value: str) -> str | int | float | bool:
-    text = _unquote(value)
+    text = value.strip()
     if text == "yes":
         return True
     if text == "no":
@@ -227,15 +213,10 @@ def _coerce_scalar(value: str) -> str | int | float | bool:
             return text
 
 
-def _unquote(value: str) -> str:
-    text = value.strip()
-    if len(text) >= 2 and text[0] == text[-1] == '"':
-        return text[1:-1].replace('\\"', '"').replace("\\\\", "\\")
-    return text
-
-
 def _wrap_block(key: str, body: str) -> str:
     clean = body.strip("\n")
+    # A body with a stray or missing brace would change the script around it.
+    require_well_formed(clean, f"the body of '{key}'")
     if not clean.strip():
         return f"{key} = {{ }}"
     inner = "\n".join(f"\t{line}" for line in clean.splitlines())

@@ -17,6 +17,8 @@ from ..states import (
     build_state_index,
     read_state,
 )
+from ..syntax import parse, repair
+from ..textio import read_text
 from ..types import (
     State,
 )
@@ -207,7 +209,7 @@ class StatesLayer(CoreLayer):
             state = read_state(f)
             self._states[state_id] = state
             self._state_source_paths.setdefault(state_id, f)
-            self._original_files.setdefault(f, f.read_text(encoding="utf-8", errors="ignore"))
+            self._original_files.setdefault(f, read_text(f))
             self._source_baseline.setdefault(f.resolve(strict=False), f.read_bytes())
             return state
         raise KeyError(f"State {state_id} not found")
@@ -233,6 +235,10 @@ class StatesLayer(CoreLayer):
                 except ValueError:
                     pass
         target = resolve_mod_output_path(self.mod_root, relative)
+        if state.raw_text and parse(state.raw_text).problems:
+            # Like the game, read the inherited file forgivingly, but write the
+            # mod's own copy well formed.
+            state.raw_text = repair(state.raw_text)
         state.path = target
         self._state_source_paths[state.id] = target
         self._original_files.setdefault(target, self._read_current_text(target))
@@ -256,6 +262,8 @@ class StatesLayer(CoreLayer):
             if list_key in kwargs and isinstance(kwargs[list_key], list):
                 kwargs[list_key] = _append_unique(getattr(state, list_key), kwargs[list_key])
         _set_fields(state, kwargs)
+        if "victory_points" in kwargs:
+            state._victory_points_requested = True
         self._dirty.add("states")
         self._dirty_states.add(state_id)
         return True

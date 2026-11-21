@@ -122,11 +122,7 @@ def test_loads_category_metadata_from_categories_directory(tmp_path):
     assert "always = yes" in category.allowed
 
 
-def test_touching_legacy_combined_decision_file_migrates_category_metadata(tmp_path):
-    path = tmp_path / "common/decisions/legacy_decisions.txt"
-    path.parent.mkdir(parents=True)
-    path.write_text(
-        """legacy_category = {
+LEGACY_COMBINED = """legacy_category = {
     icon = generic_decision
     allowed = { always = yes }
     legacy_decision = {
@@ -134,26 +130,43 @@ def test_touching_legacy_combined_decision_file_migrates_category_metadata(tmp_p
         complete_effect = { add_political_power = 5 }
     }
 }
-""",
-        encoding="utf-8",
-    )
+"""
+
+
+def test_decision_edit_leaves_category_presentation_where_it_is(tmp_path):
+    path = tmp_path / "common/decisions/legacy_decisions.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(LEGACY_COMBINED, encoding="utf-8")
     mod = Mod(tmp_path)
 
     assert mod.update_decision("legacy_decision", cost=10)
-    mod.save()
+    result = mod.save(require_changes=True)
+
+    # One field changed, so one value changes: nothing is moved between files.
+    assert result.written_files == [path]
+    assert path.read_text(encoding="utf-8") == LEGACY_COMBINED.replace("cost = 5", "cost = 10")
+    assert not (tmp_path / "common/decisions/categories").exists()
+
+
+def test_editing_the_category_moves_its_presentation_to_the_category_file(tmp_path):
+    path = tmp_path / "common/decisions/legacy_decisions.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(LEGACY_COMBINED, encoding="utf-8")
+    mod = Mod(tmp_path)
+
+    assert mod.update_decision_category("legacy_category", icon="generic_research")
+    mod.save(require_changes=True)
 
     decision_text = path.read_text(encoding="utf-8")
-    category_path = (
-        tmp_path
-        / "common/decisions/categories/legacy_decision_categories.txt"
-    )
-    category_text = category_path.read_text(encoding="utf-8")
+    category_text = (
+        tmp_path / "common/decisions/categories/legacy_decision_categories.txt"
+    ).read_text(encoding="utf-8")
     assert "legacy_decision = {" in decision_text
-    assert "cost = 10" in decision_text
+    assert "cost = 5" in decision_text
     assert "icon =" not in decision_text
     assert "allowed =" not in decision_text
     assert "legacy_category = {" in category_text
-    assert "icon = generic_decision" in category_text
+    assert "icon = generic_research" in category_text
     assert "allowed =" in category_text
 
 
@@ -212,20 +225,19 @@ def test_cost_edit_keeps_nested_metadata_in_decisions(tmp_path, metadata_source)
     assert "first_icon" not in added
     assert "has_war" not in added
     assert "first_allowed" not in added
-    if metadata_source == "legacy":
-        assert "icon = category_icon" in added
-        assert "original_tag = TST" in added
-        assert "always = yes" in added
+    assert "category_icon" not in added
+    assert "original_tag = TST" not in added
 
     result = mod.save(require_changes=True)
-    print(result)
-    print(result.written_files)
-    expected_paths = {path} if metadata_source == "separate" else {path, category_path}
-    assert set(result.written_files) == expected_paths
+    # A decision edit writes only the file that holds the decision. Category
+    # presentation is never moved or created as a side effect.
+    assert set(result.written_files) == {path}
     saved = path.read_text(encoding="utf-8")
-    assert first.replace("cost = 5", "cost = 15") in saved
-    assert sibling in saved
-    category_text = category_path.read_text(encoding="utf-8")
+    assert saved == source.replace("cost = 5", "cost = 15")
+    assert category_path.exists() == (metadata_source == "separate")
+    category_text = (
+        category_path.read_text(encoding="utf-8") if category_path.exists() else ""
+    )
     if metadata_source == "separate":
         assert category_text == separate_source
     assert "first_icon" not in category_text
@@ -234,7 +246,8 @@ def test_cost_edit_keeps_nested_metadata_in_decisions(tmp_path, metadata_source)
     assert "has_country_flag" not in category_text
     category_span = top_level_assignments(saved)[0]
     body = saved[category_span.body_start:category_span.body_end]
-    assert [span.key for span in top_level_assignments(body)] == ["first", "second"]
+    decision_keys = [span.key for span in top_level_assignments(body) if span.key in {"first", "second"}]
+    assert decision_keys == ["first", "second"]
 
     reloaded = Mod(tmp_path)
     category = reloaded.get_decision_category("test_category")

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from .patching import append_assignment, replace_assignment, scalar_values_equivalent
 from .patching import top_level_assignments
 from .script import pdx_value
+from .syntax import require_entry
 
 
 def patch_scalar_mapping(
@@ -40,5 +41,5 @@ def patch_scalar_mapping(
             result = result[: span.value_start] + rendered + result[span.value_end :]
         remaining.pop(span.key, None)
     for key, value in remaining.items():
-        result = append_assignment(result, f"{key} = {pdx_value(value)}")
+        result = append_assignment(result, require_entry(key, pdx_value(value)))
     return result

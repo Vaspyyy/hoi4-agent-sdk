@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from .patching import AssignmentSpan, append_assignment, replace_assignment, top_level_assignments
+from .syntax import Assignment, Block, Scalar, parse, require_statement, require_well_formed
+from .textio import read_text
 from .types import ValidationError
 
 SUPPLY_NODES_FILE = "map/supply_nodes.txt"
@@ -26,9 +28,6 @@ STRATEGIC_REGIONS_DIR = "map/strategicregions"
 
 MAX_RAILWAY_LEVEL = 5
 _DATE_KEY_RE = re.compile(r"^\d+\.\d+\.\d+$")
-_LIST_TOKEN_RE = re.compile(r"(#[^\n]*)|(?<![\w.\-])(\d+)(?![\w.])")
-_STATE_PROVINCES_RE = re.compile(r"\bprovinces\s*=\s*\{([^{}]*)\}")
-_COMMENT_RE = re.compile(r"#[^\n]*")
 _BUILDING_STATE_RE = re.compile(r"^(﻿?[ \t]*)(\d+)([ \t]*;)")
 _RAILWAY_LEVEL_RE = re.compile(r"^(﻿?[ \t]*)(\d+)")
 
@@ -243,14 +242,23 @@ def set_map_building_state_text(text: str, index: int, state_id: int) -> str:
 # ── Province-list token editing ──────────────────────────────────────
 
 
+def _int_atoms(body: str) -> list[Scalar]:
+    """Return the bare integer atoms directly inside a list body, in order."""
+
+    return [
+        item for item in parse(body).root.values()
+        if not item.quoted and item.value.isdigit()
+    ]
+
+
+def _block_ints(block: Block) -> list[int]:
+    return [int(item.value) for item in block.values() if not item.quoted and item.value.isdigit()]
+
+
 def list_ints(body: str) -> list[int]:
     """Return the integer atoms of a list body, ignoring comments."""
 
-    return [
-        int(token)
-        for token in _COMMENT_RE.sub(" ", body).split()
-        if token.isdigit()
-    ]
+    return [int(item.value) for item in _int_atoms(body)]
 
 
 def remove_list_tokens(body: str, values: Iterable[int]) -> str:
@@ -266,12 +274,17 @@ def remove_list_tokens(body: str, values: Iterable[int]) -> str:
         return body
     groups: list[list[int]] = []
     previous_end: int | None = None
-    for match in _LIST_TOKEN_RE.finditer(body):
-        removed = match.group(2) is not None and int(match.group(2)) in targets
+    for item in parse(body).root.items:
+        removed = (
+            type(item) is Scalar
+            and not item.quoted
+            and item.value.isdigit()
+            and int(item.value) in targets
+        )
         if not removed:
             previous_end = None
             continue
-        start, end = match.start(2), match.end(2)
+        start, end = item.start, item.end
         if previous_end is not None and not body[previous_end:start].strip(" \t"):
             groups[-1][1] = end
         else:
@@ -303,10 +316,8 @@ def append_list_tokens(body: str, values: Sequence[int]) -> str:
     if not values:
         return body
     addition = " ".join(str(value) for value in values)
-    last_end: int | None = None
-    for match in _LIST_TOKEN_RE.finditer(body):
-        if match.group(2) is not None:
-            last_end = match.end(2)
+    atoms = _int_atoms(body)
+    last_end = atoms[-1].end if atoms else None
     if last_end is None:
         if not body.strip():
             return f" {addition} " if "\n" not in body else f" {addition}{body}"
@@ -336,13 +347,17 @@ def patch_int_list_body(body: str, original: Sequence[int], updated: Sequence[in
 @lru_cache(maxsize=4096)
 def _cached_state_file_provinces(path: Path, stamp: int) -> tuple[int, ...]:
     del stamp  # cache key only
-    text = _COMMENT_RE.sub("", path.read_text(encoding="utf-8", errors="ignore"))
-    match = _STATE_PROVINCES_RE.search(text)
-    return tuple(list_ints(match.group(1))) if match else ()
+    for item in parse(read_text(path)).root.assignments("state"):
+        state = item.block
+        if state is None:
+            continue
+        provinces = state.block("provinces")
+        return tuple(_block_ints(provinces)) if provinces is not None else ()
+    return ()
 
 
 def state_file_provinces(path: Path) -> tuple[int, ...]:
-    """Quickly read a state file's province list without a full parse."""
+    """Read the ``provinces`` list of a state file's ``state`` block (cached)."""
 
     return _cached_state_file_provinces(path, path.stat().st_mtime_ns)
 
@@ -554,7 +569,15 @@ def render_strategic_region(
     ]
     if weather and weather.strip():
         assignment = weather.strip()
-        if not re.match(r"^weather\s*=", assignment):
+        items = parse(assignment).root.items
+        is_assignment = (
+            len(items) == 1 and type(items[0]) is Assignment and items[0].name == "weather"
+        )
+        if is_assignment:
+            require_statement(assignment, "the weather of a strategic region")
+        else:
+            # A body with a stray or missing brace would change the region around it.
+            require_well_formed(assignment, "the weather of a strategic region")
             assignment = "weather = {\n" + textwrap.indent(
                 textwrap.dedent(weather).strip(), "\t"
             ) + "\n}"

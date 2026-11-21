@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import tempfile
 import warnings
 from contextlib import contextmanager
@@ -50,11 +49,15 @@ from ..paths import (
 from ..states import (
     serialize_state,
 )
+from ..syntax import parse, repair
 from ..tags import (
     _parse_tag_file_mapping,
+    country_tag_entries,
     load_vanilla_tags,
+    remove_country_tag_entries,
     sort_generated_country_tags,
 )
+from ..textio import encode_text, read_text
 from ..types import (
     SaveResult,
 )
@@ -64,6 +67,10 @@ from ._shared import (
     ExternalModificationError,
 )
 from ._sources import SourcesLayer
+
+
+# Files that hold Paradox script and are checked for syntax before a save.
+_SCRIPT_SUFFIXES = frozenset({".txt", ".gfx", ".gui", ".asset"})
 
 
 class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
@@ -83,7 +90,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         rendered = self._render_dirty_files()
         self._assert_no_external_modifications(rendered)
         for path, current in rendered.items():
-            original = self._read_rendered_text(path)
+            original = self._read_current_text(path)
             rel = str(path.relative_to(self.mod_root))
             if current is None:
                 current = ""
@@ -114,7 +121,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             path: content
             for path, content in rendered.items()
             if (content is None and path.exists())
-            or (content is not None and self._read_rendered_text(path) != content)
+            or (content is not None and self._read_current_text(path) != content)
         }
         changed_assets = {
             path: content
@@ -145,18 +152,18 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             rendered[path] = text or None
         if "countries" in self._dirty:
             tag_path = self.mod_root / "common" / "country_tags" / "00_generated_tags.txt"
-            tag_text = self._read_current_text(tag_path)
-            for tag in sorted(self._deleted_countries):
-                tag_text = re.sub(rf"(?m)^\s*{re.escape(tag)}\s*=.*(?:\n|$)", "", tag_text)
+            tag_text = remove_country_tag_entries(
+                self._read_current_text(tag_path), set(self._deleted_countries)
+            )
             for tag in sorted(self._dirty_countries):
                 if tag not in self._countries:
                     continue
                 line = f'{tag} = "countries/{tag}.txt"'
                 declared_in_mod = tag in self._country_tag_mappings.get(self.mod_root, {})
                 declared_by_vanilla = tag in self._vanilla_tags
-                if not declared_in_mod and not declared_by_vanilla and not re.search(
-                    rf"(?m)^\s*{re.escape(tag)}\s*=", tag_text
-                ):
+                if not declared_in_mod and not declared_by_vanilla and tag not in {
+                    registered for registered, _ in country_tag_entries(tag_text)
+                }:
                     tag_text = tag_text.rstrip() + ("\n" if tag_text.strip() else "") + line + "\n"
             tag_text = sort_generated_country_tags(tag_text)
             rendered[tag_path] = tag_text or None
@@ -166,13 +173,9 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     if source_path == tag_path:
                         continue
                     source_text = self._read_current_text(source_path)
-                    updated_text = source_text
-                    for tag in sorted(self._deleted_countries):
-                        updated_text = re.sub(
-                            rf"(?m)^\s*{re.escape(tag)}\s*=.*(?:\n|$)",
-                            "",
-                            updated_text,
-                        )
+                    updated_text = remove_country_tag_entries(
+                        source_text, set(self._deleted_countries)
+                    )
                     if updated_text != source_text:
                         rendered[source_path] = updated_text or None
             for deleted_country in self._deleted_countries.values():
@@ -182,14 +185,20 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 dirty_country = self._countries.get(tag)
                 if dirty_country is None:
                     continue
-                country_files = serialize_country_files(self.mod_root, dirty_country)
-                rendered.update(
-                    {
-                        path: content
-                        for path, content in country_files.items()
-                        if path not in self._dirty_character_files
-                    }
+                country_files = serialize_country_files(
+                    self.mod_root,
+                    dirty_country,
+                    keep_history_path=self._overrides_inherited(dirty_country.history_path),
                 )
+                for path, content in country_files.items():
+                    if path in self._dirty_character_files:
+                        continue
+                    if not path.exists() and self._same_as_inherited(path, content):
+                        # A vanilla-backed country edit retargets all of its
+                        # files; one the edit did not change stays inherited
+                        # instead of becoming a stale copy in the mod.
+                        continue
+                    rendered[path] = content
                 if (
                     dirty_country.history_path is not None
                     and dirty_country.history_path not in country_files
@@ -202,8 +211,11 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 tag: country.color
                 for tag in self._dirty_countries
                 if (country := self._countries.get(tag)) is not None
-                and ("*" in country.touched_fields or "color" in country.touched_fields)
+                and {"*", "color", "color_ui"} & country.touched_fields
                 and (tag in self._vanilla_tags or tag in existing_color_tags)
+            }
+            ui_color_updates = {
+                tag: self._countries[tag].color_ui for tag in color_updates
             }
             deleted_color_tags = set(self._deleted_countries) & existing_color_tags
             colors_base = self._script_file_updates.get(colors_path, colors_original)
@@ -214,9 +226,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 if vanilla_colors_path.is_file():
                     colors_base = seed_country_colors_file(
                         colors_base,
-                        vanilla_colors_path.read_text(
-                            encoding="utf-8", errors="ignore"
-                        ),
+                        read_text(vanilla_colors_path),
                     )
                 elif set(color_updates) & self._vanilla_tags:
                     raise RuntimeError(
@@ -229,6 +239,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 colors_base,
                 color_updates,
                 deleted_tags=deleted_color_tags,
+                ui_colors=ui_color_updates,
             )
             if colors_text != colors_original:
                 rendered[colors_path] = colors_text or None
@@ -434,10 +445,17 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     else None
                 )
 
-        return {
+        resolved = {
             resolve_mod_output_path(self.mod_root, path): content
             for path, content in rendered.items()
         }
+        for output_path, output in resolved.items():
+            if output is not None:
+                # Here, not at write time, so preview() shows what save() writes.
+                resolved[output_path] = self._repair_new_override(output_path, output)
+        self._refuse_failed_loads(resolved)
+        self._refuse_new_syntax_problems(resolved)
+        return resolved
 
     def _capture_source_baseline(self) -> None:
         """Fingerprint text sources so legacy writers cannot be overwritten silently."""
@@ -475,6 +493,146 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 f"{displayed}. Call reload() and reapply the intended edit."
             )
 
+    def _overrides_inherited(self, path: Path | None) -> bool:
+        """Return whether a mod path shadows a file from the game or a base mod."""
+
+        if path is None or self._base_content_root is None:
+            return False
+        try:
+            relative = path.resolve(strict=False).relative_to(self.mod_root.resolve(strict=False))
+        except ValueError:
+            return False
+        return (self._base_content_root / relative).is_file()
+
+    def _same_as_inherited(self, path: Path, content: str) -> bool:
+        """Return whether ``content`` only repeats the file ``path`` would shadow."""
+
+        try:
+            shadowed = self.content_source(path.relative_to(self.mod_root))
+        except ValueError:
+            return False
+        if shadowed is None or not shadowed.is_file() or shadowed == path:
+            return False
+        inherited = read_text(shadowed)
+        return content == inherited or content == repair(inherited)
+
+    def _repair_new_override(self, path: Path, content: str) -> str:
+        """Close the braces of a new mod file that copies a tolerated inherited one.
+
+        The game reads its own files with missing or stray braces; the mod's
+        copy is written out well formed.
+        """
+
+        if path.exists():
+            return content
+        try:
+            shadowed = self.content_source(path.relative_to(self.mod_root))
+        except ValueError:
+            return content
+        if shadowed is None or not shadowed.is_file() or shadowed == path:
+            return content
+        if parse(read_text(shadowed)).problems:
+            return repair(content)
+        return content
+
+    def _refuse_new_syntax_problems(self, rendered: dict[Path, str | None]) -> None:
+        """Refuse to write a script file with a syntax problem it did not have before.
+
+        This is the last check before anything reaches the disk: whatever went
+        wrong on the way (malformed script passed to the SDK, or a bug in a
+        patcher), a file is never left more broken than it was.
+        """
+
+        for path, content in rendered.items():
+            if content is None or path.suffix.lower() not in _SCRIPT_SUFFIXES:
+                continue
+            document = parse(content)
+            if not document.problems:
+                continue
+            if path.is_file():
+                before = len(parse(self._read_current_text(path)).problems)
+            else:
+                try:
+                    shadowed = self.content_source(path.relative_to(self.mod_root))
+                except ValueError:
+                    shadowed = None
+                before = (
+                    len(parse(repair(read_text(shadowed))).problems)
+                    if shadowed is not None and shadowed.is_file() and shadowed != path
+                    else 0
+                )
+            if len(document.problems) <= before:
+                continue
+            problem = document.problems[0]
+            line, column = document.line_col(problem.offset)
+            raise RuntimeError(
+                f"Refusing to write {path}: it would get a syntax problem it does not have "
+                f"now ({problem.message}, line {line}, column {column}). Check the script "
+                "text passed to the last edits; nothing was written."
+            )
+
+    def _refuse_failed_loads(self, rendered: dict[Path, str | None]) -> None:
+        """Refuse to write over, or next to, a mod file that could not be loaded.
+
+        Its content was never fully modeled, so writing it from the model
+        would silently drop what the author wrote. And while it is unreadable,
+        the SDK edits the inherited version of whatever it defines: writing
+        that as a new override file would give the mod the same content twice.
+        """
+
+        failed = {
+            diagnostic.path.resolve(strict=False): diagnostic
+            for diagnostic in self._load_diagnostics
+            if diagnostic.error_type != "DuplicateIdentifierError"
+        }
+        if not failed:
+            return
+        failed_folders = {path.parent: diagnostic for path, diagnostic in failed.items()}
+        for path, content in rendered.items():
+            resolved = path.resolve(strict=False)
+            neighbour = failed_folders.get(resolved.parent)
+            if content is not None and neighbour is not None and self._shadows_inherited(path):
+                raise RuntimeError(
+                    f"Refusing to create {path}: it would override an inherited file, but "
+                    f"{neighbour.path} in the same folder failed to load "
+                    f"({neighbour.error_type}: {neighbour.message}) and may already hold the "
+                    "mod's version of this content. Fix that file and call reload() first."
+                )
+            diagnostic = failed.get(resolved)
+            if diagnostic is None or not path.is_file():
+                continue
+            if content is not None and content == self._read_current_text(path):
+                continue
+            raise RuntimeError(
+                f"Refusing to rewrite {path}: it failed to load "
+                f"({diagnostic.error_type}: {diagnostic.message}). Fix the file "
+                "and call reload() before editing it."
+            )
+
+    def _encode_like_source(self, path: Path, content: str, current: bytes | None) -> bytes:
+        """Encode ``content`` for ``path`` the way its source file is stored.
+
+        An existing file keeps its encoding, byte-order mark and line endings,
+        and every line that did not change keeps its exact bytes. A new file
+        that overrides an inherited one copies those properties from the file
+        it shadows. Localisation always gets the byte-order mark the game
+        requires.
+        """
+
+        bom = True if path.suffix.lower() == ".yml" else None
+        donor = self._format_donors.get(path)
+        if donor is not None:
+            return encode_text(content, like=donor, bom=bom)
+        if current is not None:
+            return encode_text(content, like=current, bom=bom)
+        try:
+            shadowed = self.content_source(path.relative_to(self.mod_root))
+        except ValueError:
+            shadowed = None
+        if shadowed is not None and shadowed.is_file() and shadowed != path:
+            donor = shadowed.read_bytes()
+        return encode_text(content, like=donor, bom=bom)
+
     def _commit_rendered_files(
         self,
         rendered: dict[Path, str | None],
@@ -496,7 +654,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     continue
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
-                    handle.write(content.encode("utf-8-sig" if path.suffix == ".yml" else "utf-8"))
+                    handle.write(self._encode_like_source(path, content, backups[path]))
                     prepared[path] = Path(handle.name)
             for path, binary_content in assets.items():
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -612,6 +770,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         self._pending_asset_baselines.clear()
         self._country_name_pool_updates.clear()
         self._script_file_updates.clear()
+        self._format_donors.clear()
         self._original_files.clear()
         self._dirty.clear()
         self._scan_cache.clear()

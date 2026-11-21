@@ -11,11 +11,14 @@ from ..paths import (
     require_script_id,
 )
 from ..script import (
+    braced,
     effect_block,
     normalize_block_body,
     pdx_string,
+    pdx_value,
     scope_block,
 )
+from ..syntax import quote, require_well_formed
 from ._core import CoreLayer
 from ._shared import (
     _join_script_parts,
@@ -31,7 +34,7 @@ class EffectsLayer(CoreLayer):
             f"{state_id} = {{ "
             f"add_extra_state_shared_building_slots = {level} "
             "add_building_construction = { "
-            f"type = {building_type} level = {level} instant_build = yes "
+            f"type = {quote(building_type)} level = {level} instant_build = yes "
             "} "
             "}"
         )
@@ -115,7 +118,10 @@ class EffectsLayer(CoreLayer):
             raise ValueError(
                 f"Unknown technology category '{category}'. Common valid categories: {examples}"
             )
-        return f"add_tech_bonus = {{ name = {name} bonus = {bonus} uses = {uses} category = {category} }}"
+        return (
+            f"add_tech_bonus = {{ name = {quote(name)} bonus = {pdx_value(bonus)} "
+            f"uses = {pdx_value(uses)} category = {category} }}"
+        )
 
     @classmethod
     def effect_add_industry_bonus(cls, name: str, uses: int = 1, bonus: float = 0.5) -> str:
@@ -306,6 +312,9 @@ class EffectsLayer(CoreLayer):
                 raise ValueError("Civil-war capital must be a positive state ID")
             parts.append(f"capital = {capital}")
         nested = [effect.strip() for effect in effects or () if effect and effect.strip()]
+        for effect in nested:
+            # A stray brace would end the civil war block early.
+            require_well_formed(effect, "an effect of start_civil_war")
         if not nested:
             return f"start_civil_war = {{ {' '.join(parts)} }}"
         body = "\n".join(
@@ -465,12 +474,17 @@ class EffectsLayer(CoreLayer):
         support: str = "",
         division_names_group: str = "",
     ) -> str:
+        regiments = normalize_block_body(regiments)
+        support = normalize_block_body(support)
+        # A stray brace would end a block of the template early.
+        for label, body in (("regiments", regiments), ("support", support)):
+            require_well_formed(body, f"the {label} of a division template")
         fields = [
             f"name = {pdx_string(name)}",
-            f"regiments = {{ {normalize_block_body(regiments)} }}",
+            f"regiments = {braced(regiments)}",
         ]
         if support:
-            fields.append(f"support = {{ {normalize_block_body(support)} }}")
+            fields.append(f"support = {braced(support)}")
         if division_names_group:
             fields.append(f"division_names_group = {pdx_string(division_names_group)}")
         return f"division_template = {{ {' '.join(fields)} }}"

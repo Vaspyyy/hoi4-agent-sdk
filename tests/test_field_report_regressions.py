@@ -165,26 +165,23 @@ def test_malformed_country_colors_file_fails_strict_loading(tmp_path: Path) -> N
         Mod(tmp_path, strict_loading=True)
 
 
-def test_malformed_vanilla_country_colors_is_an_exact_load_failure(tmp_path: Path) -> None:
+def test_unclosed_vanilla_country_colors_is_read_the_way_the_game_reads_it(tmp_path: Path) -> None:
     game_root = tmp_path / "game"
     mod_root = tmp_path / "mod"
     _write_vanilla_countries(game_root)
     colors = game_root / "common/countries/colors.txt"
-    colors.write_text("GER = { color = rgb { 1 2 3 }\n", encoding="utf-8")
+    # The game closes a block that is still open at the end of a file. The
+    # author of a mod cannot fix a file the game ships, so it is not an error.
+    colors.write_text("GER = { color = rgb { 4 5 6 }\n", encoding="utf-8")
 
-    mod = Mod(mod_root, hoi4_install=game_root)
+    mod = Mod(mod_root, hoi4_install=game_root, strict_loading=True)
 
-    assert any(
-        diagnostic.section == "country_colors" and diagnostic.path == colors
-        for diagnostic in mod.load_diagnostics
-    )
-    assert mod.get_country("GER").color == (1, 2, 3)
-    assert any(
-        issue.code == "load_failure" and issue.file_path == str(colors)
+    assert not mod.load_diagnostics
+    assert mod.get_country("GER").color == (4, 5, 6)
+    assert not any(
+        issue.code in {"load_failure", "country_colors_parse"}
         for issue in mod.validate(stage="build")
     )
-    with pytest.raises(RuntimeError, match="Failed to load country_colors file"):
-        Mod(mod_root, hoi4_install=game_root, strict_loading=True)
 
 
 def test_reload_rebuilds_country_color_sources_and_diagnostics(tmp_path: Path) -> None:

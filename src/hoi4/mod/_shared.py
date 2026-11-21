@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Sequence, cast
 
@@ -79,8 +80,17 @@ def _join_script_parts(parts: Sequence[str | None]) -> str:
     return "\n".join(part.strip() for part in parts if part and part.strip())
 
 
-def _decision_category_definition_path(mod_root: Path, decision_path: Path) -> Path:
-    """Derive a category-metadata file from a decision-content file."""
+def _decision_category_definition_path(
+    mod_root: Path,
+    decision_path: Path,
+    shadows_inherited: Callable[[Path], bool],
+) -> Path:
+    """Derive a category-metadata file from a decision-content file.
+
+    The game merges every file in ``categories/``, but a mod file replaces the
+    inherited file of the same name. The derived name therefore avoids names
+    that would hide a game or base-mod file.
+    """
 
     resolved = resolve_mod_output_path(mod_root, decision_path)
     decisions_root = mod_root / "common" / "decisions"
@@ -91,7 +101,10 @@ def _decision_category_definition_path(mod_root: Path, decision_path: Path) -> P
     stem = resolved.stem
     if stem.endswith("_decisions"):
         stem = stem[: -len("_decisions")]
-    return decisions_root / "categories" / f"{stem}_decision_categories.txt"
+    candidate = decisions_root / "categories" / f"{stem}_decision_categories.txt"
+    while shadows_inherited(candidate):
+        candidate = candidate.with_name(f"{candidate.stem}_mod.txt")
+    return candidate
 
 
 def _filter_validation_errors(

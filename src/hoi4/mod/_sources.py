@@ -8,6 +8,7 @@ from typing import Iterator, Optional, cast
 from ..characters import (
     Character,
 )
+from ..decisions import category_files, category_in_file
 from ..patching import (
     block_bodies_equivalent,
     set_block,
@@ -27,9 +28,20 @@ from ..types import (
     OnAction,
 )
 from ._localisation import LocalisationLayer
+from ..textio import read_text
 from ._shared import (
     _decision_category_definition_path,
 )
+
+
+def _definition_only(category: DecisionCategory) -> bool:
+    """A category known only from ``common/decisions/categories``.
+
+    It has no block in any decisions file, and editing its metadata must not
+    create one.
+    """
+
+    return category.path is None and not category.paths and not category.decisions
 
 
 class SourcesLayer(LocalisationLayer):
@@ -80,7 +92,7 @@ class SourcesLayer(LocalisationLayer):
                     else self._script_file_updates.get(target)
                 )
                 if text is None:
-                    text = source.read_bytes().decode("utf-8-sig")
+                    text = read_text(source)
                 yield target, text
             except (OSError, ValueError):
                 continue
@@ -217,25 +229,35 @@ class SourcesLayer(LocalisationLayer):
     def _group_decisions_by_file(
         self, dirty_only: bool = False
     ) -> dict[Path, list[DecisionCategory]]:
-        file_categories: dict[Path, list[DecisionCategory]] = {}
+        """Map each decisions file to the categories it should hold.
+
+        A category spread over several files appears once per file, holding
+        only that file's decisions (see ``category_in_file``). A file whose
+        last decision of a category was deleted still lists the category, so
+        its block stays and only the decision span goes. A file the category
+        moved away from no longer lists it, so its blocks leave.
+        """
+
+        default = self.mod_root / "common" / "decisions" / "mod_decisions.txt"
         dirty_files: set[Path] = set(self._dirty_decision_files) if dirty_only else set()
         if dirty_only:
             for category_id in self._dirty_decision_categories:
                 category = self._decision_categories.get(category_id)
-                if category is None:
+                if category is None or _definition_only(category):
                     continue
-                dirty_files.add(
-                    category.path or self.mod_root / "common" / "decisions" / "mod_decisions.txt"
-                )
-        for path in dirty_files:
-            file_categories[path] = []
+                dirty_files.update(category_files(category) or [default])
+        file_categories: dict[Path, list[DecisionCategory]] = {
+            path: [] for path in dirty_files
+        }
         for category in self._decision_categories.values():
-            p = category.path or self.mod_root / "common" / "decisions" / "mod_decisions.txt"
-            if dirty_only and p not in dirty_files:
+            if _definition_only(category):
                 continue
-            if p not in file_categories:
-                file_categories[p] = []
-            file_categories[p].append(category)
+            for path in category_files(category) or [default]:
+                if dirty_only and path not in dirty_files:
+                    continue
+                file_categories.setdefault(path, []).append(
+                    category_in_file(category, path)
+                )
         return file_categories
 
     def _group_decision_categories_by_file(
@@ -247,6 +269,7 @@ class SourcesLayer(LocalisationLayer):
         grouped: dict[Path, list[DecisionCategory]] = {
             path: [] for path in dirty_files
         }
+        defined: dict[Path, set[str]] = {}
         for category in self._decision_categories.values():
             path = category.definition_path
             if path is None:
@@ -258,10 +281,23 @@ class SourcesLayer(LocalisationLayer):
                     / "mod_decisions.txt"
                 )
                 path = _decision_category_definition_path(
-                    self.mod_root, decision_path
+                    self.mod_root, decision_path, self._shadows_inherited
                 )
             if dirty_only and path not in dirty_files:
                 continue
+            if not category.touched:
+                # Nobody edited this category itself. It belongs in the file
+                # only if the file defines it already: an edit of another
+                # category, or of one of this category's decisions, must not
+                # write a definition for it.
+                if path not in defined:
+                    defined[path] = {
+                        span.key
+                        for span in top_level_assignments(self._original_files.get(path, ""))
+                        if span.is_block
+                    }
+                if category.id not in defined[path]:
+                    continue
             grouped.setdefault(path, []).append(category)
         return grouped
 

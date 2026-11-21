@@ -360,7 +360,9 @@ def test_updating_vanilla_country_creates_mod_override_not_game_write(
 
     assert definition.read_bytes() == original_definition
     assert history.read_bytes() == original_history
-    assert (mod_root / "common/countries/Example.txt").is_file()
+    # Only the file the edit changed becomes an override; the definition
+    # stays inherited instead of being copied unchanged into the mod.
+    assert not (mod_root / "common/countries/Example.txt").exists()
     override = mod_root / "history/countries/ABC - Example.txt"
     assert "capital = 2" in override.read_text(encoding="utf-8")
     assert "# vanilla stays" in override.read_text(encoding="utf-8")

@@ -4,24 +4,53 @@ Country Tag Management
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Optional
 
-from .paths import require_country_tag
+from .patching import replace_assignment, top_level_assignments
+from .paths import COUNTRY_TAG_RE, require_country_tag
+from .syntax import Assignment, Scalar, parse
+from .textio import encode_text, read_text, write_text
 
-# Keep the generated-table writer's sorting and deduplication policy separate.
-TAG_FILE_RE = re.compile(r'^\s*([A-Z0-9]{3})\s*=\s*"(.+)"\s*$')
 
-_COUNTRY_TAG_LINE_RE = re.compile(
-    r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"(?:\s*#.*)?\s*$'
-)
+def _tag_registrations(text: str) -> list[Assignment]:
+    return [
+        item
+        for item in parse(text).root.assignments()
+        if item.op == "="
+        and type(item.value) is Scalar
+        and COUNTRY_TAG_RE.fullmatch(item.name)
+    ]
+
+
+def country_tag_entries(text: str) -> list[tuple[str, str]]:
+    """Return the ``TAG = "countries/File.txt"`` registrations of a file, in order.
+
+    Comments, quoted ``#`` characters and other statements such as
+    ``dynamic_tags = yes`` are never registrations.
+    """
+
+    return [(item.name, item.scalar or "") for item in _tag_registrations(text)]
+
+
+def remove_country_tag_entries(text: str, tags: set[str] | frozenset[str]) -> str:
+    """Remove every registration of ``tags`` and leave all other bytes alone."""
+
+    spans = [
+        span
+        for span in top_level_assignments(text)
+        if span.key in tags and not span.is_block
+    ]
+    for span in reversed(spans):
+        text = replace_assignment(text, span, None)
+    return text
 
 
 def _parse_country_tag_line(line: str) -> tuple[str, str] | None:
-    """Read a registration without treating hashes inside its quoted path as comments."""
-    match = _COUNTRY_TAG_LINE_RE.match(line)
-    return (match.group(1), match.group(2)) if match else None
+    """Read one registration line (kept for callers of the old line reader)."""
+
+    entries = country_tag_entries(line)
+    return entries[0] if entries else None
 
 
 def _parse_tag_file_mapping(country_tags_dir: Path) -> dict[str, str]:
@@ -29,12 +58,8 @@ def _parse_tag_file_mapping(country_tags_dir: Path) -> dict[str, str]:
     if not country_tags_dir.is_dir():
         return mapping
     for f in sorted(country_tags_dir.glob("*.txt")):
-        txt = f.read_text(encoding="utf-8", errors="ignore")
-        for line in txt.splitlines():
-            entry = _parse_country_tag_line(line)
-            if entry:
-                tag, target = entry
-                mapping[tag] = target
+        for tag, target in country_tag_entries(read_text(f)):
+            mapping[tag] = target
     return mapping
 
 
@@ -63,16 +88,12 @@ def load_vanilla_tags(hoi4_install: Path) -> set[str]:
 
 
 def load_mod_tags(mod_root: Path) -> list[str]:
-    tags = set()
+    tags: set[str] = set()
     d = mod_root / "common/country_tags"
     if not d.exists():
         return []
     for f in d.glob("*.txt"):
-        txt = f.read_text(encoding="utf-8", errors="ignore")
-        for line in txt.splitlines():
-            entry = _parse_country_tag_line(line)
-            if entry:
-                tags.add(entry[0])
+        tags.update(tag for tag, _ in country_tag_entries(read_text(f)))
     return sorted(tags)
 
 
@@ -90,27 +111,44 @@ def add_country_tag(mod_root: Path, tag: str) -> Path:
     p = mod_root / "common/country_tags/00_generated_tags.txt"
     p.parent.mkdir(parents=True, exist_ok=True)
     line = f'{tag} = "countries/{tag}.txt"\n'
-    if p.exists():
-        content = p.read_text(encoding="utf-8", errors="ignore")
-        if re.search(rf"^{re.escape(tag)}\s*=", content, re.MULTILINE):
-            return p
-    with p.open("a", encoding="utf-8") as fh:
-        fh.write(line)
+    if not p.exists():
+        write_text(p, line)
+        return p
+    original = p.read_bytes()
+    content = read_text(p)
+    if any(existing == tag for existing, _ in country_tag_entries(content)):
+        return p
+    separator = "\n" if content and not content.endswith("\n") else ""
+    p.write_bytes(encode_text(content + separator + line, like=original))
     return p
 
 
 def sort_generated_country_tags(text: str) -> str:
     """Canonicalize an SDK-owned generated country-tag table."""
 
-    other: list[str] = []
+    # A registration that owns its whole line (no comment, nothing else on
+    # it) is canonical and sorted; the last one of a tag wins. Every other
+    # line, comments and commented registrations included, stays first in
+    # its original order.
     entries: dict[str, str] = {}
-    for line in text.splitlines():
-        match = TAG_FILE_RE.match(line)
-        if match is None:
-            if line.strip():
-                other.append(line.rstrip())
+    owned: list[tuple[int, int]] = []
+    for item in _tag_registrations(text):
+        if type(item.value) is not Scalar or not item.value.quoted:
             continue
-        entries[match.group(1)] = line.strip()
+        line_start = text.rfind("\n", 0, item.start) + 1
+        line_end = text.find("\n", item.end)
+        line_end = len(text) if line_end < 0 else line_end
+        if text[line_start : item.start].strip() or text[item.end : line_end].strip():
+            continue
+        entries[item.name] = text[item.start : item.end]
+        owned.append((line_start, line_end))
+    remaining: list[str] = []
+    position = 0
+    for start, end in owned:
+        remaining.append(text[position:start])
+        position = end
+    remaining.append(text[position:])
+    other = [line.rstrip() for line in "".join(remaining).splitlines() if line.strip()]
     lines = [*other, *(entries[tag] for tag in sorted(entries))]
     return "\n".join(lines) + ("\n" if lines else "")
 
@@ -120,9 +158,10 @@ def remove_country_tag(mod_root: Path, tag: str) -> Path | None:
     path = mod_root / "common" / "country_tags" / "00_generated_tags.txt"
     if not path.exists():
         return None
-    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines(keepends=True)
-    kept = [line for line in lines if not re.match(rf"^\s*{re.escape(tag)}\s*=", line)]
-    if kept == lines:
+    original = path.read_bytes()
+    text = read_text(path)
+    updated = remove_country_tag_entries(text, {tag})
+    if updated == text:
         return None
-    path.write_text("".join(kept), encoding="utf-8")
+    path.write_bytes(encode_text(updated, like=original))
     return path

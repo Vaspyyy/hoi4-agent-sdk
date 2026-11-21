@@ -21,7 +21,6 @@ from pathlib import Path
 import re
 from typing import Iterable, Mapping, Sequence
 
-from ._scalar import needs_quotes
 from .parser import parse_pdx
 from .patching import (
     AssignmentSpan,
@@ -35,6 +34,7 @@ from .patching import (
     replace_assignment_body,
     top_level_assignments,
 )
+from .syntax import quote, require_entry, require_well_formed
 
 DEFINITION_ID_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*")
 
@@ -248,7 +248,7 @@ def definition_body(text: str, kind: DefinitionKind, span: AssignmentSpan) -> st
 
 
 def _id_value(definition_id: str) -> str:
-    return f'"{definition_id}"' if needs_quotes(definition_id) else definition_id
+    return quote(definition_id)
 
 
 def _full_body(kind: DefinitionKind, definition_id: str, body: str) -> str:
@@ -354,15 +354,18 @@ def read_definitions(
 def _scalar(value: object) -> str:
     if isinstance(value, bool):
         return "yes" if value else "no"
-    text = str(value)
-    return f'"{text}"' if needs_quotes(text) else text
+    return quote(str(value))
 
 
 def render_scalar_mapping(values: Mapping[str, object]) -> str:
-    return "\n".join(f"{key} = {_scalar(value)}" for key, value in values.items())
+    return "\n".join(
+        require_entry(key, _scalar(value), f"the entry '{key}'") for key, value in values.items()
+    )
 
 
 def render_block(key: str, body: str) -> str:
+    # A body with a stray or missing brace would change the script around it.
+    require_well_formed(body, f"the body of '{key}'")
     return _render_assignment(key, _dedent_block_body(body))
 
 
@@ -396,6 +399,8 @@ def render_ai_strategy(
     if not strategies:
         raise ValueError("An AI strategy needs at least one ai_strategy entry")
     for strategy_type, target, weight in strategies:
+        if not DEFINITION_ID_RE.fullmatch(strategy_type):
+            raise ValueError(f"Invalid AI strategy type: {strategy_type!r}")
         line = f"type = {strategy_type}"
         if target:
             line += f" id = {_scalar(target)}"

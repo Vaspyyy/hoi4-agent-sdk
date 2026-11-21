@@ -23,7 +23,9 @@ class Focus:
     icon: str = "GFX_goal_generic_construct_civilian"
     x: int = 0
     y: int = 0
-    cost: int = 10
+    # Days divided by seven, as the game reads it; fractional costs such as
+    # ``7.2`` are kept, whole numbers stay ``int``.
+    cost: float = 10
     prerequisites: list[list[str]] = field(default_factory=list)
     requires: InitVar[str | list[str] | list[list[str]] | None] = None
     mutually_exclusive: list[list[str]] = field(default_factory=list)
@@ -42,12 +44,39 @@ class Focus:
     will_lead_to_war_with: str = ""
     raw_block: str = ""
     touched: bool = False
+    # Bodies of the ``icon = { ... }`` blocks (conditional icons), in source
+    # order. ``icon`` is the plain ``icon = GFX_...`` entry; a focus with only
+    # icon blocks reports the first icon named in them.
+    icon_blocks: list[str] = field(default_factory=list)
+    # The block key: ``focus`` inside a ``focus_tree``; a top-level block can
+    # also be a ``shared_focus`` or a ``joint_focus``.
+    kind: str = "focus"
 
     def __post_init__(self, requires) -> None:
         if requires:
             self.prerequisites.extend(_ensure_nested(requires))
         self.prerequisites = _ensure_nested(self.prerequisites)
         self.mutually_exclusive = _ensure_nested(self.mutually_exclusive)
+
+    def icon_names(self) -> list[str]:
+        """Return every icon sprite this focus can show, the plain ``icon`` first.
+
+        Reads both block forms the game accepts:
+        ``icon = { trigger = { ... } value = GFX_a }`` and
+        ``icon = { GFX_a = { <trigger> } GFX_b = yes }``.
+        """
+
+        from .syntax import Assignment, parse
+
+        names = [self.icon] if self.icon else []
+        for body in self.icon_blocks:
+            for item in parse(body).root.items:
+                if type(item) is not Assignment or item.name == "trigger":
+                    continue
+                name = item.scalar if item.name == "value" else item.name
+                if name and name not in names:
+                    names.append(name)
+        return names
 
 
 @dataclass
@@ -61,6 +90,11 @@ class FocusTree:
     shared_focuses: list[str] = field(default_factory=list)
     raw_block: str = ""
     touched: bool = False
+    # ``focus_tree`` for a real tree. ``file`` is the container for the
+    # top-level ``focus``, ``shared_focus`` and ``joint_focus`` blocks of one
+    # file: its ``id`` is the file name without extension, and the game sees no
+    # tree with that ID. A file can hold real trees and one container.
+    kind: str = "focus_tree"
 
 
 @dataclass
@@ -98,6 +132,8 @@ class Country:
     history_path: Optional[Path] = None
     character_path: Optional[Path] = None
     touched_fields: set[str] = field(default_factory=set)
+    # UI colour from ``common/countries/colors.txt``; ``None`` means "same as color".
+    color_ui: tuple[int, int, int] | None = None
 
     def __post_init__(self):
         if not self.popularities:
@@ -162,6 +198,19 @@ class LoadDiagnostic:
 
 
 @dataclass
+class EventText:
+    """One conditional localisation key of an event title, description or option name.
+
+    ``title = { text = KEY trigger = { ... } }`` reads as
+    ``EventText(text="KEY", trigger="...")``. The game shows the first entry
+    whose trigger holds.
+    """
+
+    text: str
+    trigger: str = ""
+
+
+@dataclass
 class EventOption:
     name: str = ""
     trigger: str = ""
@@ -169,12 +218,22 @@ class EventOption:
     ai_chance: str = ""
     raw_block: str = ""
     touched: bool = False
+    # ``name = { text = ... trigger = { ... } }`` entries, in source order.
+    conditional_names: list[EventText] = field(default_factory=list)
     # Exact interior retained independently of the option's current list position.
     _source_body: Optional[str] = field(default=None, repr=False, compare=False)
 
 
 @dataclass
 class Event:
+    """One event.
+
+    ``title`` and ``description`` hold the unconditional key: a plain
+    ``title = KEY`` or a ``title = { text = KEY }`` without a trigger.
+    ``conditional_titles`` and ``conditional_descriptions`` hold every
+    ``title``/``desc`` block that has a trigger, in source order.
+    """
+
     id: str
     title: str = ""
     description: str = ""
@@ -190,6 +249,8 @@ class Event:
     raw_block: str = ""
     touched: bool = False
     touched_fields: set[str] = field(default_factory=set)
+    conditional_titles: list[EventText] = field(default_factory=list)
+    conditional_descriptions: list[EventText] = field(default_factory=list)
 
 
 @dataclass
@@ -217,11 +278,13 @@ class State:
     cores: list[str] = field(default_factory=list)
     resources: dict[str, str | int | float] = field(default_factory=dict)
     buildings: str = ""
-    local_supplies: str = ""
-    manpower: str = "0"
+    # Numeric properties may be given as numbers or as their script spelling.
+    # Loaded states keep the spelling of the file.
+    local_supplies: str | int | float = ""
+    manpower: str | int | float = "0"
     state_category: str = "large_city"
     victory_points: str = ""
-    buildings_max_level_factor: str = "1.0"
+    buildings_max_level_factor: str | int | float = "1.0"
     is_demilitarized_zone: bool = False
     provinces: list[int] = field(default_factory=list)
     history: str = ""
@@ -230,6 +293,10 @@ class State:
     source_path: Optional[Path] = None
 
     impassable: bool = False
+    # Set when a caller passes ``victory_points`` explicitly: the points are
+    # then written one province/value pair per block even when the value equals
+    # what the file says. Other edits leave the file's spelling alone.
+    _victory_points_requested: bool = field(default=False, repr=False, compare=False)
 
 @dataclass
 class Decision:
@@ -285,13 +352,17 @@ class DecisionCategory:
     visible: str = ""
     decisions: list[Decision] = field(default_factory=list)
     # Category presentation belongs in common/decisions/categories while
-    # decision content belongs in common/decisions. ``path`` remains the
-    # decision-content path for public API compatibility.
+    # decision content belongs in common/decisions. ``path`` is the
+    # decision-content file new decisions go to: the last file, in load
+    # order, that holds a block of the category.
     path: Optional[Path] = None
     definition_path: Optional[Path] = None
     raw_block: str = ""
     definition_raw_block: str = ""
     touched: bool = False
+    # Every common/decisions file that holds a block of this category, in
+    # load order. The game merges them all into one category.
+    paths: list[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -311,7 +382,11 @@ class Idea:
     # from older SDK output. Current HOI4 uses ``{idea_id}_desc`` localization.
     desc: str = ""
     removal_cost: str | int | float | None = None
+    # The idea's own body as read from its file (without the braces).
     raw_block: str = ""
+    # The category's own settings (``designer = yes``, ``law = yes``...), not
+    # its sibling ideas. Ideas of one category share the same string; it is
+    # used only to recreate the category when the idea moves to a new file.
     category_raw_block: str = ""
     touched: bool = False
     touched_fields: set[str] = field(default_factory=set)

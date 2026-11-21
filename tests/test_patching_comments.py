@@ -56,4 +56,32 @@ def test_comment_free_replacements_stay_compact(body):
 def test_semantically_unchanged_source_is_byte_identical():
     source = "trigger = {\r\n  # retained\r\n  always = yes }\r\n"
     assert set_block(source, "trigger", "always = yes") == source
-    assert set_block(source, "trigger", "# new comment\nalways = yes") == source
+    assert set_block(source, "trigger", "# retained\nalways = yes") == source
+
+
+def test_a_changed_comment_is_written():
+    source = "trigger = {\r\n  # retained\r\n  always = yes }\r\n"
+    assert set_block(source, "trigger", "# new comment\nalways = yes") == (
+        "trigger = {\r\n  # new comment\r\n  always = yes }\r\n"
+    )
+
+
+def test_a_comment_moved_to_another_statement_is_a_change():
+    text = "x = {\n\ta = 1 # note\n\tb = 2\n}\n"
+
+    assert set_block(text, "x", "a = 1 # note\nb = 2") == text
+    assert set_block(text, "x", "a = 1\nb = 2 # note") == "x = {\n\ta = 1\n\tb = 2 # note\n}\n"
+
+
+def test_a_comment_moved_inside_a_nested_block_is_a_change():
+    text = "trigger = {\n\tif = {\n\t\tlimit = {\n\t\t\ta = 1 # move me\n\t\t\tb = 2\n\t\t}\n\t}\n}\n"
+    same = "if = {\n\tlimit = {\n\t\ta = 1 # move me\n\t\tb = 2\n\t}\n}"
+    moved = "if = {\n\tlimit = {\n\t\ta = 1\n\t\tb = 2 # move me\n\t}\n}"
+    wanted = text.replace("a = 1 # move me", "a = 1").replace("b = 2", "b = 2 # move me")
+
+    assert set_block(text, "trigger", same) == text
+    assert set_block(text, "trigger", moved) == wanted
+    # Also when another statement changes in the same edit.
+    assert set_block(text, "trigger", moved + "\nc = 3") == wanted.replace(
+        "\t}\n}\n", "\t}\n\tc = 3\n}\n"
+    )

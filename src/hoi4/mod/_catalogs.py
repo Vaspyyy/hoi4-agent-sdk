@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import re
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from ..parser import (
 from ..patching import (
     top_level_assignments,
 )
+from ..syntax import parse
+from ..textio import decode_text, read_text
 from ..validation import (
     collect_character_ids,
 )
@@ -27,7 +30,17 @@ from ._sources import SourcesLayer
 _SCRIPT_BLOCK_ID_RE = re.compile(r"(?m)^\s*([A-Za-z0-9_.:-]+)\s*=\s*\{")
 
 
-_GFX_NAME_RE = re.compile(r"\bname\s*=\s*\"?([A-Za-z0-9_.:-]+)\"?")
+def _sprite_names(text: str) -> set[str]:
+    """The ``name = GFX_...`` of every sprite declared in a ``.gfx`` text."""
+
+    names: set[str] = set()
+    for assignment, _ in parse(text).root.walk():
+        if assignment.op != "=" or assignment.name.lower() != "name":
+            continue
+        name = assignment.scalar
+        if name is not None and name.startswith("GFX_"):
+            names.add(name)
+    return names
 
 
 class CatalogsLayer(SourcesLayer):
@@ -114,21 +127,17 @@ class CatalogsLayer(SourcesLayer):
                     continue
                 for path in interface_dir.rglob("*.gfx"):
                     try:
-                        text = path.read_text(encoding="utf-8", errors="ignore")
+                        text = read_text(path)
                     except Exception:
                         continue
-                    cached.update(
-                        name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_")
-                    )
+                    cached.update(_sprite_names(text))
             self._scan_cache["focus_icons"] = cached
         icons = set(cached)
         # Staged sprite declarations are visible before save; they are not cached.
         for path, content in self._pending_asset_writes.items():
             if path.suffix.lower() == ".gfx":
-                text = content.decode("utf-8", errors="ignore")
-                icons.update(
-                    name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_")
-                )
+                text = decode_text(content)
+                icons.update(_sprite_names(text))
         return icons
 
     def _known_sprite_textures(self) -> dict[str, str]:
@@ -166,7 +175,7 @@ class CatalogsLayer(SourcesLayer):
                 return
             for path in interface_dir.rglob("*.gfx"):
                 try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    text = read_text(path)
                     scan_text(text, textures)
                 except (OSError, ValueError):
                     continue
@@ -180,7 +189,7 @@ class CatalogsLayer(SourcesLayer):
         scan(self.mod_root, textures)
         for path, content in self._pending_asset_writes.items():
             if path.suffix.lower() == ".gfx":
-                scan_text(content.decode("utf-8", errors="ignore"), textures)
+                scan_text(decode_text(content), textures)
         return dict(textures)
 
     def _texture_exists(self, relative_path: str) -> bool:
@@ -316,7 +325,7 @@ class CatalogsLayer(SourcesLayer):
                 continue
             for path in directory.glob("*.txt"):
                 try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    text = read_text(path)
                     for body, _, _ in iter_assignment_blocks(text, "sub_units"):
                         result.update(
                             span.key
@@ -348,15 +357,14 @@ class CatalogsLayer(SourcesLayer):
                 break
         province_types: dict[int, str] = {}
         if path is not None:
-            with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
-                for row in csv.reader(handle, delimiter=";"):
-                    if len(row) < 5:
-                        continue
-                    try:
-                        numeric_id = int(row[0].strip())
-                    except ValueError:
-                        continue
-                    province_types[numeric_id] = row[4].strip().lower()
+            for row in csv.reader(io.StringIO(read_text(path)), delimiter=";"):
+                if len(row) < 5:
+                    continue
+                try:
+                    numeric_id = int(row[0].strip())
+                except ValueError:
+                    continue
+                province_types[numeric_id] = row[4].strip().lower()
         self._scan_cache["province_type_rows"] = {
             f"{province_id}:{province_type}"
             for province_id, province_type in province_types.items()

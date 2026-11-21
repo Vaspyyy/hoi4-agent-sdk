@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .textio import decode_text, read_text, write_text
+
 YML_ENTRY_RE = re.compile(r'^\s*([^:#\s]+)\s*:\s*(?:\d+\s*)?\s*"')
 _HEADER_RE = re.compile(r"^\s*l_([A-Za-z_]+)\s*:\s*(?:#.*)?$")
 
@@ -132,10 +134,7 @@ def parse_localization_dir(loc_dir: Path) -> tuple[dict[str, str], dict[str, Pat
 def parse_localization_file(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     raw = path.read_bytes()
-    try:
-        txt = raw.decode("utf-8-sig")
-    except Exception:
-        txt = raw.decode("utf-8", errors="ignore")
+    txt = decode_text(raw)
 
     for line in txt.splitlines():
         if not line or line.strip().startswith("#"):
@@ -172,16 +171,17 @@ def write_localization_file(
     """Write entries; a new file's header follows ``language`` or its folder."""
     path.parent.mkdir(parents=True, exist_ok=True)
     original = (
-        path.read_text(encoding="utf-8-sig", errors="ignore") if path.exists() else ""
+        read_text(path) if path.exists() else ""
     )
     resolved = (
         language
         or localisation_language_for_path(path)
         or DEFAULT_LOCALISATION_LANGUAGE
     )
-    path.write_text(
+    write_text(
+        path,
         serialize_localization_file(entries, original=original, language=resolved),
-        encoding="utf-8-sig",
+        bom=True,
     )
 
 

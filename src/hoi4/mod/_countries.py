@@ -29,6 +29,8 @@ from ..script import (
     pdx_string,
     pdx_value,
 )
+from ..syntax import repair, require_entry
+from ..textio import read_text
 from ..types import (
     Country,
 )
@@ -128,7 +130,7 @@ class CountriesLayer(CoreLayer):
         for path in country_file_paths(self.mod_root, country):
             if path.exists():
                 self._original_files.setdefault(
-                    path, path.read_text(encoding="utf-8", errors="ignore")
+                    path, read_text(path)
                 )
                 if path.resolve(strict=False).is_relative_to(self.mod_root):
                     self._source_baseline.setdefault(
@@ -201,7 +203,7 @@ class CountriesLayer(CoreLayer):
         if not ({"*", "technologies"} & country.touched_fields):
             return
         body = "\n".join(
-            f"{technology} = {pdx_value(level)}"
+            require_entry(technology, pdx_value(level), f"the technology '{technology}'")
             for technology, level in country.technologies.items()
         )
         history = set_block(
@@ -264,18 +266,26 @@ class CountriesLayer(CoreLayer):
         """Retarget vanilla-backed country files into equivalent mod paths."""
 
         path_fields = (
-            ("definition_path", Path("common/countries") / f"{country.tag}.txt"),
+            ("definition_path", "raw_definition", Path("common/countries") / f"{country.tag}.txt"),
             (
                 "history_path",
+                "raw_history",
                 Path("history/countries")
                 / f"{country.tag} - {country.name or country.tag}.txt",
             ),
-            ("character_path", Path("common/characters") / f"{country.tag}_characters.txt"),
+            (
+                "character_path",
+                "raw_character",
+                Path("common/characters") / f"{country.tag}_characters.txt",
+            ),
         )
-        for field_name, fallback in path_fields:
+        for field_name, raw_field, fallback in path_fields:
             source = getattr(country, field_name)
             if source is None or source.resolve(strict=False).is_relative_to(self.mod_root):
                 continue
+            # The game tolerates a missing closing brace in its own files
+            # (Norway's history); the mod's copy is edited and written well formed.
+            setattr(country, raw_field, repair(getattr(country, raw_field)))
             relative = fallback
             if self._base_content_root is not None:
                 try:

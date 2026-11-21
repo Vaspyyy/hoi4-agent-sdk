@@ -44,18 +44,23 @@ from .characters import (
     CountryLeaderRole,
     NavyLeaderRole,
 )
-from .country_package import CountryPackageReport
 from .commons_images import (
     CommonsImage,
     CommonsImageClient,
     CommonsImageError,
     DownloadedCommonsImage,
 )
-from .content_graph import ContentLivenessReport
-from .mod import ExternalModificationError, Mod
 from .config import Config, find_config
+from .content_graph import ContentLivenessReport
+from .country_package import CountryPackageReport
 from .definitions import DEFINITION_KINDS, DefinitionKind, ScriptDefinition
 from .dynamic_modifiers import DynamicModifier
+from .game_log import (
+    GameLogEntry,
+    GameLogReport,
+    format_game_log_report,
+    parse_hoi4_error_log,
+)
 from .gemini_images import (
     DEFAULT_GEMINI_IMAGE_MODEL,
     DEFAULT_GEMINI_IMAGE_SIZE,
@@ -67,16 +72,11 @@ from .gemini_images import (
     GeminiImageResponseError,
     GeminiImageResult,
 )
-from .game_log import (
-    GameLogEntry,
-    GameLogReport,
-    format_game_log_report,
-    parse_hoi4_error_log,
-)
 from .ideologies import Ideology, SubIdeology
 from .map_editing import MapBuilding, MapEditReport, Railway, StrategicRegion
 from .map_render import MapRenderCancelled, PoliticalMapResult, render_political_map
 from .map_topology import TerritoryComponent
+from .mod import ExternalModificationError, Mod
 from .oob import (
     AirWing,
     Battalion,
@@ -95,9 +95,9 @@ from .parser import ParseError, PdxNode, parse_pdx, serialize_pdx
 from .progress import OperationCancelled, ProgressEvent
 from .project import (
     DiscoveredMod,
+    ModDescriptorFiles,
     ModDiscoveryIssue,
     ModDiscoveryResult,
-    ModDescriptorFiles,
     create_mod_structure,
     detect_launcher_mod_directory,
     discover_mods,
@@ -112,8 +112,6 @@ from .script import (
     scope_block,
     validate_script_syntax,
 )
-from .validation import VALIDATION_CODES, VALIDATION_WARNING_CODES
-from .validation_stages import ValidationStage
 from .script_vocabulary import (
     GameScriptVocabulary,
     ScriptSource,
@@ -126,6 +124,7 @@ from .types import (
     DecisionCategory,
     Event,
     EventOption,
+    EventText,
     Focus,
     FocusTree,
     Idea,
@@ -136,6 +135,8 @@ from .types import (
     State,
     ValidationError,
 )
+from .validation import VALIDATION_CODES, VALIDATION_WARNING_CODES
+from .validation_stages import ValidationStage
 
 try:
     from .effects_catalog import EFFECT_CATEGORIES, TECHNOLOGY_CATEGORIES
@@ -182,6 +183,7 @@ __all__ = [
     "DecisionCategory",
     "Event",
     "EventOption",
+    "EventText",
     "Focus",
     "FocusTree",
     "Idea",

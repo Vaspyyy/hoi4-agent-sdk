@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Iterable, Protocol
 
 from .localisation import parse_localization_dir
 from .parser import strip_comments
+from .textio import read_text
 from .types import ValidationError
 
 if TYPE_CHECKING:
@@ -375,7 +376,7 @@ def _installed_flag_usage(mod: LivenessSource) -> tuple[set[str], set[str]]:
             continue
         for path in directory.rglob("*.txt"):
             try:
-                text = path.read_text(encoding="utf-8-sig", errors="ignore")
+                text = read_text(path)
             except OSError:
                 continue
             for operation, flag in _FLAG_RE.findall(strip_comments(text)):
@@ -407,7 +408,9 @@ def _known_localization_uses(mod: LivenessSource) -> set[str]:
             result.update((focus.id, f"{focus.id}_desc"))
     for event in mod._events.values():
         result.update((event.title, event.description))
+        result.update(e.text for e in (*event.conditional_titles, *event.conditional_descriptions))
         result.update(option.name for option in event.options)
+        result.update(e.text for option in event.options for e in option.conditional_names)
     for idea in mod._ideas.values():
         result.update((idea.id, f"{idea.id}_desc"))
     for decision in mod._decisions.values():

@@ -19,8 +19,21 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
+from ..textio import read_text
 from ._countries import CountriesLayer
 from ._localisation import LocalisationLayer
+
+
+def _require_character_lookup_id(value: str) -> str:
+    """Validate an id to look up: any script word, including non-ASCII letters."""
+
+    text = str(value)
+    if not text or any(
+        character.isspace() or not character.isprintable() or character in '{}=<>#"/\\'
+        for character in text
+    ):
+        return require_script_id(text, label="character ID")
+    return text
 
 
 class CharactersLayer(CountriesLayer, LocalisationLayer):
@@ -49,10 +62,12 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         include_vanilla: bool = True,
     ) -> Character:
-        character_id = require_script_id(character_id, label="character ID")
-        character = self._characters.get(character_id)
+        # Look up before validating: the game accepts ids the SDK would not
+        # generate, such as ``COL_alfonso_lópez_pumarejo`` in vanilla.
+        character = self._characters.get(str(character_id))
         if character is not None:
             return character
+        character_id = _require_character_lookup_id(character_id)
         if include_vanilla and self._base_content_root is not None:
             prefix = character_id.split("_", 1)[0]
             tag = (
@@ -426,7 +441,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             )
         relative = source.resolve(strict=False).relative_to(self._base_content_root)
         target = resolve_mod_output_path(self.mod_root, relative)
-        source_text = source.read_text(encoding="utf-8", errors="ignore")
+        source_text = read_text(source)
         for item in load_characters_file(source, country_tag=character.country_tag):
             cached = self._characters.get(item.id)
             if cached is not None and cached.path == source:

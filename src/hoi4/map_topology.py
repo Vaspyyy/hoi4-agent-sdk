@@ -8,6 +8,7 @@ with the ``map`` extra to catch accidental enclaves and disconnected states.
 from __future__ import annotations
 
 import csv
+import io
 import math
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .map_render import parse_definition_csv
+from .textio import read_text
 from .types import State
 
 
@@ -437,15 +439,14 @@ def _optional_effective_map_file(
 
 def _province_types(path: Path) -> dict[int, str]:
     result: dict[int, str] = {}
-    with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
-        for row in csv.reader(handle, delimiter=";"):
-            if len(row) < 5:
-                continue
-            try:
-                province_id = int(row[0].strip())
-            except ValueError:
-                continue
-            result[province_id] = row[4].strip().lower()
+    for row in csv.reader(io.StringIO(read_text(path)), delimiter=";"):
+        if len(row) < 5:
+            continue
+        try:
+            province_id = int(row[0].strip())
+        except ValueError:
+            continue
+        result[province_id] = row[4].strip().lower()
     return result
 
 
@@ -496,24 +497,23 @@ def _add_explicit_adjacencies(
     path: Path,
     land_provinces: AbstractSet[int],
 ) -> None:
-    with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
-        for row in csv.reader(handle, delimiter=";"):
-            if len(row) < 3:
-                continue
-            try:
-                first = int(row[0].strip())
-                second = int(row[1].strip())
-            except ValueError:
-                continue
-            adjacency_type = row[2].strip().lower()
-            if first < 0 or second < 0:
-                continue
-            if adjacency_type in {"impassable", "disabled"}:
-                continue
-            if first not in land_provinces or second not in land_provinces:
-                continue
-            graph.setdefault(first, set()).add(second)
-            graph.setdefault(second, set()).add(first)
+    for row in csv.reader(io.StringIO(read_text(path)), delimiter=";"):
+        if len(row) < 3:
+            continue
+        try:
+            first = int(row[0].strip())
+            second = int(row[1].strip())
+        except ValueError:
+            continue
+        adjacency_type = row[2].strip().lower()
+        if first < 0 or second < 0:
+            continue
+        if adjacency_type in {"impassable", "disabled"}:
+            continue
+        if first not in land_provinces or second not in land_provinces:
+            continue
+        graph.setdefault(first, set()).add(second)
+        graph.setdefault(second, set()).add(first)
 
 
 def _connected_components(graph: dict[int, set[int]]) -> list[set[int]]:

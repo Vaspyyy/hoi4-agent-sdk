@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import re
 from pathlib import Path
-from typing import Literal, Sequence, cast
+from typing import Literal, Protocol, Sequence, TypeVar, cast
 
 from ..oob import (
     AirWing,
@@ -30,11 +30,56 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
+from ..syntax import parse, repair
+from ..textio import read_text
 from ..types import (
     Country,
 )
 from ._countries import CountriesLayer
 from ._equipment import EquipmentLayer
+
+
+class _SourceItem(Protocol):
+    source_index: int
+    raw_block: str
+
+
+_Item = TypeVar("_Item", bound=_SourceItem)
+
+
+def _inherit_sources(replacements: Sequence[_Item], existing: Sequence[_Item]) -> None:
+    """Give each fresh replacement the source block of the item at its position.
+
+    An item that already points at a source block keeps it. A source block that
+    another replacement already points at is never handed out a second time, so
+    removing one item and adding another in the same call cannot make the new
+    item overwrite a kept one. Which fields get written is decided later, by
+    comparing each item with what its source block says.
+    """
+
+    claimed = {item.source_index for item in replacements if item.source_index >= 0}
+    for index, item in enumerate(replacements):
+        if index >= len(existing) or item.source_index >= 0 or item.raw_block:
+            continue
+        source = existing[index]
+        if source.source_index < 0 or source.source_index in claimed:
+            continue
+        item.source_index = source.source_index
+        item.raw_block = source.raw_block
+        if isinstance(item, AirWing) and isinstance(source, AirWing):
+            item.source_location_index = source.source_location_index
+        claimed.add(source.source_index)
+
+
+def _matching_source(item: _Item, existing: Sequence[_Item]) -> _Item | None:
+    """The loaded item that ``item`` was read from, if any."""
+
+    if item.source_index < 0:
+        return None
+    return next(
+        (source for source in existing if source.source_index == item.source_index),
+        None,
+    )
 
 
 def _inherit_fleet_sources(
@@ -43,42 +88,21 @@ def _inherit_fleet_sources(
 ) -> None:
     """Carry source coordinates into explicit naval replacements."""
 
-    for fleet_index, fleet in enumerate(replacements):
-        if fleet_index >= len(existing):
+    _inherit_sources(replacements, existing)
+    for fleet in replacements:
+        source_fleet = _matching_source(fleet, existing)
+        if source_fleet is None:
             continue
-        source_fleet = existing[fleet_index]
-        if fleet.source_index < 0 and not fleet.raw_block:
-            fleet.source_index = source_fleet.source_index
-            fleet.raw_block = source_fleet.raw_block
-        fleet.touched_fields.update({"name", "naval_base", "task_forces"})
-        for force_index, task_force in enumerate(fleet.task_forces):
-            if force_index >= len(source_fleet.task_forces):
+        _inherit_sources(fleet.task_forces, source_fleet.task_forces)
+        for task_force in fleet.task_forces:
+            source_force = _matching_source(task_force, source_fleet.task_forces)
+            if source_force is None:
                 continue
-            source_force = source_fleet.task_forces[force_index]
-            if task_force.source_index < 0 and not task_force.raw_block:
-                task_force.source_index = source_force.source_index
-                task_force.raw_block = source_force.raw_block
-            task_force.touched_fields.update({"name", "location", "ships"})
-            for ship_index, ship in enumerate(task_force.ships):
-                if ship_index >= len(source_force.ships):
-                    continue
-                source_ship = source_force.ships[ship_index]
-                if ship.source_index < 0 and not ship.raw_block:
-                    ship.source_index = source_ship.source_index
-                    ship.raw_block = source_ship.raw_block
-                ship.touched_fields.update(
-                    {"name", "definition", "equipment", "pride_of_the_fleet"}
-                )
-                for equipment_index, equipment in enumerate(ship.equipment):
-                    if equipment_index >= len(source_ship.equipment):
-                        continue
-                    source_equipment = source_ship.equipment[equipment_index]
-                    if equipment.source_index < 0 and not equipment.raw_block:
-                        equipment.source_index = source_equipment.source_index
-                        equipment.raw_block = source_equipment.raw_block
-                    equipment.touched_fields.update(
-                        {"amount", "owner", "creator", "version_name"}
-                    )
+            _inherit_sources(task_force.ships, source_force.ships)
+            for ship in task_force.ships:
+                source_ship = _matching_source(ship, source_force.ships)
+                if source_ship is not None:
+                    _inherit_sources(ship.equipment, source_ship.equipment)
 
 
 def _default_oob_equipment_owners(oob: OrderOfBattle) -> None:
@@ -92,13 +116,9 @@ def _default_oob_equipment_owners(oob: OrderOfBattle) -> None:
                 for equipment in ship.equipment:
                     if not equipment.owner:
                         equipment.owner = oob.country_tag
-                        if equipment.raw_block:
-                            equipment.touched_fields.add("owner")
     for wing in oob.air_wings:
         if not wing.owner:
             wing.owner = oob.country_tag
-            if wing.raw_block:
-                wing.touched_fields.add("owner")
 
 
 def _oob_content_kind(
@@ -184,7 +204,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             if path.resolve(strict=False).is_relative_to(self.mod_root):
                 self._original_files.setdefault(
                     path,
-                    path.read_text(encoding="utf-8-sig", errors="ignore"),
+                    read_text(path),
                 )
             return oob
         raise KeyError(f"OOB '{name}' not found")
@@ -267,29 +287,10 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 if index < len(existing.templates):
                     template.source_index = existing.templates[index].source_index
                     template.raw_block = existing.templates[index].raw_block
-                    template.touched_fields.update(
-                        {
-                            "name",
-                            "battalions",
-                            "support",
-                            "division_names_group",
-                            "priority",
-                        }
-                    )
             for index, division in enumerate(oob.divisions):
                 if index < len(existing.divisions):
                     division.source_index = existing.divisions[index].source_index
                     division.raw_block = existing.divisions[index].raw_block
-                    division.touched_fields.update(
-                        {
-                            "name",
-                            "name_order",
-                            "location",
-                            "division_template",
-                            "start_experience_factor",
-                            "start_equipment_factor",
-                        }
-                    )
             _inherit_fleet_sources(oob.fleets, existing.fleets)
             for index, wing in enumerate(oob.air_wings):
                 if index < len(existing.air_wings):
@@ -297,9 +298,6 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                     wing.source_index = source.source_index
                     wing.source_location_index = source.source_location_index
                     wing.raw_block = source.raw_block
-                    wing.touched_fields.update(
-                        {"amount", "owner", "creator", "version_name"}
-                    )
         if assign:
             self._check_country_oob_assignment(
                 self.get_country(country_tag),
@@ -375,45 +373,12 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         self._materialize_oob_override(oob)
         if templates is not None:
             template_replacements = copy.deepcopy(list(templates))
-            for index, template in enumerate(template_replacements):
-                if (
-                    index < len(oob.templates)
-                    and template.source_index < 0
-                    and not template.raw_block
-                ):
-                    template.source_index = oob.templates[index].source_index
-                    template.raw_block = oob.templates[index].raw_block
-                    template.touched_fields.update(
-                        {
-                            "name",
-                            "battalions",
-                            "support",
-                            "division_names_group",
-                            "priority",
-                        }
-                    )
+            _inherit_sources(template_replacements, oob.templates)
             oob.templates = template_replacements
             oob.touched_fields.add("templates")
         if divisions is not None:
             division_replacements = copy.deepcopy(list(divisions))
-            for index, division in enumerate(division_replacements):
-                if (
-                    index < len(oob.divisions)
-                    and division.source_index < 0
-                    and not division.raw_block
-                ):
-                    division.source_index = oob.divisions[index].source_index
-                    division.raw_block = oob.divisions[index].raw_block
-                    division.touched_fields.update(
-                        {
-                            "name",
-                            "name_order",
-                            "location",
-                            "division_template",
-                            "start_experience_factor",
-                            "start_equipment_factor",
-                        }
-                    )
+            _inherit_sources(division_replacements, oob.divisions)
             oob.divisions = division_replacements
             oob.touched_fields.add("divisions")
         if fleets is not None:
@@ -423,25 +388,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             oob.touched_fields.add("fleets")
         if air_wings is not None:
             wing_replacements = copy.deepcopy(list(air_wings))
-            # Loaded entries keep their occurrences even when new wings precede them.
-            claimed_sources = {
-                wing.source_index for wing in wing_replacements if wing.source_index >= 0
-            }
-            for index, wing in enumerate(wing_replacements):
-                if (
-                    index < len(oob.air_wings)
-                    and oob.air_wings[index].source_index not in claimed_sources
-                    and wing.source_index < 0
-                    and not wing.raw_block
-                ):
-                    source = oob.air_wings[index]
-                    wing.source_index = source.source_index
-                    claimed_sources.add(source.source_index)
-                    wing.source_location_index = source.source_location_index
-                    wing.raw_block = source.raw_block
-                    wing.touched_fields.update(
-                        {"amount", "owner", "creator", "version_name"}
-                    )
+            _inherit_sources(wing_replacements, oob.air_wings)
             oob.air_wings = wing_replacements
             oob.touched_fields.add("air_wings")
         if country_tag is not None:
@@ -732,7 +679,11 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         self._original_files.setdefault(
             target,
             self._read_current_text(target)
-            or source.read_text(encoding="utf-8-sig", errors="ignore"),
+            or read_text(source),
         )
+        if parse(oob.raw_text).problems:
+            # The game tolerates the inherited file's missing or stray braces;
+            # the mod's own copy is patched and written out well formed.
+            oob.raw_text = repair(oob.raw_text)
         oob.path = target
         self._dirty_oob_files.add(target)

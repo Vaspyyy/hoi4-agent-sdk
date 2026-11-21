@@ -9,7 +9,7 @@ Dataclass fields and semantics for SDK objects. Most agents should use the `Mod`
 Focus(id: str,                          # Required. Unique within tree.
       icon: str = "GFX_goal_generic_construct_civilian",
       x: int = 0, y: int = 0,          # Grid position. Must be unique in tree.
-      cost: int = 10,                   # Political power cost
+      cost: float = 10,                 # Time in weeks (days / 7); may be fractional
       prerequisites: list[list[str]] = [],      # AND of OR groups
       requires: str | list[str] | list[list[str]] | None = None,
       mutually_exclusive: list[list[str]] = [], # Same structure
@@ -26,10 +26,25 @@ Focus(id: str,                          # Required. Unique within tree.
       continue_if_invalid: bool | None = None,
       available_if_capitulated: bool | None = None,
       will_lead_to_war_with: str = "",
+      icon_blocks: list[str] = [],      # Bodies of conditional icon = { ... } blocks
+      kind: str = "focus",              # focus, shared_focus, or joint_focus
 )
 ```
 
 `requires` is constructor-only sugar for prerequisites. `Focus(id="B", requires="A")` becomes `prerequisites=[["A"]]`; `requires=["A", "C"]` becomes one OR group.
+
+`cost` keeps fractional values such as `7.2`; whole numbers stay `int`. A cost
+written as a file constant (`cost = @tier_1`) is resolved for reading and left
+as written on save.
+
+`icon` is the plain `icon = GFX_...` entry. Conditional icons
+(`icon = { trigger = { ... } value = GFX_... }`) are kept in `icon_blocks`, in
+source order, without the outer braces. A focus with only icon blocks reports
+the first icon named in them as `icon`. `icon_names()` returns every sprite the
+focus can show, the plain `icon` first.
+
+`kind` is the block key. Focuses inside a `focus_tree` are `focus`; top-level
+blocks in a file can also be `shared_focus` or `joint_focus`.
 
 ### FocusTree
 ```python
@@ -37,8 +52,15 @@ FocusTree(id: str, country_tag: str = "",
           focuses: list[Focus] = [], path: Path | None = None,
           default: bool | None = None,
           continuous_focus_position: str = "",
-          shared_focuses: list[str] = [])
+          shared_focuses: list[str] = [],
+          kind: str = "focus_tree")
 ```
+
+`kind` is `focus_tree` for a real tree, whose `id` is the tree's own top-level
+`id`. A file's top-level `focus`, `shared_focus` and `joint_focus` blocks load
+into one container tree per file with `kind == "file"`; its `id` is the file
+name without `.txt`. The game sees no tree with that ID. A file can hold real
+trees and one container.
 
 ### Country
 ```python
@@ -57,8 +79,22 @@ Country(tag: str, name: str = "", adjective: str = "",
         war_support: str|int|float|None = None,
         technologies: dict[str,int] = {},
         oob: str = "",
-        recruited_characters: list[str] = [])
+        recruited_characters: list[str] = [],
+        color_ui: tuple[int,int,int] | None = None)
 ```
+
+`color` is read from the country definition and from `colors.txt`, in any of
+the spellings the game accepts: `rgb { r g b }`, a plain `{ r g b }`,
+`hsv { h s v }` (any case) and `hsv360 { degrees percent percent }`. HSV values
+are converted to RGB. `color_ui` is the `colors.txt` UI colour; `None` means it
+follows `color`. Setting `color` without `color_ui` makes the UI colour follow
+the new map colour. On save, a colour that already has the wanted value is
+left byte for byte; otherwise only the three channel numbers change (an `hsv`
+value becomes `rgb`).
+
+`capital` and `research_slots` come only from direct `capital = ...` and
+`set_research_slots = ...` statements of the history file, never from nested
+blocks.
 
 ### Leader
 ```python
@@ -255,11 +291,11 @@ State(id: int, name: str = "", owner: str = "",
       cores: list[str] = [],
       resources: dict[str, str|int|float] = {},
       buildings: str = "",
-      local_supplies: str = "",
-      manpower: str = "0",
+      local_supplies: str | int | float = "",
+      manpower: str | int | float = "0",
       state_category: str = "large_city",
       victory_points: str = "",
-      buildings_max_level_factor: str = "1.0",
+      buildings_max_level_factor: str | int | float = "1.0",
       is_demilitarized_zone: bool = False,
       provinces: list[int] = [],
       history: str = "",
@@ -268,6 +304,10 @@ State(id: int, name: str = "", owner: str = "",
 
 `State.impassable` is an optional boolean (default `False`); set it by keyword
 to mark a state impassable without changing existing positional arguments.
+
+A state is identified by the `id` directly inside its own top-level
+`state = { }` block. An `id` in a comment or in a nested block does not count,
+and neither does the file name.
 
 ### Decision
 ```python
@@ -328,9 +368,39 @@ DecisionCategory(id: str, icon: str = "",
                  allowed: str = "",
                  visible: str = "",
                  decisions: list[Decision] = [],
-                 path: Path | None = None,             # decision content
-                 definition_path: Path | None = None)  # category metadata
+                 path: Path | None = None,             # where new decisions go
+                 definition_path: Path | None = None,  # category metadata
+                 paths: list[Path] = [])               # every decisions file
 ```
+
+A category block may appear more than once in one file (the game reopens it)
+and may continue in other files. The game merges them all, and so does the
+SDK: `decisions` holds the decisions of every block in load order (files
+sorted by name), and `paths` lists every `common/decisions` file that holds a
+block of the category. `path` is the last of them. Each decision is edited in
+the block and file that holds it.
+
+- `create_decision` puts a new decision at the end of the last block of
+  `path`, so it comes after every existing decision, as it will after a
+  reload. With `path=` naming one of `paths`, it goes to the last block of that
+  file instead.
+- `update_decision_category(..., path=...)` with one of `paths` only changes
+  where new decisions go, until the mod is saved or reloaded: `path` is not
+  stored in any file, so after that it is the last file again. Any other file
+  receives the whole category: every decision moves there and the old blocks
+  go.
+- A category edit moves the presentation fields to `definition_path` and
+  removes the legacy inline `icon`, `allowed` and `visible` from every file in
+  `paths`. A decision edit leaves them where they are.
+- Only the mod's own decision files load. A category that the game defines
+  and the mod extends holds the mod's decisions only.
+
+Every `key = { ... }` block directly inside a category is a decision, except
+the category's own keys (`icon`, `allowed`, `visible`, `picture`, `priority`,
+`visibility_type`, `on_map_area`, `custom_icon`, `scripted_gui`).
+
+Decision and category strings are written with quotes only when they need
+them (`icon = "a b"`, but `icon = GFX_idea`), and are read without them.
 
 ### Event
 ```python
@@ -341,14 +411,35 @@ Event(id: str, title: str = "", description: str = "",
       fire_only_once: bool | None = None,
       trigger: str = "", immediate: str = "",
       mean_time_to_happen: str = "",
-      options: list[EventOption] = [], path: Path | None = None)
+      options: list[EventOption] = [], path: Path | None = None,
+      conditional_titles: list[EventText] = [],
+      conditional_descriptions: list[EventText] = [])
 ```
+
+`title` and `description` hold the unconditional key: a plain `title = KEY`, or
+a `title = { text = KEY }` block without a trigger. Every `title` or `desc`
+block that has a trigger is an entry of `conditional_titles` or
+`conditional_descriptions`, in source order. The game shows the first entry
+whose trigger holds, then falls back to the plain key.
+
+### EventText
+```python
+EventText(text: str, trigger: str = "")
+```
+
+One conditional key: `title = { text = KEY trigger = { tag = GER } }` reads as
+`EventText(text="KEY", trigger="tag = GER")`. The trigger is a block body
+without the outer braces.
 
 ### EventOption
 ```python
 EventOption(name: str = "", trigger: str = "", effect: str = "",
-            ai_chance: str = "")
+            ai_chance: str = "",
+            conditional_names: list[EventText] = [])
 ```
+
+`name` is the unconditional option name; `conditional_names` holds the
+`name = { text = ... trigger = { ... } }` entries.
 
 Valid event types are `country_event`, `state_event`, `news_event`,
 `unit_leader_event`, and `operative_leader_event`.
@@ -366,6 +457,20 @@ An ID is a compositional HOI4 hook, not a globally unique object ID. Use
 `Mod.get_on_action_occurrences(id)` when the hook is extended in multiple source blocks;
 `source_path` and `source_occurrence` on loaded models are internal fidelity metadata.
 
+One hook block may repeat `effect`, `events` and `random_events` (the game runs
+all of them). The model joins them in source order. On save, a field whose
+content did not change keeps all its blocks. `events` and `random_events` are
+edited entry by entry: an entry that stays keeps its block and its comment, a
+changed weight is rewritten in place, and a new entry goes into the block of
+the entry before it (a new first entry into the block of the first entry that
+stays). Only a reordered list or a changed `effect` is written
+into the first block with the other blocks removed. Weighted `random_events`
+entries keep their `weight = event_id` pairs: `10 = example.1` is the two list
+values `"10", "example.1"`. Any other statement in such a block
+(`chance_to_fire = 25`) is one list value holding the whole statement, so it
+is never taken for a weight. Every `on_actions = { }` block of a file is
+loaded.
+
 ### Idea
 ```python
 Idea(id: str, icon: str = "generic_political_support",
@@ -380,9 +485,18 @@ Idea(id: str, icon: str = "generic_political_support",
      removal_cost: str|int|float|None = None)
 ```
 
+An idea is any `id = { ... }` block inside a category of `ideas = { ... }`
+(`country = { ... }`, `political_advisor = { ... }` and so on), whatever keys
+it holds. Ideas with only `equipment_bonus`, `targeted_modifier`, `rule` or
+unknown keys are modelled too. `category` names the category block. A category
+that appears twice in a file is patched where each idea sits.
+
 At the facade level, a supplied `modifier` replaces the mapping by default;
 `modifier={}` removes the block. Pass `merge_modifier=True` to `update_idea()`
-or `ensure_idea()` for key-by-key merging.
+or `ensure_idea()` for key-by-key merging. Either way, only the values that
+differ are rewritten; a key that is repeated in the source (such as
+`custom_modifier_tooltip`) keeps every repetition while its last value is
+unchanged.
 Idea descriptions use `{idea_id}_desc` localization and are not serialized as a
 field inside the idea definition.
 `icon` is retained as the compatibility field name, but its value is a bare
@@ -451,6 +565,9 @@ Bookmark(name: str, description: str = "", date: str = "1936.1.1.12",
          effect: str = "randomize_weather = 22345",
          countries: list[BookmarkCountry] = [])
 ```
+
+A file may hold several top-level `bookmarks = { }` blocks; all of them load
+and are patched in place, and new bookmarks go to the end of the last one.
 
 Bookmark countries are ordered rather than keyed by tag because vanilla may
 repeat a country for DLC variants. The bookmark mutation methods use a

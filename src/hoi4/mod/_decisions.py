@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Sequence, cast
 
+from ..decisions import category_files
 from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
+from ..syntax import quote
 from ..types import (
     Decision,
     DecisionCategory,
@@ -36,8 +38,44 @@ def _decision_targets(value: object) -> list[str]:
     return targets
 
 
+def _insert_in_file_order(category: DecisionCategory, decision: Decision) -> None:
+    """Add a decision where a reload would put it.
+
+    Decisions load file by file, so a decision added to an earlier file of a
+    category spread over several files goes after that file's decisions and
+    before the decisions of later files.
+    """
+
+    rank = {path: index for index, path in enumerate(category_files(category))}
+    own = rank.get(cast(Path, decision.path), len(rank))
+    for index, candidate in enumerate(category.decisions):
+        if rank.get(cast(Path, candidate.path or category.path), len(rank)) > own:
+            category.decisions.insert(index, decision)
+            return
+    category.decisions.append(decision)
+
+
 class DecisionsLayer(LocalisationLayer, EffectsLayer):
     """Decision and decision-category authoring."""
+
+    def _point_decision_category_at(self, category: DecisionCategory, target: Path) -> None:
+        """Make ``target`` the file new decisions of ``category`` go to.
+
+        A file that already holds a block of the category only becomes the
+        target; nothing moves. Any other file receives the whole category:
+        every decision moves there, and the blocks in the old files go.
+        """
+
+        old_files = category_files(category)
+        self._dirty_decision_files.update(old_files)
+        self._dirty_decision_files.add(target)
+        category.path = target
+        if target in old_files:
+            return
+        category.paths = [target]
+        for decision in category.decisions:
+            decision.path = target
+        category.touched = True
 
     # ── Decisions ────────────────────────────────────────────────
 
@@ -116,7 +154,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             else (
                 existing.definition_path
                 if existing is not None and existing.definition_path is not None
-                else _decision_category_definition_path(self.mod_root, target)
+                else _decision_category_definition_path(self.mod_root, target, self._shadows_inherited)
             )
         )
         expected_categories_dir = self.mod_root / "common" / "decisions" / "categories"
@@ -125,8 +163,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
                 "Decision category_path must point inside common/decisions/categories"
             )
         if existing is not None:
-            if existing.path is not None:
-                self._dirty_decision_files.add(existing.path)
+            self._dirty_decision_files.update(category_files(existing))
             if existing.definition_path is not None:
                 self._dirty_decision_category_files.add(existing.definition_path)
             for decision in existing_decisions:
@@ -159,18 +196,24 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             return False
         if "id" in kwargs:
             raise ValueError("Decision category IDs are immutable")
-        old_path = category.path
+        if "paths" in kwargs:
+            raise ValueError(
+                "Decision category paths are read from the files; pass path= to move it"
+            )
         old_definition_path = category.definition_path
         category_path = kwargs.pop("category_path", None)
-        if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+        target = (
+            resolve_mod_output_path(self.mod_root, kwargs.pop("path"))
+            if "path" in kwargs
+            else None
+        )
         if category_path is not None:
             category.definition_path = resolve_mod_output_path(
                 self.mod_root, category_path
             )
-        elif "path" in kwargs and category.definition_path is None:
+        elif target is not None and category.definition_path is None:
             category.definition_path = _decision_category_definition_path(
-                self.mod_root, cast(Path, kwargs["path"])
+                self.mod_root, target, self._shadows_inherited
             )
         if (
             category.definition_path is not None
@@ -180,12 +223,13 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             raise ValueError(
                 "Decision category_path must point inside common/decisions/categories"
             )
-        _set_fields(category, kwargs, allow_path=True)
+        _set_fields(category, kwargs)
+        if target is not None:
+            self._point_decision_category_at(category, target)
         category.touched = True
-        if old_path is not None:
-            self._dirty_decision_files.add(old_path)
-        if category.path is not None:
-            self._dirty_decision_files.add(category.path)
+        # The edit moves legacy inline presentation out of every file that
+        # holds a block of the category.
+        self._dirty_decision_files.update(category_files(category))
         if old_definition_path is not None:
             self._dirty_decision_category_files.add(old_definition_path)
         if category.definition_path is not None:
@@ -254,18 +298,16 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
                 f"Decision '{decision_id}' already exists. "
                 "Use overwrite=True to replace it or update_decision() to patch it."
             )
-        if existing is not None:
-            self._assert_decision_occurrence_is_editable(existing)
+        if existing is not None and existing.path is not None:
+            # The file that held the replaced decision loses it.
+            self._dirty_decision_files.add(existing.path)
         category = self._decision_categories.get(category_id)
         if category is None:
             category = self.create_decision_category(category_id, path=path)
         elif path is not None:
-            old_path = category.path
-            category.path = resolve_mod_output_path(self.mod_root, path)
-            category.touched = True
-            if old_path is not None:
-                self._dirty_decision_files.add(old_path)
-            self._dirty_decision_files.add(category.path)
+            self._point_decision_category_at(
+                category, resolve_mod_output_path(self.mod_root, path)
+            )
         if existing is not None:
             old_category = self._decision_categories.get(existing.category)
             if old_category is not None:
@@ -313,16 +355,17 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             highlight_states=highlight_states,
             priority=priority,
         )
-        category.decisions.append(decision)
+        # Without ``path`` the decision goes to ``category.path``: for a
+        # category spread over several files that is the last file in load
+        # order, so the new decision lands after every existing one, at the end
+        # of that file's last block.
+        _insert_in_file_order(category, decision)
         self._decisions[decision_id] = decision
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(category_id)
         if category.path is not None:
             self._dirty_decision_files.add(category.path)
-        if (
-            category.definition_path is not None
-            and (category.touched or not category.definition_raw_block)
-        ):
+        if category.definition_path is not None and category.touched:
             self._dirty_decision_category_files.add(category.definition_path)
         return decision
 
@@ -336,7 +379,6 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         decision = self._decisions.get(decision_id)
         if decision is None:
             return False
-        self._assert_decision_occurrence_is_editable(decision)
         if "id" in kwargs or "category" in kwargs:
             raise ValueError(
                 "Decision identity/category are immutable; recreate the decision to move it"
@@ -348,23 +390,23 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         decision.touched = True
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(decision.category)
+        if decision.path is not None:
+            # A category may continue in other files; patch the decision
+            # in the file that holds it.
+            self._dirty_decision_files.add(decision.path)
         category = self._decision_categories.get(decision.category)
         if category is not None:
             if category.path is not None:
                 self._dirty_decision_files.add(category.path)
-            if (
-                category.definition_path is not None
-                and not category.definition_raw_block
-            ):
-                self._dirty_decision_category_files.add(category.definition_path)
         return True
 
     def delete_decision(self, decision_id: str) -> bool:
         decision = self._decisions.get(decision_id)
         if decision is None:
             return False
-        self._assert_decision_occurrence_is_editable(decision)
         del self._decisions[decision_id]
+        if decision.path is not None:
+            self._dirty_decision_files.add(decision.path)
         category = self._decision_categories.get(decision.category)
         if category:
             category.decisions = [
@@ -375,21 +417,6 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
                 self._dirty_decision_files.add(category.path)
         self._dirty.add("decisions")
         return True
-
-    def _assert_decision_occurrence_is_editable(self, decision: Decision) -> None:
-        category = self._decision_categories.get(decision.category)
-        if (
-            category is None
-            or decision.path is None
-            or category.path is None
-            or decision.path.resolve(strict=False) == category.path.resolve(strict=False)
-        ):
-            return
-        raise RuntimeError(
-            f"Decision category '{decision.category}' is extended across multiple files; "
-            f"cannot safely mutate '{decision.id}' in {decision.path}. Consolidate the "
-            "category or edit that source file directly."
-        )
 
     def create_decision_chain(
         self,
@@ -426,7 +453,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             decision_id = str(step.get("id") or (f"{prefix}_{index}" if prefix else ""))
             if not decision_id:
                 raise ValueError("Decision chain steps need an id or a prefix")
-            flag = str(step.get("flag") or f"{decision_id}_done")
+            flag = quote(str(step.get("flag") or f"{decision_id}_done"))
             visible = _join_script_parts(
                 [
                     str(step.get("visible") or ""),
@@ -452,7 +479,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
                 f"set_country_flag = {flag}",
             ]
             clear_flags = step.get("clear_flags") or []
-            effect_parts.extend(f"clr_country_flag = {item}" for item in clear_flags)
+            effect_parts.extend(f"clr_country_flag = {quote(str(item))}" for item in clear_flags)
             create_kwargs: dict[str, Any] = {
                 "icon": str(step.get("icon") or icon),
                 "cost": step.get("cost", 0),
