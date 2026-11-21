@@ -64,6 +64,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- `hoi4/mod.py` (12,992 lines) is now the `hoi4/mod/` package: one module per
+  content type, each defining one layer class, with `Mod` inheriting from all
+  of them. A layer subclasses only the layers whose methods it calls, so its
+  class header is its dependency list and mypy rejects a call to any other
+  layer. Every method moved with its body unchanged, apart from function-local
+  relative imports gaining a dot, the last two calls of `__init__` moving into
+  the top class, and `from_config` returning `Self` (it lives on `Mod` itself).
+  `from hoi4 import Mod` and `from hoi4.mod import Mod` work as before. See
+  `docs/internals/mod_layers.md`.
+- `hoi4.mod` now exports exactly `Mod` and `ExternalModificationError`. The old
+  module had no `__all__`, so every name it defined or imported for its own
+  use (for example `Focus`, `State`, `set_block`, `COMMON_FOCUS_ICONS`, even
+  `os`) could be imported from it by accident. Import models from `hoi4` and
+  helpers from their home module. Method `__qualname__`s now name the layer
+  (`CountryAuthoringLayer.create_country`), and
+  `ExternalModificationError.__module__` is `hoi4.mod._shared`.
 - Agent country-creation guidance now prefers suitable existing assets and
   Commons sources. Paid Gemini generation is an explicitly authorized option;
   missing credentials no longer prevent local or web-sourced graphics.

@@ -378,5 +378,6 @@ Read only the documentation relevant to the current task:
 - Effect, modifier, and technology catalogs: `docs/catalogs.md`
 - Common AI agent mistakes: `docs/agent_traps.md`
 - Low-level parser internals: `docs/internals/parser.md`
+- How the `Mod` class is split into layer modules: `docs/internals/mod_layers.md`
 
 Prefer the `Mod` facade. Use the low-level parser only when the public API cannot represent the required modification.

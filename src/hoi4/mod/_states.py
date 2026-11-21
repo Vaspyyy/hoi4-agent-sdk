@@ -1,0 +1,322 @@
+"""State lookup, search and history edits."""
+
+from __future__ import annotations
+
+import unicodedata
+from difflib import SequenceMatcher
+from pathlib import Path
+
+from ..localisation import (
+    parse_localization_dir,
+)
+from ..paths import (
+    require_country_tag,
+    resolve_mod_output_path,
+)
+from ..states import (
+    build_state_index,
+    read_state,
+)
+from ..types import (
+    State,
+)
+from ._core import CoreLayer
+from ._shared import (
+    _set_fields,
+)
+
+
+def _append_unique(existing: list, values: list) -> list:
+    out = list(existing)
+    for value in values:
+        if value not in out:
+            out.append(value)
+    return out
+
+
+def _fold_search_text(value: object) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value).strip().casefold())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+class StatesLayer(CoreLayer):
+    """State lookup, search and history edits."""
+
+    # ── States ──────────────────────────────────────────────────
+
+    def list_states(self) -> list[int]:
+        all_ids = set(self._state_ids) | set(self._states.keys())
+        return sorted(all_ids)
+
+    def state_index(self, include_vanilla: bool = True) -> list[dict]:
+        cached = self._state_index_cache.get(include_vanilla)
+        if cached is not None:
+            return [
+                dict(entry) for entry in cached
+                if entry["id"] not in self._deleted_state_ids
+            ]
+        state_localization = self._state_localization_entries()
+        entries: list[dict] = []
+        for source, base in [("mod", self.mod_root), ("vanilla", self._base_content_root)]:
+            if base is None:
+                continue
+            if source == "vanilla" and not include_vanilla:
+                continue
+            states_dir = base / "history" / "states"
+            for entry in build_state_index(states_dir):
+                if source == "vanilla" and self._is_shadowed_by_mod(base, Path(entry["path"])):
+                    continue
+                item = dict(entry)
+                item["source"] = source
+                if self._content_layers is not None:
+                    relative = Path(item["path"]).relative_to(base)
+                    original = self.content_source(relative)
+                    item["source_path"] = str(original) if original else item["path"]
+                    item["source_layer"] = (
+                        "mod" if original and original.is_relative_to(self.mod_root)
+                        else "base_mod" if original and any(original.is_relative_to(root) for root in self.base_mod_paths)
+                        else "vanilla"
+                    )
+                loc_key = str(item.get("name", ""))
+                localized_name = state_localization.get(loc_key)
+                item["localized"] = localized_name is not None
+                if localized_name is not None:
+                    item["display_name"] = localized_name
+                entries.append(item)
+        by_id: dict[int, dict] = {}
+        for entry in entries:
+            existing = by_id.get(entry["id"])
+            if existing is None or (
+                existing["source"] == "vanilla" and entry["source"] == "mod"
+            ):
+                by_id[entry["id"]] = entry
+        result = sorted(by_id.values(), key=lambda item: item["id"])
+        self._state_index_cache[include_vanilla] = [dict(entry) for entry in result]
+        return [entry for entry in result if entry["id"] not in self._deleted_state_ids]
+
+    def get_state_name_map(self, include_vanilla: bool = True) -> dict[int, str]:
+        return {
+            entry["id"]: entry.get("display_name") or entry.get("name") or str(entry["id"])
+            for entry in self.state_index(include_vanilla=include_vanilla)
+        }
+
+    def find_state(self, query: str, include_vanilla: bool = True, limit: int = 10) -> list[dict]:
+        needle = _fold_search_text(query)
+        if not needle:
+            return []
+        scored: list[tuple[float, dict, str]] = []
+        for entry in self.state_index(include_vanilla=include_vanilla):
+            haystacks = [
+                ("id", str(entry.get("id", "")), 1.0),
+                ("name", str(entry.get("name", "")), 1.0),
+                ("display_name", str(entry.get("display_name", "")), 1.0),
+            ]
+            best = 0.0
+            matched = ""
+            for field_name, haystack, weight in haystacks:
+                text = _fold_search_text(haystack)
+                if text == needle:
+                    score = 1.0 * weight
+                elif needle in text:
+                    score = 0.85 * weight
+                else:
+                    score = SequenceMatcher(None, needle, text).ratio() * weight
+                if score > best:
+                    best = score
+                    matched = field_name
+            file_name = str(entry.get("file_name", ""))
+            if file_name:
+                file_weight = 0.7 if entry.get("localized") else 1.0
+                text = _fold_search_text(file_name)
+                if text == needle:
+                    score = 1.0 * file_weight
+                elif needle in text:
+                    score = 0.85 * file_weight
+                else:
+                    score = SequenceMatcher(None, needle, text).ratio() * file_weight
+                if score > best:
+                    best = score
+                    matched = "file_name"
+            if best >= 0.45:
+                scored.append((best, entry, matched))
+        scored.sort(key=lambda item: (-item[0], item[1]["id"]))
+        results: list[dict] = []
+        for _, entry, matched in scored[:limit]:
+            result = dict(entry)
+            result["matched"] = matched
+            results.append(result)
+        return results
+
+    def _state_localization_entries(self) -> dict[str, str]:
+        if self._vanilla_state_loc_entries is None:
+            vanilla_entries: dict[str, str] = {}
+            if self._base_content_root is not None:
+                loaded, _ = parse_localization_dir(
+                    self._base_content_root / "localisation" / "english"
+                )
+                vanilla_entries = {
+                    key: value for key, value in loaded.items() if key.startswith("STATE_")
+                }
+            self._vanilla_state_loc_entries = vanilla_entries
+        entries = dict(self._vanilla_state_loc_entries)
+        entries.update(
+            {
+                key: value
+                for key, value in self._loc_entries.items()
+                if key.startswith("STATE_")
+            }
+        )
+        return entries
+
+    def get_state(self, state_id: int) -> State:
+        """Load a state without changing the mod directory.
+
+        Vanilla fallback states remain backed by their vanilla source until a
+        mutating state API explicitly materializes an override under the mod.
+        """
+        if state_id in self._states:
+            return self._states[state_id]
+        if state_id in self._deleted_state_ids:
+            raise KeyError(f"State {state_id} is queued for deletion")
+        # Scan inherited content once, never once per missing filename prefix.
+        # Writable directory additions retain existing live-discovery behavior;
+        # directory timestamps avoid scanning unchanged files for every state.
+        states_dir = self.mod_root / "history" / "states"
+        stamp = states_dir.stat().st_mtime_ns if states_dir.is_dir() else None
+        if stamp != self._writable_state_directory_stamp:
+            paths = {entry["id"]: Path(entry["path"]) for entry in build_state_index(states_dir)}
+            self._state_source_paths = {
+                sid: path for sid, path in self._state_source_paths.items()
+                if not path.is_relative_to(states_dir)
+            }
+            self._state_source_paths.update(paths)
+            self._writable_state_directory_stamp = stamp
+        f = self._state_source_paths.get(state_id)
+        if f is not None and not f.exists():
+            f = None
+        if f is None and self._base_content_root:
+            if self._inherited_state_source_paths is None:
+                inherited_paths: dict[int, Path] = {}
+                for entry in build_state_index(self._base_content_root / "history" / "states"):
+                    if self._is_shadowed_by_mod(self._base_content_root, Path(entry["path"])):
+                        continue
+                    inherited_paths.setdefault(entry["id"], Path(entry["path"]))
+                self._inherited_state_source_paths = inherited_paths
+            f = self._inherited_state_source_paths.get(state_id)
+        if f:
+            state = read_state(f)
+            self._states[state_id] = state
+            self._state_source_paths.setdefault(state_id, f)
+            self._original_files.setdefault(f, f.read_text(encoding="utf-8", errors="ignore"))
+            self._source_baseline.setdefault(f.resolve(strict=False), f.read_bytes())
+            return state
+        raise KeyError(f"State {state_id} not found")
+
+    def _materialize_state_override(self, state: State) -> bool:
+        """Retarget a vanilla-backed state to its equivalent in-mod path.
+
+        This only changes queued in-memory state. The source file is copied by
+        the normal preview/save rendering path, so reads and validation never
+        create files as a side effect.
+        """
+
+        source = state.path or state.source_path or self._state_source_paths.get(state.id)
+        if source is None:
+            relative = Path("history") / "states" / f"{state.id} - {state.name or state.id}.txt"
+        elif source.resolve(strict=False).is_relative_to(self.mod_root):
+            return False
+        else:
+            relative = Path("history") / "states" / source.name
+            if self._base_content_root is not None:
+                try:
+                    relative = source.resolve(strict=False).relative_to(self._base_content_root)
+                except ValueError:
+                    pass
+        target = resolve_mod_output_path(self.mod_root, relative)
+        state.path = target
+        self._state_source_paths[state.id] = target
+        self._original_files.setdefault(target, self._read_current_text(target))
+        return True
+
+    def set_state_owner(self, state_id: int, tag: str, add_core: bool = True) -> State:
+        tag = require_country_tag(tag)
+        state = self.get_state(state_id)
+        self._materialize_state_override(state)
+        state.owner = tag
+        if add_core and tag not in state.cores:
+            state.cores.append(tag)
+        self._dirty.add("states")
+        self._dirty_states.add(state_id)
+        return state
+
+    def set_state_properties(self, state_id: int, **kwargs) -> bool:
+        state = self.get_state(state_id)
+        self._materialize_state_override(state)
+        for list_key in ("cores", "provinces"):
+            if list_key in kwargs and isinstance(kwargs[list_key], list):
+                kwargs[list_key] = _append_unique(getattr(state, list_key), kwargs[list_key])
+        _set_fields(state, kwargs)
+        self._dirty.add("states")
+        self._dirty_states.add(state_id)
+        return True
+
+    def add_state_core(self, state_id: int, tag: str) -> State:
+        state = self.get_state(state_id)
+        self._materialize_state_override(state)
+        tag = require_country_tag(tag)
+        if tag not in state.cores:
+            state.cores.append(tag)
+        self._dirty.add("states")
+        self._dirty_states.add(state_id)
+        return state
+
+    def remove_state_core(self, state_id: int, tag: str) -> State:
+        state = self.get_state(state_id)
+        self._materialize_state_override(state)
+        tag = require_country_tag(tag)
+        state.cores = [core for core in state.cores if core != tag]
+        self._dirty.add("states")
+        self._dirty_states.add(state_id)
+        return state
+
+    def patch_state_history(
+        self,
+        state_id: int,
+        *,
+        owner: str | None = None,
+        add_cores: list[str] | None = None,
+        remove_cores: list[str] | None = None,
+    ) -> State:
+        """Queue a minimal owner/core history patch for the next ``save()``.
+
+        Repeated patches and other state setters compose in call order on the
+        same pending State. Serialization patches its original source text.
+        """
+        state = self.get_state(state_id)
+        self._materialize_state_override(state)
+        removed = {tag.upper() for tag in (remove_cores or [])}
+        state.cores = [core for core in state.cores if core.upper() not in removed]
+        for core in add_cores or []:
+            normalized = require_country_tag(core)
+            if normalized not in state.cores:
+                state.cores.append(normalized)
+        if owner is not None:
+            state.owner = require_country_tag(owner)
+        self._dirty.add("states")
+        self._dirty_states.add(state_id)
+        return state
+
+    def batch_set_owner(self, state_ids: list[int], tag: str, add_core: bool = True) -> list[State]:
+        results = []
+        for sid in state_ids:
+            results.append(self.set_state_owner(sid, tag, add_core))
+        return results
+
+    def _effective_states(self) -> list[State]:
+        result: list[State] = []
+        for state_id in sorted(set(self._state_ids) | set(self._states)):
+            try:
+                result.append(self.get_state(state_id))
+            except (KeyError, OSError, ValueError):
+                continue
+        return result

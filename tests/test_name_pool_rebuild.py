@@ -3,10 +3,10 @@ from pathlib import Path
 import pytest
 
 from hoi4 import AirWing, Mod
-import hoi4.mod as facade
+from hoi4.patching import set_block
 
 
-def test_unchanged_name_pool_render_skips_repeated_full_file_patches(tmp_path, monkeypatch):
+def test_unchanged_name_pool_render_skips_repeated_full_file_patches(tmp_path, patch_mod_helper):
     mod = Mod(tmp_path / "mod")
     for tag in ("AAA", "BBB", "CCC"):
         mod.set_country_name_pool(
@@ -16,13 +16,13 @@ def test_unchanged_name_pool_render_skips_repeated_full_file_patches(tmp_path, m
     source = mod.mod_root / "common/names/00_generated_names.txt"
     original = source.read_bytes()
     calls = []
-    actual = facade.set_block
+    actual = set_block
 
     def counted(text, key, body):
         calls.append(key)
         return actual(text, key, body)
 
-    monkeypatch.setattr(facade, "set_block", counted)
+    patch_mod_helper(set_block, counted)
     for tag in ("AAA", "BBB", "CCC"):
         mod.set_country_name_pool(
             tag, male_names=[tag + " Man"], female_names=[tag + " Woman"], surnames=["Family"]
