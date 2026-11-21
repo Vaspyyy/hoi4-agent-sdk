@@ -210,45 +210,11 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         A duplicated archetype such as ``small_plane_cas_airframe`` (made from
         ``small_plane_airframe``) also gets one equipment for every equipment
         of the original archetype: ``small_plane_airframe_0`` gives
-        ``small_plane_cas_airframe_0``.
+        ``small_plane_cas_airframe_0``. The reference check reads the same
+        catalog (``hoi4.script_references.resolve_equipment``).
         """
 
-        cached = self._scan_cache.get("oob_equipment")
-        if cached is not None:
-            return set(cached)
-        ids = set(self._known_equipment_ids())
-        members: dict[str, set[str]] = defaultdict(set)
-        duplicates: dict[str, str] = {}
-        for _, text in self._effective_script_texts("common/units/equipment"):
-            root = parse(text).root
-            for container in root.assignments():
-                if container.block is None:
-                    continue
-                if container.name == "equipments":
-                    for item in container.block.assignments():
-                        if item.block is None:
-                            continue
-                        ids.add(item.name)
-                        archetype = item.block.scalar("archetype")
-                        if archetype:
-                            members[archetype].add(item.name)
-                elif container.name == "duplicate_archetypes":
-                    for item in container.block.assignments():
-                        if item.block is None:
-                            continue
-                        ids.add(item.name)
-                        archetype = item.block.scalar("archetype")
-                        if archetype:
-                            duplicates[item.name] = archetype
-                        names = item.block.block("variant_name")
-                        if names is not None:
-                            ids.update(entry.name for entry in names.assignments())
-        for duplicate, archetype in duplicates.items():
-            for member in members.get(archetype, ()):
-                if member.startswith(archetype) and member != archetype:
-                    ids.add(duplicate + member[len(archetype) :])
-        self._scan_cache["oob_equipment"] = set(ids)
-        return ids
+        return self._known_equipment_ids()
 
     def _script_division_templates(self) -> set[str]:
         """Template names that history or effect script creates at runtime."""

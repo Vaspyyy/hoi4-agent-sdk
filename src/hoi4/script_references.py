@@ -543,6 +543,22 @@ def definitions_of(doc: Document, relative: str) -> Definitions:
     return found
 
 
+def dynamic_tags_of(root: Block) -> set[str]:
+    """Tags a ``common/country_tags`` file declares after ``dynamic_tags = yes``.
+
+    These are civil-war and released tags the game names at runtime.
+    """
+
+    tags: set[str] = set()
+    dynamic = False
+    for item in root.assignments():
+        if item.key.value.lower() == "dynamic_tags":
+            dynamic = (item.scalar or "").lower() == "yes"
+        elif dynamic:
+            tags.add(item.key.value)
+    return tags
+
+
 def resolve_equipment(
     equipment: dict[str, str], copies: Iterable[tuple[str, str, frozenset[str]]]
 ) -> set[str]:

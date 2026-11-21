@@ -27,6 +27,7 @@ from ..types import (
     Country,
     ValidationError,
 )
+from ..script_references import dynamic_tags_of
 from ..syntax import parse
 from ..validation import validate_country
 from ._characters import CharactersLayer
@@ -65,12 +66,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
 
         tags: set[str] = set()
         for _, text in self._effective_script_texts("common/country_tags"):
-            dynamic = False
-            for item in parse(text).root.assignments():
-                if item.name.lower() == "dynamic_tags":
-                    dynamic = (item.scalar or "").lower() == "yes"
-                elif dynamic:
-                    tags.add(item.name)
+            tags |= dynamic_tags_of(parse(text).root)
         return tags
 
     def _recruited_leader_ideologies(self, country: Country) -> list[str] | None:
