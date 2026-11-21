@@ -17,6 +17,7 @@ from ..states import (
     build_state_index,
     read_state,
 )
+from ..syntax import parse, repair
 from ..textio import read_text
 from ..types import (
     State,
@@ -234,6 +235,10 @@ class StatesLayer(CoreLayer):
                 except ValueError:
                     pass
         target = resolve_mod_output_path(self.mod_root, relative)
+        if state.raw_text and parse(state.raw_text).problems:
+            # Like the game, read the inherited file forgivingly, but write the
+            # mod's own copy well formed.
+            state.raw_text = repair(state.raw_text)
         state.path = target
         self._state_source_paths[state.id] = target
         self._original_files.setdefault(target, self._read_current_text(target))

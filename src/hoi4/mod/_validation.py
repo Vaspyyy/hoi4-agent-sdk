@@ -564,6 +564,19 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                         )
                     )
                     continue
+                except (OSError, ValueError) as error:
+                    errors.append(
+                        ValidationError(
+                            message=(
+                                f"Could not read {reference.kind} OOB "
+                                f"'{reference.name}' of country '{country.tag}': {error}"
+                            ),
+                            severity="error",
+                            code="oob_load_error",
+                            country_tag=country.tag,
+                        )
+                    )
+                    continue
                 oob.country_tag = country.tag
                 oob.kind = reference.kind
                 oob.required_dlc = reference.required_dlc

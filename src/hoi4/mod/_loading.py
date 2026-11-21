@@ -253,6 +253,11 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         for entry in build_state_index(states_dir):
             state_id = entry["id"]
             path = Path(entry["path"])
+            try:
+                self._require_well_formed(path)
+            except Exception as error:
+                self._record_load_error("state", path, error)
+                continue
             first_path = self._state_source_paths.get(state_id)
             if first_path is not None:
                 self._record_duplicate_identifier(

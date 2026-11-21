@@ -30,6 +30,7 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
+from ..syntax import parse, repair
 from ..textio import read_text
 from ..types import (
     Country,
@@ -735,5 +736,9 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             self._read_current_text(target)
             or read_text(source),
         )
+        if parse(oob.raw_text).problems:
+            # The game tolerates the inherited file's missing or stray braces;
+            # the mod's own copy is patched and written out well formed.
+            oob.raw_text = repair(oob.raw_text)
         oob.path = target
         self._dirty_oob_files.add(target)

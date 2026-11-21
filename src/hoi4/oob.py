@@ -9,6 +9,7 @@ from typing import Callable, Literal, TypeVar
 
 from .patching import (
     AssignmentSpan,
+    assignment_spans,
     append_assignment,
     replace_assignment,
     replace_assignment_body,
@@ -17,6 +18,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_string, pdx_value
+from .syntax import parse
 from .textio import read_text
 from .types import ValidationError
 
@@ -1025,6 +1027,28 @@ def _parse_battalions(body: str) -> list[Battalion]:
     return result
 
 
+def _set_scalar(body: str, key: str, value: str | None) -> str:
+    """``patching.set_scalar`` that keeps a block written on one line on one line."""
+
+    if value is not None and "\n" not in body and not assignment_spans(body, key):
+        content = body.rstrip()
+        return f"{content} {key} = {value}" + (body[len(content):] or " ")
+    return set_scalar(body, key, value)
+
+
+def _set_block(body: str, key: str, value: str | None) -> str:
+    """``patching.set_block`` that keeps a block written on one line on one line."""
+
+    if value is not None and "\n" not in body and not assignment_spans(body, key):
+        inner = value.strip()
+        if not parse(inner).comments:
+            compact = " ".join(line.strip() for line in inner.splitlines() if line.strip())
+            content = body.rstrip()
+            rendered = f"{key} = {{ {compact} }}" if compact else f"{key} = {{ }}"
+            return f"{content} {rendered}" + (body[len(content):] or " ")
+    return set_block(body, key, value)
+
+
 def _patch_template_body(
     body: str,
     template: DivisionTemplate,
@@ -1037,27 +1061,27 @@ def _patch_template_body(
         else template.touched_fields
     )
     if "name" in fields:
-        body = set_scalar(body, "name", pdx_string(template.name))
+        body = _set_scalar(body, "name", pdx_string(template.name))
     if "division_names_group" in fields:
-        body = set_scalar(
+        body = _set_scalar(
             body,
             "division_names_group",
             template.division_names_group or None,
         )
     if "battalions" in fields:
-        body = set_block(
+        body = _set_block(
             body,
             "regiments",
             _serialize_battalions(template.battalions) or None,
         )
     if "support" in fields:
-        body = set_block(
+        body = _set_block(
             body,
             "support",
             _serialize_battalions(template.support) or None,
         )
     if "priority" in fields:
-        body = set_scalar(
+        body = _set_scalar(
             body,
             "priority",
             str(template.priority) if template.priority is not None else None,
@@ -1093,19 +1117,19 @@ def _patch_division_body(
         else division.touched_fields
     )
     if "name" in fields:
-        body = set_scalar(body, "name", pdx_string(division.name) if division.name else None)
+        body = _set_scalar(body, "name", pdx_string(division.name) if division.name else None)
     if "name_order" in fields:
         if division.name_order is None:
-            body = set_block(body, "division_name", None)
+            body = _set_block(body, "division_name", None)
         else:
             current = _block_value(body, "division_name")
-            current = set_scalar(current, "is_name_ordered", "yes")
-            current = set_scalar(current, "name_order", str(division.name_order))
-            body = set_block(body, "division_name", current)
+            current = _set_scalar(current, "is_name_ordered", "yes")
+            current = _set_scalar(current, "name_order", str(division.name_order))
+            body = _set_block(body, "division_name", current)
     if "location" in fields:
-        body = set_scalar(body, "location", str(division.location))
+        body = _set_scalar(body, "location", str(division.location))
     if "division_template" in fields:
-        body = set_scalar(
+        body = _set_scalar(
             body,
             "division_template",
             pdx_string(division.division_template),
@@ -1113,7 +1137,7 @@ def _patch_division_body(
     for field_name in ("start_experience_factor", "start_equipment_factor"):
         if field_name in fields:
             value = getattr(division, field_name)
-            body = set_scalar(
+            body = _set_scalar(
                 body,
                 field_name,
                 pdx_value(value) if value is not None else None,
@@ -1143,13 +1167,13 @@ def _patch_ship_equipment_body(
         else equipment.touched_fields
     )
     if "amount" in fields:
-        body = set_scalar(body, "amount", str(equipment.amount))
+        body = _set_scalar(body, "amount", str(equipment.amount))
     for field_name in ("owner", "creator"):
         if field_name in fields:
             value = getattr(equipment, field_name)
-            body = set_scalar(body, field_name, pdx_value(value) if value else None)
+            body = _set_scalar(body, field_name, pdx_value(value) if value else None)
     if "version_name" in fields:
-        body = set_scalar(
+        body = _set_scalar(
             body,
             "version_name",
             pdx_string(equipment.version_name) if equipment.version_name else None,
@@ -1172,11 +1196,12 @@ def _patch_ship_body(
         else ship.touched_fields
     )
     if "name" in fields:
-        body = set_scalar(body, "name", pdx_string(ship.name))
+        # Ships may be named by ``ordered_name`` instead; an empty name stays out.
+        body = _set_scalar(body, "name", pdx_string(ship.name) if ship.name else None)
     if "definition" in fields:
-        body = set_scalar(body, "definition", pdx_value(ship.definition))
+        body = _set_scalar(body, "definition", pdx_value(ship.definition))
     if "pride_of_the_fleet" in fields:
-        body = set_scalar(
+        body = _set_scalar(
             body,
             "pride_of_the_fleet",
             "yes" if ship.pride_of_the_fleet else None,
@@ -1195,7 +1220,7 @@ def _patch_ship_body(
                 if span.is_block
             },
         )
-        body = set_block(body, "equipment", current or None)
+        body = _set_block(body, "equipment", current or None)
     unknown = fields - {"name", "definition", "equipment", "pride_of_the_fleet"}
     if unknown:
         raise ValueError(f"Unknown ship fields: {sorted(unknown)}")
@@ -1212,9 +1237,9 @@ def _patch_task_force_body(
         {"name", "location", "ships"} if all_fields else task_force.touched_fields
     )
     if "name" in fields:
-        body = set_scalar(body, "name", pdx_string(task_force.name))
+        body = _set_scalar(body, "name", pdx_string(task_force.name))
     if "location" in fields:
-        body = set_scalar(body, "location", str(task_force.location))
+        body = _set_scalar(body, "location", str(task_force.location))
     if "ships" in fields:
         body = _patch_repeated_blocks(
             body,
@@ -1242,9 +1267,9 @@ def _patch_fleet_body(
         else fleet.touched_fields
     )
     if "name" in fields:
-        body = set_scalar(body, "name", pdx_string(fleet.name))
+        body = _set_scalar(body, "name", pdx_string(fleet.name))
     if "naval_base" in fields:
-        body = set_scalar(body, "naval_base", str(fleet.naval_base))
+        body = _set_scalar(body, "naval_base", str(fleet.naval_base))
     if "task_forces" in fields:
         body = _patch_repeated_blocks(
             body,
@@ -1272,13 +1297,13 @@ def _patch_air_wing_body(
         else wing.touched_fields
     )
     if "amount" in fields:
-        body = set_scalar(body, "amount", str(wing.amount))
+        body = _set_scalar(body, "amount", str(wing.amount))
     for field_name in ("owner", "creator"):
         if field_name in fields:
             value = getattr(wing, field_name)
-            body = set_scalar(body, field_name, pdx_value(value) if value else None)
+            body = _set_scalar(body, field_name, pdx_value(value) if value else None)
     if "version_name" in fields:
-        body = set_scalar(
+        body = _set_scalar(
             body,
             "version_name",
             pdx_string(wing.version_name) if wing.version_name else None,
@@ -1469,9 +1494,11 @@ def _patch_air_wings(text: str, air_wings: list[AirWing]) -> str:
                 _patch_air_wing_body(location_body[child.body_start:child.body_end], wing),
             )
             if child.key != wing.equipment_type:
-                key_match = re.match(r'"(?:\\.|[^"\\])*"|[^\s=]+', location_body[child.start:])
-                assert key_match is not None
-                key_end = child.start + key_match.end()
+                key_end = next(
+                    item.key.end
+                    for item in parse(location_body).root.assignments()
+                    if item.start == child.start
+                )
                 location_body = (
                     location_body[:child.start] + wing.equipment_type + location_body[key_end:]
                 )
