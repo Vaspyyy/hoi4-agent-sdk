@@ -3,7 +3,6 @@ import pytest
 from hoi4.parser import (
     ParseError,
     PdxNode,
-    extract_braced_block,
     find_assignment_block,
     iter_assignment_blocks,
     parse_pdx,
@@ -217,11 +216,8 @@ class TestSpanHelpers:
         found = iter_assignment_blocks(text, "t")
         assert [text[s:e] for _, s, e in found] == ["t = { t = { inner } }", "t = { 2 }"]
 
-    def test_extract_braced_block(self):
-        text = 'a = { b = "}" # }\n c = { } } tail'
-        start = text.index("{") + 1
-        body, end = extract_braced_block(text, start)
-        assert text[end:] == " tail"
-        assert body == ' b = "}" # }\n c = { } '
-        body, end = extract_braced_block("a = { open", 5)
-        assert body == " open" and end == len("a = { open")
+
+def test_set_value_turns_a_comparison_into_an_assignment():
+    node = parse_pdx("a > 1\n")
+    node.set_value("a", "2")
+    assert serialize_pdx(node) == "a = 2\n"

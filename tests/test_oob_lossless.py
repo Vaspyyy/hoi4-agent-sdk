@@ -370,3 +370,33 @@ def test_removing_one_ship_and_adding_another_keeps_the_rest(tmp_path: Path) -> 
         ("Beta", "destroyer"),
         ("Delta", "submarine"),
     ]
+
+
+ACE = """air_wings = {
+\t162 = {
+\t\tlarge_plane_airframe_3 = {
+\t\t\towner = "ITA"
+\t\t\tamount = 12
+\t\t}
+\t\tname = "Angeli Mortis"
+\t\tace = { # belongs to the wing above
+\t\t\tmodifier = "bomber_unique"
+\t\t\tname = "Carlo"
+\t\t}
+\t}
+}
+"""
+
+
+def test_an_ace_block_is_not_an_air_wing(tmp_path: Path) -> None:
+    path = tmp_path / "history/units/ITA_air.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(ACE, encoding="utf-8")
+    mod = Mod(tmp_path)
+    (wing,) = mod.get_oob("ITA_air").air_wings
+    assert wing.equipment_type == "large_plane_airframe_3"
+
+    wing.amount = 24
+    assert mod.update_oob("ITA_air", air_wings=[wing])
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == ACE.replace("amount = 12", "amount = 24")

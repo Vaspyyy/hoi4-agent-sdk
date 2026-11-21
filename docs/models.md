@@ -457,8 +457,10 @@ An ID is a compositional HOI4 hook, not a globally unique object ID. Use
 
 One hook block may repeat `effect`, `events` and `random_events` (the game runs
 all of them). The model joins them in source order. On save, a field whose
-content did not change keeps all its blocks; a changed field is written into
-its first block and its other blocks are removed. Weighted `random_events`
+content did not change keeps all its blocks. `events` and `random_events` are
+edited entry by entry (an entry that stays keeps its block and its comment, a
+new one goes into the last block); only a reordered list or a changed `effect`
+is written into the first block with the other blocks removed. Weighted `random_events`
 entries keep their `weight = event_id` pairs. Every `on_actions = { }` block of
 a file is loaded.
 

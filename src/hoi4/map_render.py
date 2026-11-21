@@ -14,22 +14,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .countries import read_color
 from .layers import replace_paths
-from .parser import find_assignment_block
-from .patching import top_level_assignments
 from .progress import ProgressCallback as EventProgressCallback
 from .progress import report_progress
 from .states import read_state
+from .syntax import parse
+from .tags import _parse_tag_file_mapping
 from .textio import read_text
 
 ProgressCallback = Callable[[int, int], None]
 CancelCallback = Callable[[], bool]
 
-_TAG_LINE = re.compile(r'^\s*([A-Z0-9]{3})\s*=\s*"([^"]+)"')
 _COUNTRY_TAG = re.compile(r"^[A-Z0-9]{3}$")
-_COLOR = re.compile(
-    r"\bcolor\s*=\s*(?:rgb\s*)?\{\s*(\d+)\s+(\d+)\s+(\d+)\s*\}"
-)
 
 
 class MapRenderCancelled(RuntimeError):
@@ -127,13 +124,13 @@ def load_country_colors(
             continue
         countries_dir = root / "common" / "countries"
         tags_dir = root / "common" / "country_tags"
-        for tag, relative in _parse_tag_mappings(tags_dir).items():
+        for tag, relative in _parse_tag_file_mapping(tags_dir).items():
             country_path = countries_dir / Path(relative).name
             if not country_path.is_file():
                 continue
-            match = _COLOR.search(read_text(country_path))
-            if match:
-                result[tag] = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
+            color = read_color(parse(read_text(country_path)).root)
+            if color is not None:
+                result[tag] = color
         colors_path = countries_dir / "colors.txt"
         if colors_path.is_file():
             result.update(_parse_colors_file(colors_path))
@@ -271,28 +268,18 @@ def render_political_map(
 
 
 def _parse_colors_file(path: Path) -> dict[str, tuple[int, int, int]]:
-    text = read_text(path)
-    outer = find_assignment_block(text, "colors")
-    body = outer[0] if outer is not None else text
+    """Read ``TAG = { color = ... }`` entries, with or without a ``colors`` wrapper."""
+
+    root = parse(read_text(path)).root
+    container = root.block("colors") or root
     result: dict[str, tuple[int, int, int]] = {}
-    for span in top_level_assignments(body):
-        if not span.is_block or span.body_start is None or span.body_end is None:
+    for entry in container.assignments():
+        block = entry.block
+        if entry.op != "=" or block is None or not _COUNTRY_TAG.fullmatch(entry.name):
             continue
-        match = _COLOR.search(body[span.body_start : span.body_end])
-        if match and _COUNTRY_TAG.fullmatch(span.key):
-            result[span.key] = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
-    return result
-
-
-def _parse_tag_mappings(directory: Path) -> dict[str, str]:
-    result: dict[str, str] = {}
-    if not directory.is_dir():
-        return result
-    for path in sorted(directory.glob("*.txt")):
-        for line in read_text(path).splitlines():
-            match = _TAG_LINE.match(line)
-            if match:
-                result[match.group(1)] = match.group(2)
+        color = read_color(block)
+        if color is not None:
+            result[entry.name] = color
     return result
 
 

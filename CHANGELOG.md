@@ -29,6 +29,12 @@ All notable changes to this project are documented here. The format follows
   `Event.conditional_descriptions` and `EventOption.conditional_names`.
 - `Country.color_ui`, and colours read from `rgb { }`, plain `{ r g b }`,
   `hsv`/`HSV` and `hsv360`.
+- `hoi4.patching.sync_body`: rewrites a block body statement by statement.
+  Statements the old and the new body share keep their exact bytes, a list
+  gets one more entry without losing the comments next to the others, and a
+  nested block that changed is edited the same way one level down.
+  `set_block` uses it for every block edit. Also `same_block_body` and
+  `statement_spans`.
 - An opt-in corpus test (`pytest -m corpus` with `HOI4_INSTALL_DIR` set) that
   checks the script core against every script file of a real game install.
 
@@ -106,8 +112,23 @@ All notable changes to this project are documented here. The format follows
   `parse_pdx(strict=False)` reads the forgiving way. `PdxNode` gained
   `key_quoted` and `tag`; `AssignmentSpan` gained `operator` and `tag`;
   `top_level_assignments(comparisons=True)` also returns comparison
-  statements. `find_assignment_block` and `extract_braced_block` no longer
-  fail on a block that is open at the end of the text.
+  statements. `find_assignment_block` no longer fails on a block that is
+  open at the end of the text.
+- A block edit changes only the statements that differ, instead of writing
+  the whole block again. Comments count as soon as the new text has any: a
+  changed, added or dropped comment is written. A text without comments
+  leaves the comments in the file alone (pass `comments=True` to
+  `set_block` to remove them). A statement that is removed takes the
+  comment on its line with it.
+- Setting an event's plain `title` or `description`, or an option's plain
+  `name`, no longer removes the conditional alternatives. Pass
+  `conditional_titles=[]` (or `conditional_descriptions=[]`,
+  `conditional_names=[]`) to remove them.
+- While a file in the mod's own folder fails to load, `save()` also refuses
+  to create a new override of a game file in that folder: the broken file
+  may already hold the mod's version of that content.
+- `preview()` shows the repaired form of a game file with unbalanced braces
+  that becomes a mod override, which is what `save()` writes.
 - A decision edit writes only the file that holds the decision. Category
   presentation that an old layout kept in the decisions file moves to
   `common/decisions/categories/` only when the category itself is edited. A
@@ -139,6 +160,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Adding an event to an on-action merged its repeated `events` blocks into
+  one and dropped the comments inside them. Event lists are now edited entry
+  by entry.
+- Editing an event option's effect copied the option's comments, and the
+  copies doubled with every edit.
+- A comment-only change to an effect or trigger was silently ignored.
+- Adding a trait, an idea, a technology or any other entry to a list or
+  mapping block dropped the comments inside the block.
+- A multi-line statement that replaced another one was indented only on its
+  first line, and the first statement put into an empty multi-line block was
+  glued to the opening brace.
+- Removing a statement that was followed by spaces left a line of spaces.
+- A broken state file in the mod made the SDK edit the game's state of the
+  same id and write it as a second file for that state.
+- An air base's `ace = { ... }` block was read as an air wing named `ace`.
+- An event `picture` with a space or `#` was written without quotes.
+- `PdxNode.set_value` kept a comparison operator (`a > 1` became `a > 2`).
+- The map renderer read country colours and tag files with a regular
+  expression: a commented-out colour counted, and `hsv` colours did not.
+  The known-sprite list counted commented-out sprites.
 - Editing one field of a focus deleted its conditional `icon = { ... }` blocks
   and truncated `cost = 7.2` to `7`.
 - Editing the `icon = { ... }` blocks of a focus that had no plain `icon`
@@ -256,6 +297,8 @@ All notable changes to this project are documented here. The format follows
   `STATE_NAME_RE` and `OWNER_RE`.
 - The automatic move of category presentation out of a decisions file on any
   decision edit. It now happens only when the category itself is edited.
+- `parser.extract_braced_block`, a second brace scanner that nothing used any
+  more. Use `parser.find_assignment_block` or the syntax tree.
 
 ## [0.6.5] - 2026-08-01
 

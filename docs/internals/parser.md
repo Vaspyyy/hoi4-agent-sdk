@@ -160,15 +160,18 @@ The loading policy built on this:
 - **A malformed file in the mod's own folder is a load failure**, reported in
   `mod.load_diagnostics` and by `validate()` (or raised with
   `strict_loading=True`). It is the author's to fix, so the SDK does not guess.
-  Saving refuses to rewrite a country, character or country-tag file that
-  failed to load, because its content was never fully read.
+  Saving refuses to rewrite any mod file that failed to load, because its
+  content was never fully read. It also refuses to create a new override of
+  a game file in the same folder: the broken file may already hold the mod's
+  version of that content.
 - When the SDK copies a tolerated inherited file into the mod as an override,
-  it writes the repaired form, so the mod's copy is well formed.
+  it writes the repaired form, so the mod's copy is well formed. `preview()`
+  shows that repaired form.
 
 ## `hoi4.patching`: change one statement
 
 ```python
-from hoi4.patching import top_level_assignments, set_scalar, set_block
+from hoi4.patching import top_level_assignments, set_scalar, set_block, sync_body
 
 text = set_scalar(text, "cost", "7.2")           # only the value span changes
 text = set_block(text, "completion_reward", "add_political_power = 50")
@@ -189,9 +192,47 @@ for span in top_level_assignments(body):         # AssignmentSpan, depth zero
   count.
 - Removing or replacing the first statement of a line that holds several (or
   one followed by a comment) leaves the rest of the line in place.
+- A replacement or appended statement is written at column zero; its later
+  lines are moved to the indentation of the place it goes to. The first
+  statement of an empty multi-line block gets its own line, one level deeper
+  than the closing brace.
 - These helpers work on any text, so the usual pattern for a nested edit is:
   take the body of the block (`text[span.body_start:span.body_end]`), patch it,
   and splice it back with `replace_assignment_body`.
+
+### A block body changes statement by statement
+
+`set_block(text, key, body)` does not write the block again. It hands the old
+and the new body to `sync_body(current, new)`, which lines up their statements
+and changes only the ones that differ:
+
+- A statement both bodies have keeps its exact bytes, whatever its spacing.
+- A statement that only the old body has is cut out, together with the comment
+  on its line. One that only the new body has is put in, on its own line or,
+  in a one-line block or a list that shares lines (`provinces = { 1 2 3 }`),
+  on the line.
+- A statement with the same key and a new value is the same statement: a
+  scalar value is replaced, a block is edited the same way one level down, and
+  the comment on its line stays.
+
+So a list gets one more entry, or a reward gets one changed line, and every
+comment and every other statement stays where it was. `sync_body` checks its
+own result: if the layout cannot hold the edit (a comment put into a one-line
+block would comment out the closing brace), it returns `None` and `set_block`
+writes the body as a whole.
+
+Comments: they are compared as soon as the new body has any. A changed, added
+or dropped comment is then written. A new body without comments says nothing
+about the comments in the file, so they are left alone; pass `comments=True`
+to remove them too. `same_block_body(current, new)` answers "would this edit
+change anything?" by the same rule, and is what the content modules use to
+decide whether a text field changed.
+
+`sync_body(current, new, keep=("name", "ai_chance"))` leaves the statements
+with those keys alone and does not expect them in `new`. Event options use it:
+an option's effect is every statement and comment that is not `name`,
+`ai_chance` or `trigger`. `statement_spans(text, keep=...)` returns the spans
+that such an edit owns.
 
 ## `hoi4.parser`: `PdxNode`
 

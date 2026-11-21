@@ -69,7 +69,7 @@ _TOKEN_RE = re.compile(
     re.VERBOSE | re.DOTALL,
 )
 _COMMENT, _OPEN, _CLOSE, _OP, _STRING, _WORD = 1, 2, 3, 4, 5, 6
-_SPACES = frozenset(" \t\r\n\f\v﻿")
+_SPACES = frozenset(" \t\r\n\f\v\ufeff")
 
 # A scalar followed by a block is one value for these typed constructors.
 _TAGS = frozenset({"rgb", "hsv", "hsv360"})
@@ -419,7 +419,6 @@ def _parse_into(doc: Document) -> None:
     items = root.items
     # An assignment that has its key and operator but not yet its value, per
     # open block: (key, op_start, op_end) or None.
-    pending_stack: list[tuple[Scalar, int, int] | None] = [None]
     pending: tuple[Scalar, int, int] | None = None
     position = 0
 
@@ -453,7 +452,6 @@ def _parse_into(doc: Document) -> None:
         tagged_block = Block(doc, following.start(_OPEN), following.end(_OPEN))
         position = following.end(_OPEN)
         stack.append(tagged_block)
-        pending_stack.append(None)
         block = tagged_block
         items = tagged_block.items
         return Tagged(doc, scalar, tagged_block)
@@ -504,7 +502,6 @@ def _parse_into(doc: Document) -> None:
             else:
                 items.append(child)
             stack.append(child)
-            pending_stack.append(None)
             block = child
             items = child.items
             continue
@@ -519,7 +516,6 @@ def _parse_into(doc: Document) -> None:
             block.body_end = start
             block.end = end
             stack.pop()
-            pending_stack.pop()
             block = stack[-1]
             items = block.items
             continue

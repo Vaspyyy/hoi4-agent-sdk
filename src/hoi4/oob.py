@@ -984,6 +984,23 @@ def _parse_ship(body: str, source_index: int) -> Ship:
     )
 
 
+# Blocks of an air base that are not a wing: the ace assigned to the wing above.
+_AIR_BASE_BLOCKS = frozenset({"ace"})
+
+
+def _air_wing_spans(location_body: str) -> list[AssignmentSpan]:
+    """The wing blocks (``equipment_type = { ... }``) of one air base."""
+
+    return [
+        span
+        for span in top_level_assignments(location_body)
+        if span.is_block
+        and span.body_start is not None
+        and span.body_end is not None
+        and span.key not in _AIR_BASE_BLOCKS
+    ]
+
+
 def _parse_air_wings(text: str) -> list[AirWing]:
     outer = _block_span(text, "air_wings")
     if outer is None or outer.body_start is None or outer.body_end is None:
@@ -1001,13 +1018,8 @@ def _parse_air_wings(text: str) -> list[AirWing]:
             continue
         location = int(location_span.key)
         location_body = body[location_span.body_start : location_span.body_end]
-        for equipment_span in top_level_assignments(location_body):
-            if (
-                not equipment_span.is_block
-                or equipment_span.body_start is None
-                or equipment_span.body_end is None
-            ):
-                continue
+        for equipment_span in _air_wing_spans(location_body):
+            assert equipment_span.body_start is not None and equipment_span.body_end is not None
             equipment_body = location_body[
                 equipment_span.body_start : equipment_span.body_end
             ]
@@ -1456,9 +1468,7 @@ def _patch_air_wings(text: str, air_wings: list[AirWing]) -> str:
         assert location.body_start is not None and location.body_end is not None
         location_body = body[location.body_start : location.body_end]
         children = []
-        for child in top_level_assignments(location_body):
-            if not child.is_block or child.body_start is None or child.body_end is None:
-                continue
+        for child in _air_wing_spans(location_body):
             wing = source.get(source_index)
             if wing is not None and (
                 wing.source_location_index == location_index

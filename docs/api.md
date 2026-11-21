@@ -45,8 +45,9 @@ syntax problem) is a load failure. Files from the game or a base mod are read
 the way the game reads them: a block still open at the end of the file ends
 there, and a stray closing brace is skipped. When such an inherited file is
 copied into the mod as an override, the copy is written with balanced braces.
-`save()` refuses to rewrite a country, character or country-tag file that
-failed to load; fix it and call `reload()`.
+`save()` refuses to rewrite any mod file that failed to load, and to create a
+new override of a game file in the same folder as one; fix the file and call
+`reload()`.
 
 Saving keeps each file's encoding, byte-order mark and line endings, and an
 edit replaces only the text of the statements that changed. See
@@ -460,13 +461,12 @@ mod.create_event(
 )
 ```
 
-Setting the plain `title`, `description` or option `name` clears the matching
-conditional list unless that list is passed in the same call:
+Setting the plain `title`, `description` or option `name` changes only that
+key. The conditional list changes only when it is passed:
 
 ```python
-kept = mod.get_event("my_mod.2").conditional_titles
-mod.update_event("my_mod.2", title="my_mod.2.t2", conditional_titles=kept)  # kept
-mod.update_event("my_mod.2", title="my_mod.2.t3")  # conditional titles removed
+mod.update_event("my_mod.2", title="my_mod.2.t2")       # conditional titles stay
+mod.update_event("my_mod.2", conditional_titles=[])     # conditional titles removed
 ```
 
 Validation reports a conditional entry without `text` as
@@ -538,8 +538,11 @@ and patch them by exact source occurrence.
 
 Every `on_actions = { }` block of a file is loaded. Inside one hook block,
 repeated `effect`, `events` and `random_events` blocks are joined in source
-order. Saving leaves unchanged fields alone, with all their blocks; a changed
-field is written into its first block and its other blocks are removed.
+order. Saving leaves unchanged fields alone, with all their blocks. An event
+list is edited entry by entry: an entry that stays keeps its block and its
+comment, a dropped one is cut out, and a new one goes into the last block.
+Only a reordered list or a changed `effect` is written into the first block,
+with the other blocks removed.
 
 ## Decisions
 

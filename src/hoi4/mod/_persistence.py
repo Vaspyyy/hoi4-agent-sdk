@@ -57,7 +57,7 @@ from ..tags import (
     remove_country_tag_entries,
     sort_generated_country_tags,
 )
-from ..textio import decode_text, encode_text, read_text
+from ..textio import encode_text, read_text
 from ..types import (
     SaveResult,
 )
@@ -445,6 +445,10 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             resolve_mod_output_path(self.mod_root, path): content
             for path, content in rendered.items()
         }
+        for output_path, output in resolved.items():
+            if output is not None:
+                # Here, not at write time, so preview() shows what save() writes.
+                resolved[output_path] = self._repair_new_override(output_path, output)
         self._refuse_failed_loads(resolved)
         return resolved
 
@@ -507,11 +511,32 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         inherited = read_text(shadowed)
         return content == inherited or content == repair(inherited)
 
+    def _repair_new_override(self, path: Path, content: str) -> str:
+        """Close the braces of a new mod file that copies a tolerated inherited one.
+
+        The game reads its own files with missing or stray braces; the mod's
+        copy is written out well formed.
+        """
+
+        if path.exists():
+            return content
+        try:
+            shadowed = self.content_source(path.relative_to(self.mod_root))
+        except ValueError:
+            return content
+        if shadowed is None or not shadowed.is_file() or shadowed == path:
+            return content
+        if parse(read_text(shadowed)).problems:
+            return repair(content)
+        return content
+
     def _refuse_failed_loads(self, rendered: dict[Path, str | None]) -> None:
-        """Refuse to overwrite a mod file that could not be loaded.
+        """Refuse to write over, or next to, a mod file that could not be loaded.
 
         Its content was never fully modeled, so writing it from the model
-        would silently drop what the author wrote.
+        would silently drop what the author wrote. And while it is unreadable,
+        the SDK edits the inherited version of whatever it defines: writing
+        that as a new override file would give the mod the same content twice.
         """
 
         failed = {
@@ -521,8 +546,18 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         }
         if not failed:
             return
+        failed_folders = {path.parent: diagnostic for path, diagnostic in failed.items()}
         for path, content in rendered.items():
-            diagnostic = failed.get(path.resolve(strict=False))
+            resolved = path.resolve(strict=False)
+            neighbour = failed_folders.get(resolved.parent)
+            if content is not None and neighbour is not None and self._shadows_inherited(path):
+                raise RuntimeError(
+                    f"Refusing to create {path}: it would override an inherited file, but "
+                    f"{neighbour.path} in the same folder failed to load "
+                    f"({neighbour.error_type}: {neighbour.message}) and may already hold the "
+                    "mod's version of this content. Fix that file and call reload() first."
+                )
+            diagnostic = failed.get(resolved)
             if diagnostic is None or not path.is_file():
                 continue
             if content is not None and content == self._read_current_text(path):
@@ -555,10 +590,6 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             shadowed = None
         if shadowed is not None and shadowed.is_file() and shadowed != path:
             donor = shadowed.read_bytes()
-            if parse(decode_text(donor)).problems:
-                # The game tolerates the inherited file's missing or stray
-                # braces; the mod's own copy is written out well formed.
-                content = repair(content)
         return encode_text(content, like=donor, bom=bom)
 
     def _commit_rendered_files(

@@ -35,7 +35,6 @@ __all__ = [
     "PdxNode",
     "Token",
     "TokenType",
-    "extract_braced_block",
     "find_assignment_block",
     "iter_assignment_blocks",
     "parse_pdx",
@@ -200,6 +199,7 @@ class PdxNode:
         for child in self.children:
             if child.key == key:
                 child.value = value
+                child.operator = "="
                 child.children = []
                 child.block = False
                 child.tag = None
@@ -401,35 +401,3 @@ def _serialize(node: PdxNode, indent: int, parts: list[str]) -> None:
             parts.append(f"{tab}{key} {node.operator} {value}\n")
         else:
             parts.append(f"{tab}{value}\n")
-
-
-def extract_braced_block(text: str, start_index: int) -> tuple[str, int]:
-    """Return the body of the block whose ``{`` sits just before ``start_index``.
-
-    Returns ``(body, end)`` where ``end`` is the index after the closing brace.
-    Like the game, a block that is still open at the end of the text ends there.
-    """
-
-    depth = 1
-    i = start_index
-    length = len(text)
-    while i < length and depth > 0:
-        c = text[i]
-        if c == '"':
-            i += 1
-            while i < length and text[i] != '"':
-                if text[i] == "\\":
-                    i += 1
-                i += 1
-        elif c == "#":
-            while i < length and text[i] != "\n":
-                i += 1
-            continue
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-        i += 1
-    if depth != 0:
-        return text[start_index:], length
-    return text[start_index : i - 1], i

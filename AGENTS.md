@@ -250,7 +250,8 @@ with mod.transaction():
 37. Check `mod.load_diagnostics` (or load with `strict_loading=True`) before
     editing an existing mod. A malformed file in the mod's own folder, such as
     one with an unclosed brace, is not loaded, and `save()` refuses to rewrite
-    a country, character or country-tag file that failed to load. Fix the file
+    any mod file that failed to load, or to create a new override of a game
+    file in the same folder. Fix the file
     and call `reload()`. Files from the game or a base mod with unbalanced
     braces load the way the game reads them.
 
@@ -266,8 +267,8 @@ with mod.transaction():
     `Event.description` and `EventOption.name` hold only the unconditional
     key; the others are in `conditional_titles`, `conditional_descriptions`
     and `conditional_names` (`EventText` values). Passing `title=`,
-    `description=` or `name=` to an update replaces the matching conditional
-    list with nothing unless you pass that list too.
+    `description=` or `name=` to an update changes only the plain key; pass
+    the conditional list (an empty list removes it) to change the others.
 
 ## Country Visual Completeness
 

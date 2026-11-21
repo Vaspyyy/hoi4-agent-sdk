@@ -41,6 +41,32 @@ def test_country_colors_use_colors_file_and_mod_precedence(tmp_path: Path) -> No
     assert load_country_colors(mod, vanilla)["ABC"] == (7, 8, 9)
 
 
+def test_country_colors_are_read_from_the_tree(tmp_path: Path) -> None:
+    """A commented-out colour is not a colour, and ``hsv`` is one."""
+
+    mod = tmp_path / "mod"
+    (mod / "common/country_tags").mkdir(parents=True)
+    (mod / "common/countries").mkdir(parents=True)
+    (mod / "common/country_tags/00_tags.txt").write_text(
+        '# OLD = "countries/Old.txt"\nABC = "countries/Abc.txt" DEF = "countries/Def.txt"\n',
+        encoding="utf-8",
+    )
+    (mod / "common/countries/Abc.txt").write_text(
+        "# color = { 1 1 1 }\ngraphical_culture = x\ncolor = HSV { 0 1 1 }\n", encoding="utf-8"
+    )
+    (mod / "common/countries/Def.txt").write_text(
+        "unit = { color = { 9 9 9 } }\ncolor = rgb { 4 5 6 }\n", encoding="utf-8"
+    )
+    (mod / "common/countries/colors.txt").write_text(
+        "GHI = {\n\t# color = rgb { 1 1 1 }\n\tcolor = rgb { 7 8 9 }\n}\n", encoding="utf-8"
+    )
+    assert load_country_colors(mod, None) == {
+        "ABC": (255, 0, 0),
+        "DEF": (4, 5, 6),
+        "GHI": (7, 8, 9),
+    }
+
+
 def test_fallback_country_colors_are_deterministic_and_distinct() -> None:
     first = resolve_country_colors({"ABC": (1, 2, 3), "DEF": (1, 2, 3)}, {"ABC", "DEF", "XYZ"})
     second = resolve_country_colors(

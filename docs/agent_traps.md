@@ -268,9 +268,8 @@ title = my.1.t
 `Event.title` is `"my.1.t"`; the first line is in `Event.conditional_titles`
 as `EventText("my.1.t.ger", "tag = GER")`. The same holds for `desc`
 (`conditional_descriptions`) and option names (`conditional_names`).
-`update_event("my.1", title="my.1.t2")` removes the conditional titles. To
-keep them, pass `conditional_titles=event.conditional_titles` in the same
-call.
+`update_event("my.1", title="my.1.t2")` changes only the plain key and
+keeps the conditional titles. To remove them, pass `conditional_titles=[]`.
 
 ## Revolts Need a Playable Baseline
 
