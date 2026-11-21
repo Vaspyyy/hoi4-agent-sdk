@@ -600,12 +600,19 @@ class CatalogsLayer(SourcesLayer):
                         continue
                     vanilla.update(found)
             self._sprite_texture_cache = vanilla
-        textures = dict(self._sprite_texture_cache)
-        scan(FolderView(self.mod_root), textures)
-        for path, content in self._pending_asset_writes.items():
-            if path.suffix.lower() == ".gfx":
-                scan_text(decode_text(content), textures)
-        return dict(textures)
+        vanilla_textures = self._sprite_texture_cache
+
+        def build() -> dict[str, str]:
+            textures = dict(vanilla_textures)
+            scan(FolderView(self.mod_root), textures)
+            for path, content in self._pending_asset_writes.items():
+                if path.suffix.lower() == ".gfx":
+                    scan_text(decode_text(content), textures)
+            return textures
+
+        # The country package check asks once per country; within one
+        # validate() run the mod's files do not change, so read them once.
+        return dict(self._run_cached("sprite_textures", build))
 
     def _texture_exists(self, relative_path: str) -> bool:
         normalized = relative_path.replace("\\", "/").lstrip("/")
