@@ -8,19 +8,10 @@ preserving common trigger/effect blocks as raw Paradox script strings.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ._scalar import needs_quotes
-from .parser import (
-    ParseError,
-    TokenType,
-    find_assignment_block,
-    iter_assignment_blocks,
-    strip_comments,
-    tokenize,
-)
 from .patching import (
     AssignmentSpan,
     append_assignment,
@@ -31,16 +22,34 @@ from .patching import (
     set_scalar,
     top_level_assignments,
 )
-from .textio import read_text
+from .syntax import Scalar, parse, unquote
+from .textio import read_text, write_text
 from .types import Decision, DecisionCategory
 
-SCALAR_RE = re.compile(r"\b([A-Za-z0-9_]+)\s*=\s*([^\s{}#]+)")
+# Keys a category block may carry for itself. Every other ``key = { ... }``
+# directly inside a category block of a ``common/decisions`` file is a
+# decision, the way the game reads it. (Category presentation belongs in
+# ``common/decisions/categories``; pre-0.4.2 SDK output put ``icon``,
+# ``allowed`` and ``visible`` here, see ``_patch_category_body``.)
+_CATEGORY_METADATA_KEYS = frozenset(
+    {
+        "allowed",
+        "visible",
+        "picture",
+        "icon",
+        "priority",
+        "visibility_type",
+        "on_map_area",
+        "custom_icon",
+        "scripted_gui",
+    }
+)
 
 # Field kinds: "int", "bool", "str" (scalar, quoted when needed), "atom" (bare
 # scalar), "list" (``key = { A B }``), and "block" (raw Paradox script).
-# Legacy fields keep their historical readers; the mission/targeted/general
-# fields are read from top-level assignments only, so nested keys such as an
-# ``ai_will_do = { modifier = { ... } }`` never leak into ``Decision.modifier``.
+# Every field is read from the decision's own top-level assignments only, so a
+# nested key such as ``complete_effect = { cost = 5 }`` or
+# ``ai_will_do = { modifier = { ... } }`` never leaks into the model.
 _LEGACY_FIELDS: dict[str, str] = {
     "icon": "atom",
     "cost": "int",
@@ -122,65 +131,23 @@ _RENDER_ORDER: tuple[str, ...] = (
 assert set(_RENDER_ORDER) == set(DECISION_FIELD_KINDS)
 
 
-def _extract_block(text: str, key: str) -> str:
-    match = find_assignment_block(text, key)
-    return dedent_block_body(match[0]) if match else ""
-
-
-def _extract_scalar(text: str, key: str) -> str:
-    clean = strip_comments(text)
-    m = re.search(rf"\b{re.escape(key)}\s*=\s*([^\s{{}}#]+)", clean)
-    return m.group(1) if m else ""
-
-
-def _extract_int(text: str, key: str) -> int | None:
-    raw = _extract_scalar(text, key)
-    if not raw:
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
-
-
-def _extract_bool(text: str, key: str) -> bool | None:
-    raw = _extract_scalar(text, key)
-    if raw == "yes":
-        return True
-    if raw == "no":
-        return False
-    return None
-
-
 def _first_spans(body: str) -> dict[str, AssignmentSpan]:
     spans: dict[str, AssignmentSpan] = {}
-    try:
-        for span in top_level_assignments(body):
-            spans.setdefault(span.key, span)
-    except ParseError:
-        return {}
+    for span in top_level_assignments(body):
+        spans.setdefault(span.key, span)
     return spans
-
-
-def _unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] == '"':
-        return value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
-    return value
 
 
 def _parse_atom_list(body: str) -> list[str]:
     """Read ``A B "C"``; anything structured is not a plain list."""
-    values: list[str] = []
-    try:
-        tokens = tokenize(body)
-    except (ParseError, ValueError):
+    doc = parse(body)
+    if doc.problems:
         return []
-    for token in tokens:
-        if token.type in {TokenType.COMMENT, TokenType.EOF}:
-            continue
-        if token.type not in {TokenType.IDENT, TokenType.STRING, TokenType.NUMBER}:
+    values: list[str] = []
+    for item in doc.root.items:
+        if type(item) is not Scalar:
             return []
-        values.append(token.value)
+        values.append(item.value)
     return values
 
 
@@ -198,31 +165,21 @@ def _top_level_value(body: str, span: AssignmentSpan | None, kind: str) -> Any:
     raw = body[span.value_start : span.value_end]
     if kind == "int":
         try:
-            return int(_unquote(raw))
+            return int(unquote(raw))
         except ValueError:
             return None
     if kind == "bool":
-        value = _unquote(raw)
+        value = unquote(raw)
         return True if value == "yes" else False if value == "no" else None
-    return _unquote(raw)
-
-
-_LEGACY_READERS: dict[str, Callable[[str, str], Any]] = {
-    "atom": _extract_scalar,
-    "int": _extract_int,
-    "bool": _extract_bool,
-    "block": _extract_block,
-}
+    return unquote(raw)
 
 
 def _read_decision_fields(body: str) -> dict[str, Any]:
-    values: dict[str, Any] = {
-        key: _LEGACY_READERS[kind](body, key) for key, kind in _LEGACY_FIELDS.items()
-    }
     spans = _first_spans(body)
-    for key, kind in _EXTENDED_FIELDS.items():
-        values[key] = _top_level_value(body, spans.get(key), kind)
-    return values
+    return {
+        key: _top_level_value(body, spans.get(key), kind)
+        for key, kind in DECISION_FIELD_KINDS.items()
+    }
 
 
 def _quote_if_needed(value: str) -> str:
@@ -293,49 +250,28 @@ def decision_has_mission_timeout(decision: Decision) -> bool:
     )
 
 
-def _brace_depth_at(text: str, pos: int) -> int:
-    depth = 0
-    in_quote = False
-    i = 0
-    while i < min(pos, len(text)):
-        c = text[i]
-        if c == "\\" and in_quote:
-            i += 2
-            continue
-        if c == '"':
-            in_quote = not in_quote
-        elif c == "#" and not in_quote:
-            while i < min(pos, len(text)) and text[i] != "\n":
-                i += 1
-            continue
-        elif not in_quote and c == "{":
-            depth += 1
-        elif not in_quote and c == "}":
-            depth -= 1
-        i += 1
-    return depth
-
-
-def _looks_like_category(body: str) -> bool:
-    decision_keys = {
-        "available",
-        "visible",
-        "complete_effect",
-        "remove_effect",
-        "days_remove",
-        "fire_only_once",
-        "cost",
-        # Missions and targeted decisions need not use any key above.
-        "days_mission_timeout",
-        "activation",
-        "timeout_effect",
-        "target_trigger",
-        "selectable_mission",
-    }
-    clean = strip_comments(body)
-    return bool(iter_assignment_blocks(body, "available")) or any(
-        re.search(rf"\b{re.escape(key)}\s*=", clean) for key in decision_keys
+def _is_block_span(span: AssignmentSpan) -> bool:
+    return (
+        span.is_block
+        and span.tag is None
+        and span.body_start is not None
+        and span.body_end is not None
     )
+
+
+def _decision_spans(category_body: str) -> list[AssignmentSpan]:
+    """Return the decisions directly inside a category body, in source order."""
+
+    return [
+        span
+        for span in top_level_assignments(category_body)
+        if _is_block_span(span) and span.key not in _CATEGORY_METADATA_KEYS
+    ]
+
+
+def _block_body(text: str, span: AssignmentSpan) -> str:
+    assert span.body_start is not None and span.body_end is not None
+    return text[span.body_start : span.body_end]
 
 
 def _extract_category_metadata(body: str) -> dict[str, str]:
@@ -357,27 +293,42 @@ def _extract_category_metadata(body: str) -> dict[str, str]:
 
 
 def load_decisions_file(path: Path) -> list[DecisionCategory]:
+    """Load the categories of a ``common/decisions`` file with their decisions.
+
+    A category block may appear more than once in one file: the game reopens
+    the category. All its blocks become one :class:`DecisionCategory` holding
+    the decisions of every block in source order.
+    """
+
     txt = read_text(path)
-    categories: list[DecisionCategory] = []
+    categories: dict[str, DecisionCategory] = {}
+    bodies: dict[str, list[str]] = {}
     for span in top_level_assignments(txt):
-        if not span.is_block or span.body_start is None or span.body_end is None:
+        if not _is_block_span(span):
             continue
         category_id = span.key
-        category_body = txt[span.body_start : span.body_end]
+        category_body = _block_body(txt, span)
         metadata = _extract_category_metadata(category_body)
-        category = DecisionCategory(
-            id=category_id,
-            icon=metadata.get("icon", ""),
-            allowed=metadata.get("allowed", ""),
-            visible=metadata.get("visible", ""),
-            path=path,
-            raw_block=category_body.strip(),
-        )
-        for decision_id, decision_body in _iter_top_level_decision_blocks(category_body):
-            decision = _parse_decision(decision_id, category_id, decision_body, path)
-            category.decisions.append(decision)
-        categories.append(category)
-    return categories
+        category = categories.get(category_id)
+        if category is None:
+            category = DecisionCategory(id=category_id, path=path)
+            categories[category_id] = category
+        category.icon = category.icon or metadata.get("icon", "")
+        category.allowed = category.allowed or metadata.get("allowed", "")
+        category.visible = category.visible or metadata.get("visible", "")
+        bodies.setdefault(category_id, []).append(category_body.strip())
+        for decision_span in _decision_spans(category_body):
+            category.decisions.append(
+                _parse_decision(
+                    decision_span.key,
+                    category_id,
+                    _block_body(category_body, decision_span),
+                    path,
+                )
+            )
+    for category_id, category in categories.items():
+        category.raw_block = "\n\n".join(body for body in bodies[category_id] if body)
+    return list(categories.values())
 
 
 def load_decision_categories_file(path: Path) -> list[DecisionCategory]:
@@ -386,9 +337,9 @@ def load_decision_categories_file(path: Path) -> list[DecisionCategory]:
     txt = read_text(path)
     categories: list[DecisionCategory] = []
     for span in top_level_assignments(txt):
-        if not span.is_block or span.body_start is None or span.body_end is None:
+        if not _is_block_span(span):
             continue
-        body = txt[span.body_start : span.body_end]
+        body = _block_body(txt, span)
         metadata = _extract_category_metadata(body)
         categories.append(
             DecisionCategory(
@@ -401,21 +352,6 @@ def load_decision_categories_file(path: Path) -> list[DecisionCategory]:
             )
         )
     return categories
-
-
-def _iter_top_level_decision_blocks(category_body: str) -> list[tuple[str, str]]:
-    blocks: list[tuple[str, str]] = []
-    for span in top_level_assignments(category_body):
-        if not span.is_block or span.body_start is None or span.body_end is None:
-            continue
-        key = span.key
-        if key in {"allowed", "visible", "picture", "icon"}:
-            continue
-        body = category_body[span.body_start : span.body_end]
-        if not _looks_like_category(body):
-            continue
-        blocks.append((key, body))
-    return blocks
 
 
 def _parse_decision(decision_id: str, category_id: str, body: str, path: Path) -> Decision:
@@ -453,30 +389,46 @@ def serialize_decision(decision: Decision) -> str:
 
 
 def serialize_decisions_file(categories: list[DecisionCategory], original: str = "") -> str:
+    """Render a ``common/decisions`` file, patching ``original`` in place.
+
+    Only the spans of decisions that changed are replaced. A category that
+    appears in several blocks of ``original`` keeps every block; each decision
+    is patched in the block that holds it, and new decisions go to the
+    category's last block.
+    """
+
     if original:
-        text = original
         current = {category.id: category for category in categories}
-        for span in sorted(top_level_assignments(text), key=lambda item: item.start, reverse=True):
-            if not span.is_block:
-                continue
-            category = current.pop(span.key, None)
-            if category is None and span.key not in {candidate.id for candidate in categories}:
-                # Treat blocks that parse as categories as deleted; leave unrelated blocks.
-                if (
-                    span.body_start is None
-                    or span.body_end is None
-                    or not _iter_top_level_decision_blocks(text[span.body_start : span.body_end])
-                ):
-                    continue
+        blocks: dict[str, list[AssignmentSpan]] = {}
+        for span in top_level_assignments(original):
+            if _is_block_span(span):
+                blocks.setdefault(span.key, []).append(span)
+        edits: list[tuple[AssignmentSpan, str | None]] = []
+        for category_id, spans in blocks.items():
+            category = current.pop(category_id, None)
             if category is None:
-                text = replace_assignment(text, span, None)
-            elif category.raw_block and span.body_start is not None and span.body_end is not None:
-                category_body = text[span.body_start : span.body_end]
-                text = replace_assignment_body(
-                    text, span, _patch_category_body(category, category_body)
+                # A category that left this file (moved or replaced): remove
+                # its blocks, but leave blocks that hold no decision alone.
+                edits.extend(
+                    (span, None)
+                    for span in spans
+                    if _decision_spans(_block_body(original, span))
                 )
+                continue
+            pool = list(category.decisions)
+            for index, span in enumerate(spans):
+                body = _block_body(original, span)
+                patched = _patch_category_body(
+                    category, body, pool, append=index == len(spans) - 1
+                )
+                if patched != body:
+                    edits.append((span, patched))
+        text = original
+        for span, new_body in sorted(edits, key=lambda edit: edit[0].start, reverse=True):
+            if new_body is None:
+                text = replace_assignment(text, span, None)
             else:
-                text = replace_assignment(text, span, _serialize_category(category))
+                text = replace_assignment_body(text, span, new_body)
         for category in current.values():
             text = append_assignment(text, _serialize_category(category))
         return text
@@ -520,36 +472,47 @@ def _patch_decision_body(decision: Decision, body: str) -> str:
     return body
 
 
-def _patch_category_body(category: DecisionCategory, body: str) -> str:
+def _patch_category_body(
+    category: DecisionCategory,
+    body: str,
+    pool: list[Decision] | None = None,
+    *,
+    append: bool = True,
+) -> str:
+    """Patch one category block's body.
+
+    ``pool`` holds the category's decisions not yet placed in an earlier block
+    of the same category; each decision found here is taken from it. With
+    ``append``, decisions still left in the pool are added at the end.
+    """
+
+    if pool is None:
+        pool = list(category.decisions)
     # Migrate invalid pre-0.4.2 output by removing presentation metadata from
     # the decision-content file. It is rendered through the category file.
     body = set_scalar(body, "icon", None)
     body = set_block(body, "allowed", None)
     body = set_block(body, "visible", None)
-    current = {decision.id: decision for decision in category.decisions}
-    decision_spans = {
-        span.key: span
-        for span in top_level_assignments(body)
-        if span.is_block
-        and span.body_start is not None
-        and span.body_end is not None
-        and _looks_like_category(body[span.body_start : span.body_end])
-    }
-    for decision_id, span in sorted(
-        decision_spans.items(), key=lambda item: item[1].start, reverse=True
-    ):
-        decision = current.pop(decision_id, None)
+    placed: list[tuple[AssignmentSpan, Decision | None]] = []
+    for span in _decision_spans(body):
+        index = next(
+            (i for i, decision in enumerate(pool) if decision.id == span.key), None
+        )
+        placed.append((span, None if index is None else pool.pop(index)))
+    for span, decision in reversed(placed):
         if decision is None:
             body = replace_assignment(body, span, None)
-        elif span.body_start is not None and span.body_end is not None and decision.raw_block:
-            decision_body = body[span.body_start : span.body_end]
+        elif decision.raw_block:
+            decision_body = _block_body(body, span)
             body = replace_assignment_body(
                 body, span, _patch_decision_body(decision, decision_body)
             )
         else:
             body = replace_assignment(body, span, serialize_decision(decision).strip())
-    for decision in current.values():
-        body = append_assignment(body, serialize_decision(decision).strip())
+    if append:
+        for decision in pool:
+            body = append_assignment(body, serialize_decision(decision).strip())
+        pool.clear()
     return body
 
 
@@ -564,13 +527,13 @@ def serialize_decision_categories_file(
         for span in sorted(
             top_level_assignments(text), key=lambda item: item.start, reverse=True
         ):
-            if not span.is_block:
+            if not _is_block_span(span):
                 continue
             category = current.pop(span.key, None)
             if category is None:
                 text = replace_assignment(text, span, None)
-            elif span.body_start is not None and span.body_end is not None:
-                body = text[span.body_start : span.body_end]
+            else:
+                body = _block_body(text, span)
                 text = replace_assignment_body(
                     text, span, _patch_category_definition_body(category, body)
                 )
@@ -603,15 +566,22 @@ def _serialize_category_definition(category: DecisionCategory) -> str:
 def _patch_category_definition_body(category: DecisionCategory, body: str) -> str:
     if not category.touched:
         return body
-    body = set_scalar(body, "icon", category.icon or None)
-    body = set_block(body, "allowed", category.allowed or None)
-    body = set_block(body, "visible", category.visible or None)
+    # Patch only fields whose value differs from what the source reads as, so
+    # setting a field to its current value (an empty ``visible = { }``
+    # included) changes nothing.
+    current = _extract_category_metadata(body)
+    if category.icon != current.get("icon", ""):
+        body = set_scalar(body, "icon", category.icon or None)
+    for key in ("allowed", "visible"):
+        value = getattr(category, key)
+        if value != current.get(key, ""):
+            body = set_block(body, key, value or None)
     return body
 
 
 def write_decisions_file(path: Path, categories: list[DecisionCategory]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(serialize_decisions_file(categories), encoding="utf-8")
+    write_text(path, serialize_decisions_file(categories))
     return path
 
 

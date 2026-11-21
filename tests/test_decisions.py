@@ -220,12 +220,18 @@ def test_cost_edit_keeps_nested_metadata_in_decisions(tmp_path, metadata_source)
     result = mod.save(require_changes=True)
     print(result)
     print(result.written_files)
-    expected_paths = {path} if metadata_source == "separate" else {path, category_path}
+    # A decision edit writes the category file only to move legacy metadata
+    # there. With no definition in the mod (it may come from the game), an
+    # empty one must not be created: it would replace the inherited one.
+    expected_paths = {path, category_path} if metadata_source == "legacy" else {path}
     assert set(result.written_files) == expected_paths
     saved = path.read_text(encoding="utf-8")
     assert first.replace("cost = 5", "cost = 15") in saved
     assert sibling in saved
-    category_text = category_path.read_text(encoding="utf-8")
+    assert category_path.exists() == (metadata_source != "none")
+    category_text = (
+        category_path.read_text(encoding="utf-8") if category_path.exists() else ""
+    )
     if metadata_source == "separate":
         assert category_text == separate_source
     assert "first_icon" not in category_text

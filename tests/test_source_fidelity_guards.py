@@ -123,9 +123,11 @@ def test_duplicate_decision_cannot_be_lost_by_editing_same_file(tmp_path: Path) 
     _assert_guarded_rewrite(mod, second_path, second_source)
 
 
-def test_repeated_decision_category_in_one_file_cannot_be_collapsed(
+def test_repeated_decision_category_in_one_file_is_reopened_not_duplicated(
     tmp_path: Path,
 ) -> None:
+    # The game reopens a category block that appears again in the same file,
+    # so this is legal; both decisions load and an edit touches only its value.
     path = tmp_path / "common/decisions/repeated.txt"
     path.parent.mkdir(parents=True)
     source = """shared_category = { first_decision = { cost = 1 } }
@@ -134,16 +136,15 @@ shared_category = { second_decision = { cost = 2 } }
     path.write_text(source, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    diagnostic = next(
-        item for item in mod.load_diagnostics if item.section == "decision_category"
-    )
-    assert diagnostic.identifier == "shared_category"
-    assert any(
+    assert not mod.load_diagnostics
+    assert mod.list_decisions() == ["first_decision", "second_decision"]
+    assert not any(
         issue.code == "duplicate_decision_category_id" for issue in mod.validate()
     )
     assert mod.update_decision("first_decision", cost=3)
+    mod.save()
 
-    _assert_guarded_rewrite(mod, path, source)
+    assert path.read_text(encoding="utf-8") == source.replace("cost = 1", "cost = 3")
 
 
 def test_duplicate_idea_cannot_be_lost_by_editing_same_file(tmp_path: Path) -> None:

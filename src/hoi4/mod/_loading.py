@@ -436,19 +436,10 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         for f in sorted(decisions_dir.glob("*.txt")):
             try:
                 self._require_well_formed(f)
+                # A category reopened later in the same file is one category:
+                # load_decisions_file merges its blocks.
                 categories = load_decisions_file(f)
-                file_category_sources: dict[str, Path] = {}
                 for category in categories:
-                    first_category_path = file_category_sources.get(category.id)
-                    if first_category_path is not None:
-                        self._record_duplicate_identifier(
-                            "decision_category",
-                            category.id,
-                            first_category_path,
-                            category.path or f,
-                        )
-                        continue
-                    file_category_sources[category.id] = category.path or f
                     unique_decisions: list[Decision] = []
                     pending_sources: dict[str, Path] = {}
                     for decision in category.decisions:

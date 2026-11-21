@@ -251,13 +251,22 @@ def test_repeated_decision_category_with_unique_decisions_is_not_a_duplicate(
 
     assert mod.list_decisions() == ["first_decision", "second_decision"]
     assert not mod.load_diagnostics
-    with pytest.raises(RuntimeError, match="extended across multiple files"):
-        mod.update_decision("first_decision", cost=3)
 
+    # Each decision is edited in the file that holds it; the other file of the
+    # shared category is left alone.
     assert mod.update_decision("second_decision", cost=4)
     preview = mod.preview()
     assert "b.txt" in preview
     assert "a.txt" not in preview
+
+    assert mod.update_decision("first_decision", cost=3)
+    mod.save()
+    assert (tmp_path / "common/decisions/a.txt").read_text(encoding="utf-8") == (
+        "shared_category = { first_decision = { cost = 3 } }\n"
+    )
+    assert (tmp_path / "common/decisions/b.txt").read_text(encoding="utf-8") == (
+        "shared_category = { second_decision = { cost = 4 } }\n"
+    )
 
 
 def test_overwrite_decision_category_replaces_in_place_and_drops_old_index(
