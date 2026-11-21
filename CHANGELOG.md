@@ -13,8 +13,9 @@ All notable changes to this project are documented here. The format follows
   map data and localisation. A new process reads the stored results instead
   of parsing the game again, so the first `validate()` of a process on a
   small mod takes about 3 to 4 seconds instead of about 40. The catalogs'
-  per-file scans of the inherited files (definitions, focus, event and idea
-  ids, localisation keys and more) are stored too. It lives in
+  per-file scans of the inherited files (definitions, country tags, focus,
+  event and idea ids, shared focuses, localisation keys and more) are stored
+  too. It lives in
   `~/.cache/hoi4-sdk/file-results/` (or under `$XDG_CACHE_HOME` or
   `$HOI4_SDK_CACHE_DIR`), holds only results for inherited files, and is
   rebuilt for a file whose size or modification time changed and for any new

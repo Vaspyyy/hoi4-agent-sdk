@@ -20,8 +20,9 @@ life of the process. A mod placed inside the game folder counts as the mod.
 | Store | What one entry holds |
 | --- | --- |
 | `file_references` | The owners, references and definitions of one script file of `common`, `events` or `history` |
-| `names` | A set of names from one file: scripted effect and trigger names, division template names, character, idea, event and focus ids, name pool tags, sub-unit types, sprite names, dynamic tags, idea categories, tag aliases, event namespaces, localisation keys and `[?name]` values |
-| `definitions` | What one script file defines (events, ideas, focus trees, technologies, equipment, tags, organizations) |
+| `names` | A set of names from one file: scripted effect and trigger names, division template names, character, idea, event and focus ids, name pool tags, sub-unit types, sprite names, dynamic tags, idea categories, event namespaces, localisation keys and `[?name]` values |
+| `definitions` | What one script file defines (events, ideas, focus trees, technologies, equipment, tags, organizations); the country tags and tag aliases come from here |
+| `shared_focuses` | The prerequisites and the `allow_branch` condition (none, or one that always holds, kept apart) of every top-level shared or joint focus of one focus file |
 | `pairs` | `(equipment, technology or special project)` pairs of one file, in order |
 | `sprite_textures` | `name -> texturefile` of every sprite of one `.gfx` file |
 | `state_index_header` | The id, name and owner of one state file |

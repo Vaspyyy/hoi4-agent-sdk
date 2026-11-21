@@ -74,7 +74,11 @@ keeps, so that is cheap. Caches keyed by a file's exact text check that text
 on every use and stay valid: the references of the mod's own files
 (`_own_reference_cache`) keep the entries of files that were not written,
 staged or changed and that belong to no unloaded section, and the parsed
-sprite, scripted-trigger and runtime-activation texts are kept. `reload()`
+sprite, scripted-trigger and runtime-activation texts are kept. An entry of
+`_own_reference_cache` also records the character ids it was read with
+(`_character_scope_names()`, the same frozenset while the ids are the same),
+so a character created, deleted or reloaded since reads the file again.
+`reload()`
 clears all of them. With base mods, the inherited content is read where it is (see
 [`mod_layers.md`](mod_layers.md)), so nothing needs rebuilding after a save. A
 base mod's text files have fingerprints too (`_base_fingerprints`): when one
