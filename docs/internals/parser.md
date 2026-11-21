@@ -32,14 +32,18 @@ is built on it:
 ## `hoi4.textio`: byte-exact files
 
 ```python
-from hoi4.textio import read_text, decode_text, encode_text, detect_format
+from hoi4.textio import read_text, decode_text, encode_text, detect_format, write_text
 
 text = read_text(path)                    # "\n" line endings, no BOM, nothing dropped
 data = encode_text(new_text, like=path.read_bytes())
+detect_format(data)                       # TextFormat(encoding, bom, newline, mixed_newlines)
+write_text(path, new_text, like=original) # encode_text, then write; returns the bytes
 ```
 
 - Decoding tries UTF-8, then Windows-1252, then Latin-1. The last one maps
   every byte, so no byte is ever dropped.
+- Only CR LF, a lone CR and LF are line breaks. A form feed or a Unicode line
+  separator stays inside its line.
 - `encode_text(text, like=original)` keeps the original's encoding, byte-order
   mark and line endings. Unchanged text returns `original` itself. In a file
   that mixes line endings, each unchanged line keeps its own.
@@ -64,6 +68,9 @@ focus.start, focus.end       # exact offsets into text
 focus.block.scalar("id")     # value of the first `id = ...`
 ```
 
+`parse` never modifies the text and never raises. It caches the documents of
+the last few large texts, so treat a `Document` as read-only.
+
 Grammar (the one the game accepts):
 
 ```
@@ -74,23 +81,41 @@ OP     := "=" | "<" | ">" | "<=" | ">=" | "!=" | "==" | "?="
 scalar := bare word | "quoted string"
 ```
 
+Details the game's reader shares, and so does this one:
+
+- Whitespace is only space, tab, CR, LF, form feed and vertical tab, plus a
+  stray byte-order mark. Any other character, such as a no-break space, is
+  part of a word, so the parser can never stop early.
+- A comment runs from `#` to the end of the line. A comment may sit between a
+  key and its operator, or between an operator and its value:
+  `key # note` with `= value` on the next line is one statement.
+- `TAG` is `rgb`, `hsv` or `hsv360`, in any case (`HSV { ... }` too). A bare
+  `rgb { 1 2 3 }` inside a list is one `Tagged` value, not a word and a block.
+- Inline maths such as `@[ 1 + 2 ]` is one word.
+- A lone `!` or `?` belongs to a word (`foo?0`); only `!=` and `?=` are
+  operators.
+
 Node types, all with `start`/`end` offsets and `raw` (the exact source):
 
 | Node | Meaning | Useful members |
 | --- | --- | --- |
 | `Scalar` | bare word or quoted string | `value` (unquoted), `quoted` |
 | `Block` | `{ ... }`, or the whole file | `items`, `body`, `body_start`, `body_end`, `closed` |
-| `Tagged` | `rgb { ... }`, `hsv { ... }` | `tag`, `block` |
-| `Assignment` | `key OP value` | `key`, `name`, `op`, `value`, `scalar`, `block` |
+| `Tagged` | `rgb { ... }`, `hsv { ... }`, `hsv360 { ... }` | `tag` (a `Scalar`), `block` |
+| `Assignment` | `key OP value` | `key` (a `Scalar`), `name`, `op`, `value`, `scalar`, `block` |
 
 `Block` queries: `assignments(key=None)`, `first(key)`, `scalar(key, default)`,
 `block(key)`, `blocks(key)`, `values()` (the bare scalars of a list), and
-`walk()` (every assignment at any depth with its parents). Pass `fold=True` to
-compare keys without regard to case, the way the game reads effect and trigger
-names such as `IF`.
+`walk()` (every assignment at any depth with the chain of assignments around
+it, in source order: an assignment, then everything inside its block, then the
+next one). `scalar()` only looks at `key = value` statements, not comparisons
+such as `key > value`. Pass `fold=True` to compare keys without regard to
+case, the way the game reads effect and trigger names such as `IF`.
 
-`Document` also has `comments` (their spans), `in_comment(offset)`,
-`without_comments()`, `line_col(offset)` and `problems`.
+`Document` also has `text`, `root`, `comments` (their spans),
+`in_comment(offset)`, `without_comments()` (line breaks are kept),
+`line_col(offset)` and `problems`. The module also exports `quote(value)` and
+`unquote(raw)`, which add or remove quotes and escapes only when needed.
 
 ### Malformed script
 
@@ -100,9 +125,11 @@ file is closed there, and a stray closing brace is skipped. Each repair is a
 `unclosed_block`, `stray_close`, `missing_value`, `stray_operator`,
 `unterminated_string`.
 
-- `syntax.require_well_formed(text)` raises `ParseError` if there is any.
+- `syntax.require_well_formed(text, source=None)` raises `ParseError` if there
+  is any, with the line and column of the first one.
 - `syntax.repair(text)` spells out the game's reading: it appends the missing
-  closing braces and removes stray ones.
+  closing braces and removes stray ones. Other problems (a missing value, an
+  unterminated string) cannot be repaired and stay as they are.
 
 The loading policy built on this:
 
@@ -110,8 +137,10 @@ The loading policy built on this:
   The game ships files with unbalanced braces (Norway's history, France's 1936
   army), and a mod author cannot fix those.
 - **A malformed file in the mod's own folder is a load failure**, reported in
-  `mod.load_diagnostics` and by `validate()`. It is the author's to fix, so the
-  SDK does not guess.
+  `mod.load_diagnostics` and by `validate()` (or raised with
+  `strict_loading=True`). It is the author's to fix, so the SDK does not guess.
+  Saving refuses to rewrite a country, character or country-tag file that
+  failed to load, because its content was never fully read.
 - When the SDK copies a tolerated inherited file into the mod as an override,
   it writes the repaired form, so the mod's copy is well formed.
 
@@ -127,9 +156,18 @@ for span in top_level_assignments(body):         # AssignmentSpan, depth zero
 ```
 
 - `top_level_assignments(text)` returns `key = value` statements at depth zero.
-  Pass `comparisons=True` to also get `key > value` and friends.
+  Pass `comparisons=True` to also get `key > value` and friends;
+  `span.operator` says which.
 - An `AssignmentSpan` for `color = rgb { 1 2 3 }` has `tag == "rgb"` and a
   value span that covers the tag and the block.
+- Other helpers: `assignment_spans(text, key)`, `replace_assignment(text, span,
+  replacement)` (`None` removes the statement), `append_assignment(text,
+  statement)`, `move_assignment_before(text, span, target)`,
+  `scalar_values_equivalent()` and `block_bodies_equivalent()`. The last two
+  compare values by meaning: `7.0` equals `7`, and spacing and comments do not
+  count.
+- Removing or replacing the first statement of a line that holds several (or
+  one followed by a comment) leaves the rest of the line in place.
 - These helpers work on any text, so the usual pattern for a nested edit is:
   take the body of the block (`text[span.body_start:span.body_end]`), patch it,
   and splice it back with `replace_assignment_body`.

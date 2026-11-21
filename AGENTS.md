@@ -149,7 +149,7 @@ with mod.transaction():
 
 19. Use `preview_summary()` alongside `preview()` in long scripts so the agent log contains a compact semantic change list.
 
-20. Use `patch_state_history()` for owner/core-only changes to fragile vanilla states when preserving exact unrelated text matters.
+20. State edits (`set_state_owner()`, `add_state_core()`, `set_state_properties()`, `patch_state_history()`) change only the statements they touch; `patch_state_history()` sets the owner and several cores in one call. A state is identified by the `id` directly inside its own `state = { }` block, not by its file name.
 
 21. Avoid bare `add_to_faction = TAG`. Use `effect_add_target_to_faction(leader, target)` or `effect_join_faction(actor, leader)` so faction direction is explicit.
 
@@ -239,6 +239,35 @@ with mod.transaction():
     not proofs of dynamic achievability. Review popularity/variable threshold
     arithmetic and mutually dependent trigger chains, then live-test important
     runtime releases and endings before calling them playable.
+
+36. Never edit mod script files with regular expressions, `str.replace`, or
+    by writing the whole file yourself. Use the `Mod` API. `save()` changes
+    only the edited statements and keeps each file's encoding, byte-order mark
+    and line endings, so do not convert line endings or re-encode files
+    afterwards. For an edit the API cannot express, use the span helpers in
+    `hoi4.patching` (see `docs/internals/parser.md`).
+
+37. Check `mod.load_diagnostics` (or load with `strict_loading=True`) before
+    editing an existing mod. A malformed file in the mod's own folder, such as
+    one with an unclosed brace, is not loaded, and `save()` refuses to rewrite
+    a country, character or country-tag file that failed to load. Fix the file
+    and call `reload()`. Files from the game or a base mod with unbalanced
+    braces load the way the game reads them.
+
+38. Top-level `shared_focus`, `joint_focus` and bare `focus` blocks of a file
+    load into one container `FocusTree` with `kind == "file"` whose ID is the
+    file name without `.txt`. The game has no tree with that ID: never use it
+    in `load_focus_tree` or a country selector. Edit those focuses with
+    `update_focus(<file stem>, focus_id, ...)`; `Focus.kind` names the block
+    key. `Focus.cost` may be fractional (`7.2`).
+
+39. An event title, description or option name can have conditional
+    alternatives (`title = { text = KEY trigger = { ... } }`). `Event.title`,
+    `Event.description` and `EventOption.name` hold only the unconditional
+    key; the others are in `conditional_titles`, `conditional_descriptions`
+    and `conditional_names` (`EventText` values). Passing `title=`,
+    `description=` or `name=` to an update replaces the matching conditional
+    list with nothing unless you pass that list too.
 
 ## Country Visual Completeness
 

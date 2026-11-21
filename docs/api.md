@@ -40,6 +40,18 @@ mod = Mod("/path/to/my_mod", hoi4_install="/path/to/hoi4")
 
 Loader failures are available through `mod.load_diagnostics`. Pass `strict_loading=True` to `Mod(...)` when malformed discovered files should abort construction instead of being skipped with a diagnostic.
 
+A script file in the mod's own folder with unbalanced braces (or another
+syntax problem) is a load failure. Files from the game or a base mod are read
+the way the game reads them: a block still open at the end of the file ends
+there, and a stray closing brace is skipped. When such an inherited file is
+copied into the mod as an override, the copy is written with balanced braces.
+`save()` refuses to rewrite a country, character or country-tag file that
+failed to load; fix it and call `reload()`.
+
+Saving keeps each file's encoding, byte-order mark and line endings, and an
+edit replaces only the text of the statements that changed. See
+[the parser internals](internals/parser.md) for how this works.
+
 ## Countries
 
 Country data spans tag registration, definition and `colors.txt` files,
@@ -56,7 +68,7 @@ history, characters, and localization.
 | `suggest_tags(name: str, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
 | `create_country(tag, name, adjective="", color=(128,128,128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. Raises for existing mod or vanilla tags unless explicitly allowed. |
-| `update_country(tag: str, **kwargs) -> bool` | `bool` | Update modeled country fields. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
+| `update_country(tag: str, **kwargs) -> bool` | `bool` | Update modeled country fields, including `color` and `color_ui`. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
 | `delete_country(tag: str) -> bool` | `bool` | Stage deletion of a mod-owned country and its generated localization. Vanilla-backed countries require an explicit total-conversion strategy. |
 
 ### Example
@@ -158,6 +170,12 @@ Air-wing updates retain existing location/equipment occurrence order, including
 repeated locations, and preserve enclosing comments and unknown fields. New or
 relocated wings append to the first matching location (or a new location block).
 Removing the last wing retains the enclosing blocks and their unmodeled content.
+
+An inherited OOB with unbalanced braces (the game ships some) is read the way
+the game reads it. When it becomes a mod override it is written with balanced
+braces, so preview and save agree and new divisions land inside `units`.
+`validate()` reports an OOB that cannot be read as `oob_load_error` instead of
+raising. A field added to a one-line block stays on that line.
 
 Validation rejects duplicate template names or battalion positions, unknown
 templates, unit definitions, or equipment, out-of-range factors, invalid
@@ -264,11 +282,25 @@ ideology variants, every custom group present in `popularities` or
 names. Define party text separately with `TAG_<ideology>_party` and
 `TAG_<ideology>_party_long` when the country needs custom party names.
 Country color reads follow game precedence: vanilla definition, vanilla
-`colors.txt`, mod definition, then mod `colors.txt`. New mod-only tags store
-their color in the country definition and do not create `colors.txt`. When a
-vanilla tag's color is overridden, the SDK seeds the complete configured
-vanilla `colors.txt` before patching it. Validation warns if an existing mod
-file omits vanilla entries because HOI4 replaces this file wholesale.
+`colors.txt`, mod definition, then mod `colors.txt`. Colours may be written as
+`rgb { }`, a plain `{ r g b }`, `hsv { }`/`HSV { }` or `hsv360 { }`; HSV is
+converted to RGB. `Country.color_ui` comes from `colors.txt` (`None` follows
+`color`), and changing `color` without `color_ui` makes the UI colour follow
+it. New mod-only tags store their color in the country definition and do not
+create `colors.txt`. When a vanilla tag's color is overridden and the mod has
+no `colors.txt`, the SDK starts from the configured vanilla table verbatim; a
+mod table that lacks vanilla entries gets them appended. A colour that already
+has the wanted value is left as written; otherwise only its three channel
+numbers change. Validation warns if an existing mod file omits vanilla entries
+because HOI4 replaces this file wholesale.
+
+Editing a vanilla country writes only the files the edit changed: a new
+capital creates only a history override, not a definition, tag or character
+file. Renaming a
+vanilla country keeps its inherited history file name, so the game never sees
+two history files for one tag. `capital` and `research_slots` are read only
+from direct statements of the history file. `set_politics` edits keep
+`last_election` and unknown keys.
 
 ## States
 
@@ -296,6 +328,10 @@ states for copying, use `get_country_context(tag, copy_states=True)` or
 | `patch_state_history(state_id, owner=None, add_cores=None, remove_cores=None) -> State` | `State` | Queue a text-preserving owner/core patch for the next `save()` |
 | `batch_set_owner(state_ids: list[int], tag: str, add_core: bool = True) -> list[State]` | `list[State]` | Batch owner change |
 
+A state is identified by the `id` directly inside its own top-level
+`state = { }` block, not by its file name. A commented-out or nested
+`id = 42` neither hides nor impersonates a state.
+
 ### Example
 
 ```python
@@ -309,14 +345,16 @@ print(mod.find_state("Sicily")[0]["id"])
 
 Repeated `patch_state_history()` calls and ordinary state setters compose in call order within the same pending batch; preview and save render the accumulated state.
 
-Loaded state files are patched through their original parsed content. Updating owner, cores, manpower, resources, buildings, or other modeled fields preserves unrelated vanilla data such as buildings, resources, local supplies, history bookmarks, resistance, and compliance blocks.
+Loaded state files are patched in place. Updating owner, cores, manpower, resources, buildings, or other modeled fields changes only those statements and preserves unrelated vanilla data such as buildings, resources, local supplies, history bookmarks, resistance, and compliance blocks. A resource edit changes only the lines that differ.
+
+New statements go on their own line, indented like their siblings with the file's own indentation step (a tab, or its smallest space indent). An empty or one-line block is spread over lines first. A new owner goes first in `history`, new cores after the existing cores, and new victory points or buildings before the first dated history block (`1939.1.1 = { ... }`).
 
 `State.impassable: bool` represents the state-level `impassable = yes` flag.
 Use `mod.set_state_properties(state_id, impassable=True)` to queue it; setting
 `False` removes the flag while preserving unrelated state text. This changes
 traversability only: ownership, cores, and population remain separate fields.
 
-Use `patch_state_history()` when owner/core changes must avoid reserializing unrelated state content such as complex vanilla `victory_points` formatting. The change remains in memory for `preview()` and is written transactionally by `save()`.
+`patch_state_history()` sets the owner and adds or removes several cores in one call. Like the other state setters it changes only those statements, so unusual vanilla `victory_points` formatting stays as written. The change remains in memory for `preview()` and is written transactionally by `save()`.
 
 ### Map editing
 
@@ -380,10 +418,10 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 |--------|---------|-------------|
 | `list_events() -> list[str]` | Sorted event IDs | All loaded events |
 | `get_event(event_id: str) -> Event` | `Event` | Raises `KeyError` with available IDs if not found |
-| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer namespace from the ID prefix. |
+| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer namespace from the ID prefix. Conditional titles and descriptions are written before the plain fallback. |
 | `ensure_event(event_id: str, **kwargs) -> Event` | `Event` | Idempotent create-or-update wrapper |
-| `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field |
-| `update_event_option(event_id: str, option: int \| str, **kwargs) -> bool` | `bool` | Update one option by zero-based index or option name. Supports `name`, `effect`, `trigger`, and `ai_chance`. |
+| `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
+| `update_event_option(event_id: str, option: int \| str, **kwargs) -> bool` | `bool` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |
 | `delete_event(event_id: str) -> bool` | `bool` | Remove event and its namespace mapping |
 | `set_event_namespace(event_id: str, namespace: str) -> None` | `None` | Set which file this event writes to (`{namespace}_events.txt`) |
 | `add_event_option(event_id: str, option: EventOption) -> bool` | `bool` | Append an option to an event |
@@ -394,6 +432,46 @@ body, including comments and unknown fields, even when names repeat. Comments
 inside an option move with that option; comments between option blocks remain at
 their original event-level positions. Target subsequent edits by the option's
 new zero-based index when names are repeated.
+
+Saving compares each touched event with its source and replaces only the
+fields that differ. Unchanged fields keep their spelling.
+
+#### Conditional titles, descriptions and option names
+
+```text
+title = { text = my_mod.2.t.ger trigger = { tag = GER } }
+title = my_mod.2.t
+```
+
+`Event.title` holds the unconditional key (`my_mod.2.t`); the block with a
+trigger is an `EventText` in `Event.conditional_titles`. Descriptions use
+`conditional_descriptions` and option names `EventOption.conditional_names`.
+Entries can be `EventText` values, `(text, trigger)` tuples or
+`{"text": ..., "trigger": ...}` dicts.
+
+```python
+from hoi4 import EventOption, EventText
+
+mod.create_event(
+    "my_mod.2",
+    title="my_mod.2.t",
+    conditional_titles=[EventText("my_mod.2.t.ger", "tag = GER")],
+    options=[EventOption(name="my_mod.2.a", effect="add_stability = 0.05")],
+)
+```
+
+Setting the plain `title`, `description` or option `name` clears the matching
+conditional list unless that list is passed in the same call:
+
+```python
+kept = mod.get_event("my_mod.2").conditional_titles
+mod.update_event("my_mod.2", title="my_mod.2.t2", conditional_titles=kept)  # kept
+mod.update_event("my_mod.2", title="my_mod.2.t3")  # conditional titles removed
+```
+
+Validation reports a conditional entry without `text` as
+`event_conditional_text_missing`. An event with only conditional titles or
+descriptions still counts as having a title or description.
 
 ### Example
 
@@ -458,12 +536,37 @@ mod.update_on_action("on_startup", occurrence=1, effect="set_country_flag = upda
 Repeated definitions are not duplicate-ID validation errors. Serializers retain
 and patch them by exact source occurrence.
 
+Every `on_actions = { }` block of a file is loaded. Inside one hook block,
+repeated `effect`, `events` and `random_events` blocks are joined in source
+order. Saving leaves unchanged fields alone, with all their blocks; a changed
+field is written into its first block and its other blocks are removed.
+
 ## Decisions
 
 Decision content lives in `common/decisions/*.txt`; category presentation and
 visibility live in `common/decisions/categories/*.txt`. The SDK writes and
-patches those files separately. Touching legacy pre-0.4.2 combined output
-migrates its category metadata automatically.
+patches those files separately.
+
+- A category block may be reopened in the same file and may continue in other
+  files. All its decisions load, and each one is edited or deleted in the
+  block and file that holds it. New decisions go to the last block of the
+  category's file.
+- Every `key = { ... }` block directly inside a category is a decision, except
+  the category's own keys (`icon`, `allowed`, `visible`, `picture`,
+  `priority`, `visibility_type`, `on_map_area`, `custom_icon`,
+  `scripted_gui`). Decision fields come from the decision's own top-level
+  keys only.
+- Editing a decision, or adding one to an existing category, never writes or
+  moves category presentation. The category definition is written only when
+  the category itself changes (`create_decision_category()`,
+  `update_decision_category()`, `create_decision()` for a new category, or
+  `create_decision(..., path=...)`). That write also moves `icon`, `allowed`
+  and `visible` out of legacy pre-0.4.2 combined output.
+- A generated definition file is named after the decision file
+  (`foo_decisions.txt` gives `categories/foo_decision_categories.txt`). If that
+  name would replace a file from the game or a base mod, `_mod` is added
+  (`foo_decision_categories_mod.txt`) until it does not.
+- Setting a category field to its current value changes nothing.
 
 ### Methods
 
@@ -567,6 +670,12 @@ optional `removal_cost`. Idea files are loaded
 from both legacy `common/national_ideas/` and current `common/ideas/`. Both
 `country_ideas = { }` and `ideas = { }` container formats are read.
 
+An idea is any `id = { ... }` block inside a category of `ideas = { ... }`,
+whatever keys it holds; scalars in a category (`designer = yes`, `law = yes`)
+are category settings. `Idea.category_raw_block` holds only those settings,
+not the sibling ideas. A category that appears more than once in a file (as in
+several vanilla files) is patched in place.
+
 Without an explicit `path`, new ideas write to `common/ideas/{TAG}_ideas.txt` when the idea ID starts with a 3-letter tag, otherwise `common/ideas/mod_ideas.txt`. New ideas default to `category="country"`, producing current-HOI4 `ideas = { country = { ... } }`. Pass `category="political_advisor"` or similar for advisors/designers.
 
 HOI4 idea definitions use `picture = <bare_stem>` rather than
@@ -591,7 +700,7 @@ SDK output as an error and removes it when the idea is edited.
 | `get_idea(idea_id: str) -> Idea` | `Idea` | Raises `KeyError` if not found |
 | `create_idea(idea_id, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, *, desc="", removal_cost=None) -> Idea` | `Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
 | `ensure_idea(idea_id, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
-| `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> bool` | `bool` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. |
+| `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> bool` | `bool` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |
 | `delete_idea(idea_id: str) -> bool` | `bool` | Remove from cache |
 | `suggest_idea_icons(query: str, count=5) -> list[str]` | `list[str]` | Rank loaded `GFX_idea_` sprites and return canonical bare stems. Prefixed queries remain accepted. |
 | `suggest_idea_icon(query: str) -> str` | `str` | Return the closest canonical bare picture stem or raise if no icon catalog is available. |
@@ -635,6 +744,24 @@ Use `MODIFIER_CATEGORIES` to discover available modifier keys (see Catalogs sect
 ## Focus Trees
 
 Focus trees are collections of focuses. Each focus has a position (x, y), cost, prerequisites, and completion reward.
+
+`Focus.cost` may be fractional (`7.2`). Conditional `icon = { ... }` blocks
+are kept in `Focus.icon_blocks`; `Focus.icon_names()` lists every icon a focus
+can show. A focus edit compares the focus with its source and rewrites only
+the fields that changed.
+
+Top-level `focus`, `shared_focus` and `joint_focus` blocks of a file (outside
+any `focus_tree`) load into one container tree per file. Its `kind` is
+`"file"` and its ID is the file name without `.txt`; `Focus.kind` names each
+block's key. The game has no tree with that ID, so never use it in
+`load_focus_tree` or a country selector. The usual focus methods edit these
+focuses with the same guarantees, and `add_focus()` with
+`Focus(..., kind="shared_focus")` adds a new top-level block:
+
+```python
+mod.update_focus("shared_focuses", "SH_one", cost=3.5)  # common/national_focus/shared_focuses.txt
+mod.add_focus("shared_focuses", Focus(id="SH_two", x=4, y=0, kind="shared_focus"))
+```
 
 Layout bounds, overlap checks, and validation resolve `relative_position_id` chains
 within the tree's local focus models, preserving the serialized `x`/`y` offsets.
@@ -996,6 +1123,13 @@ Structural reference checks use `tag_definition`, `capital_ref`, `character_ref`
 and `focus_cycle`. Undefined recruited characters are warnings; missing tag
 targets, missing capital states, and focus prerequisite cycles are errors.
 
+`event_conditional_text_missing` (warning) marks a conditional event title,
+description or option name without `text`. `oob_load_error` (error) marks an
+assigned OOB file that could not be read. `invalid_decision_category_layout`
+(error) marks category `icon`, `allowed` or `visible` written beside the
+decisions instead of in `common/decisions/categories/`. The first two are not
+yet listed in `VALIDATION_CODES`.
+
 The `history_set_owner_in_effect` warning catches a common HOI4 boundary mistake: `set_owner` is a state history directive, not a runtime event/focus effect. Use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`.
 
 Use icon suggestion helpers instead of guessing:
@@ -1188,6 +1322,11 @@ mod.update_bookmark(
     effect="randomize_weather = 54321\nset_global_flag = my_start_loaded",
 )
 ```
+
+A bookmark file may hold several top-level `bookmarks = { }` blocks. All of
+them load and are patched in place; new bookmarks go to the end of the last
+one. Setting a field to its current value (an empty `ideas = { }` included)
+changes no bytes.
 
 Repeated bookmark country tags are retained in order because vanilla uses them
 for DLC-specific variants. Use `occurrence=` when editing one such variant.
@@ -1779,3 +1918,37 @@ partial tag list, refuses an empty registry, and should follow country edits.
 This provides an explicit override of the engine color registry when inherited
 modern entries survive ordinary folder replacement. Normal country creation
 continues to use its own definition and does not create a global table.
+
+## Low-level script modules
+
+Prefer the `Mod` facade. These functions read or patch the text of one file
+and are what the facade is built on. [The parser internals](internals/parser.md)
+explain the syntax tree, span patching and byte-exact file I/O in detail.
+
+| Function | Description |
+|----------|-------------|
+| `hoi4.syntax.parse(text) -> Document` | Lossless syntax tree with exact offsets. Never raises; repairs are in `Document.problems`. |
+| `hoi4.syntax.require_well_formed(text, source=None) -> Document` | Same, but raises `ParseError` on any problem. |
+| `hoi4.syntax.repair(text) -> str` | Adds missing closing braces and removes stray ones, the way the game reads the file. |
+| `hoi4.patching.top_level_assignments(text, *, comparisons=False) -> list[AssignmentSpan]` | Depth-zero statements with their spans. `AssignmentSpan.operator` is the operator; `AssignmentSpan.tag` is `"rgb"` for `color = rgb { ... }`. |
+| `hoi4.patching.set_scalar(text, key, value)` / `set_block(text, key, body)` | Replace one statement's value; `None` removes it. |
+| `hoi4.textio.read_text(path)` / `decode_text(data)` | File to text with `"\n"` line endings, no byte-order mark, no byte dropped. |
+| `hoi4.textio.encode_text(text, *, like=None, bom=None)` / `write_text(path, text, *, like=None, bom=None)` | Text back to bytes in the format of `like` (encoding, byte-order mark, line endings). |
+| `hoi4.parse_pdx(text, *, strict=True) -> PdxNode` | Editable tree. Raises `ParseError` on malformed input unless `strict=False`. `PdxNode.key_quoted` says whether the key was quoted, `PdxNode.tag` holds `rgb` for a typed block. |
+| `hoi4.focus.load_focus_tree(path, text=None, *, tree_id=None)` | The first tree of a focus file, or the one with `tree_id` (the file stem selects the shared-focus container). `load_focus_trees(path, text=None)` returns all of them. |
+| `hoi4.ideas.read_ideas_text(text, path=None) -> tuple[list[Idea], str]` | Every idea of an ideas file and the container name (`ideas` or `country_ideas`). |
+| `hoi4.ideologies.load_ideologies_text(text, path=None, *, is_vanilla=False)` | Every ideology of a file's text. |
+| `hoi4.dynamic_modifiers.load_dynamic_modifiers_text(text, path=None)` | Every top-level dynamic modifier of a file's text. |
+| `hoi4.countries.color_from_value(value)` | RGB of a colour value from the syntax tree (`rgb`, plain, `hsv`, `hsv360`), or `None`. |
+| `hoi4.countries.read_color(block, key="color")` | RGB of the first direct `key = ...` of a block. |
+| `hoi4.countries.set_color(text, key, color, *, default_tag="")` | Set a direct colour, changing only the channel numbers that differ. |
+| `hoi4.tags.country_tag_entries(text)` | The `TAG = "countries/File.txt"` registrations of a file, in order. |
+| `hoi4.tags.remove_country_tag_entries(text, tags)` | Remove the registrations of `tags` and leave every other byte alone. |
+| `hoi4.states.state_id_of(text)` | The `id` directly inside the file's top-level `state` block, or `None`. |
+
+The module-level regular expressions these modules used to export (for
+example `hoi4.decisions.SCALAR_RE`, `hoi4.countries.COLOR_RE`,
+`COLOR_FIELD_RE`, `CAPITAL_RE`, `RESEARCH_SLOTS_RE`, `hoi4.tags.TAG_FILE_RE`,
+`hoi4.states.STATE_ID_RE`, `STATE_NAME_RE` and `OWNER_RE`, and the `*_RE`
+constants of `hoi4.focus`, `hoi4.events` and `hoi4.ideas`) are removed.
+Query the syntax tree instead.
