@@ -7,6 +7,7 @@ import dataclasses
 from pathlib import Path
 from typing import Optional
 
+from ..focus import FOCUS_KINDS
 from ..focus_layout import resolve_focus_positions, visual_overlap_issues
 from ..paths import (
     require_country_tag,
@@ -22,6 +23,20 @@ from ._effects import EffectsLayer
 from ._shared import (
     _set_fields,
 )
+
+# Tree-level fields of a real ``focus_tree``; a file container has none.
+_TREE_ONLY_FIELDS = frozenset({"default", "continuous_focus_position", "shared_focuses"})
+
+
+def _require_focus_kind(tree: FocusTree, kind: str) -> None:
+    """A focus inside a ``focus_tree`` is a ``focus``; a top-level block can be any kind."""
+
+    allowed = FOCUS_KINDS if tree.kind == "file" else ("focus",)
+    if kind not in allowed:
+        raise ValueError(
+            f"Focus kind {kind!r} is not allowed in {tree.kind} '{tree.id}'. "
+            f"Use one of: {', '.join(allowed)}"
+        )
 
 
 class FocusLayer(ContextLayer, EffectsLayer):
@@ -96,6 +111,13 @@ class FocusLayer(ContextLayer, EffectsLayer):
             )
         if "id" in kwargs:
             raise ValueError("Focus tree IDs are immutable; create a new tree instead")
+        if "kind" in kwargs:
+            raise ValueError("A focus tree's kind is fixed by its file; it cannot be changed")
+        if tree.kind == "file" and _TREE_ONLY_FIELDS & set(kwargs):
+            raise ValueError(
+                f"'{tree_id}' holds the top-level focus blocks of a file, not a focus_tree; "
+                f"it has no {', '.join(sorted(_TREE_ONLY_FIELDS & set(kwargs)))}"
+            )
         old_path = tree.path
         if "path" in kwargs:
             kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
@@ -113,6 +135,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
 
     def add_focus(self, tree_id: str, focus: Focus) -> None:
         tree = self.get_focus_tree(tree_id)
+        _require_focus_kind(tree, focus.kind)
         focus.touched = True
         tree.focuses.append(focus)
         tree.touched = True
@@ -143,9 +166,11 @@ class FocusLayer(ContextLayer, EffectsLayer):
             return False
         if "id" in kwargs:
             raise ValueError("Focus IDs are immutable; create a new focus instead")
+        tree = self.get_focus_tree(tree_id)
+        if "kind" in kwargs:
+            _require_focus_kind(tree, kwargs["kind"])
         _set_fields(focus, kwargs)
         focus.touched = True
-        tree = self.get_focus_tree(tree_id)
         tree.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
@@ -160,7 +185,8 @@ class FocusLayer(ContextLayer, EffectsLayer):
         updates = {
             field.name: copy.deepcopy(getattr(focus, field.name))
             for field in dataclasses.fields(Focus)
-            if field.name not in {"id", "raw_block", "touched"}
+            # ``kind`` is where the block lives, not content to replace.
+            if field.name not in {"id", "raw_block", "touched", "kind"}
         }
         self.update_focus(tree_id, focus.id, **updates)
         return self.get_focus(tree_id, focus.id) or focus
@@ -251,6 +277,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
         relative_position: bool = True,
     ) -> None:
         tree = self.get_focus_tree(tree_id)
+        _require_focus_kind(tree, focus.kind)
         for idx, existing in enumerate(tree.focuses):
             if existing.id == anchor_focus_id:
                 if add_prerequisite and not focus.prerequisites:

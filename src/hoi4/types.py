@@ -23,7 +23,9 @@ class Focus:
     icon: str = "GFX_goal_generic_construct_civilian"
     x: int = 0
     y: int = 0
-    cost: int = 10
+    # Days divided by seven, as the game reads it; fractional costs such as
+    # ``7.2`` are kept, whole numbers stay ``int``.
+    cost: float = 10
     prerequisites: list[list[str]] = field(default_factory=list)
     requires: InitVar[str | list[str] | list[list[str]] | None] = None
     mutually_exclusive: list[list[str]] = field(default_factory=list)
@@ -42,12 +44,39 @@ class Focus:
     will_lead_to_war_with: str = ""
     raw_block: str = ""
     touched: bool = False
+    # Bodies of the ``icon = { ... }`` blocks (conditional icons), in source
+    # order. ``icon`` is the plain ``icon = GFX_...`` entry; a focus with only
+    # icon blocks reports the first icon named in them.
+    icon_blocks: list[str] = field(default_factory=list)
+    # The block key: ``focus`` inside a ``focus_tree``; a top-level block can
+    # also be a ``shared_focus`` or a ``joint_focus``.
+    kind: str = "focus"
 
     def __post_init__(self, requires) -> None:
         if requires:
             self.prerequisites.extend(_ensure_nested(requires))
         self.prerequisites = _ensure_nested(self.prerequisites)
         self.mutually_exclusive = _ensure_nested(self.mutually_exclusive)
+
+    def icon_names(self) -> list[str]:
+        """Return every icon sprite this focus can show, the plain ``icon`` first.
+
+        Reads both block forms the game accepts:
+        ``icon = { trigger = { ... } value = GFX_a }`` and
+        ``icon = { GFX_a = { <trigger> } GFX_b = yes }``.
+        """
+
+        from .syntax import Assignment, parse
+
+        names = [self.icon] if self.icon else []
+        for body in self.icon_blocks:
+            for item in parse(body).root.items:
+                if type(item) is not Assignment or item.name == "trigger":
+                    continue
+                name = item.scalar if item.name == "value" else item.name
+                if name and name not in names:
+                    names.append(name)
+        return names
 
 
 @dataclass
@@ -61,6 +90,11 @@ class FocusTree:
     shared_focuses: list[str] = field(default_factory=list)
     raw_block: str = ""
     touched: bool = False
+    # ``focus_tree`` for a real tree. ``file`` is the container for the
+    # top-level ``focus``, ``shared_focus`` and ``joint_focus`` blocks of one
+    # file: its ``id`` is the file name without extension, and the game sees no
+    # tree with that ID. A file can hold real trees and one container.
+    kind: str = "focus_tree"
 
 
 @dataclass

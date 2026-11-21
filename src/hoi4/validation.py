@@ -14,6 +14,7 @@ from .focus_layout import resolve_focus_positions
 from .parser import iter_assignment_blocks
 from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
+from .syntax import parse as parse_script
 from .script import validate_script_syntax
 from .textio import read_text
 from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationError
@@ -791,7 +792,17 @@ def validate_focus_tree(
 
     seen_ids: set[str] = set()
     layout = resolve_focus_positions(tree)
+    by_id = {focus.id: focus for focus in tree.focuses}
     for focus_id, reason in layout.unresolved.items():
+        if tree.kind == "file":
+            # Top-level shared/joint focuses may anchor to a focus of the tree
+            # they are shared into; that is fine when the anchor exists.
+            anchor, seen = focus_id, set()
+            while anchor in by_id and anchor not in seen:
+                seen.add(anchor)
+                anchor = by_id[anchor].relative_position_id
+            if anchor not in by_id and anchor in all_known:
+                continue
         errors.append(
             ValidationError(
                 message=f"Focus '{focus_id}' position unresolved: {reason}",
@@ -842,7 +853,25 @@ def validate_focus_tree(
             )
         seen_ids.add(focus.id)
 
-        pos = layout.positions.get(focus.id)
+        expected_kind = focus.kind if tree.kind == "file" else "focus"
+        if focus.kind != expected_kind or focus.kind not in (
+            "focus", "shared_focus", "joint_focus"
+        ):
+            errors.append(
+                ValidationError(
+                    message=(
+                        f"Focus '{focus.id}' has kind '{focus.kind}', which is not allowed "
+                        f"in {tree.kind} '{tree.id}'"
+                    ),
+                    severity="error",
+                    focus_id=focus.id,
+                    file_path=str(tree.path) if tree.path else None,
+                )
+            )
+
+        # The top-level blocks of one file are placed into different trees,
+        # so their positions do not share one canvas.
+        pos = layout.positions.get(focus.id) if tree.kind != "file" else None
         if pos is not None and pos in seen_positions:
             errors.append(
                 ValidationError(
@@ -904,8 +933,17 @@ def validate_focus_tree(
             ]
         )
         if known_state_ids is not None:
-            for raw_id in re.findall(r"(?m)^\s*(\d+)\s*=\s*\{", script):
-                sid = int(raw_id)
+            # ``123 = { ... }`` at any depth is a state scope, except the
+            # weighted options of a ``random_list``.
+            state_scopes = [
+                item
+                for item, parents in parse_script(script).root.walk()
+                if item.name.isdigit()
+                and item.block is not None
+                and not (parents and parents[-1].name.lower() == "random_list")
+            ]
+            for item in sorted(state_scopes, key=lambda found: found.start):
+                sid = int(item.name)
                 if sid not in known_state_ids:
                     errors.append(
                         ValidationError(

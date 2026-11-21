@@ -137,7 +137,11 @@ class PreviewLayer(CoreLayer):
                 tree = self._focus_trees.get(tree_id)
                 if tree is None:
                     continue
-                old_tree = load_focus_tree(tree.path) if tree.path and tree.path.exists() else None
+                old_tree = (
+                    load_focus_tree(tree.path, tree_id=tree.id)
+                    if tree.path and tree.path.exists()
+                    else None
+                )
                 old_focuses = {focus.id: focus for focus in old_tree.focuses} if old_tree else {}
                 new_focuses = {focus.id: focus for focus in tree.focuses}
                 if (

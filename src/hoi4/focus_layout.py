@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
+from .syntax import parse
 from .types import FocusTree
 
 
@@ -67,6 +67,10 @@ def visual_overlap_issues(
     """Check known positions; continuous bounds require a complete layout."""
     occupied: dict[tuple[int, int], str] = {}
     issues: list[str] = []
+    if tree.kind == "file":
+        # Top-level shared/joint focuses of one file are placed into different
+        # trees, so they do not share one canvas.
+        return issues
     for focus in tree.focuses:
         pos = layout.positions.get(focus.id)
         if pos is None:
@@ -76,11 +80,11 @@ def visual_overlap_issues(
         else:
             occupied[pos] = focus.id
     if tree.continuous_focus_position and not layout.unresolved:
-        match = re.search(r"\by\s*=\s*(-?\d+)", tree.continuous_focus_position)
-        if match:
+        raw_y = parse(tree.continuous_focus_position).root.scalar("y")
+        if raw_y is not None and raw_y.lstrip("-").isdigit():
             max_y = max((pos[1] for pos in layout.positions.values()), default=0)
             min_y = (max_y + 1) * 100 + min_continuous_padding
-            y = int(match.group(1))
+            y = int(raw_y)
             if y < min_y:
                 issues.append(
                     f"continuous_focus_position y={y} is above recommended minimum y={min_y}"

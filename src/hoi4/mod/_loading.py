@@ -322,11 +322,14 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         for f in sorted(focus_dir.glob("*.txt")):
             try:
                 self._require_well_formed(f)
-                trees = load_focus_trees(f)
+                text = read_text(f)
+                # ``focus_tree`` blocks, plus one ``kind="file"`` container
+                # for top-level ``shared_focus``/``joint_focus``/``focus``.
+                trees = load_focus_trees(f, text=text)
                 # Preserve non-focus companion files too. A subsequently
                 # created tree may legitimately target the same file and must
                 # append to, not replace, its unmodeled declarations.
-                self._original_files[f] = read_text(f)
+                self._original_files[f] = text
                 if not trees:
                     continue
                 for tree in trees:
