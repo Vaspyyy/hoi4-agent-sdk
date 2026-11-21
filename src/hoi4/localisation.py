@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from ._file_cache import cached_file_result
 from .textio import decode_text, read_text, write_text
 
 YML_ENTRY_RE = re.compile(r'^\s*([^:#\s]+)\s*:\s*(?:\d+\s*)?\s*"')
@@ -105,22 +106,34 @@ def _closes_value(line: str, index: int) -> bool:
     return not trailing or trailing.startswith("#")
 
 
+# An escape (a backslash and the character after it) or a quote.
+_VALUE_TOKEN_RE = re.compile(r'\\(.)|"', re.DOTALL)
+
+
 def _parse_quoted_value(line: str, start: int) -> str | None:
-    value: list[str] = []
-    i = start
-    while i < len(line):
-        if line[i] == "\\" and i + 1 < len(line):
-            nxt = line[i + 1]
-            if nxt == "n":
-                value.append("\n")
-            else:
-                value.append(nxt if nxt in {'"', "\\"} else "\\" + nxt)
-            i += 2
+    """The value that starts after the opening quote at ``start - 1``.
+
+    ``\\n`` is a line break, ``\\"`` and ``\\\\`` are a quote and a
+    backslash, any other escape is kept as written. ``None`` when no quote
+    ends the value.
+    """
+
+    parts: list[str] = []
+    position = start
+    for found in _VALUE_TOKEN_RE.finditer(line, start):
+        escaped = found.group(1)
+        if escaped is None:
+            index = found.start()
+            if _closes_value(line, index):
+                parts.append(line[position:index])
+                return "".join(parts)
+            # A quote inside the value is kept as text.
             continue
-        if line[i] == '"' and _closes_value(line, i):
-            return "".join(value)
-        value.append(line[i])
-        i += 1
+        parts.append(line[position : found.start()])
+        parts.append(
+            "\n" if escaped == "n" else escaped if escaped in '"\\' else "\\" + escaped
+        )
+        position = found.end()
     return None
 
 
@@ -132,7 +145,11 @@ def parse_localization_dir(loc_dir: Path) -> tuple[dict[str, str], dict[str, Pat
         return entries, sources
 
     for f in loc_dir.rglob("*.yml"):
-        file_entries = parse_localization_file(f)
+        # The game's folder is read on every load and validation: keep each
+        # file's entries until the file changes. They are only read here.
+        file_entries = cached_file_result(
+            "localisation_entries", f, _localization_entries, read=_read_localization
+        )
         for key, value in file_entries.items():
             entries[key] = value
             sources[key] = f
@@ -141,10 +158,15 @@ def parse_localization_dir(loc_dir: Path) -> tuple[dict[str, str], dict[str, Pat
 
 
 def parse_localization_file(path: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
-    raw = path.read_bytes()
-    txt = decode_text(raw)
+    return _localization_entries(_read_localization(path))
 
+
+def _read_localization(path: Path) -> str:
+    return decode_text(path.read_bytes())
+
+
+def _localization_entries(txt: str) -> dict[str, str]:
+    out: dict[str, str] = {}
     for line in txt.splitlines():
         if not line or line.strip().startswith("#"):
             continue
@@ -153,7 +175,9 @@ def parse_localization_file(path: Path) -> dict[str, str]:
         if m:
             value = _parse_quoted_value(line, m.end())
             if value is not None:
-                out[normalize_localization_key(m.group(1))] = value
+                # The key has no colon or blank (see YML_ENTRY_RE), so it
+                # is already what normalize_localization_key would return.
+                out[m.group(1)] = value
 
     return out
 
