@@ -195,7 +195,10 @@ for span in top_level_assignments(body):         # AssignmentSpan, depth zero
   statement)`, `move_assignment_before(text, span, target)`,
   `scalar_values_equivalent()` and `block_bodies_equivalent()`. The last two
   compare values by meaning: `7.0` equals `7`, and spacing and comments do not
-  count.
+  count. `scalar_values_equivalent()` takes text as a file spells it (quotes
+  are taken off). For two plain values from a model use
+  `plain_values_equivalent()`: text is compared as it is, only numbers by
+  value.
 - Removing or replacing the first statement of a line that holds several (or
   one followed by a comment) leaves the rest of the line in place.
 - A replacement or appended statement is written at column zero; its later
@@ -264,7 +267,7 @@ checks the text it was given:
   type, an idea category): it has to be one word;
 - `require_entry(key, value)` for a `key = value` line built from a mapping:
   the two rules above together;
-- numbers only for a state's victory points.
+- numbers or script constants (`@name`) only for a state's victory points.
 
 `tests/test_block_body_guard.py` tries eleven attack texts (a closing brace,
 an unescaped quote, a `#`, a statement where a word belongs, and so on) in

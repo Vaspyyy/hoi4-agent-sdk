@@ -202,3 +202,143 @@ def test_a_party_set_on_a_history_without_politics_stays_one_value(tmp_path: Pat
 
     names = [item.name for item, _ in parse(history.read_text(encoding="utf-8")).root.walk()]
     assert "zz_breakout" not in names
+
+
+def _names(text: str) -> list[str]:
+    from hoi4.syntax import parse
+
+    doc = parse(text)
+    assert not doc.problems
+    return [item.name for item, _ in doc.root.walk()]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("name", '"STATE_1"'),
+        ("name", "STATE_1 "),
+        ("name", " STATE_1"),
+        ("state_category", '"town"'),
+        ("state_category", "town "),
+    ],
+)
+def test_a_state_edit_that_only_adds_quotes_or_spaces_is_written(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    path = _write(tmp_path, "history/states/1-Test.txt", STATE)
+    mod = Mod(tmp_path)
+    mod.set_state_properties(1, **{field: value})
+    mod.save()
+    assert path.read_text(encoding="utf-8") != STATE
+    assert getattr(Mod(tmp_path).get_state(1), field) == value
+
+
+def test_a_state_number_spelled_another_way_is_no_change(tmp_path: Path) -> None:
+    source = STATE.replace("manpower = 1\n", "manpower = 2000.0\n\tresources = { steel = 10 }\n")
+    path = _write(tmp_path, "history/states/1-Test.txt", source)
+    mod = Mod(tmp_path)
+    mod.set_state_properties(1, manpower=2000, resources={"steel": 10.0})
+    assert mod.preview() == ""
+    mod.save()
+    assert path.read_text(encoding="utf-8") == source
+
+
+def test_a_resource_value_with_quote_characters_is_written(tmp_path: Path) -> None:
+    source = STATE.replace("manpower = 1\n", "manpower = 1\n\tresources = { steel = 10 }\n")
+    path = _write(tmp_path, "history/states/1-Test.txt", source)
+    mod = Mod(tmp_path)
+    mod.set_state_properties(1, resources={"steel": '"10"'})
+    mod.save()
+    assert 'steel = "\\"10\\""' in path.read_text(encoding="utf-8")
+    assert Mod(tmp_path).get_state(1).resources == {"steel": '"10"'}
+
+
+@pytest.mark.parametrize("points", ["1 .5", "1 +5", "1 1e3", "1 @capital_points", "1 5."])
+def test_victory_points_take_every_number_spelling_and_script_constants(
+    tmp_path: Path, points: str
+) -> None:
+    path = _write(tmp_path, "history/states/1-Test.txt", STATE)
+    mod = Mod(tmp_path)
+    mod.set_state_properties(1, victory_points=points)
+    mod.save()
+    province, value = points.split()
+    assert f"victory_points = {{ {province} {value} }}" in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("ideology", ["despotism zz_breakout = 1", '"despotism"', "despotism "])
+def test_a_leader_ideology_is_written_as_the_one_value_it_is(
+    tmp_path: Path, ideology: str
+) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ZZZ", "Zedland", color=(1, 2, 3))
+    mod.save()
+
+    # The country serializer on its own, as ``write_character_file`` uses it.
+    from hoi4.countries import serialize_country_files
+    from hoi4.syntax import quote
+
+    country = Mod(tmp_path).get_country("ZZZ")
+    country.leader.ideology = ideology
+    country.touched_fields = {"leader_ideology"}
+    files = serialize_country_files(tmp_path, country)
+    text = next(text for path, text in files.items() if "characters" in path.parts)
+    assert f"ideology = {quote(ideology, force=True)}" in text
+    assert "zz_breakout" not in _names(text)
+
+    mod = Mod(tmp_path)
+    mod.update_country("ZZZ", leader_ideology=ideology)
+    mod.save()
+
+    characters = next((tmp_path / "common" / "characters").glob("*.txt"))
+    assert "zz_breakout" not in _names(characters.read_text(encoding="utf-8"))
+    assert Mod(tmp_path).get_country("ZZZ").leader.ideology == ideology
+
+
+def test_an_event_namespace_that_is_not_one_word_stays_one_value() -> None:
+    from hoi4.events import serialize_events_file
+
+    namespace = "zz } zz_breakout = 1 #"
+    new_file = serialize_events_file(namespace, [])
+    assert "zz_breakout" not in _names(new_file)
+    assert _names(new_file) == ["add_namespace"]
+
+    patched = serialize_events_file(namespace, [], "add_namespace = old\n")
+    assert _names(patched) == ["add_namespace"]
+    assert serialize_events_file(None, [], "add_namespace = old\n").strip() == ""
+    # A plain namespace is written as before, and writing it again changes nothing.
+    assert serialize_events_file("zz", []).startswith("add_namespace = zz\n")
+    assert serialize_events_file("zz", [], "add_namespace = zz # mine\n") == (
+        "add_namespace = zz # mine\n"
+    )
+
+
+def test_effect_builders_and_decision_chains_quote_their_names(tmp_path: Path) -> None:
+    mod = Mod(tmp_path)
+    assert _names(mod.effect_add_building(1, "bunker zz_breakout = 1")).count("zz_breakout") == 0
+    assert "type = bunker level" in mod.effect_add_building(1, "bunker")
+    bonus = mod.effect_add_tech_bonus("my bonus } zz_breakout = 1 {", category="industry")
+    assert "zz_breakout" not in _names(bonus)
+    assert mod.effect_add_tech_bonus("zz_bonus") == (
+        "add_tech_bonus = { name = zz_bonus bonus = 0.5 uses = 1 category = industry }"
+    )
+
+    decisions = mod.create_decision_chain(
+        "zz_category",
+        [
+            {"id": "zz_one", "flag": "done zz_breakout = 1", "clear_flags": ["old zz_breakout = 1"]},
+            {"id": "zz_two"},
+        ],
+    )
+    for decision in decisions:
+        for body in (decision.visible, decision.available, decision.complete_effect):
+            assert "zz_breakout" not in _names(body)
+    assert 'set_country_flag = "done zz_breakout = 1"' in decisions[0].complete_effect
+    assert "set_country_flag = zz_two_done" in decisions[1].complete_effect
+
+
+def test_a_new_mapping_key_has_to_be_one_word() -> None:
+    from hoi4.structured_patching import patch_scalar_mapping
+
+    assert patch_scalar_mapping("a = 1\n", {"a": 1, "b": "two words"}) == 'a = 1\nb = "two words"\n'
+    with pytest.raises(ParseError, match="one word as a key"):
+        patch_scalar_mapping("a = 1\n", {"a": 1, "b } zz_breakout = 1 { c": 2})

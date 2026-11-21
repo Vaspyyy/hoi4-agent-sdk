@@ -14,8 +14,10 @@ from ..script import (
     effect_block,
     normalize_block_body,
     pdx_string,
+    pdx_value,
     scope_block,
 )
+from ..syntax import quote
 from ._core import CoreLayer
 from ._shared import (
     _join_script_parts,
@@ -31,7 +33,7 @@ class EffectsLayer(CoreLayer):
             f"{state_id} = {{ "
             f"add_extra_state_shared_building_slots = {level} "
             "add_building_construction = { "
-            f"type = {building_type} level = {level} instant_build = yes "
+            f"type = {quote(building_type)} level = {level} instant_build = yes "
             "} "
             "}"
         )
@@ -115,7 +117,10 @@ class EffectsLayer(CoreLayer):
             raise ValueError(
                 f"Unknown technology category '{category}'. Common valid categories: {examples}"
             )
-        return f"add_tech_bonus = {{ name = {name} bonus = {bonus} uses = {uses} category = {category} }}"
+        return (
+            f"add_tech_bonus = {{ name = {quote(name)} bonus = {pdx_value(bonus)} "
+            f"uses = {pdx_value(uses)} category = {category} }}"
+        )
 
     @classmethod
     def effect_add_industry_bonus(cls, name: str, uses: int = 1, bonus: float = 0.5) -> str:

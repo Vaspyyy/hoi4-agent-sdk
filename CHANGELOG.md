@@ -143,9 +143,17 @@ All notable changes to this project are documented here. The format follows
   string. A name that is written as a key (a modifier, an event type, an
   idea category, an equipment type) has to be one word and is refused
   otherwise. List entries are quoted where needed.
-  A state's victory points have to be numbers.
+  A state's victory points have to be numbers (any spelling the game
+  reads, such as `.5` or `1e3`) or script constants (`@points`).
+  The effect builders `effect_add_building` and `effect_add_tech_bonus` and
+  the flags of `create_decision_chain` follow the same rule.
   `tests/test_block_body_guard.py` tries eleven attack texts on every text
   field of every model, on new and on loaded objects.
+- A state edit that only adds quote characters or a space at an end of a
+  name, a category or a resource value is written. It used to be taken for
+  "no change", because the new text was compared the way file text is
+  compared. Two spellings of one number (`2000` and `2000.0`) are still no
+  change.
 - In an on-action's `random_events`, a statement that is not a
   `weight = event` pair (such as `chance_to_fire = 25`) reads as one list
   entry holding the whole statement, and in `events` any assignment does.

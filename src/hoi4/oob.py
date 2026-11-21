@@ -360,7 +360,7 @@ def serialize_equipment_variant(variant: EquipmentVariant) -> str:
     if variant.name_group:
         lines.append(f"name_group = {pdx_value(variant.name_group)}")
     if variant.parent_version:
-        lines.append(f"parent_version = {variant.parent_version}")
+        lines.append(f"parent_version = {pdx_value(variant.parent_version)}")
     if variant.allow_without_tech:
         lines.append("allow_without_tech = yes")
     if variant.obsolete:

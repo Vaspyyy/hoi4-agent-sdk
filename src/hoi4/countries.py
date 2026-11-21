@@ -1165,7 +1165,7 @@ def _patch_character(
                 "country_leader block not found"
             )
         role_body = leader_body[role.body_start : role.body_end]
-        role_body = set_scalar(role_body, "ideology", leader.ideology)
+        role_body = set_scalar(role_body, "ideology", quote(leader.ideology))
         leader_body = replace_assignment_body(leader_body, role, role_body)
     if "*" in touched_fields or "leader_portrait_slug" in touched_fields:
         leader_body = _patch_character_portrait(leader_body, tag, leader.portrait_slug)

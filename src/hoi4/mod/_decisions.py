@@ -10,6 +10,7 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
+from ..syntax import quote
 from ..types import (
     Decision,
     DecisionCategory,
@@ -452,7 +453,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             decision_id = str(step.get("id") or (f"{prefix}_{index}" if prefix else ""))
             if not decision_id:
                 raise ValueError("Decision chain steps need an id or a prefix")
-            flag = str(step.get("flag") or f"{decision_id}_done")
+            flag = quote(str(step.get("flag") or f"{decision_id}_done"))
             visible = _join_script_parts(
                 [
                     str(step.get("visible") or ""),
@@ -478,7 +479,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
                 f"set_country_flag = {flag}",
             ]
             clear_flags = step.get("clear_flags") or []
-            effect_parts.extend(f"clr_country_flag = {item}" for item in clear_flags)
+            effect_parts.extend(f"clr_country_flag = {quote(str(item))}" for item in clear_flags)
             create_kwargs: dict[str, Any] = {
                 "icon": str(step.get("icon") or icon),
                 "cost": step.get("cost", 0),

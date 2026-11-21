@@ -19,8 +19,8 @@ from .parser import PdxNode, parse_pdx, serialize_pdx
 from .patching import (
     AssignmentSpan,
     block_bodies_equivalent,
+    plain_values_equivalent,
     replace_assignment,
-    scalar_values_equivalent,
     set_block,
     top_level_assignments,
 )
@@ -476,7 +476,11 @@ def _set_direct_block(
     return _replace_body(text, span, lines + "\n" + child.outer)
 
 
-_VICTORY_POINT_NUMBER = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
+# A number as the game reads it (``5``, ``-5``, ``+5``, ``.5``, ``1e3``) or a
+# script constant (``@capital_points``).
+_VICTORY_POINT_NUMBER = re.compile(
+    r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|@[A-Za-z_][A-Za-z0-9_]*"
+)
 
 
 def _victory_point_pairs(value: str) -> list[tuple[str, str]]:
@@ -484,8 +488,9 @@ def _victory_point_pairs(value: str) -> list[tuple[str, str]]:
     if len(values) % 2:
         raise ValueError("Victory points require province/value pairs")
     for item in values:
-        # A province id and its points are numbers; anything else (a brace,
-        # an operator) would not stay inside the victory_points block.
+        # A province id and its points are numbers or script constants;
+        # anything else (a brace, an operator) would not stay inside the
+        # victory_points block.
         if not _VICTORY_POINT_NUMBER.fullmatch(item):
             raise ValueError(f"Victory points have to be numbers, found {item!r}")
     return list(zip(values[::2], values[1::2]))
@@ -583,7 +588,9 @@ def _set_resources(
         if key not in updated:
             body = _set_direct_scalar(body, key, None, child)
     for key, value in updated.items():
-        if key not in original or not scalar_values_equivalent(
+        # Both sides are plain model values: ``10`` and ``10.0`` are the same
+        # number, ``"10"`` with quote characters is another value.
+        if key not in original or not plain_values_equivalent(
             _scalar_text(original[key]), _scalar_text(value)
         ):
             body = _set_direct_scalar(body, key, _scalar_text(value), child)
@@ -621,7 +628,7 @@ def _render_new_state(state: State) -> str:
         state_block.children.append(PdxNode(key="is_demilitarized_zone", value="yes"))
 
     factor = _scalar_text(state.buildings_max_level_factor)
-    if factor and not scalar_values_equivalent(factor, "1.0"):
+    if factor and not plain_values_equivalent(factor, "1.0"):
         state_block.children.append(PdxNode(key="buildings_max_level_factor", value=factor))
     local_supplies = _scalar_text(state.local_supplies)
     if local_supplies:
@@ -695,11 +702,10 @@ def _patch_existing_state(state: State) -> str:
         "state_category": ("manpower", "name", "id"),
     }
     for key, value in scalar_fields.items():
-        # Compare by meaning: ``2000`` given for a file's ``2000.0`` is no change.
-        if value == original_scalars[key] or (
-            value and original_scalars[key]
-            and scalar_values_equivalent(value, original_scalars[key])
-        ):
+        # Compare by meaning: ``2000`` given for a file's ``2000.0`` is no
+        # change. Text is compared as it is: a name with quote characters or
+        # with a space at its end is another name.
+        if plain_values_equivalent(value, original_scalars[key]):
             continue
         rendered_value: str | None = value
         if key in {"local_supplies", "buildings_max_level_factor"} and not value:

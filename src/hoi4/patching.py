@@ -232,6 +232,25 @@ def scalar_values_equivalent(left: str, right: str) -> bool:
         return False
 
 
+_PLAIN_NUMBER = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?")
+
+
+def plain_values_equivalent(left: str, right: str) -> bool:
+    """Return whether two plain model values are the same value.
+
+    Unlike :func:`scalar_values_equivalent` this takes text as a model holds
+    it, not as a file spells it: nothing is trimmed and no quotes are taken
+    off, so ``"A"`` with quote characters, or ``A`` with a space behind it, is
+    not ``A``. Only two numbers compare by value (``2000`` and ``2000.0``).
+    """
+
+    if left == right:
+        return True
+    if _PLAIN_NUMBER.fullmatch(left) and _PLAIN_NUMBER.fullmatch(right):
+        return Decimal(left) == Decimal(right)
+    return False
+
+
 def block_bodies_equivalent(left: str, right: str, *, comments: bool = False) -> bool:
     """Compare block bodies while ignoring formatting and comments.
 
