@@ -354,6 +354,9 @@ def test_ordered_iterators_do_not_exist_in_hoi4(game: Path) -> None:
     assert [(item.code, "ordered_owned_state" in item.message) for item in findings] == [
         ("unknown_effect_token", True)
     ]
+    # Even where every name counts as known, it is a command and its block is data.
+    statements = walk_script("ordered_owned_state = { set_state_flag = x }", "effect", scope="COUNTRY")
+    assert [(item.name, item.scope) for item in statements] == [("ordered_owned_state", "COUNTRY")]
 
 
 def test_a_country_scope_core_effect_is_one_finding(game: Path, tmp_path: Path) -> None:
