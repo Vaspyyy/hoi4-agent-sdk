@@ -35,7 +35,16 @@ from .patching import (
     set_scalar,
 )
 from .script import pdx_string, pdx_value
-from .syntax import Assignment, Block, parse, quote, require_entry, require_key, require_well_formed
+from .syntax import (
+    Assignment,
+    Block,
+    Document,
+    parse,
+    quote,
+    require_entry,
+    require_key,
+    require_well_formed,
+)
 from .textio import read_text, write_text
 from .types import Idea
 
@@ -218,15 +227,18 @@ def _idea_from_block(idea_id: str, block: Block) -> Idea:
     return idea
 
 
-def read_ideas_text(text: str, path: Path | None = None) -> tuple[list[Idea], str]:
+def read_ideas_text(
+    text: str, path: Path | None = None, *, document: Document | None = None
+) -> tuple[list[Idea], str]:
     """Read every idea of an ideas file's text; returns ``(ideas, container_name)``.
 
     An idea is any ``id = { ... }`` block inside a category block of the
     ``ideas`` container, whatever keys it holds. A block that is still open at
-    the end of the text ends there, the way the game reads it.
+    the end of the text ends there, the way the game reads it. ``document``
+    is ``text`` already parsed.
     """
 
-    containers = _containers(parse(text).root)
+    containers = _containers((document if document is not None else parse(text)).root)
     container_name = containers[0].key.value if containers else "country_ideas"
     ideas: list[Idea] = []
     # One settings string per category occurrence, shared by its ideas.

@@ -930,7 +930,13 @@ def patch_state_history_owner_cores_text(
 def state_index_header(text: str) -> tuple[int, str, str | None] | None:
     """``(id, name, owner)`` of a state file's text, or ``None`` without an id."""
 
-    state_assignment = _state_assignment(parse(text).root)
+    return state_header_of(parse(text).root)
+
+
+def state_header_of(root: Block) -> tuple[int, str, str | None] | None:
+    """``(id, name, owner)`` of a parsed state file, or ``None`` without an id."""
+
+    state_assignment = _state_assignment(root)
     block = state_assignment.block if state_assignment is not None else None
     if block is None:
         return None

@@ -32,15 +32,27 @@ from .patching import (
     sync_body,
 )
 from .script import normalize_block_body
-from .syntax import Assignment, Block, ParseError, Scalar, parse, require_well_formed
+from .syntax import (
+    Assignment,
+    Block,
+    Document,
+    ParseError,
+    Scalar,
+    parse,
+    require_well_formed,
+)
 from .textio import read_text, write_text
 from .types import OnAction
 
 
-def load_on_actions_file(path: Path) -> list[OnAction]:
+def load_on_actions_file(path: Path, *, document: Document | None = None) -> list[OnAction]:
+    """Every on-action occurrence of one file; ``document`` is the file already parsed."""
+
     actions: list[OnAction] = []
     occurrences: dict[str, int] = {}
-    for container in _containers(parse(read_text(path)).root):
+    if document is None:
+        document = parse(read_text(path))
+    for container in _containers(document.root):
         for item in _action_items(container):
             block = item.block
             assert block is not None

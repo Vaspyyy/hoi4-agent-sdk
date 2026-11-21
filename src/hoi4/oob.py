@@ -220,8 +220,12 @@ def load_oob_file(
     kind: OOBKind | None = None,
     required_dlc: tuple[str, ...] = (),
     excluded_dlc: tuple[str, ...] = (),
+    text: str | None = None,
 ) -> OrderOfBattle:
-    text = read_text(path)
+    """Load one OOB file; ``text`` is its content when the caller has read it."""
+
+    if text is None:
+        text = read_text(path)
     templates: list[DivisionTemplate] = []
     template_index = 0
     for span in top_level_assignments(text):

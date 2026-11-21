@@ -43,6 +43,7 @@ from .script import normalize_block_body
 from .syntax import (
     Assignment,
     Block,
+    Document,
     Scalar,
     Tagged,
     parse,
@@ -95,8 +96,12 @@ def scan_event_ids_file(path: Path) -> set[str]:
     return ids
 
 
-def load_events_file(path: Path) -> tuple[Optional[str], list[Event]]:
-    doc = parse(read_text(path))
+def load_events_file(
+    path: Path, *, document: Document | None = None
+) -> tuple[Optional[str], list[Event]]:
+    """The namespace and events of one file; ``document`` is the file already parsed."""
+
+    doc = document if document is not None else parse(read_text(path))
     namespace = doc.root.scalar("add_namespace")
     events: list[Event] = []
     for item in doc.root.assignments():

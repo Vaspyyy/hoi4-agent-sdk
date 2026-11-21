@@ -42,7 +42,7 @@ from ..script_vocabulary import (
     GameScriptVocabulary,
 )
 from ..states import state_index_header
-from ..syntax import require_well_formed
+from ..syntax import Document, require_well_formed
 from ..tags import (
     load_vanilla_tags,
 )
@@ -1019,15 +1019,23 @@ class CoreLayer:
         return source is not None and source != path
 
     @staticmethod
-    def _require_well_formed(path: Path) -> None:
-        """Refuse a malformed script file in the mod's own folder.
+    def _read_well_formed(path: Path) -> tuple[str, Document]:
+        """Read and parse a script file of the mod's own folder, refusing a malformed one.
 
         Files inherited from the game or a base mod are read the way the game
         reads them. A file the mod owns is the author's to fix, so a missing or
-        stray brace there is a load failure instead of a guess.
+        stray brace there is a load failure instead of a guess. The text and
+        its tree are handed to the loader, so the file is read and parsed once.
         """
 
-        require_well_formed(read_text(path))
+        text = read_text(path)
+        return text, require_well_formed(text)
+
+    def _keep_source(self, path: Path, text: str) -> str:
+        """Remember the text a loader read from a mod file, like ``_read_source``."""
+
+        self._note_read(path, text)
+        return text
 
     def _snapshot(self) -> dict[str, object]:
         """Copy the in-memory state a transaction may change.
