@@ -23,6 +23,7 @@ from .patching import (
     top_level_assignments,
 )
 from .paths import require_country_tag, resolve_mod_output_path
+from .textio import read_text
 from .types import Focus, FocusTree
 
 FOCUS_ID_RE = re.compile(r"\bid\s*=\s*([A-Za-z0-9_\-]+)")
@@ -43,7 +44,7 @@ def load_focus_tree(path: Path, text: str | None = None) -> Optional[FocusTree]:
 
 
 def load_focus_trees(path: Path, text: str | None = None) -> list[FocusTree]:
-    txt = text if text is not None else path.read_text(encoding="utf-8", errors="ignore")
+    txt = text if text is not None else read_text(path)
     wrapped = [
         txt[span.body_start : span.body_end]
         for span in top_level_assignments(txt)

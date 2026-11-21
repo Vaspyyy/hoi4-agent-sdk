@@ -13,6 +13,7 @@ from typing import Iterable, Literal, Mapping, cast
 from .ideologies import load_ideologies
 from .parser import ParseError
 from .patching import top_level_assignments
+from .textio import read_text
 from .types import ValidationError
 
 ScriptTokenKind = Literal["effect", "trigger", "modifier"]
@@ -195,7 +196,7 @@ def load_game_script_vocabulary(
             continue
         for path in directory.rglob("*.txt"):
             try:
-                text = path.read_text(encoding="utf-8-sig", errors="ignore")
+                text = read_text(path)
             except OSError:
                 continue
             relative = path.relative_to(root)
@@ -397,7 +398,7 @@ def _documentation_entries(
 ) -> dict[str, tuple[tuple[str, ...], tuple[str, ...]]]:
     if not path.is_file():
         return {}
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(path)
     matches = list(_HEADING_RE.finditer(text))
     result: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
     for index, match in enumerate(matches):
@@ -605,7 +606,7 @@ def _custom_script_tokens(mod_root: Path) -> dict[ScriptTokenKind, set[str]]:
                 result[typed_kind].update(
                     span.key
                     for span in top_level_assignments(
-                        path.read_text(encoding="utf-8-sig", errors="ignore")
+                        read_text(path)
                     )
                     if span.is_block
                 )
@@ -625,7 +626,7 @@ def _scripted_tokens(directory: Path) -> set[str]:
             result.update(
                 span.key
                 for span in top_level_assignments(
-                    path.read_text(encoding="utf-8-sig", errors="ignore")
+                    read_text(path)
                 )
                 if span.is_block
             )

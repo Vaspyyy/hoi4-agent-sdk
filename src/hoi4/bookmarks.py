@@ -13,10 +13,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .parser import find_assignment_block, strip_comments
-from .patching import append_assignment, replace_assignment, set_block, set_scalar
-from .patching import top_level_assignments
+from .patching import (
+    append_assignment,
+    replace_assignment,
+    set_block,
+    set_scalar,
+    top_level_assignments,
+)
 from .script import pdx_string, pdx_value
-
+from .textio import read_text
 
 _COUNTRY_TAG = re.compile(r"^[A-Z0-9]{3}$")
 BOOKMARK_OTHER_COUNTRY = "---"
@@ -55,7 +60,7 @@ class Bookmark:
 
 
 def load_bookmarks_file(path: Path) -> list[Bookmark]:
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(path)
     outer = find_assignment_block(text, "bookmarks")
     if outer is None:
         return []

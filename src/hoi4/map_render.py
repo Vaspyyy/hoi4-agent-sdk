@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .layers import replace_paths
-from .progress import ProgressCallback as EventProgressCallback
-from .progress import report_progress
 from .parser import find_assignment_block
 from .patching import top_level_assignments
+from .progress import ProgressCallback as EventProgressCallback
+from .progress import report_progress
 from .states import read_state
-
+from .textio import read_text
 
 ProgressCallback = Callable[[int, int], None]
 CancelCallback = Callable[[], bool]
@@ -58,7 +58,7 @@ class PoliticalMapResult:
 def parse_definition_csv(path: Path) -> dict[tuple[int, int, int], int]:
     """Return the RGB-to-province mapping from ``map/definition.csv``."""
 
-    rows = csv.reader(path.read_text(encoding="utf-8", errors="ignore").splitlines(), delimiter=";")
+    rows = csv.reader(read_text(path).splitlines(), delimiter=";")
     result: dict[tuple[int, int, int], int] = {}
     for row in rows:
         if len(row) < 4:
@@ -131,7 +131,7 @@ def load_country_colors(
             country_path = countries_dir / Path(relative).name
             if not country_path.is_file():
                 continue
-            match = _COLOR.search(country_path.read_text(encoding="utf-8", errors="ignore"))
+            match = _COLOR.search(read_text(country_path))
             if match:
                 result[tag] = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
         colors_path = countries_dir / "colors.txt"
@@ -271,7 +271,7 @@ def render_political_map(
 
 
 def _parse_colors_file(path: Path) -> dict[str, tuple[int, int, int]]:
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(path)
     outer = find_assignment_block(text, "colors")
     body = outer[0] if outer is not None else text
     result: dict[str, tuple[int, int, int]] = {}
@@ -289,7 +289,7 @@ def _parse_tag_mappings(directory: Path) -> dict[str, str]:
     if not directory.is_dir():
         return result
     for path in sorted(directory.glob("*.txt")):
-        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        for line in read_text(path).splitlines():
             match = _TAG_LINE.match(line)
             if match:
                 result[match.group(1)] = match.group(2)

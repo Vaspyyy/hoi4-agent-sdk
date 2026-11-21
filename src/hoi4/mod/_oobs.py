@@ -30,6 +30,7 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
+from ..textio import read_text
 from ..types import (
     Country,
 )
@@ -184,7 +185,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             if path.resolve(strict=False).is_relative_to(self.mod_root):
                 self._original_files.setdefault(
                     path,
-                    path.read_text(encoding="utf-8-sig", errors="ignore"),
+                    read_text(path),
                 )
             return oob
         raise KeyError(f"OOB '{name}' not found")
@@ -732,7 +733,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         self._original_files.setdefault(
             target,
             self._read_current_text(target)
-            or source.read_text(encoding="utf-8-sig", errors="ignore"),
+            or read_text(source),
         )
         oob.path = target
         self._dirty_oob_files.add(target)

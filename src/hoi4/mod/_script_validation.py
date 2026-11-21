@@ -34,6 +34,7 @@ from ..states import (
 from ..tags import (
     load_all_tags,
 )
+from ..textio import read_text
 from ..types import (
     Event,
     EventOption,
@@ -556,7 +557,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 try:
                     pending_text = self._script_file_updates.get(path)
                     text = (pending_text if pending_text is not None else
-                            path.read_text(encoding="utf-8-sig", errors="ignore"))
+                            read_text(path))
                     for span in top_level_assignments(text):
                         if (
                             span.is_block
@@ -1079,7 +1080,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             return cls._line_column(script, script_offset)
         path = Path(file_path)
         try:
-            source = path.read_text(encoding="utf-8-sig", errors="ignore")
+            source = read_text(path)
         except OSError:
             return cls._line_column(script, script_offset)
 

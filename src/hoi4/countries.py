@@ -15,11 +15,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from .tags import (
-    add_country_tag,
-    remove_country_tag as _remove_country_tag,
-    resolve_country_filename,
-)
+from .parser import find_assignment_block
 from .patching import (
     append_assignment,
     replace_assignment,
@@ -29,9 +25,16 @@ from .patching import (
     top_level_assignments,
 )
 from .paths import require_country_tag, safe_file_stem
-from .parser import find_assignment_block
 from .script import pdx_string, pdx_value
 from .structured_patching import patch_scalar_mapping
+from .tags import (
+    add_country_tag,
+    resolve_country_filename,
+)
+from .tags import (
+    remove_country_tag as _remove_country_tag,
+)
+from .textio import decode_text, read_text
 from .types import Country, Leader
 
 COLOR_RE = re.compile(
@@ -85,7 +88,7 @@ def _read_definition(
             continue
         p = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
         if p and p.exists():
-            txt = p.read_text(encoding="utf-8", errors="ignore")
+            txt = read_text(p)
             country.definition_path = p.resolve()
             country.raw_definition = txt
             m = COLOR_RE.search(txt)
@@ -109,7 +112,7 @@ def _read_color(
             continue
         definition = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
         if definition is not None and definition.is_file():
-            match = COLOR_RE.search(definition.read_text(encoding="utf-8", errors="ignore"))
+            match = COLOR_RE.search(read_text(definition))
             if match:
                 resolved = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
         colors_path = base / "common" / "countries" / "colors.txt"
@@ -120,7 +123,7 @@ def _read_color(
             if text is None:
                 continue
         else:
-            text = colors_path.read_text(encoding="utf-8", errors="ignore")
+            text = read_text(colors_path)
         span = next((item for item in top_level_assignments(text) if item.key == country.tag), None)
         if span is None or not span.is_block or span.body_start is None or span.body_end is None:
             continue
@@ -141,7 +144,7 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
         f = _find_history_file(d, country.tag)
         if not f:
             continue
-        txt = f.read_text(encoding="utf-8", errors="ignore")
+        txt = read_text(f)
         country.history_path = f.resolve()
         country.raw_history = txt
 
@@ -241,10 +244,7 @@ def _read_localisation(country: Country, mod_root: Path, hoi4_install: Optional[
             if not f.exists():
                 continue
             raw = f.read_bytes()
-            try:
-                txt = raw.decode("utf-8-sig")
-            except Exception:
-                txt = raw.decode("utf-8", errors="ignore")
+            txt = decode_text(raw)
             if f"{country.tag}:" not in txt:
                 continue
             for line in txt.splitlines():
@@ -263,10 +263,7 @@ def _build_loc_cache(mod_root: Path) -> dict[str, dict[str, str]]:
         return cache
     for f in loc_dir.rglob("*.yml"):
         raw = f.read_bytes()
-        try:
-            txt = raw.decode("utf-8-sig")
-        except Exception:
-            txt = raw.decode("utf-8", errors="ignore")
+        txt = decode_text(raw)
         for line in txt.splitlines():
             s = line.strip()
             if not s or s.startswith("#") or s.startswith("l_"):
@@ -303,7 +300,7 @@ def _read_character(country: Country, mod_root: Path, hoi4_install: Optional[Pat
             p = base / f"common/characters/{country.tag}.txt"
         if not p.exists():
             continue
-        txt = p.read_text(encoding="utf-8", errors="ignore")
+        txt = read_text(p)
         country.character_path = p.resolve()
         country.raw_character = txt
 

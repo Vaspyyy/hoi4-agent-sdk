@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from .paths import require_country_tag
+from .textio import read_text
 
 # Keep the generated-table writer's sorting and deduplication policy separate.
 TAG_FILE_RE = re.compile(r'^\s*([A-Z0-9]{3})\s*=\s*"(.+)"\s*$')
@@ -29,7 +30,7 @@ def _parse_tag_file_mapping(country_tags_dir: Path) -> dict[str, str]:
     if not country_tags_dir.is_dir():
         return mapping
     for f in sorted(country_tags_dir.glob("*.txt")):
-        txt = f.read_text(encoding="utf-8", errors="ignore")
+        txt = read_text(f)
         for line in txt.splitlines():
             entry = _parse_country_tag_line(line)
             if entry:
@@ -68,7 +69,7 @@ def load_mod_tags(mod_root: Path) -> list[str]:
     if not d.exists():
         return []
     for f in d.glob("*.txt"):
-        txt = f.read_text(encoding="utf-8", errors="ignore")
+        txt = read_text(f)
         for line in txt.splitlines():
             entry = _parse_country_tag_line(line)
             if entry:
@@ -91,7 +92,7 @@ def add_country_tag(mod_root: Path, tag: str) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     line = f'{tag} = "countries/{tag}.txt"\n'
     if p.exists():
-        content = p.read_text(encoding="utf-8", errors="ignore")
+        content = read_text(p)
         if re.search(rf"^{re.escape(tag)}\s*=", content, re.MULTILINE):
             return p
     with p.open("a", encoding="utf-8") as fh:
@@ -120,7 +121,7 @@ def remove_country_tag(mod_root: Path, tag: str) -> Path | None:
     path = mod_root / "common" / "country_tags" / "00_generated_tags.txt"
     if not path.exists():
         return None
-    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines(keepends=True)
+    lines = read_text(path).splitlines(keepends=True)
     kept = [line for line in lines if not re.match(rf"^\s*{re.escape(tag)}\s*=", line)]
     if kept == lines:
         return None

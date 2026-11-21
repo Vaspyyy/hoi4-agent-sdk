@@ -25,6 +25,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import normalize_block_body
+from .textio import read_text
 from .types import Event, EventOption
 
 NAMESPACE_RE = re.compile(r"add_namespace\s*=\s*(\S+)")
@@ -46,7 +47,7 @@ TRIGGERED_ONLY_RE = re.compile(r"\bis_triggered_only\s*=\s*(yes|no)")
 def scan_event_ids_file(path: Path) -> set[str]:
     """Extract event IDs without constructing full event/option models."""
 
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(path)
     ids: set[str] = set()
     for span in top_level_assignments(text):
         if (
@@ -69,7 +70,7 @@ def scan_event_ids_file(path: Path) -> set[str]:
 
 
 def load_events_file(path: Path) -> tuple[Optional[str], list[Event]]:
-    txt = path.read_text(encoding="utf-8", errors="ignore")
+    txt = read_text(path)
 
     ns_m = NAMESPACE_RE.search(strip_comments(txt))
     namespace = ns_m.group(1) if ns_m else None

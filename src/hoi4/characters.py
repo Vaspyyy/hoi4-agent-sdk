@@ -22,7 +22,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_string
-
+from .textio import read_text
 
 PortraitChannel = Literal["civilian", "army", "navy"]
 ArmyCommanderKind = Literal["corps_commander", "field_marshal"]
@@ -156,7 +156,7 @@ def role_key(role: CharacterRole) -> str:
 def load_characters_file(path: Path, *, country_tag: str = "") -> list[Character]:
     """Load every direct character definition from one source file."""
 
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(path)
     wrapper = next(
         (
             span

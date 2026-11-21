@@ -29,6 +29,7 @@ from ..script import (
     pdx_string,
     pdx_value,
 )
+from ..textio import read_text
 from ..types import (
     Country,
 )
@@ -128,7 +129,7 @@ class CountriesLayer(CoreLayer):
         for path in country_file_paths(self.mod_root, country):
             if path.exists():
                 self._original_files.setdefault(
-                    path, path.read_text(encoding="utf-8", errors="ignore")
+                    path, read_text(path)
                 )
                 if path.resolve(strict=False).is_relative_to(self.mod_root):
                     self._source_baseline.setdefault(

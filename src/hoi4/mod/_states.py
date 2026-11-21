@@ -17,6 +17,7 @@ from ..states import (
     build_state_index,
     read_state,
 )
+from ..textio import read_text
 from ..types import (
     State,
 )
@@ -207,7 +208,7 @@ class StatesLayer(CoreLayer):
             state = read_state(f)
             self._states[state_id] = state
             self._state_source_paths.setdefault(state_id, f)
-            self._original_files.setdefault(f, f.read_text(encoding="utf-8", errors="ignore"))
+            self._original_files.setdefault(f, read_text(f))
             self._source_baseline.setdefault(f.resolve(strict=False), f.read_bytes())
             return state
         raise KeyError(f"State {state_id} not found")

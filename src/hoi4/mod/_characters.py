@@ -19,6 +19,7 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
+from ..textio import read_text
 from ._countries import CountriesLayer
 from ._localisation import LocalisationLayer
 
@@ -426,7 +427,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             )
         relative = source.resolve(strict=False).relative_to(self._base_content_root)
         target = resolve_mod_output_path(self.mod_root, relative)
-        source_text = source.read_text(encoding="utf-8", errors="ignore")
+        source_text = read_text(source)
         for item in load_characters_file(source, country_tag=character.country_tag):
             cached = self._characters.get(item.id)
             if cached is not None and cached.path == source:

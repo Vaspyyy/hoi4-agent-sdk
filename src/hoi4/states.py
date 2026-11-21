@@ -16,6 +16,7 @@ from typing import Optional, Sequence
 from .map_editing import list_ints, patch_int_list_body
 from .parser import PdxNode, parse_pdx, serialize_pdx
 from .patching import AssignmentSpan, replace_assignment, top_level_assignments
+from .textio import read_text
 from .types import State
 
 STATE_ID_RE = re.compile(r"\bid\s*=\s*(\d+)")
@@ -29,7 +30,7 @@ def find_state_file(states_dir: Path, state_id: int) -> Optional[Path]:
     for f in states_dir.glob(f"{state_id} *.txt"):
         return f
     for f in sorted(states_dir.glob("*.txt")):
-        txt = f.read_text(encoding="utf-8", errors="ignore")
+        txt = read_text(f)
         if re.search(rf"\bid\s*=\s*{state_id}\b", txt):
             return f
     return None
@@ -58,7 +59,7 @@ def ensure_state_in_mod(
 
 
 def read_state(state_file: Path, text: str | None = None) -> State:
-    txt = text if text is not None else state_file.read_text(encoding="utf-8", errors="ignore")
+    txt = text if text is not None else read_text(state_file)
     root = parse_pdx(txt)
 
     state_block = None
@@ -591,7 +592,7 @@ def patch_state_history_owner_cores(
     remove_cores: list[str] | None = None,
 ) -> None:
     """Patch owner/core lines in-place without reserializing unrelated state data."""
-    text = state_file.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(state_file)
     patched = patch_state_history_owner_cores_text(
         text,
         owner=owner,
@@ -626,7 +627,7 @@ def build_state_index(states_dir: Path) -> list[dict]:
     if not states_dir.is_dir():
         return out
     for f in sorted(states_dir.glob("*.txt")):
-        txt = f.read_text(encoding="utf-8", errors="ignore")
+        txt = read_text(f)
         mid = STATE_ID_RE.search(txt)
         if not mid:
             continue

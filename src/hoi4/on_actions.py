@@ -21,11 +21,12 @@ from .patching import (
     top_level_assignments,
 )
 from .script import normalize_block_body
+from .textio import read_text
 from .types import OnAction
 
 
 def load_on_actions_file(path: Path) -> list[OnAction]:
-    txt = path.read_text(encoding="utf-8", errors="ignore")
+    txt = read_text(path)
     root = find_assignment_block(txt, "on_actions")
     body = root[0] if root else txt
     actions: list[OnAction] = []

@@ -25,6 +25,7 @@ from ..paths import (
 from ..states import (
     read_state,
 )
+from ..textio import read_text
 from ..types import (
     State,
 )
@@ -79,7 +80,7 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
             if states_dir.exists():
                 for state_path in sorted(states_dir.glob("*.txt")):
                     try:
-                        state_text = state_path.read_text(encoding="utf-8", errors="ignore")
+                        state_text = read_text(state_path)
                     except Exception:
                         continue
                     if (
@@ -122,7 +123,7 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
             if focus_dir.exists():
                 for path in sorted(focus_dir.glob("*.txt")):
                     try:
-                        raw_focus_text = path.read_text(encoding="utf-8", errors="ignore")
+                        raw_focus_text = read_text(path)
                     except Exception:
                         continue
                     focus_header = raw_focus_text.split("focus = {", 1)[0]

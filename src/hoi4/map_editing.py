@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from .patching import AssignmentSpan, append_assignment, replace_assignment, top_level_assignments
+from .textio import read_text
 from .types import ValidationError
 
 SUPPLY_NODES_FILE = "map/supply_nodes.txt"
@@ -336,7 +337,7 @@ def patch_int_list_body(body: str, original: Sequence[int], updated: Sequence[in
 @lru_cache(maxsize=4096)
 def _cached_state_file_provinces(path: Path, stamp: int) -> tuple[int, ...]:
     del stamp  # cache key only
-    text = _COMMENT_RE.sub("", path.read_text(encoding="utf-8", errors="ignore"))
+    text = _COMMENT_RE.sub("", read_text(path))
     match = _STATE_PROVINCES_RE.search(text)
     return tuple(list_ints(match.group(1))) if match else ()
 

@@ -15,6 +15,7 @@ from .parser import iter_assignment_blocks
 from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
 from .script import validate_script_syntax
+from .textio import read_text
 from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationError
 
 TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
@@ -372,7 +373,7 @@ def validate_tag_definition_targets(mod_root: Path) -> list[ValidationError]:
     if not tags_dir.is_dir():
         return issues
     for path in sorted(tags_dir.glob("*.txt")):
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = read_text(path)
         for line_number, line in enumerate(text.splitlines(), 1):
             match = _TAG_DEFINITION_RE.match(line)
             if match is None:
@@ -408,7 +409,7 @@ def collect_character_ids(*roots: Path | None) -> set[str]:
             continue
         for path in sorted(directory.glob("*.txt")):
             try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
+                text = read_text(path)
                 for body, _, _ in iter_assignment_blocks(text, "characters"):
                     character_ids.update(
                         span.key
@@ -436,7 +437,7 @@ def validate_country_history_references(
     if not histories_dir.is_dir():
         return issues
     for path in sorted(histories_dir.glob("*.txt")):
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        text = read_text(path)
         source = _mask_script_comments(text)
         for match in _CAPITAL_RE.finditer(source):
             state_id = int(match.group(1))

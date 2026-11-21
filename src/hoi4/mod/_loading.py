@@ -36,9 +36,11 @@ from ..oob import (
 from ..states import (
     build_state_index,
 )
+from ..syntax import require_well_formed
 from ..tags import (
     _parse_country_tag_line,
 )
+from ..textio import read_text
 from ..types import (
     Country,
     Decision,
@@ -151,7 +153,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         if not tags_dir.is_dir():
             return mapping
         for path in sorted(tags_dir.glob("*.txt")):
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = read_text(path)
             for line in text.splitlines():
                 entry = _parse_country_tag_line(line)
                 if entry is None:
@@ -177,7 +179,9 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             if not colors_path.is_file():
                 continue
             try:
-                source = colors_path.read_text(encoding="utf-8", errors="ignore")
+                source = read_text(colors_path)
+                if base == self.mod_root:
+                    require_well_formed(source)
                 country_color_tags(source)
             except Exception as error:
                 self._country_color_sources[colors_path] = None
@@ -202,10 +206,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         if generated_tags.is_file():
             self._created_country_tags.update(
                 entry[0]
-                for line in generated_tags.read_text(
-                    encoding="utf-8",
-                    errors="ignore",
-                ).splitlines()
+                for line in read_text(generated_tags).splitlines()
                 if (entry := _parse_country_tag_line(line)) is not None
             )
         override_tags = set(mod_mapping)
@@ -241,7 +242,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             for path in country_file_paths(self.mod_root, self._countries[tag]):
                 if path.exists():
                     self._original_files.setdefault(
-                        path, path.read_text(encoding="utf-8", errors="ignore")
+                        path, read_text(path)
                     )
 
     def _load_states(self) -> None:
@@ -267,6 +268,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             return
         for path in sorted(directory.glob("*.txt")):
             try:
+                self._require_well_formed(path)
                 for character in load_characters_file(path):
                     existing = self._characters.get(character.id)
                     if existing is not None:
@@ -278,9 +280,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                         )
                         continue
                     self._characters[character.id] = character
-                self._original_files[path] = path.read_text(
-                    encoding="utf-8", errors="ignore"
-                )
+                self._original_files[path] = read_text(path)
             except _DuplicateIdentifierError:
                 raise
             except Exception as error:
@@ -296,6 +296,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                 assigned.setdefault(reference.name, (country.tag, reference))
         for path in sorted(directory.glob("*.txt")):
             try:
+                self._require_well_formed(path)
                 assignment = assigned.get(path.stem)
                 oob = load_oob_file(
                     path,
@@ -310,9 +311,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                     ),
                 )
                 self._oobs[oob.name] = oob
-                self._original_files[path] = path.read_text(
-                    encoding="utf-8-sig", errors="ignore"
-                )
+                self._original_files[path] = read_text(path)
             except Exception as error:
                 self._record_load_error("oob", path, error)
 
@@ -322,11 +321,12 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             return
         for f in sorted(focus_dir.glob("*.txt")):
             try:
+                self._require_well_formed(f)
                 trees = load_focus_trees(f)
                 # Preserve non-focus companion files too. A subsequently
                 # created tree may legitimately target the same file and must
                 # append to, not replace, its unmodeled declarations.
-                self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+                self._original_files[f] = read_text(f)
                 if not trees:
                     continue
                 for tree in trees:
@@ -361,6 +361,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             return
         for f in sorted(events_dir.glob("*.txt")):
             try:
+                self._require_well_formed(f)
                 namespace, events = load_events_file(f)
                 self._event_file_namespaces[f] = namespace
                 for event in events:
@@ -375,7 +376,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                         continue
                     self._events[event.id] = event
                     self._event_namespaces[event.id] = namespace
-                self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+                self._original_files[f] = read_text(f)
             except _DuplicateIdentifierError:
                 raise
             except Exception as error:
@@ -388,6 +389,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             return
         for f in sorted(on_actions_dir.glob("*.txt")):
             try:
+                self._require_well_formed(f)
                 for action in load_on_actions_file(f):
                     # Unlike most Paradox objects, on-actions are hooks.  The
                     # game composes repeated definitions across files (and
@@ -395,7 +397,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                     # occurrence instead of diagnosing or dropping duplicates.
                     self._on_action_occurrences.setdefault(action.id, []).append(action)
                     self._on_actions.setdefault(action.id, action)
-                self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+                self._original_files[f] = read_text(f)
             except Exception as error:
                 self._record_load_error("on_action", f, error)
                 continue
@@ -409,6 +411,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         if categories_dir.is_dir():
             for f in sorted(categories_dir.glob("*.txt")):
                 try:
+                    self._require_well_formed(f)
                     for category in load_decision_categories_file(f):
                         first_path = category_sources.get(category.id)
                         if first_path is not None:
@@ -421,9 +424,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                             continue
                         category_sources[category.id] = category.definition_path or f
                         self._decision_categories[category.id] = category
-                    self._original_files[f] = f.read_text(
-                        encoding="utf-8", errors="ignore"
-                    )
+                    self._original_files[f] = read_text(f)
                 except _DuplicateIdentifierError:
                     raise
                 except Exception as error:
@@ -431,6 +432,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                     continue
         for f in sorted(decisions_dir.glob("*.txt")):
             try:
+                self._require_well_formed(f)
                 categories = load_decisions_file(f)
                 file_category_sources: dict[str, Path] = {}
                 for category in categories:
@@ -481,7 +483,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                             self.mod_root, category.path or f
                         )
                     self._decision_categories[category.id] = category
-                self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+                self._original_files[f] = read_text(f)
             except _DuplicateIdentifierError:
                 raise
             except Exception as error:
@@ -498,6 +500,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                 continue
             for f in sorted(ideas_dir.glob("*.txt")):
                 try:
+                    self._require_well_formed(f)
                     ideas, container = read_ideas_file(f)
                     for idea in ideas:
                         existing = self._ideas.get(idea.id)
@@ -511,7 +514,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                             continue
                         self._ideas[idea.id] = idea
                     self._idea_file_containers[f] = container
-                    self._original_files[f] = f.read_text(encoding="utf-8", errors="ignore")
+                    self._original_files[f] = read_text(f)
                 except _DuplicateIdentifierError:
                     raise
                 except Exception as error:
@@ -526,6 +529,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             if directory.is_dir():
                 for path in sorted(directory.glob("*.txt")):
                     try:
+                        self._require_well_formed(path)
                         for ideology in load_ideologies_file(path, is_vanilla=True):
                             self._vanilla_ideologies[ideology.id] = ideology
                     except Exception:
@@ -538,6 +542,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             return
         for path in sorted(directory.glob("*.txt")):
             try:
+                self._require_well_formed(path)
                 for ideology in load_ideologies_file(path):
                     existing = self._ideologies.get(ideology.id)
                     if existing is not None:
@@ -549,7 +554,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                         )
                         continue
                     self._ideologies[ideology.id] = ideology
-                self._original_files[path] = path.read_text(encoding="utf-8", errors="ignore")
+                self._original_files[path] = read_text(path)
             except _DuplicateIdentifierError:
                 raise
             except Exception as error:
@@ -561,9 +566,8 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             return
         for path in sorted(directory.glob("*.txt")):
             try:
-                self._original_files[path] = path.read_text(
-                    encoding="utf-8", errors="ignore"
-                )
+                self._require_well_formed(path)
+                self._original_files[path] = read_text(path)
                 for modifier in load_dynamic_modifiers_file(path):
                     existing = self._dynamic_modifiers.get(modifier.id)
                     if existing is not None:
@@ -590,6 +594,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         sources: dict[str, Path] = {}
         for path in sorted(directory.glob("*.txt")):
             try:
+                self._require_well_formed(path)
                 for bookmark in load_bookmarks_file(path):
                     first_path = sources.get(bookmark.name)
                     if first_path is not None:
@@ -599,7 +604,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                         continue
                     sources[bookmark.name] = bookmark.path or path
                     self._bookmarks.append(bookmark)
-                self._original_files[path] = path.read_text(encoding="utf-8", errors="ignore")
+                self._original_files[path] = read_text(path)
             except _DuplicateIdentifierError:
                 raise
             except Exception as error:

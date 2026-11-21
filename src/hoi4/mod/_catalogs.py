@@ -15,6 +15,7 @@ from ..parser import (
 from ..patching import (
     top_level_assignments,
 )
+from ..textio import decode_text, read_text
 from ..validation import (
     collect_character_ids,
 )
@@ -114,7 +115,7 @@ class CatalogsLayer(SourcesLayer):
                     continue
                 for path in interface_dir.rglob("*.gfx"):
                     try:
-                        text = path.read_text(encoding="utf-8", errors="ignore")
+                        text = read_text(path)
                     except Exception:
                         continue
                     cached.update(
@@ -125,7 +126,7 @@ class CatalogsLayer(SourcesLayer):
         # Staged sprite declarations are visible before save; they are not cached.
         for path, content in self._pending_asset_writes.items():
             if path.suffix.lower() == ".gfx":
-                text = content.decode("utf-8", errors="ignore")
+                text = decode_text(content)
                 icons.update(
                     name for name in _GFX_NAME_RE.findall(text) if name.startswith("GFX_")
                 )
@@ -166,7 +167,7 @@ class CatalogsLayer(SourcesLayer):
                 return
             for path in interface_dir.rglob("*.gfx"):
                 try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    text = read_text(path)
                     scan_text(text, textures)
                 except (OSError, ValueError):
                     continue
@@ -180,7 +181,7 @@ class CatalogsLayer(SourcesLayer):
         scan(self.mod_root, textures)
         for path, content in self._pending_asset_writes.items():
             if path.suffix.lower() == ".gfx":
-                scan_text(content.decode("utf-8", errors="ignore"), textures)
+                scan_text(decode_text(content), textures)
         return dict(textures)
 
     def _texture_exists(self, relative_path: str) -> bool:
@@ -316,7 +317,7 @@ class CatalogsLayer(SourcesLayer):
                 continue
             for path in directory.glob("*.txt"):
                 try:
-                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    text = read_text(path)
                     for body, _, _ in iter_assignment_blocks(text, "sub_units"):
                         result.update(
                             span.key

@@ -17,6 +17,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_string, pdx_value
+from .textio import read_text
 from .types import ValidationError
 
 _T = TypeVar("_T")
@@ -176,7 +177,7 @@ def load_oob_file(
     required_dlc: tuple[str, ...] = (),
     excluded_dlc: tuple[str, ...] = (),
 ) -> OrderOfBattle:
-    text = path.read_text(encoding="utf-8-sig", errors="ignore")
+    text = read_text(path)
     templates: list[DivisionTemplate] = []
     template_index = 0
     for span in top_level_assignments(text):

@@ -50,11 +50,13 @@ from ..paths import (
 from ..states import (
     serialize_state,
 )
+from ..syntax import parse, repair
 from ..tags import (
     _parse_tag_file_mapping,
     load_vanilla_tags,
     sort_generated_country_tags,
 )
+from ..textio import decode_text, encode_text, read_text
 from ..types import (
     SaveResult,
 )
@@ -83,7 +85,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         rendered = self._render_dirty_files()
         self._assert_no_external_modifications(rendered)
         for path, current in rendered.items():
-            original = self._read_rendered_text(path)
+            original = self._read_current_text(path)
             rel = str(path.relative_to(self.mod_root))
             if current is None:
                 current = ""
@@ -114,7 +116,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             path: content
             for path, content in rendered.items()
             if (content is None and path.exists())
-            or (content is not None and self._read_rendered_text(path) != content)
+            or (content is not None and self._read_current_text(path) != content)
         }
         changed_assets = {
             path: content
@@ -214,9 +216,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 if vanilla_colors_path.is_file():
                     colors_base = seed_country_colors_file(
                         colors_base,
-                        vanilla_colors_path.read_text(
-                            encoding="utf-8", errors="ignore"
-                        ),
+                        read_text(vanilla_colors_path),
                     )
                 elif set(color_updates) & self._vanilla_tags:
                     raise RuntimeError(
@@ -475,6 +475,34 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 f"{displayed}. Call reload() and reapply the intended edit."
             )
 
+    def _encode_like_source(self, path: Path, content: str, current: bytes | None) -> bytes:
+        """Encode ``content`` for ``path`` the way its source file is stored.
+
+        An existing file keeps its encoding, byte-order mark and line endings,
+        and every line that did not change keeps its exact bytes. A new file
+        that overrides an inherited one copies those properties from the file
+        it shadows. Localisation always gets the byte-order mark the game
+        requires.
+        """
+
+        bom = True if path.suffix.lower() == ".yml" else None
+        donor = self._format_donors.get(path)
+        if donor is not None:
+            return encode_text(content, like=donor, bom=bom)
+        if current is not None:
+            return encode_text(content, like=current, bom=bom)
+        try:
+            shadowed = self.content_source(path.relative_to(self.mod_root))
+        except ValueError:
+            shadowed = None
+        if shadowed is not None and shadowed.is_file() and shadowed != path:
+            donor = shadowed.read_bytes()
+            if parse(decode_text(donor)).problems:
+                # The game tolerates the inherited file's missing or stray
+                # braces; the mod's own copy is written out well formed.
+                content = repair(content)
+        return encode_text(content, like=donor, bom=bom)
+
     def _commit_rendered_files(
         self,
         rendered: dict[Path, str | None],
@@ -496,7 +524,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     continue
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
-                    handle.write(content.encode("utf-8-sig" if path.suffix == ".yml" else "utf-8"))
+                    handle.write(self._encode_like_source(path, content, backups[path]))
                     prepared[path] = Path(handle.name)
             for path, binary_content in assets.items():
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -612,6 +640,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         self._pending_asset_baselines.clear()
         self._country_name_pool_updates.clear()
         self._script_file_updates.clear()
+        self._format_donors.clear()
         self._original_files.clear()
         self._dirty.clear()
         self._scan_cache.clear()

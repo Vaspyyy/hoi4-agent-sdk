@@ -25,6 +25,7 @@ from .patching import (
 )
 from .script import pdx_string, pdx_value
 from .structured_patching import patch_scalar_mapping
+from .textio import read_text
 from .types import Idea
 
 KV_RE = re.compile(r"^\s*([a-zA-Z0-9_]+)\s*=\s*([^\n\r]+)", re.MULTILINE)
@@ -88,7 +89,7 @@ def _is_idea_body(text: str) -> bool:
 def scan_idea_ids_file(path: Path) -> set[str]:
     """Extract idea IDs without parsing every modeled property."""
 
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(path)
     ids: set[str] = set()
     for container_name in VALID_CONTAINERS:
         match = find_assignment_block(text, container_name)
@@ -168,7 +169,7 @@ def _parse_idea_body(idea_id: str, body: str) -> Idea:
 
 
 def read_ideas_file(path: Path) -> tuple[list[Idea], str]:
-    txt = path.read_text(encoding="utf-8", errors="ignore")
+    txt = read_text(path)
     container_name = detect_ideas_container(txt)
     container = _extract_block(txt, container_name)
     if not container:
@@ -490,7 +491,7 @@ def write_ideas_file(path: Path, ideas: list[Idea], container_name: str = "count
 def read_assigned_ideas(history_file: Path) -> list[str]:
     if not history_file.exists():
         return []
-    text = history_file.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(history_file)
     assigned: list[str] = []
     removed: set[str] = set()
 

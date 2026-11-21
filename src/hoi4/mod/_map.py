@@ -64,6 +64,7 @@ from ..types import (
 )
 from ._catalogs import CatalogsLayer
 from ._states import StatesLayer
+from ..textio import read_text
 
 
 class MapLayer(StatesLayer, CatalogsLayer):
@@ -510,7 +511,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
             and self._mod_hides_inherited(Path(relative))
         ):
             return None
-        return source.read_bytes().decode("utf-8", errors="replace")
+        return read_text(source)
 
     def _queue_map_text(self, relative: str, text: str) -> None:
         resolve_mod_output_path(self.mod_root, relative)

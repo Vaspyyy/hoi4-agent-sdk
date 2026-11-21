@@ -31,8 +31,8 @@ from .patching import (
     set_scalar,
     top_level_assignments,
 )
+from .textio import read_text
 from .types import Decision, DecisionCategory
-
 
 SCALAR_RE = re.compile(r"\b([A-Za-z0-9_]+)\s*=\s*([^\s{}#]+)")
 
@@ -357,7 +357,7 @@ def _extract_category_metadata(body: str) -> dict[str, str]:
 
 
 def load_decisions_file(path: Path) -> list[DecisionCategory]:
-    txt = path.read_text(encoding="utf-8", errors="ignore")
+    txt = read_text(path)
     categories: list[DecisionCategory] = []
     for span in top_level_assignments(txt):
         if not span.is_block or span.body_start is None or span.body_end is None:
@@ -383,7 +383,7 @@ def load_decisions_file(path: Path) -> list[DecisionCategory]:
 def load_decision_categories_file(path: Path) -> list[DecisionCategory]:
     """Load category metadata from ``common/decisions/categories``."""
 
-    txt = path.read_text(encoding="utf-8", errors="ignore")
+    txt = read_text(path)
     categories: list[DecisionCategory] = []
     for span in top_level_assignments(txt):
         if not span.is_block or span.body_start is None or span.body_end is None:

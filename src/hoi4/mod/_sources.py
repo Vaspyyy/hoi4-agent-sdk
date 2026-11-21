@@ -27,6 +27,7 @@ from ..types import (
     OnAction,
 )
 from ._localisation import LocalisationLayer
+from ..textio import read_text
 from ._shared import (
     _decision_category_definition_path,
 )
@@ -80,7 +81,7 @@ class SourcesLayer(LocalisationLayer):
                     else self._script_file_updates.get(target)
                 )
                 if text is None:
-                    text = source.read_bytes().decode("utf-8-sig")
+                    text = read_text(source)
                 yield target, text
             except (OSError, ValueError):
                 continue

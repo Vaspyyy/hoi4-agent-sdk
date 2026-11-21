@@ -15,7 +15,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_value
-
+from .textio import read_text
 
 _RESERVED_SCALARS = {"icon", "attacker_modifier"}
 
@@ -34,7 +34,7 @@ class DynamicModifier:
 
 
 def load_dynamic_modifiers_file(path: Path) -> list[DynamicModifier]:
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(path)
     modifiers: list[DynamicModifier] = []
     for span in top_level_assignments(text):
         if not span.is_block or span.body_start is None or span.body_end is None:

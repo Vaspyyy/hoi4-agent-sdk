@@ -23,6 +23,7 @@ from ..types import (
     ValidationError,
 )
 from ._core import CoreLayer
+from ..textio import decode_text, read_text
 
 
 class DefinitionsLayer(CoreLayer):
@@ -72,9 +73,9 @@ class DefinitionsLayer(CoreLayer):
         source = Path(source_path).expanduser().resolve(strict=True)
         if not source.is_file() or source.suffix != ".txt":
             raise ValueError("Source must be a .txt file")
-        # Decode bytes directly to retain BOMs and line endings in the import.
-        text = source.read_bytes().decode("utf-8")
-        parsed = parse_pdx(text.lstrip("\ufeff"))
+        source_bytes = source.read_bytes()
+        text = decode_text(source_bytes)
+        parsed = parse_pdx(text)
         target = resolve_mod_output_path(self.mod_root, relative)
         if (target.exists() or target in self._script_file_updates) and not overwrite:
             raise FileExistsError(f"Script target already exists: {relative}")
@@ -126,6 +127,7 @@ class DefinitionsLayer(CoreLayer):
             self._idea_file_containers[target] = container
             self._original_files[target] = text
         self._script_file_updates[target] = text
+        self._format_donors[target] = source_bytes
         self._scan_cache.clear()
         self._equipment_unlock_cache = None
         self._dirty.add("script_files")
@@ -176,7 +178,7 @@ class DefinitionsLayer(CoreLayer):
         source = self.content_source(relative)
         text = self._script_file_updates.get(target)
         if text is None:
-            text = source.read_bytes().decode("utf-8-sig") if source else ""
+            text = read_text(source) if source else ""
         current_index = index_for(text)
         existing = current_index.get(trigger_id)
         if existing is not None and not overwrite:
@@ -235,7 +237,7 @@ class DefinitionsLayer(CoreLayer):
                 files[relative] = (target, pending, True)
                 continue
             try:
-                files[relative] = (source, source.read_bytes().decode("utf-8-sig"), False)
+                files[relative] = (source, read_text(source), False)
             except (OSError, UnicodeDecodeError):
                 continue
         for target, text in self._script_file_updates.items():

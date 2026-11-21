@@ -26,6 +26,7 @@ from .patching import (
 )
 from .paths import require_country_tag, require_script_id, resolve_mod_output_path
 from .script import pdx_string
+from .textio import decode_text
 
 
 FLAG_SIZES: dict[str, tuple[int, int]] = {
@@ -695,7 +696,7 @@ def plan_icon_asset(
         raw = read(other_path)
         if raw is None:
             continue
-        names = _declared_sprite_names(raw.decode("utf-8", errors="ignore"))
+        names = _declared_sprite_names(decode_text(raw))
         for _, declared_name, _ in declarations:
             if declared_name in names:
                 location = (

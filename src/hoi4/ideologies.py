@@ -19,11 +19,11 @@ from .patching import (
     replace_assignment_body,
     set_block,
     set_scalar,
+    top_level_assignments,
 )
-from .patching import top_level_assignments
 from .script import pdx_value
 from .structured_patching import patch_scalar_mapping
-
+from .textio import read_text
 
 VANILLA_AI_BEHAVIORS = ("democratic", "communist", "fascist", "neutral")
 
@@ -70,7 +70,7 @@ class Ideology:
 def load_ideologies_file(path: Path, *, is_vanilla: bool = False) -> list[Ideology]:
     """Load every ideology from one file, retaining duplicate definitions."""
 
-    text = path.read_text(encoding="utf-8", errors="ignore")
+    text = read_text(path)
     match = find_assignment_block(text, "ideologies")
     if match is None:
         return []

@@ -221,11 +221,12 @@ def test_commented_trigger_update_preview_save_reload(tmp_path, newline):
     print(result)
     assert result.written_files == [path]
     saved = path.read_bytes().decode()
-    # Event loading already normalizes newlines through Path.read_text().
-    # The helper tests separately require CRLF preservation when given CRLF.
-    before, after = source.replace("\r\n", "\n").split(" always = yes ")
+    # Every untouched line keeps its bytes, and the new lines use the file's
+    # own line ending.
+    before, after = source.split(" always = yes ")
     assert saved.startswith(before)
     assert saved.endswith(after)
+    assert "\n" not in saved.replace(newline, "")
     event = Mod(tmp_path).get_event("source.1")
     assert "# explanation" in event.trigger
     assert "always = no # final comment" in event.trigger

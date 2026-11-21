@@ -4,20 +4,32 @@ The serializers use these helpers on the *original* source text.  Existing
 assignments are therefore edited at their value/body spans instead of being
 rendered again, which keeps surrounding whitespace, comments, and line endings
 byte-for-byte stable.
+
+All positions come from the syntax tree in :mod:`hoi4.syntax`, so a comment, a
+quoted string or a nested block is never mistaken for an assignment.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 import re
 import textwrap
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 
-from .parser import ParseError, TokenType, extract_braced_block, tokenize
+from .parser import ParseError, TokenType, tokenize
+from .syntax import Assignment, Block, Tagged, parse
 
 
 @dataclass(frozen=True)
 class AssignmentSpan:
+    """Where one ``key OP value`` statement sits in its source text.
+
+    ``start``/``end`` cover the whole statement and ``value_start``/``value_end``
+    its value. For a block value ``body_start``/``body_end`` cover the text
+    between the braces. ``tag`` is set for a typed block such as
+    ``color = rgb { 1 2 3 }``; its value span starts at the tag.
+    """
+
     key: str
     start: int
     end: int
@@ -26,64 +38,49 @@ class AssignmentSpan:
     is_block: bool
     body_start: int | None = None
     body_end: int | None = None
+    operator: str = "="
+    tag: str | None = None
 
 
-def top_level_assignments(text: str) -> list[AssignmentSpan]:
-    """Return assignments at brace depth zero, ignoring comments and strings."""
+def top_level_assignments(text: str, *, comparisons: bool = False) -> list[AssignmentSpan]:
+    """Return assignments at brace depth zero, ignoring comments and strings.
+
+    Only ``key = value`` statements are returned unless ``comparisons`` is
+    true, which also returns ``key > value`` and the other comparison
+    statements (see :attr:`AssignmentSpan.operator`).
+
+    Like the game, a block that is still open at the end of the text ends
+    there. Use :func:`hoi4.syntax.require_well_formed` to reject such text.
+    """
+
     spans: list[AssignmentSpan] = []
-    i = 0
-    depth = 0
-    while i < len(text):
-        ch = text[i]
-        if depth == 0 and ch == '"':
-            start = i
-            key_end = _skip_quote(text, i)
-            j = _skip_space_and_comments(text, key_end)
-            if j < len(text) and text[j] == "=":
-                key = _unescape_quoted(text[start + 1 : key_end - 1])
-                value_at = _skip_space_and_comments(text, j + 1)
-                if value_at >= len(text):
-                    raise ParseError(f"Missing value for {key!r}")
-                span, i = _assignment_span(text, key, start, value_at)
-                spans.append(span)
-                continue
-            i = key_end
+    for item in parse(text).root.items:
+        if type(item) is not Assignment:
             continue
-        if ch == '"':
-            i = _skip_quote(text, i)
+        operator = item.op
+        if operator != "=" and not comparisons:
             continue
-        if ch == "#":
-            i = _skip_comment(text, i)
-            continue
-        if ch == "{":
-            depth += 1
-            i += 1
-            continue
-        if ch == "}":
-            depth -= 1
-            if depth < 0:
-                raise ParseError(f"Unexpected closing brace at offset {i}")
-            i += 1
-            continue
-        if depth == 0 and (ch.isalnum() or ch == "_"):
-            start = i
-            i += 1
-            while i < len(text) and (text[i].isalnum() or text[i] in "_.:-"):
-                i += 1
-            key = text[start:i]
-            j = _skip_space_and_comments(text, i)
-            if j >= len(text) or text[j] != "=":
-                continue
-            j = _skip_space_and_comments(text, j + 1)
-            if j >= len(text):
-                raise ParseError(f"Missing value for {key!r}")
-            span, i = _assignment_span(text, key, start, j)
-            spans.append(span)
-            continue
-        i += 1
-    if depth != 0:
-        raise ParseError("Unbalanced braces while scanning assignments")
+        spans.append(_span(item, operator))
     return spans
+
+
+def _span(item: Assignment, operator: str) -> AssignmentSpan:
+    value = item.value
+    if type(value) is Block:
+        return AssignmentSpan(
+            item.key.value, item.start, value.end, value.start, value.end, True,
+            value.body_start, value.body_end, operator,
+        )
+    if type(value) is Tagged:
+        block = value.block
+        return AssignmentSpan(
+            item.key.value, item.start, block.end, value.start, block.end, True,
+            block.body_start, block.body_end, operator, value.tag.raw,
+        )
+    return AssignmentSpan(
+        item.key.value, item.start, value.end, value.start, value.end, False,
+        operator=operator,
+    )
 
 
 def assignment_spans(text: str, key: str) -> list[AssignmentSpan]:
@@ -117,7 +114,13 @@ def set_block(text: str, key: str, body: str | None) -> str:
         replacement += "}"
         return append_assignment(text, replacement)
     first = spans[0]
-    if not first.is_block or first.body_start is None or first.body_end is None:
+    if (
+        not first.is_block
+        or first.body_start is None
+        or first.body_end is None
+        # ``key = rgb { ... }``: the caller's body is untyped, so the tag must go.
+        or first.tag is not None
+    ):
         replacement = f"{key} = {{"
         if cleaned:
             replacement += "\n" + _indent(cleaned, 1) + "\n"
@@ -176,17 +179,27 @@ def dedent_block_body(body: str) -> str:
 
 
 def replace_assignment(text: str, span: AssignmentSpan, replacement: str | None) -> str:
+    """Replace (or with ``None`` remove) one statement, leaving its neighbours alone."""
+
     line_start = text.rfind("\n", 0, span.start) + 1
-    indent = text[line_start : span.start]
-    start = line_start if not text[line_start : span.start].strip() else span.start
+    prefix = text[line_start : span.start]
+    if prefix.strip():
+        # The statement shares its line with earlier script (``a = 1 b = 2``):
+        # only its own span changes.
+        if replacement is not None:
+            return text[: span.start] + replacement.rstrip() + text[span.end :]
+        end = span.end
+        while end < len(text) and text[end] in " \t":
+            end += 1
+        return text[: span.start] + text[end:]
     end = span.end
     if end < len(text) and text[end] == "\r":
         end += 1
     if end < len(text) and text[end] == "\n":
         end += 1
     newline = _line_ending(text)
-    rendered = "" if replacement is None else indent + replacement.rstrip() + newline
-    return text[:start] + rendered + text[end:]
+    rendered = "" if replacement is None else prefix + replacement.rstrip() + newline
+    return text[:line_start] + rendered + text[end:]
 
 
 def append_assignment(text: str, replacement: str) -> str:
@@ -249,85 +262,12 @@ def _remove_assignments(text: str, spans: list[AssignmentSpan]) -> str:
     return result
 
 
-def _assignment_span(
-    text: str, key: str, start: int, value_start: int
-) -> tuple[AssignmentSpan, int]:
-    if text[value_start] == "{":
-        _, end = extract_braced_block(text, value_start + 1)
-        return (
-            AssignmentSpan(
-                key,
-                start,
-                end,
-                value_start,
-                end,
-                True,
-                value_start + 1,
-                end - 1,
-            ),
-            end,
-        )
-    if text[value_start] == '"':
-        value_end = _skip_quote(text, value_start)
-    else:
-        value_end = value_start
-        while (
-            value_end < len(text)
-            and not text[value_end].isspace()
-            and text[value_end] not in "{}#"
-        ):
-            value_end += 1
-    return (
-        AssignmentSpan(key, start, value_end, value_start, value_end, False),
-        value_end,
-    )
-
-
-def _skip_quote(text: str, start: int) -> int:
-    i = start + 1
-    while i < len(text):
-        if text[i] == "\\" and i + 1 < len(text):
-            i += 2
-            continue
-        if text[i] == '"':
-            return i + 1
-        i += 1
-    raise ParseError(f"Unterminated quote at offset {start}")
-
-
-def _skip_comment(text: str, start: int) -> int:
-    end = text.find("\n", start)
-    return len(text) if end < 0 else end + 1
-
-
-def _skip_space_and_comments(text: str, start: int) -> int:
-    i = start
-    while i < len(text):
-        if text[i].isspace():
-            i += 1
-            continue
-        if text[i] == "#":
-            i = _skip_comment(text, i)
-            continue
-        break
-    return i
-
-
 def _block_comments(body: str) -> tuple[bool, bool]:
     """Return whether real comments exist and whether the body ends in one."""
-    found = False
-    i = 0
-    while i < len(body):
-        if body[i] == '"':
-            i = _skip_quote(body, i)
-        elif body[i] == "#":
-            found = True
-            if "\n" not in body[i:]:
-                return True, True
-            i = _skip_comment(body, i)
-        else:
-            i += 1
-    return found, False
+    comments = parse(body).comments
+    if not comments:
+        return False, False
+    return True, "\n" not in body[comments[-1][0] :]
 
 
 def _render_block_body_like(
