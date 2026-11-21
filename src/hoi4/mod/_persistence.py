@@ -69,6 +69,10 @@ from ._shared import (
 from ._sources import SourcesLayer
 
 
+# Files that hold Paradox script and are checked for syntax before a save.
+_SCRIPT_SUFFIXES = frozenset({".txt", ".gfx", ".gui", ".asset"})
+
+
 class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
     """Rendering pending edits to files, diffs, atomic save, discard and transactions."""
 
@@ -450,6 +454,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 # Here, not at write time, so preview() shows what save() writes.
                 resolved[output_path] = self._repair_new_override(output_path, output)
         self._refuse_failed_loads(resolved)
+        self._refuse_new_syntax_problems(resolved)
         return resolved
 
     def _capture_source_baseline(self) -> None:
@@ -529,6 +534,42 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         if parse(read_text(shadowed)).problems:
             return repair(content)
         return content
+
+    def _refuse_new_syntax_problems(self, rendered: dict[Path, str | None]) -> None:
+        """Refuse to write a script file with a syntax problem it did not have before.
+
+        This is the last check before anything reaches the disk: whatever went
+        wrong on the way (malformed script passed to the SDK, or a bug in a
+        patcher), a file is never left more broken than it was.
+        """
+
+        for path, content in rendered.items():
+            if content is None or path.suffix.lower() not in _SCRIPT_SUFFIXES:
+                continue
+            document = parse(content)
+            if not document.problems:
+                continue
+            if path.is_file():
+                before = len(parse(self._read_current_text(path)).problems)
+            else:
+                try:
+                    shadowed = self.content_source(path.relative_to(self.mod_root))
+                except ValueError:
+                    shadowed = None
+                before = (
+                    len(parse(repair(read_text(shadowed))).problems)
+                    if shadowed is not None and shadowed.is_file() and shadowed != path
+                    else 0
+                )
+            if len(document.problems) <= before:
+                continue
+            problem = document.problems[0]
+            line, column = document.line_col(problem.offset)
+            raise RuntimeError(
+                f"Refusing to write {path}: it would get a syntax problem it does not have "
+                f"now ({problem.message}, line {line}, column {column}). Check the script "
+                "text passed to the last edits; nothing was written."
+            )
 
     def _refuse_failed_loads(self, rendered: dict[Path, str | None]) -> None:
         """Refuse to write over, or next to, a mod file that could not be loaded.

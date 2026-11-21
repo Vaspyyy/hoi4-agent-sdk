@@ -385,8 +385,10 @@ the block and file that holds it.
   reload. With `path=` naming one of `paths`, it goes to the last block of that
   file instead.
 - `update_decision_category(..., path=...)` with one of `paths` only changes
-  where new decisions go. Any other file receives the whole category: every
-  decision moves there and the old blocks go.
+  where new decisions go, until the mod is saved or reloaded: `path` is not
+  stored in any file, so after that it is the last file again. Any other file
+  receives the whole category: every decision moves there and the old blocks
+  go.
 - A category edit moves the presentation fields to `definition_path` and
   removes the legacy inline `icon`, `allowed` and `visible` from every file in
   `paths`. A decision edit leaves them where they are.
@@ -458,9 +460,10 @@ An ID is a compositional HOI4 hook, not a globally unique object ID. Use
 One hook block may repeat `effect`, `events` and `random_events` (the game runs
 all of them). The model joins them in source order. On save, a field whose
 content did not change keeps all its blocks. `events` and `random_events` are
-edited entry by entry (an entry that stays keeps its block and its comment, a
-new one goes into the last block); only a reordered list or a changed `effect`
-is written into the first block with the other blocks removed. Weighted `random_events`
+edited entry by entry: an entry that stays keeps its block and its comment, a
+changed weight is rewritten in place, and a new entry goes into the block of
+the entry before it. Only a reordered list or a changed `effect` is written
+into the first block with the other blocks removed. Weighted `random_events`
 entries keep their `weight = event_id` pairs. Every `on_actions = { }` block of
 a file is loaded.
 

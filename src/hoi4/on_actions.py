@@ -11,9 +11,9 @@ them); the model joins them in source order. Writing compares the model with
 the hook's source text and touches only what changed, so comments, unknown
 keys and repeated blocks stay byte-identical. An event list is edited entry by
 entry: an entry that stays keeps its block and its comment, a dropped one is
-cut out and a new one goes into the last block. Only a reordered list, or a
-changed ``effect``, is written into the first block with the other blocks
-removed.
+cut out, a changed weight is rewritten in place and a new entry goes into the
+block of the entry before it. Only a reordered list, or a changed ``effect``,
+is written into the first block with the other blocks removed.
 """
 
 from __future__ import annotations
@@ -235,44 +235,68 @@ def _set_field(body: str, key: str, value: str | None) -> str:
 def _set_entries(body: str, key: str, wanted: list[tuple[str, ...]]) -> str:
     """Make the ``key`` blocks of a hook hold ``wanted``, entry by entry.
 
-    Entries that stay keep their block, spelling and comment; new ones go into
-    the last block that still has entries. A changed order cannot be expressed
-    that way and rewrites the list into the first block.
+    An entry that stays keeps its block, spelling and comment. A weighted
+    entry whose weight changed (``10 = a.1`` to ``20 = a.1``) is the same
+    entry: only its weight is rewritten. A new entry goes into the block of
+    the entry before it. Only a changed order cannot be expressed that way and
+    rewrites the list into the first block.
     """
 
     rendered = "\n".join(" = ".join(entry) for entry in wanted)
-    blocks = _field_blocks(parse(body).root, key)
-    remaining = Counter(wanted)
-    kept: list[list[tuple[str, ...]]] = []
-    for item in blocks:
+    held: list[tuple[tuple[str, ...], int, Assignment | None]] = []
+    for block_index, item in enumerate(_field_blocks(parse(body).root, key)):
         assert type(item.value) is Block
-        staying: list[tuple[str, ...]] = []
         for entry in item.value.items:
             if type(entry) is Scalar:
-                held: tuple[str, ...] = (entry.value,)
+                held.append(((entry.value,), block_index, None))
             elif type(entry) is Assignment and type(entry.value) is Scalar:
-                held = (entry.name, entry.value.value)
+                held.append(((entry.name, entry.value.value), block_index, entry))
             else:
                 return _set_field(body, key, rendered or None)
-            if remaining[held] > 0:
-                remaining[held] -= 1
-                staying.append(held)
-        kept.append(staying)
-    flat = [held for staying in kept for held in staying]
-    unplaced = Counter(flat)
-    added: list[tuple[str, ...]] = []
-    for target in wanted:
-        if unplaced[target] > 0:
-            unplaced[target] -= 1
+
+    # Which entries stay as they are, and which wanted entries are still open.
+    open_entries = Counter(wanted)
+    stays: list[tuple[str, ...] | None] = []
+    for value, _, _ in held:
+        if open_entries[value] > 0:
+            open_entries[value] -= 1
+            stays.append(value)
         else:
-            added.append(target)
-    if not flat or flat + added != wanted:
+            stays.append(None)
+    spare = [entry for entry in wanted if open_entries[entry] > 0]
+    reweighted: list[tuple[int, int, str]] = []
+    for index, (value, _, node) in enumerate(held):
+        if stays[index] is not None or node is None:
+            continue
+        twin = next((entry for entry in spare if len(entry) == 2 and entry[1] == value[1]), None)
+        if twin is not None and open_entries[twin] > 0:
+            open_entries[twin] -= 1
+            spare.remove(twin)
+            stays[index] = twin
+            reweighted.append((node.key.start, node.key.end, twin[0]))
+
+    # Walking the wanted list, the staying entries have to come in source order.
+    flat = [(value, block) for value, (_, block, _) in zip(stays, held) if value is not None]
+    if not flat:
         return _set_field(body, key, rendered or None)
-    last = max(index for index, staying in enumerate(kept) if staying)
-    kept[last] = kept[last] + added
+    per_block: dict[int, list[tuple[str, ...]]] = {}
+    pointer = 0
+    current = flat[0][1]
+    for target in wanted:
+        if pointer < len(flat) and target == flat[pointer][0]:
+            current = flat[pointer][1]
+            pointer += 1
+        per_block.setdefault(current, []).append(target)
+    if pointer != len(flat):
+        return _set_field(body, key, rendered or None)
+
     patched = body
-    for item, staying in reversed(list(zip(blocks, kept))):
+    for start, end, weight in sorted(reweighted, reverse=True):
+        patched = patched[:start] + weight + patched[end:]
+    blocks = _field_blocks(parse(patched).root, key)
+    for block_index, item in reversed(list(enumerate(blocks))):
         span = _span(item)
+        staying = per_block.get(block_index)
         if not staying:
             patched = replace_assignment(patched, span, None)
             continue

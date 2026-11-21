@@ -167,6 +167,10 @@ The loading policy built on this:
 - When the SDK copies a tolerated inherited file into the mod as an override,
   it writes the repaired form, so the mod's copy is well formed. `preview()`
   shows that repaired form.
+- **The last check before a save:** every script file about to be written is
+  parsed once more. If it would get a syntax problem it does not have now
+  (malformed script passed to an update, or a bug in a patcher), `preview()`
+  and `save()` raise and nothing is written.
 
 ## `hoi4.patching`: change one statement
 
@@ -211,6 +215,8 @@ and changes only the ones that differ:
   on its line. One that only the new body has is put in, on its own line or,
   in a one-line block or a list that shares lines (`provinces = { 1 2 3 }`),
   on the line.
+- A statement that is cut in one place and put in another has moved: it takes
+  its own bytes along, with the comment on its line.
 - A statement with the same key and a new value is the same statement: a
   scalar value is replaced, a block is edited the same way one level down, and
   the comment on its line stays.
@@ -227,6 +233,10 @@ about the comments in the file, so they are left alone; pass `comments=True`
 to remove them too. `same_block_body(current, new)` answers "would this edit
 change anything?" by the same rule, and is what the content modules use to
 decide whether a text field changed.
+
+`one_statement_per_line(body, indent)` lays a one-line body out with one
+statement per line, each with its bytes, for the callers that have to make
+room for a comment or a statement of several lines.
 
 `sync_body(current, new, keep=("name", "ai_chance"))` leaves the statements
 with those keys alone and does not expect them in `new`. Event options use it:

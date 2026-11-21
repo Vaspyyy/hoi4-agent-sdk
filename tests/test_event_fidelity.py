@@ -354,3 +354,51 @@ def test_a_picture_that_needs_quotes_gets_them(tmp_path):
     )
     mod.reload()
     assert mod.get_event("probe.1").picture == "GFX a#b"
+
+
+ONE_LINE_OPTIONS = """add_namespace = t
+country_event = {
+\tid = t.1
+\toption = { name = t.1.a add_political_power = 10 }
+\toption = { name = t.1.b }
+\toption = { add_political_power = 1 name = t.1.c }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    "index, effect, old, new",
+    [
+        (
+            0, "add_political_power = 10 # note",
+            "\toption = { name = t.1.a add_political_power = 10 }\n",
+            "\toption = {\n\t\tname = t.1.a\n\t\tadd_political_power = 10 # note\n\t}\n",
+        ),
+        (
+            1, "add_stability = 1 # s",
+            "\toption = { name = t.1.b }\n",
+            "\toption = {\n\t\tname = t.1.b\n\t\tadd_stability = 1 # s\n\t}\n",
+        ),
+        (
+            2, "add_political_power = 2 # c",
+            "\toption = { add_political_power = 1 name = t.1.c }\n",
+            "\toption = {\n\t\tadd_political_power = 2 # c\n\t\tname = t.1.c\n\t}\n",
+        ),
+        (
+            1, "add_stability = 1",
+            "\toption = { name = t.1.b }\n",
+            "\toption = { name = t.1.b add_stability = 1 }\n",
+        ),
+    ],
+)
+def test_a_comment_in_a_one_line_option_never_reaches_the_closing_brace(
+    tmp_path, index, effect, old, new
+):
+    mod, path = make_mod(tmp_path, ONE_LINE_OPTIONS)
+    options = list(mod.get_event("t.1").options)
+    options[index].effect = effect
+    mod.update_event("t.1", options=options)
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == ONE_LINE_OPTIONS.replace(old, new)
+    mod.reload()
+    assert mod.get_event("t.1").options[index].effect == effect

@@ -10,6 +10,7 @@ from hoi4.patching import (
     block_bodies_equivalent,
     dedent_block_body,
     move_assignment_before,
+    one_statement_per_line,
     replace_assignment,
     replace_assignment_body,
     same_block_body,
@@ -319,3 +320,24 @@ def test_an_appended_statement_leaves_the_spaces_that_end_the_last_line() -> Non
     assert set_block(source, "reward", "a = 1\nb = 2\nc = 3") == (
         "reward = {\n\ta = 1\t\t\n\tb = 2 \n\tc = 3\n}\n"
     )
+
+
+def test_a_moved_statement_takes_its_bytes_and_its_comment_along() -> None:
+    body = "\n\ta   = 1 # one\n\tb = 2 # two\n"
+    assert sync_body(body, "b = 2\na = 1") == "\n\tb = 2 # two\n\ta   = 1 # one\n"
+
+
+def test_a_statement_put_before_the_one_on_the_brace_line_stays_on_that_line() -> None:
+    assert set_block("x = { a = 1\n\tb = 2\n}\n", "x", "z = 0\na = 1\nb = 2") == (
+        "x = { z = 0 a = 1\n\tb = 2\n}\n"
+    )
+
+
+def test_one_statement_per_line() -> None:
+    assert one_statement_per_line(" name = a add_pp = 10 ", "\t") == (
+        "\n\t\tname = a\n\t\tadd_pp = 10\n\t"
+    )
+    assert one_statement_per_line("\n\ta = 1\n", "") is None
+    # A statement that ends in a comment is followed by a line break, so the
+    # closing brace after the body stays out of the comment.
+    assert append_assignment(" a = 1 ", "b = 2 # note") == " a = 1\n b = 2 # note\n "

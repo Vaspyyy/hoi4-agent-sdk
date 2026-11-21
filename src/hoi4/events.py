@@ -29,6 +29,7 @@ from .patching import (
     AssignmentSpan,
     append_assignment,
     dedent_block_body,
+    one_statement_per_line,
     replace_assignment,
     replace_assignment_body,
     same_block_body,
@@ -332,7 +333,7 @@ def write_events_file(path: Path, namespace: Optional[str], events: list[Event])
 def _serialize_option(option: EventOption, indent: int) -> str:
     prefix = "\t" * indent
     if option.raw_block:
-        body = _patch_option_body(option, option.raw_block)
+        body = _patch_option_body(option, option.raw_block, prefix)
         return f"{prefix}option = {{\n{_indent(body, indent + 1)}\n{prefix}}}"
     lines = [f"{prefix}option = {{"]
     for line in _render_text_entries("name", option.name, option.conditional_names):
@@ -407,14 +408,16 @@ def _patch_options(options: list[EventOption], body: str) -> str:
             option_body = (
                 option._source_body if option._source_body is not None else option.raw_block
             )
-            body = replace_assignment_body(body, span, _patch_option_body(option, option_body))
+            body = replace_assignment_body(
+                body, span, _patch_option_body(option, option_body, _line_indent(body, span.start))
+            )
         else:
             body = replace_assignment(body, span, _serialize_option(option, indent=0))
     for option in options[len(option_spans) :]:
         # A leading indent prevents append_assignment from reindenting every
         # line of a retained source body when it moves beyond the old slots.
         if option._source_body is not None:
-            option_body = _patch_option_body(option, option._source_body)
+            option_body = _patch_option_body(option, option._source_body, "\t")
             rendered = f"\toption = {{{option_body}}}"
         else:
             rendered = _serialize_option(option, indent=0)
@@ -422,7 +425,12 @@ def _patch_options(options: list[EventOption], body: str) -> str:
     return body
 
 
-def _patch_option_body(option: EventOption, body: str) -> str:
+def _patch_option_body(option: EventOption, body: str, indent: str) -> str:
+    """Write the fields of ``option`` that differ from what ``body`` says.
+
+    ``indent`` is the indentation of the line that holds ``option = {``.
+    """
+
     source = _option_from_block(_parse_body(body))
     body = _patch_text_entries(body, "name", option.name, option.conditional_names, ())
     if not same_block_body(source.ai_chance, option.ai_chance):
@@ -430,13 +438,40 @@ def _patch_option_body(option: EventOption, body: str) -> str:
     if not same_block_body(source.trigger, option.trigger):
         body = set_block(body, "trigger", option.trigger or None)
     if not same_block_body(source.effect, option.effect):
-        # The effect is every statement and comment of the option that is not
-        # one of the known keys: change it statement by statement.
-        synced = sync_body(body, option.effect, keep=_OPTION_KNOWN_KEYS)
-        if synced is None:
-            synced = _replace_option_effect(body, option.effect)
-        body = synced
+        body = _set_option_effect(body, option.effect, indent)
+    comments = parse(body).comments if "#" in body else []
+    if comments and "\n" not in body[comments[-1][0] :]:
+        # A comment must never reach the closing brace of the option.
+        body = body.rstrip(" \t") + "\n" + indent
     return body
+
+
+def _set_option_effect(body: str, effect: str, indent: str) -> str:
+    """Change the effect statement by statement.
+
+    The effect is every statement and comment of the option that is not one
+    of the known keys.
+    """
+
+    synced = sync_body(body, effect, keep=_OPTION_KNOWN_KEYS)
+    if synced is not None:
+        return synced
+    # A one-line option cannot hold a comment or a statement of several
+    # lines: give every statement its own line, then try again.
+    spread = one_statement_per_line(body, indent)
+    if spread is not None:
+        body = spread
+        synced = sync_body(body, effect, keep=_OPTION_KNOWN_KEYS)
+        if synced is not None:
+            return synced
+    return _replace_option_effect(body, effect)
+
+
+def _line_indent(text: str, offset: int) -> str:
+    """The leading whitespace of the line that holds ``offset``."""
+
+    line = text[text.rfind("\n", 0, offset) + 1 :]
+    return line[: len(line) - len(line.lstrip(" \t"))]
 
 
 def _replace_option_effect(body: str, effect: str) -> str:

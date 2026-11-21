@@ -33,8 +33,8 @@ All notable changes to this project are documented here. The format follows
   Statements the old and the new body share keep their exact bytes, a list
   gets one more entry without losing the comments next to the others, and a
   nested block that changed is edited the same way one level down.
-  `set_block` uses it for every block edit. Also `same_block_body` and
-  `statement_spans`.
+  `set_block` uses it for every block edit. Also `same_block_body`,
+  `statement_spans` and `one_statement_per_line`.
 - An opt-in corpus test (`pytest -m corpus` with `HOI4_INSTALL_DIR` set) that
   checks the script core against every script file of a real game install.
 
@@ -129,6 +129,9 @@ All notable changes to this project are documented here. The format follows
   may already hold the mod's version of that content.
 - `preview()` shows the repaired form of a game file with unbalanced braces
   that becomes a mod override, which is what `save()` writes.
+- `preview()` and `save()` refuse to write a script file that would get a
+  syntax problem it does not have now (an unclosed brace in script text
+  passed to an update, for example). Nothing is written in that case.
 - A decision edit writes only the file that holds the decision. Category
   presentation that an old layout kept in the decisions file moves to
   `common/decisions/categories/` only when the category itself is edited. A
@@ -175,6 +178,18 @@ All notable changes to this project are documented here. The format follows
 - A broken state file in the mod made the SDK edit the game's state of the
   same id and write it as a second file for that state.
 - An air base's `ace = { ... }` block was read as an air wing named `ace`.
+- Putting a comment or a statement of several lines into a one-line event
+  option (`option = { name = x }`) wrote the closing brace into the comment,
+  and the event was gone after a reload. The option is now laid out with
+  one statement per line.
+- Changing the weight of a `random_events` entry dropped the comment on its
+  line, and inserting an event in the middle of a list merged the hook's
+  repeated blocks.
+- A statement added before one that shares the line of the opening brace
+  moved that statement to a new line. Reordering statements lost the
+  comments on their lines.
+- Editing one decision category wrote a definition for every other category
+  of the same decisions file into `common/decisions/categories/`.
 - A copy of a loaded division, template, ship or air wing that was passed
   to `update_oob` next to its original replaced the original. It is now
   added as a new item.

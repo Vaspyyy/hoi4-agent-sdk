@@ -653,3 +653,20 @@ def test_category_icon_edit_is_quoted_and_quoted_source_round_trips(tmp_path: Pa
     _save(mod)
     assert path.read_text(encoding="utf-8") == 'cat = {\n\ticon = "GFX two words"\n}\n'
     assert Mod(tmp_path).get_decision_category("cat").icon == "GFX two words"
+
+
+def test_a_category_edit_writes_no_definition_for_its_untouched_neighbours(tmp_path: Path) -> None:
+    path = tmp_path / "common/decisions/a.txt"
+    path.parent.mkdir(parents=True)
+    source = (
+        "my_cat = {\n\tdec_a = { cost = 10 }\n}\n"
+        "other_cat = {\n\ticon = GFX_other\n\tdec_b = { cost = 20 }\n}\n"
+    )
+    path.write_text(source, encoding="utf-8")
+    mod = Mod(tmp_path)
+    mod.update_decision_category("my_cat", icon="GFX_new")
+    mod.save(require_changes=True)
+
+    definitions = tmp_path / "common/decisions/categories/a_decision_categories.txt"
+    assert definitions.read_text(encoding="utf-8") == "my_cat = {\n\ticon = GFX_new\n}\n"
+    assert path.read_text(encoding="utf-8") == source

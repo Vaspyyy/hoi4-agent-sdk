@@ -324,41 +324,54 @@ def sync_body(
         autojunk=False,
     )
 
-    def swap(text: str, i1: int, i2: int, j1: int, j2: int) -> str | None:
-        """Put ``wanted[j1:j2]`` in the place of ``old[i1:i2]``."""
-
-        if j1 < j2:
-            placed = _insert_segments(text, new, wanted[j1:j2], old, i2, inline)
-            if placed is None:
-                return None
-            text = placed
-        for segment in reversed(old[i1:i2]):
-            text = _replace_span(text, segment.start, segment.full_end, None)
-        return text
-
-    # Offsets come from ``current``, so the edits run from its end to its start.
-    for tag, i1, i2, j1, j2 in reversed(matcher.get_opcodes()):
+    # The plan: stretches to swap, and same-key pairs to edit in place. Inside
+    # a changed stretch, a statement that keeps its key is the same statement
+    # with a new value.
+    swaps: list[tuple[int, int, int, int]] = []
+    pairs: list[tuple[int, int]] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
-        # Inside a changed stretch, a statement that keeps its key is the same
-        # statement with a new value: it is edited in place.
         same_key = SequenceMatcher(
             None,
             [_statement_key(segment, ("old", index)) for index, segment in enumerate(old[i1:i2])],
             [_statement_key(segment, ("new", index)) for index, segment in enumerate(wanted[j1:j2])],
             autojunk=False,
         )
-        for kind, a1, a2, b1, b2 in reversed(same_key.get_opcodes()):
+        for kind, a1, a2, b1, b2 in same_key.get_opcodes():
             if kind == "equal":
-                for offset in reversed(range(a2 - a1)):
-                    text = _replace_segment(
-                        text, old[i1 + a1 + offset], new, wanted[j1 + b1 + offset], count
-                    )
-                continue
-            swapped = swap(text, i1 + a1, i1 + a2, j1 + b1, j1 + b2)
-            if swapped is None:
+                pairs.extend((i1 + a1 + offset, j1 + b1 + offset) for offset in range(a2 - a1))
+            else:
+                swaps.append((i1 + a1, i1 + a2, j1 + b1, j1 + b2))
+
+    # A statement that is cut in one place and put in another has moved: it
+    # takes its own bytes along, with the comment on its line.
+    cut: dict[tuple[object, ...], list[_Segment]] = {}
+    for i1, i2, _, _ in swaps:
+        for segment in old[i1:i2]:
+            cut.setdefault(segment.meaning, []).append(segment)
+    pieces: dict[int, tuple[str, _Segment]] = {}
+    for _, _, j1, j2 in swaps:
+        for index in range(j1, j2):
+            moved = cut.get(wanted[index].meaning)
+            pieces[index] = (current, moved.pop(0)) if moved else (new, wanted[index])
+
+    # Offsets come from ``current``, so the edits run from its end to its start.
+    edits: list[tuple[int, ...]] = [*swaps, *pairs]
+    for edit in sorted(edits, key=lambda entry: entry[0], reverse=True):
+        if len(edit) == 2:
+            text = _replace_segment(text, old[edit[0]], new, wanted[edit[1]], count)
+            continue
+        i1, i2, j1, j2 = edit
+        if j1 < j2:
+            placed = _insert_segments(
+                text, [pieces[index] for index in range(j1, j2)], old, i2, inline
+            )
+            if placed is None:
                 return None
-            text = swapped
+            text = placed
+        for segment in reversed(old[i1:i2]):
+            text = _replace_span(text, segment.start, segment.full_end, None)
     # Whatever the layout did, the result has to say exactly what was asked,
     # and no comment may reach the closing brace that follows the body.
     result = _segments(text, count, keep)
@@ -459,36 +472,42 @@ def _replace_segment(
 
 def _insert_segments(
     text: str,
-    new_text: str,
-    added: list[_Segment],
+    added: list[tuple[str, _Segment]],
     old: list[_Segment],
     position: int,
     inline: bool,
 ) -> str | None:
-    """Put ``added`` before ``old[position]``, or after everything else."""
+    """Put ``added`` before ``old[position]``, or after everything else.
+
+    Each entry of ``added`` is a statement with the text it is cut from.
+    """
 
     anchor = old[position] if position < len(old) else None
     one_line = all(
         segment.item is not None
         and segment.full_end == segment.end
-        and "\n" not in new_text[segment.start : segment.end]
-        for segment in added
+        and "\n" not in source[segment.start : segment.end]
+        for source, segment in added
     )
-    joined = " ".join(new_text[segment.start : segment.end] for segment in added)
+    joined = " ".join(source[segment.start : segment.end] for source, segment in added)
     newline = _line_ending(text)
+
+    def lines(indent: str) -> list[str]:
+        return [
+            _reindented(source, segment.start, segment.full_end, indent)
+            for source, segment in added
+        ]
 
     if anchor is not None:
         line_start = text.rfind("\n", 0, anchor.start) + 1
         prefix = text[line_start : anchor.start]
-        if inline or prefix.strip():
-            # The anchor shares its line with something before it.
+        if inline or prefix.strip() or line_start == 0:
+            # The anchor shares its line with something before it, if only
+            # with the opening brace: stay on that line.
             return text[: anchor.start] + joined + " " + text[anchor.start :] if one_line else None
-        lines = [
-            _reindented(new_text, segment.start, segment.full_end, prefix) for segment in added
-        ]
         return (
             text[:line_start]
-            + "".join(prefix + line + newline for line in lines)
+            + "".join(prefix + line + newline for line in lines(prefix))
             + text[line_start:]
         )
 
@@ -514,14 +533,30 @@ def _insert_segments(
     else:
         # The only content sits on the line of the opening brace.
         indent = text[end:].rpartition("\n")[2] + "\t"
-    lines = [_reindented(new_text, segment.start, segment.full_end, indent) for segment in added]
     # Spaces that end the last line stay on that line: it keeps its bytes.
     line_end = end
     while line_end < len(text) and text[line_end] in " \t":
         line_end += 1
     if line_end < len(text) and text[line_end] in "\r\n":
         end = line_end
-    return text[:end] + "".join(newline + indent + line for line in lines) + text[end:]
+    return text[:end] + "".join(newline + indent + line for line in lines(indent)) + text[end:]
+
+
+def one_statement_per_line(body: str, indent: str) -> str | None:
+    """Lay a one-line block body out with one statement per line.
+
+    ``indent`` is the indentation of the line that holds the block's opening
+    brace. Each statement keeps its bytes. Returns ``None`` for a body that
+    already has line breaks or is malformed.
+    """
+
+    if "\n" in body or "\r" in body:
+        return None
+    spans = statement_spans(body)
+    if spans is None:
+        return None
+    inner = indent + "\t"
+    return "\n" + "".join(inner + body[start:end] + "\n" for start, end in spans) + indent
 
 
 def statement_spans(text: str, *, keep: Collection[str] = ()) -> list[tuple[int, int]] | None:
@@ -579,7 +614,19 @@ def append_assignment(text: str, replacement: str) -> str:
     if not rendered[0].isspace() and indent:
         rendered = newline.join(indent + line if line else line for line in rendered.splitlines())
     separator = newline if content else ""
+    if "\n" not in trailing and _ends_in_comment(rendered):
+        # Whatever follows on the line (a closing brace) must stay out of the comment.
+        trailing = newline + trailing
     return content + separator + rendered + trailing
+
+
+def _ends_in_comment(text: str) -> bool:
+    """Whether the last line of ``text`` ends in a comment."""
+
+    if "#" not in text:
+        return False
+    comments = parse(text).comments
+    return bool(comments) and "\n" not in text[comments[-1][0] :]
 
 
 def _fill_empty_body(text: str, rendered: str, newline: str) -> str:
@@ -587,7 +634,7 @@ def _fill_empty_body(text: str, rendered: str, newline: str) -> str:
 
     if "\n" not in text:
         # ``key = { }``: stay on the line when the statement fits on one.
-        if "\n" not in rendered:
+        if "\n" not in rendered and not _ends_in_comment(rendered):
             return " " + rendered.strip() + " "
         return newline + _indent(textwrap.dedent(rendered), 1).replace("\n", newline) + newline
     # ``key = {`` and ``}`` on separate lines: one level deeper than the brace.

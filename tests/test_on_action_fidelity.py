@@ -166,3 +166,23 @@ def test_a_weighted_entry_is_added_next_to_the_commented_ones(tmp_path):
     assert path.read_text(encoding="utf-8") == SOURCE.replace(
         "\t\t\t90 = 0\n", "\t\t\t90 = 0\n\t\t\t5 = daily.2\n"
     )
+
+
+def test_a_changed_weight_keeps_the_comment_on_its_line(tmp_path):
+    mod, path = make_mod(tmp_path)
+    mod.update_on_action("on_daily", random_events=["20", "daily.1", "80", "0"])
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == SOURCE.replace(
+        "10 = daily.1 # weighted", "20 = daily.1 # weighted"
+    ).replace("90 = 0", "80 = 0")
+
+
+def test_an_event_inserted_in_the_middle_keeps_the_repeated_blocks(tmp_path):
+    mod, path = _repeated(tmp_path)
+    mod.update_on_action("on_startup", events=["x.1", "a.1", "y.1", "b.1"])
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == REPEATED.replace(
+        "events = { a.1 }", "events = { x.1 a.1 y.1 }"
+    )
+    mod.reload()
+    assert mod.get_on_action("on_startup").events == ["x.1", "a.1", "y.1", "b.1"]

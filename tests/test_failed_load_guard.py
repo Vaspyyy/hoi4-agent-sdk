@@ -93,3 +93,20 @@ def test_preview_shows_the_repaired_override_that_save_writes(tmp_path: Path) ->
     ) + "}\n"
     added = [line[1:] for line in preview.splitlines() if line.startswith("+") and not line.startswith("+++")]
     assert added == written.splitlines()
+
+
+def test_save_never_writes_a_file_with_a_new_syntax_problem(tmp_path: Path) -> None:
+    """Malformed script handed to the SDK is refused; the file on disk stays as it was."""
+
+    path = tmp_path / "events/t.txt"
+    path.parent.mkdir(parents=True)
+    source = "add_namespace = t\ncountry_event = {\n\tid = t.1\n\toption = { name = t.1.a }\n}\n"
+    path.write_text(source, encoding="utf-8")
+    mod = Mod(tmp_path)
+    mod.update_event("t.1", immediate="add_stability = {")
+
+    with pytest.raises(RuntimeError, match="Refusing to write .*syntax problem"):
+        mod.preview()
+    with pytest.raises(RuntimeError, match="Refusing to write .*syntax problem"):
+        mod.save()
+    assert path.read_text(encoding="utf-8") == source

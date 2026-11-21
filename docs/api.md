@@ -49,6 +49,10 @@ copied into the mod as an override, the copy is written with balanced braces.
 new override of a game file in the same folder as one; fix the file and call
 `reload()`.
 
+`preview()` and `save()` also refuse to write a script file that would get a
+syntax problem it does not have now, for example an unclosed brace in script
+text passed to an update. Nothing is written in that case.
+
 Saving keeps each file's encoding, byte-order mark and line endings, and an
 edit replaces only the text of the statements that changed. See
 [the parser internals](internals/parser.md) for how this works.
@@ -540,9 +544,10 @@ Every `on_actions = { }` block of a file is loaded. Inside one hook block,
 repeated `effect`, `events` and `random_events` blocks are joined in source
 order. Saving leaves unchanged fields alone, with all their blocks. An event
 list is edited entry by entry: an entry that stays keeps its block and its
-comment, a dropped one is cut out, and a new one goes into the last block.
-Only a reordered list or a changed `effect` is written into the first block,
-with the other blocks removed.
+comment, a dropped one is cut out, a changed weight is rewritten in place, and
+a new one goes into the block of the entry before it. Only a reordered list or
+a changed `effect` is written into the first block, with the other blocks
+removed.
 
 ## Decisions
 

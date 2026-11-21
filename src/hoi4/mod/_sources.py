@@ -269,6 +269,7 @@ class SourcesLayer(LocalisationLayer):
         grouped: dict[Path, list[DecisionCategory]] = {
             path: [] for path in dirty_files
         }
+        defined: dict[Path, set[str]] = {}
         for category in self._decision_categories.values():
             path = category.definition_path
             if path is None:
@@ -284,6 +285,18 @@ class SourcesLayer(LocalisationLayer):
                 )
             if dirty_only and path not in dirty_files:
                 continue
+            if not category.touched and category.id not in self._dirty_decision_categories:
+                # Nobody edited this category. It belongs in the file only if
+                # the file defines it already: another category's edit must
+                # not write a definition for it.
+                if path not in defined:
+                    defined[path] = {
+                        span.key
+                        for span in top_level_assignments(self._original_files.get(path, ""))
+                        if span.is_block
+                    }
+                if category.id not in defined[path]:
+                    continue
             grouped.setdefault(path, []).append(category)
         return grouped
 
