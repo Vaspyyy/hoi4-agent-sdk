@@ -39,9 +39,6 @@ from ..script import (
 from ..script_vocabulary import (
     validate_script_sources,
 )
-from ..tags import (
-    load_all_tags,
-)
 from ..syntax import Block, Scalar, parse, require_well_formed
 from ..textio import read_text
 from ..types import (
@@ -717,8 +714,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         errors.extend(_validate_source_tree(self.mod_root))
 
         begin_phase("catalogs", "Resolving referenced game and mod catalogs")
-        known_tags = set(load_all_tags(self._base_content_root, self.mod_root))
-        known_tags.update(self._countries.keys())
+        known_tags = self._defined_country_tags()
         known_tags.update(self._country_tag_aliases())
         # Country history may name an idea the mod does not define; the
         # reference checks load their catalogs themselves when a name is
@@ -979,7 +975,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 known_events=set(self._events),
                 known_technologies=set(),
                 known_equipment=set(),
-                known_focus_trees=set(self._focus_trees),
+                known_focus_trees=self._own_focus_tree_ids(),
             )
         )
         errors.extend(self._validate_state_effect_assumptions())

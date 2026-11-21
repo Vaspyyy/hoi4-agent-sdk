@@ -124,8 +124,10 @@ the content checks read them the way the game does:
 - Two focuses may share a position only when the game never draws both
   there. The game draws every focus of a tree, both sides of a mutually
   exclusive choice included, so exclusivity is no reason. A pair may share
-  a position when one of them has an `offset` block (it moves while the
-  block's trigger holds), or when `allow_branch` can hide each of them
+  a position when an `offset` block moves one of them and not the other
+  (a focus moves while the trigger of its own `offset` block holds, or of
+  one on a focus it is placed relative to), or when `allow_branch` can hide
+  each of them
   (it has `allow_branch`, or every chain of prerequisites from it up to a
   focus without prerequisites passes one that has) and each depends on a
   focus with `allow_branch` that the other does not depend on. Two

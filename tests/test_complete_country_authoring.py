@@ -785,3 +785,10 @@ def test_a_country_definition_with_a_channel_above_255_is_reported(tmp_path: Pat
     ]
     assert Path(colours[0].file_path or "").name == "Zzz.txt"
     assert "314 176 74" in colours[0].message
+
+    # A colour set through the API replaces the file's: the finding goes
+    # before save(), and stays gone after it.
+    mod.update_country("ZZZ", color=(10, 20, 30))
+    assert not [issue for issue in mod.validate() if issue.code == "invalid_country_color"]
+    mod.save()
+    assert not [issue for issue in mod.validate() if issue.code == "invalid_country_color"]

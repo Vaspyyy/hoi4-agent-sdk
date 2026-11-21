@@ -985,8 +985,14 @@ def validate_country(
         )
 
     # The reader clamps a file's channels to 0..255, so a file that says 314
-    # arrives here as 255: look at what the definition file really holds.
-    written = _written_color_channels(country.raw_definition)
+    # arrives here as 255: look at what the definition file really holds. A
+    # colour set through the API replaces the file's on save(), so then the
+    # file's old colour is no longer the country's.
+    written = (
+        None
+        if {"*", "color"} & country.touched_fields
+        else _written_color_channels(country.raw_definition)
+    )
     if written is not None and any(not 0 <= channel <= 255 for channel in written[0]):
         shown = " ".join(f"{channel:g}" for channel in written[0])
         errors.append(
@@ -1106,15 +1112,22 @@ def validate_focus_tree(
     layout = resolve_focus_positions(tree)
     by_id = {focus.id: focus for focus in tree.focuses}
     for focus_id, reason in layout.unresolved.items():
-        if tree.kind == "file":
-            # Top-level shared/joint focuses may anchor to a focus of the tree
-            # they are shared into; that is fine when the anchor exists.
-            anchor, seen = focus_id, set()
-            while anchor in by_id and anchor not in seen:
-                seen.add(anchor)
-                anchor = by_id[anchor].relative_position_id
-            if anchor not in by_id and anchor in all_known:
-                continue
+        # A focus may anchor to a focus of another file: a top-level shared
+        # or joint focus to the tree it is shared into, and a focus of a tree
+        # to the shared focuses the tree pulls in (``shared_focus = ID``, and
+        # with it the focuses below that one). That is fine when the anchor
+        # exists somewhere. A tree that pulls in nothing has no focus of
+        # another file on its canvas.
+        anchor, seen = focus_id, set()
+        while anchor in by_id and anchor not in seen:
+            seen.add(anchor)
+            anchor = by_id[anchor].relative_position_id
+        if (
+            anchor not in by_id
+            and anchor in all_known
+            and (tree.kind == "file" or tree.shared_focuses)
+        ):
+            continue
         errors.append(
             ValidationError(
                 message=f"Focus '{focus_id}' position unresolved: {reason}",
@@ -1152,6 +1165,9 @@ def validate_focus_tree(
                     file_path=str(tree.path) if tree.path else None,
                 )
             )
+            # One mistake, one finding: the second definition gets no
+            # findings of its own.
+            continue
         seen_ids.add(focus.id)
 
         expected_kind = focus.kind if tree.kind == "file" else "focus"

@@ -393,3 +393,85 @@ def test_a_focus_id_defined_twice_is_one_finding(tmp_path):
     assert not codes(findings, "visual_overlap")
     messages = [finding.message for finding in codes(findings, "missing_localization")]
     assert len(messages) == len(set(messages))
+
+
+# ── Country tags ────────────────────────────────────────────────────
+
+
+def _focus_scoping_into(tag: str) -> str:
+    return (
+        "focus_tree = {\n id = tag_tree\n focus = {\n  id = TAG_scope x = 0 y = 0\n"
+        f"  completion_reward = {{ {tag} = {{ add_political_power = 5 }} }}\n }}\n}}\n"
+    )
+
+
+def test_replace_path_hides_the_country_tags_of_the_game(tmp_path):
+    game = tmp_path / "game"
+    write(game, "common/country_tags/00_countries.txt", 'GER = "countries/Germany.txt"\n')
+    write(game, "common/countries/Germany.txt", "color = { 1 2 3 }\n")
+    root = mod_root(tmp_path)
+    write(root, "common/country_tags/mine.txt", 'AAA = "countries/Germany.txt"\n')
+    write(root, "common/national_focus/tag.txt", _focus_scoping_into("GER"))
+    assert not codes(Mod(root, hoi4_install=game).validate(), "unknown_country_scope")
+
+    write(root, "descriptor.mod", 'name = "test"\nreplace_path = "common/country_tags"\n')
+    findings = codes(Mod(root, hoi4_install=game).validate(), "unknown_country_scope")
+    assert ["'GER'" in f.message for f in findings] == [True]
+
+
+def test_a_deleted_country_is_an_unknown_tag_in_the_next_run(tmp_path):
+    root = mod_root(tmp_path)
+    mod = Mod(root)
+    mod.create_country("CNN", "Ninety-nine")
+    mod.save()
+    write(root, "common/national_focus/tag.txt", _focus_scoping_into("CNN"))
+
+    mod = Mod(root)
+    assert not codes(mod.validate(), "unknown_country_scope")
+    mod.delete_country("CNN")
+    findings = codes(mod.validate(), "unknown_country_scope")
+    assert ["'CNN'" in f.message for f in findings] == [True]
+    mod.discard()
+    assert not codes(mod.validate(), "unknown_country_scope")
+
+
+# ── Focus trees and the container of a file's shared focuses ────────
+
+
+def test_a_focus_of_a_tree_may_anchor_to_a_shared_focus_of_the_game(tmp_path):
+    game = focus_game(tmp_path)
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/national_focus/tree.txt",
+        "focus_tree = {\n id = my_test_tree\n shared_focus = CONGO_free_state\n"
+        " focus = {\n  id = MOD_tree_focus\n  prerequisite = { focus = CONGO_free_state }\n"
+        "  relative_position_id = CONGO_free_state\n  x = 0 y = 1\n }\n"
+        " focus = { id = MOD_lost relative_position_id = MOD_nowhere x = 0 y = 1 }\n}\n",
+    )
+    findings = codes(
+        Mod(root, hoi4_install=game).validate(stage="build"), "unresolved_focus_position"
+    )
+    assert [f.focus_id for f in findings] == ["MOD_lost"]
+
+
+def test_load_focus_tree_cannot_name_the_container_of_a_files_shared_focuses(tmp_path):
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/national_focus/my_shared_container.txt",
+        "shared_focus = {\n id = MOD_sf_1\n x = 0 y = 0\n cost = 5\n"
+        " completion_reward = { load_focus_tree = { tree = my_shared_container } }\n}\n",
+    )
+    # With no tree at all nothing can be said about a tree name.
+    write(
+        root,
+        "common/national_focus/real.txt",
+        "focus_tree = {\n id = real_tree\n focus = { id = REAL_one x = 0 y = 0 }\n}\n",
+    )
+    mod = Mod(root)
+    assert "my_shared_container" in mod.list_focus_trees()
+    findings = codes(mod.validate(), "unknown_focus_tree_reference")
+    assert [f.focus_id for f in findings] == ["MOD_sf_1"]
+    effect = mod.validate_effect("load_focus_tree = { tree = my_shared_container }")
+    assert [f.code for f in effect] == ["unknown_focus_tree_reference"]

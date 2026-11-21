@@ -323,6 +323,38 @@ def test_a_focus_with_an_offset_block_may_share_its_base_position():
     assert not codes(findings, "visual_overlap")
 
 
+def _stepping_aside(focus_id: str) -> Focus:
+    focus = Focus(id=focus_id, x=5, y=0)
+    focus.raw_block = (
+        f"id = {focus_id}\nx = 5\ny = 0\noffset = {{ x = 4 y = 0 trigger = {{ has_idea = i }} }}\n"
+    )
+    return focus
+
+
+def test_an_offset_block_moves_the_focuses_placed_relative_to_it():
+    # Ethiopia's Italian branch: its first focus steps aside on a trigger, and
+    # the focuses anchored to it move with it.
+    findings = validate_focus_tree(
+        tree(
+            _stepping_aside("R"),
+            Focus(id="C", x=0, y=1, relative_position_id="R"),
+            Focus(id="D", x=5, y=1),
+        )
+    )
+    assert not codes(findings, "visual_overlap")
+
+
+def test_two_focuses_moved_by_the_same_offset_block_still_overlap():
+    findings = validate_focus_tree(
+        tree(
+            _stepping_aside("R"),
+            Focus(id="C", x=0, y=1, relative_position_id="R"),
+            Focus(id="D", x=0, y=1, relative_position_id="R"),
+        )
+    )
+    assert [f.focus_id for f in codes(findings, "visual_overlap")] == ["D"]
+
+
 def test_search_filter_needs_a_sprite(tmp_path):
     focus = Focus(id="A", search_filters=["FOCUS_FILTER_INDUSTRIAL", "FOCUS_FILTER_INDUSTRY"])
     findings = codes(validate_focus_tree(tree(focus)), "unknown_focus_search_filter")

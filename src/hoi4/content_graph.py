@@ -102,6 +102,23 @@ def _script_tokens(fragments: Iterable[str]) -> set[str]:
     return tokens
 
 
+_NESTED_KEY_RE = re.compile(r"\$([A-Za-z0-9_.\-]+)\$")
+
+
+def _keys_in_localization_values(values: Iterable[str]) -> set[str]:
+    """The names a localisation text pulls in as ``$NAME$``.
+
+    The game puts the text of the key ``NAME`` there, so a key that is used
+    only this way is used.
+    """
+
+    found: set[str] = set()
+    for value in values:
+        if "$" in value:
+            found.update(_NESTED_KEY_RE.findall(value))
+    return found
+
+
 def _localization_keys_in_script(keys: Iterable[str], tokens: set[str]) -> set[str]:
     """The localization keys that name something the script defines or mentions.
 
@@ -306,6 +323,9 @@ def analyze_content_liveness(
     used_localization = _known_localization_uses(mod)
     used_localization.update(
         _localization_keys_in_script(localization_keys, _script_tokens(_script_fragments(mod)))
+    )
+    used_localization.update(
+        localization_keys & _keys_in_localization_values(mod._loc_entries.values())
     )
     # A key the game or a base mod defines too is shown by the game already:
     # the mod overrides its text (``localisation/english/replace``).

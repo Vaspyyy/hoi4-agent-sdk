@@ -289,7 +289,8 @@ All notable changes to this project are documented here. The format follows
   (`incomplete_country_count`).
 - `invalid_country_color` is reported for a country definition file whose
   colour has a channel outside 0 to 255. The reader clamps such a value, so
-  the check never saw it.
+  the check never saw it. A colour set with `update_country(color=...)`
+  replaces the file's, so the finding goes before `save()`.
 - A trigger used where an effect belongs (or the other way round) is named
   as such, instead of being answered with a look-alike name.
 - `docs/validation.md` says what each stage checks. The "is this ever
@@ -322,7 +323,8 @@ All notable changes to this project are documented here. The format follows
   `namespaces=` and `validate_focus_tree` takes `known_search_filters=`.
 - `assert_no_visual_overlap` and `validate()` use the same rule: two focuses
   may share a position only when the game never draws both there, because
-  one has an `offset` block or each hangs on an `allow_branch` focus the
+  an `offset` block moves one and not the other (its own, or one on a focus
+  it is placed relative to) or each hangs on an `allow_branch` focus the
   other does not depend on. Mutually exclusive focuses are both drawn, so
   they must not share a position.
 - `validate()` and `validate_effect()` load a catalog of the game (ideas,
@@ -359,6 +361,21 @@ All notable changes to this project are documented here. The format follows
 - A focus id that is defined twice in one tree is one `duplicate_focus_id`
   finding. Before, it was reported twice, the focus "overlapped" itself
   (`visual_overlap`), and its missing texts were listed twice.
+- The country tags a script may name follow the game: a mod's
+  `replace_path = "common/country_tags"` hides the game's tags, and a
+  country removed with `delete_country()` is an unknown tag before
+  `save()` (`unknown_country_scope`, `unknown_state_owner`, the order of
+  battle checks).
+- `load_focus_tree` cannot name the container the SDK keeps a file's
+  top-level shared focuses in (`unknown_focus_tree_reference`).
+- A focus of a tree that pulls in shared focuses (`shared_focus = ID`) may
+  be placed relative to a focus of another file without
+  `unresolved_focus_position`.
+- `ALL` and `ANY` are country tags when a mod defines them, not keywords.
+- The roles inside a character's `instance = { ... }` blocks and the
+  `available` block of a bookmark country are checked like other script.
+- `unused_localization` no longer reports a key that another text of the
+  mod pulls in as `$KEY$`.
 - Validation reads each script file through one splitter
   (`hoi4._script_corpus`) and one scope walker. The token check reads the
   mod's own files as `save()` will write them, with exact file lines; the

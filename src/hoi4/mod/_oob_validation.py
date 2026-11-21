@@ -28,9 +28,6 @@ from ..oob import (
     validate_oob,
 )
 from ..syntax import parse
-from ..tags import (
-    load_all_tags,
-)
 from ..types import (
     State,
     ValidationError,
@@ -191,8 +188,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         for state in states.values():
             for province_id in state.provinces:
                 province_states[province_id] = state
-        known_tags = set(load_all_tags(self._base_content_root, self.mod_root))
-        known_tags.update(self._countries)
+        known_tags = self._defined_country_tags()
         return _OobCheckData(
             states=states,
             province_states=province_states,

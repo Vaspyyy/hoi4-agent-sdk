@@ -252,7 +252,9 @@ class GameScriptVocabulary:
         for name, source in extra.modifier_definitions.items():
             new_modifiers.setdefault(name, (("country",), source))
         characters = frozenset(name.lower() for name in characters)
-        if not (effects or triggers or new_modifiers or characters):
+        family_triggers = _family_triggers(members)
+        new_family = any(name not in self.triggers for name in family_triggers)
+        if not (effects or triggers or new_modifiers or characters or new_family):
             return self
 
         def merged(
@@ -280,7 +282,7 @@ class GameScriptVocabulary:
                 "trigger",
                 {
                     **{name: ((), "mod scripted_triggers") for name in triggers},
-                    **_family_triggers(members),
+                    **family_triggers,
                 },
             ),
             modifiers=merged("modifier", new_modifiers),

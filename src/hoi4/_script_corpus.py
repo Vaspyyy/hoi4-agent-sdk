@@ -359,9 +359,16 @@ def _characters(root: Block, relative: str) -> Iterator[CorpusOwner]:
             blocks: list[CorpusBlock] = []
             for role_key, role in _block_items(body):
                 if role_key.lower() == "instance":
+                    # One variant of the character: its own ``allowed`` and
+                    # then the same role blocks a character holds directly.
                     allowed = role.block("allowed", fold=True)
                     if allowed is not None:
                         blocks.append(CorpusBlock(allowed, "trigger", None, "character", key))
+                    for inner_key, inner in _block_items(role):
+                        if inner_key.lower() != "allowed":
+                            blocks.extend(
+                                _fields("character", key, inner, _ROLE_FIELDS, definition="character")
+                            )
                     continue
                 blocks.extend(_fields("character", key, role, _ROLE_FIELDS, definition="character"))
             yield CorpusOwner("character", key, body, None, tuple(blocks))
@@ -387,10 +394,18 @@ def _bookmarks(root: Block, relative: str) -> Iterator[CorpusOwner]:
     for _, container in _block_items(root):
         for key, body in _block_items(container):
             name = body.scalar("name") or key
-            yield CorpusOwner(
-                "bookmark", name, body, None,
-                tuple(_fields("bookmark", name, body, {"effect": "effect"}, definition="bookmark")),
-            )
+            blocks = _fields("bookmark", name, body, {"effect": "effect"}, definition="bookmark")
+            # ``GER = { history = ... available = { ... } }``: when the
+            # country can be picked.
+            for entry_key, entry in _block_items(body):
+                if entry_key.lower() != "effect":
+                    blocks.extend(
+                        _fields(
+                            "bookmark", name, entry, {"available": "trigger"},
+                            definition="bookmark",
+                        )
+                    )
+            yield CorpusOwner("bookmark", name, body, None, tuple(blocks))
 
 
 _COMMON = {

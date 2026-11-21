@@ -26,7 +26,6 @@ from ..script_references import (
     resolve_equipment,
 )
 from ..syntax import parse
-from ..tags import load_all_tags
 from ..textio import decode_text, read_text
 from ._sources import SourcesLayer
 
@@ -208,18 +207,45 @@ class CatalogsLayer(SourcesLayer):
 
         return set(self._definitions_in("common/military_industrial_organization").organizations)
 
+    def _defined_country_tags(self) -> set[str]:
+        """Every country tag the game will know with this mod, pending edits included.
+
+        The tags of the effective ``common/country_tags`` files: the game's
+        and the base mods' files unless the mod overrides them or hides the
+        folder with ``replace_path``, and the mod's own. A country deleted
+        through the API is gone from the mod's files before ``save()``, and
+        a created one is there.
+        """
+
+        purpose = "definitions:common/country_tags"
+        label = "common/country_tags/file.txt"
+        deleted = set(self._deleted_countries)
+        tags: set[str] = set()
+        for _, source, pending in self._effective_script_files("common/country_tags"):
+            try:
+                if pending is not None:
+                    found = definitions_of(parse(pending()), label).tags
+                else:
+                    found = cached_file_result(
+                        purpose, source, lambda text: definitions_of(parse(text), label)
+                    ).tags
+            except (OSError, ValueError):
+                continue
+            own = pending is not None or source.is_relative_to(self.mod_root)
+            tags |= found - deleted if own else found
+        tags.update(self._countries)
+        return tags
+
     def _known_country_tags(self) -> set[str]:
         """Every tag a script may scope into.
 
-        Tags from ``common/country_tags`` of the game and the mod, the aliases of
-        ``common/country_tag_aliases`` (``SOU``, ``SPD``, ``VIC``, ...) and the
-        countries this mod creates. Dynamic tags ``D01`` to ``D99`` are checked
-        by their shape.
+        The defined tags and the aliases of ``common/country_tag_aliases``
+        (``SOU``, ``SPD``, ``VIC``, ...). Dynamic tags ``D01`` to ``D99`` are
+        checked by their shape.
         """
 
-        tags = set(load_all_tags(self._base_content_root, self.mod_root))
+        tags = self._defined_country_tags()
         tags |= self._definitions_in("common/country_tag_aliases").tags
-        tags.update(self._countries)
         return tags
 
     def _known_focus_tree_ids(self) -> set[str]:
@@ -229,10 +255,19 @@ class CatalogsLayer(SourcesLayer):
         not a tree the game knows.
         """
 
-        trees = {tree_id for tree_id, tree in self._focus_trees.items() if tree.kind != "file"}
+        trees = self._own_focus_tree_ids()
         replaced = set(self._group_focus_trees_by_file(dirty_only=True))
         trees |= self._definitions_in("common/national_focus", skip=replaced).focus_trees
         return trees
+
+    def _own_focus_tree_ids(self) -> set[str]:
+        """The mod's own focus trees, with pending edits.
+
+        The container of a file's top-level focuses is left out: it is how
+        the SDK holds them, and ``load_focus_tree`` cannot name it.
+        """
+
+        return {tree_id for tree_id, tree in self._focus_trees.items() if tree.kind != "file"}
 
     def _known_focus_ids(self) -> set[str]:
         """Every focus id of the mod (with pending edits) and of the files it inherits.

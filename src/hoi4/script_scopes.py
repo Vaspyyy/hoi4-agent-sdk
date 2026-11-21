@@ -276,8 +276,9 @@ WEIGHT_MODIFIER_ARGUMENTS = frozenset({"factor", "add", "base"})
 #: ``hidden_modifier`` holds modifiers of its own.
 MODIFIER_ARGUMENTS = frozenset({"custom_modifier_tooltip", "icon", "attacker_modifier"})
 
-#: Keywords that look like country tags.
-_KEYWORDS = frozenset({"AND", "NOT", "ALL", "ANY"})
+#: Keywords that look like country tags. ``ALL`` and ``ANY`` are not keywords
+#: of the game, so they are tags when a mod defines them.
+_KEYWORDS = frozenset({"AND", "NOT"})
 _TAG_RE = re.compile(r"^[A-Z][A-Z0-9]{2}$")
 _NUMBER_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 

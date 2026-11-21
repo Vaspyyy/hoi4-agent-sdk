@@ -57,19 +57,6 @@ KNOWN_GAME_MISTAKES = {
     # ``declare_war_on = { target = event_target:communist_china }`` has no
     # wargoal type.
     ("missing_wargoal_type", "WTT_PRC.txt", "declare_war_on"),
-    # The exile branches (allow_branch on ETH.host_nation, which only
-    # ETH_host_country_decision sets after ETH_rally_around_the_emperor)
-    # appear on top of the Italian branch. That branch has no allow_branch,
-    # so it stays drawn although its root is mutually exclusive with
-    # ETH_rally_around_the_emperor.
-    ("visual_overlap", "ethiopia.txt", "'ETH_restore_the_country' shares position (53, 3)"),
-    ("visual_overlap", "ethiopia.txt", "'ETH_invite_italian_settlers' shares position (51, 4)"),
-    ("visual_overlap", "ethiopia.txt", "'ETH_replace_the_abuna' shares position (53, 4)"),
-    # On the Romanov route (romanov_enabled) both focuses of each pair are
-    # drawn on one spot; POL_claim_russia even needs both
-    # POL_demand_slovakia_pavel and POL_demand_yugoslav_subjugation.
-    ("visual_overlap", "poland.txt", "'POL_demand_yugoslav_subjugation' shares position (83, 5)"),
-    ("visual_overlap", "poland.txt", "'POL_claim_russia' shares position (83, 6)"),
 }
 
 

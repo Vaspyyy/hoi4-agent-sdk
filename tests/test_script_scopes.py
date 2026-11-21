@@ -536,6 +536,61 @@ def test_mod_findings_carry_file_lines(game: Path, tmp_path: Path) -> None:
     assert all(item.focus_id == "TST_one" for item in findings)
 
 
+def test_all_and_any_are_country_tags_when_a_mod_defines_them(game: Path) -> None:
+    # Neither is a keyword of the game, and mods do name countries ALL.
+    assert not check(game, "ALL = { add_stability = 1 } ANY = { add_stability = 1 }")
+    assert [item.code for item in check(game, "ALL = { set_state_flag = x }")] == [
+        "unsupported_effect_scope"
+    ]
+    assert not check(game, "ALL = { has_country_flag = x }", "trigger")
+
+
+def test_character_instances_and_bookmark_countries_are_checked(
+    game: Path, tmp_path: Path
+) -> None:
+    mod_root = tmp_path / "mod"
+    files = {
+        "common/characters/TST.txt": (
+            "characters = {\n"
+            "\tTST_someone = {\n"
+            "\t\tname = x\n"
+            "\t\tinstance = {\n"
+            "\t\t\tallowed = { always = yes }\n"
+            "\t\t\tadvisor = {\n"
+            "\t\t\t\tslot = political_advisor\n"
+            "\t\t\t\tidea_token = TST_someone_adv\n"
+            "\t\t\t\tavailable = { has_contry_flag = x }\n"
+            "\t\t\t}\n"
+            "\t\t}\n"
+            "\t}\n"
+            "}\n"
+        ),
+        "common/bookmarks/test.txt": (
+            "bookmarks = {\n"
+            "\tbookmark = {\n"
+            "\t\tname = TEST_BOOKMARK\n"
+            "\t\tTST = {\n"
+            "\t\t\thistory = TST_HISTORY\n"
+            "\t\t\tavailable = { has_state_flag = x has_contry_flag = x }\n"
+            "\t\t}\n"
+            "\t}\n"
+            "}\n"
+        ),
+    }
+    for relative, text in files.items():
+        path = mod_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    mod = Mod(mod_root, hoi4_install=game)
+    findings = [item for item in mod.validate_script_vocabulary() if item.severity != "info"]
+    assert sorted((Path(item.file_path or "").name, item.code, item.line) for item in findings) == [
+        ("TST.txt", "unknown_trigger_token", 9),
+        # A bookmark country's ``available`` runs in the country's scope.
+        ("test.txt", "unknown_trigger_token", 6),
+        ("test.txt", "unsupported_trigger_scope", 6),
+    ]
+
+
 def test_a_definition_counts_before_it_is_saved(game: Path, tmp_path: Path) -> None:
     mod_root = tmp_path / "mod"
     ideas = mod_root / "common/ideas/test.txt"

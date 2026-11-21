@@ -305,7 +305,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 known_events=set(self._events),
                 known_technologies=set(),
                 known_equipment=set(),
-                known_focus_trees=set(self._focus_trees),
+                known_focus_trees=self._own_focus_tree_ids(),
                 entries=entries,
                 entry_scope=(scope or UNKNOWN).upper(),
             )

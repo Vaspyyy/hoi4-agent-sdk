@@ -507,10 +507,15 @@ def test_unused_localization_spares_overrides_and_named_definitions(tmp_path):
         mod_root, "localisation/english/replace/my_l_english.yml",
         'l_english:\n my_compliance:0 "Mine"\n my_compliance_desc:0 "About mine"\n'
         ' compliance_15:0 "Ours"\n brilliant_strategist:0 "Ours"\n infantry_equipment_1:0 "Ours"\n'
-        ' my_leftover:0 "Nobody shows this"\n',
+        ' my_leftover:0 "Nobody shows this"\n'
+        # Another text pulls this one in as $my_part$.
+        ' my_part:0 "a part"\n my_orphan_tooltip:0 "With $my_part$ and $NOT_A_KEY$"\n',
     )
     found = liveness(Mod(mod_root, hoi4_install=game), "unused_localization")
-    assert [finding.message.split("'")[1] for finding in found] == ["my_leftover"]
+    assert [finding.message.split("'")[1] for finding in found] == [
+        "my_leftover",
+        "my_orphan_tooltip",
+    ]
 
 
 def test_ungranted_idea_fires_unless_granted_or_shown(tmp_path):
