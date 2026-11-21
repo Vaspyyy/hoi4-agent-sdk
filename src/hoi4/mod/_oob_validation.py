@@ -173,15 +173,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
     # ── Shared game data ───────────────────────────────────────
 
     def _oob_check_data(self) -> _OobCheckData:
-        run = self._validation_run
-        if run is not None:
-            cached = run.get("oob_check_data")
-            if isinstance(cached, _OobCheckData):
-                return cached
-        data = self._build_oob_check_data()
-        if run is not None:
-            run["oob_check_data"] = data
-        return data
+        return self._run_cached("oob_check_data", self._build_oob_check_data)
 
     def _build_oob_check_data(self) -> _OobCheckData:
         states: dict[int, State] = {}

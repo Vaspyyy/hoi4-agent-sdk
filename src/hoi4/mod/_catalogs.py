@@ -7,6 +7,7 @@ import io
 import re
 from pathlib import Path
 
+from .._file_cache import cached_file_result
 from ..events import scan_event_ids_file
 from ..ideas import scan_idea_ids_file
 from ..parser import (
@@ -35,28 +36,22 @@ from ._sources import SourcesLayer
 _LOC_VALUE_RE = re.compile(r"\[\?([A-Za-z_@][A-Za-z0-9_.@]*)")
 # Folders whose script the game reads as effects, triggers and definitions.
 _CORPUS_DIRECTORIES = ("common", "events", "history")
-# References of inherited files, by path. A file is read again only when its
-# size or modification time changes, so a second Mod over the same game, or a
-# second validation, does not parse the whole game again.
-_INHERITED_REFERENCES: dict[str, tuple[int, int, FileReferences]] = {}
-
-
 def _inherited_references(path: Path, relative: str) -> FileReferences | None:
-    try:
-        stat = path.stat()
-    except OSError:
-        return None
+    """The references of an inherited file, kept until the file changes.
+
+    A second Mod over the same game, or a second validation, does not parse
+    the whole game again.
+    """
+
     key = str(path)
-    cached = _INHERITED_REFERENCES.get(key)
-    if cached is not None and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
-        return cached[2]
     try:
-        text = read_text(path)
+        return cached_file_result(
+            f"file_references:{relative}",
+            path,
+            lambda text: file_references(key, relative, text, own=False),
+        )
     except (OSError, ValueError):
         return None
-    found = file_references(key, relative, text, own=False)
-    _INHERITED_REFERENCES[key] = (stat.st_mtime_ns, stat.st_size, found)
-    return found
 
 
 def _sprite_names(text: str) -> set[str]:
@@ -186,9 +181,18 @@ class CatalogsLayer(SourcesLayer):
 
         The mod's own files come with their pending edits. With ``inherited``,
         the files of the game and base mods that the mod does not override (or
-        hide with ``replace_path``) come too, marked ``own=False``.
+        hide with ``replace_path``) come too, marked ``own=False``. The checks
+        of one validate() run share the list.
         """
 
+        return list(
+            self._run_cached(
+                f"reference_corpus:{inherited}",
+                lambda: self._build_reference_corpus(inherited=inherited),
+            )
+        )
+
+    def _build_reference_corpus(self, *, inherited: bool) -> list[FileReferences]:
         pending = self._pending_script_texts()
         sources: dict[str, Path] = {}
         for top in _CORPUS_DIRECTORIES:

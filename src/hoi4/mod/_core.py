@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
+from collections.abc import Callable
 from typing import Optional, Sequence, TypeVar
 
 from ..bookmarks import (
@@ -52,6 +53,7 @@ from ..types import (
 )
 
 _InheritedModel = TypeVar("_InheritedModel", FocusTree, Event, Idea)
+_Built = TypeVar("_Built")
 
 
 class CoreLayer:
@@ -290,6 +292,19 @@ class CoreLayer:
         except ValueError:
             return False
         return self._mod_hides_inherited(relative)
+
+    def _run_cached(self, key: str, build: Callable[[], _Built]) -> _Built:
+        """``build()``, once per validate() run; every call outside a run builds.
+
+        The value is shared by the checks of one run: never change it.
+        """
+
+        run = self._validation_run
+        if run is None:
+            return build()
+        if key not in run:
+            run[key] = build()
+        return run[key]  # type: ignore[return-value]
 
     def _mod_hides_inherited(self, relative: Path) -> bool:
         """Whether the mod hides an inherited file (same name or replace_path).

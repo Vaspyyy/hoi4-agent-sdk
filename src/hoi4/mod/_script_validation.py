@@ -365,8 +365,15 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         Each source carries the scope its block runs in when that is certain
         (``hoi4.script_scopes.ENTRY_SCOPES``), what ``FROM`` is when known, and
         the file line its text starts on, so findings point into the file.
+        The token check and the liveness check of one validate() run share
+        the list.
         """
 
+        return list(
+            self._run_cached("semantic_script_sources", self._build_semantic_script_sources)
+        )
+
+    def _build_semantic_script_sources(self) -> list[ScriptSource]:
         sources: list[ScriptSource] = []
 
         def current_text(path: Path) -> str:
