@@ -8,6 +8,30 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `hoi4.syntax`: one lossless syntax tree for Paradox script. Every node knows
+  its exact position in the source, so reading is a tree query and writing is
+  the replacement of one span. It understands typed blocks (`rgb { }`,
+  `hsv { }`), quoted keys and values, nested lists, `@variables`, every
+  comparison operator and inline maths, and it is as forgiving as the game: a
+  block still open at the end of a file is closed there and a stray closing
+  brace is skipped, each recorded as a `Problem`. `require_well_formed` and
+  `repair` build on that.
+- `hoi4.textio`: byte-exact file reading and writing. A saved file keeps its
+  encoding (UTF-8, Windows-1252 or any other bytes), its byte-order mark and
+  its line endings, and every line that did not change keeps its exact bytes,
+  also in a file that mixes line endings.
+- Shared and joint focuses: a file's top-level `focus`, `shared_focus` and
+  `joint_focus` blocks load into a per-file container tree (`FocusTree.kind ==
+  "file"`), with `Focus.kind` naming the block type. 51 of the game's 82 focus
+  files use them. Also `Focus.icon_blocks`, `Focus.icon_names()` and fractional
+  `Focus.cost`.
+- Conditional event text: `EventText`, `Event.conditional_titles`,
+  `Event.conditional_descriptions` and `EventOption.conditional_names`.
+- `Country.color_ui`, and colours read from `rgb { }`, plain `{ r g b }`,
+  `hsv`/`HSV` and `hsv360`.
+- An opt-in corpus test (`pytest -m corpus` with `HOI4_INSTALL_DIR` set) that
+  checks the script core against every script file of a real game install.
+
 - Ordered directory-backed base mods, descriptor dependencies, effective-file
   provenance, and opt-in inherited focus/event/idea/on-action editing.
 - Transactional support-script imports, source-preserving scripted-trigger
@@ -64,6 +88,35 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **An edit to one field now changes only that field.** Focus trees, events,
+  on-actions, ideas, ideologies, dynamic modifiers, decisions, bookmarks,
+  countries, characters, country tags, states and orders of battle are read
+  from the syntax tree and written by replacing only the spans that differ
+  from the source. Comments, unknown keys, repeated blocks, conditional blocks
+  and the spelling of every untouched value survive.
+- Files inherited from the game or a base mod are read the way the game reads
+  them. The game ships files with unbalanced braces (Norway's history,
+  France's 1936 army, the Soviet ideas file); they load now. When such a file
+  becomes a mod override it is written out well formed.
+- A malformed file in the mod's own folder is still a load failure, reported
+  in `load_diagnostics` and by `validate()`, and `save()` now refuses to
+  rewrite any mod file that failed to load instead of replacing it from an
+  incomplete model.
+- `hoi4.parser` and `hoi4.patching` are rebuilt on the syntax tree.
+  `parse_pdx(strict=False)` reads the forgiving way. `PdxNode` gained
+  `key_quoted` and `tag`; `AssignmentSpan` gained `operator` and `tag`;
+  `top_level_assignments(comparisons=True)` also returns comparison
+  statements. `find_assignment_block` and `extract_braced_block` no longer
+  fail on a block that is open at the end of the text.
+- A decision edit writes only the file that holds the decision. Category
+  presentation that an old layout kept in the decisions file moves to
+  `common/decisions/categories/` only when the category itself is edited. A
+  category may be reopened in one file or spread over several files, and its
+  decisions are editable in place.
+- An edit to a vanilla country writes only the files it changed, and renaming
+  a vanilla country keeps its history file name.
+- `Idea.category_raw_block` holds only the category's own settings. Loading
+  every vanilla ideas file now peaks at 35 MB instead of 182 MB.
 - `hoi4/mod.py` (12,992 lines) is now the `hoi4/mod/` package: one module per
   content type, each defining one layer class, with `Mod` inheriting from all
   of them. A layer subclasses only the layers whose methods it calls, so its
@@ -86,6 +139,37 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- Editing one field of a focus deleted its conditional `icon = { ... }` blocks
+  and truncated `cost = 7.2` to `7`.
+- An event with conditional `title = { ... }` blocks read its title as `{`,
+  and any edit deleted the first block and duplicated other lines.
+- An idea with only `equipment_bonus`, `targeted_modifier`, `rule` or
+  `research_bonus` was not recognised and was duplicated when a sibling idea
+  was edited. A repeated category block in an ideas file lost its earlier
+  copy on any edit.
+- A decision took `cost` or `icon` from a nested block. A category reopened in
+  the same file lost its later decisions and blocked every save. Saving one
+  file of a category spread over several files deleted that category's
+  decisions from the saved file. A generated category file could take the name
+  of a game file and replace it.
+- A comment inside `traits = { ... }` became trait ids. Editing a typed colour
+  (`color = rgb { ... }`) left a dangling block. `colors.txt` values written
+  as `HSV { }` were ignored.
+- A state was found by any `id = N` in its file, including one in a comment.
+  A state file with a byte-order mark loaded empty. A one-field state edit
+  could produce broken indentation.
+- `validate()` crashed with `ValueError: Unbalanced braces` once a vanilla
+  country with an unbalanced order of battle was in the mod.
+- Saving rewrote Windows line endings as Unix ones in every line of the file,
+  dropped the byte-order mark, and silently deleted bytes that were not valid
+  UTF-8.
+- `serialize_pdx` dropped the quotes of bare list values and quoted keys,
+  flattened nested lists and typed blocks, and `PdxNode.set_value` on a block
+  wrote an empty block. `set_block` on an inline statement duplicated the
+  script before it, a `@variable` was mistaken for the field of the same name,
+  and `==` was scanned as an assignment.
+- On-actions: repeated `effect` blocks after the first were ignored, and
+  editing weighted `random_events` wrote `20 daily.2` instead of `20 = daily.2`.
 - Inherited state lookups now honor same-named mod files and the mod
   descriptor's `replace_path` when no base mods are configured, matching how
   the game resolves files. Province-list changes to existing state files now
@@ -122,6 +206,15 @@ All notable changes to this project are documented here. The format follows
   produce exact-path load diagnostics. Non-strict loading continues with
   unaffected country data instead of reparsing and crashing; strict loading
   still fails immediately.
+
+### Removed
+
+- Module-level regular expressions that read script from raw text and are no
+  longer used: `decisions.SCALAR_RE`, `countries.COLOR_RE`, `COLOR_FIELD_RE`,
+  `CAPITAL_RE`, `RESEARCH_SLOTS_RE`, `tags.TAG_FILE_RE`, `states.STATE_ID_RE`,
+  `STATE_NAME_RE` and `OWNER_RE`.
+- The automatic move of category presentation out of a decisions file on any
+  decision edit. It now happens only when the category itself is edited.
 
 ## [0.6.5] - 2026-08-01
 
