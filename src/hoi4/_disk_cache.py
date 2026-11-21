@@ -320,7 +320,6 @@ def forget() -> None:
 
     with _LOCK:
         _STORES.clear()
-    code_stamp.cache_clear()
 
 
 atexit.register(flush)
