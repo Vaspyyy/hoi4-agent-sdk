@@ -360,13 +360,8 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             scripted_triggers=custom.get("trigger", ()),
             ideology_ids=self._ideologies,
             characters=self._characters,
-            pending=self._pending_texts(),
+            pending=self._pending_script_texts(),
         )
-
-    def _pending_texts(self) -> dict[Path, str | None]:
-        """What ``save()`` would write, shared by the checks of one validate() run."""
-
-        return self._run_cached("pending_script_texts", self._pending_script_texts)
 
     def validate_script_vocabulary(
         self,
@@ -418,7 +413,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         count, and a file that ``save()`` deletes is left out.
         """
 
-        pending = self._pending_texts()
+        pending = self._pending_script_texts()
         paths: dict[str, Path] = {}
         for top in tops:
             folder = self.mod_root / top
