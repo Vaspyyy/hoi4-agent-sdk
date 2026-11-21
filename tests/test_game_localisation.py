@@ -140,3 +140,28 @@ def test_with_base_mods_the_game_is_read_once_through_the_layers(
     assert mod.get_loc("GER") == "Germany"
     assert mod.get_loc("BASE_key") == "Base"
     assert mod._game_loc_entries == {}
+
+
+def test_a_mod_file_saved_over_a_game_file_hides_it(game: Path, mod_root: Path) -> None:
+    """The game's entries belong to the localisation section and reload with it."""
+
+    mod = Mod(mod_root, hoi4_install=game)
+    assert mod.get_loc("GER") == "Germany"
+    # A mod file of the same name replaces the game's file as a whole.
+    write(mod_root, "localisation/english/countries_l_english.yml", 'l_english:\n ITA: "Italy"\n')
+    mod.discard()
+    assert "localisation" not in mod._section_loaded
+    assert mod.get_loc("GER") is None
+    assert mod.get_loc("ITA") == "Italy"
+    assert mod.get_loc("GER", language="german") == "Deutschland"
+
+
+def test_an_unrelated_save_keeps_the_game_index(game: Path, mod_root: Path) -> None:
+    write(mod_root, "events/e.txt", "add_namespace = e\ncountry_event = { id = e.1 }\n")
+    mod = Mod(mod_root, hoi4_install=game)
+    assert mod.get_loc("GER") == "Germany"
+    index = mod._game_loc_entries["english"]
+    mod.update_event("e.1", title="e.1.t")
+    mod.save()
+    assert mod._game_loc_entries["english"] is index
+    assert mod.get_loc("GER") == "Germany"

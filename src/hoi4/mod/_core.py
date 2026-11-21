@@ -854,7 +854,7 @@ class CoreLayer:
         )
 
     def content_source(self, relative_path: str | Path) -> Path | None:
-        """Original winning file in game/base/output layers; never a snapshot path."""
+        """The winning file of the game, the base mods or the mod, where it is on disk."""
         relative = relative_content_path(relative_path)
         if self._content_layers is not None:
             return self._content_layers.source(relative)
@@ -979,8 +979,8 @@ class CoreLayer:
     def _mod_hides_inherited(self, relative: Path) -> bool:
         """Whether the mod hides an inherited file (same name or replace_path).
 
-        Layered snapshots already omit hidden files; this covers a direct
-        ``hoi4_install`` base.
+        The layered view of base mods already leaves hidden files out; this
+        covers a direct ``hoi4_install`` base.
         """
 
         if self._content_layers is not None:
