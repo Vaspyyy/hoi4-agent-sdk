@@ -1117,6 +1117,7 @@ def validate_focus_tree(
     *,
     known_search_filters: Collection[str] | None = None,
     shared_focus_parents: Mapping[str, Collection[str]] | None = None,
+    shared_focus_conditions: Mapping[str, str | None] | None = None,
 ) -> list[ValidationError]:
     """Check one focus tree.
 
@@ -1129,6 +1130,12 @@ def validate_focus_tree(
     to exactly the shared focuses the tree pulls in (``shared_focus = ID``
     and the shared focuses below ``ID``). Without it, any known focus of
     another file is taken once the tree pulls in a shared focus.
+
+    ``shared_focus_conditions`` maps the same focuses to their
+    ``allow_branch`` condition (``None`` without one, ``""`` when it always
+    holds). With both maps, a focus of this tree that hangs below a shared
+    focus is hidden with it, which the position check needs. Without them
+    a prerequisite outside the tree counts as always drawn.
     """
 
     errors: list[ValidationError] = []
@@ -1173,7 +1180,9 @@ def validate_focus_tree(
     valid_filters = (
         DEFAULT_FOCUS_SEARCH_FILTERS if known_search_filters is None else known_search_filters
     )
-    branches = FocusBranches(tree)
+    branches = FocusBranches(
+        tree, shared_parents=shared_focus_parents, shared_conditions=shared_focus_conditions
+    )
 
     for focus in tree.focuses:
         if not focus.id:

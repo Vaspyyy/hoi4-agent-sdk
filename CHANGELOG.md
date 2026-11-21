@@ -375,8 +375,10 @@ All notable changes to this project are documented here. The format follows
   top-level shared focuses in (`unknown_focus_tree_reference`).
 - A focus of a tree may be placed relative to the shared focuses the tree
   pulls in (`shared_focus = ID`, and the shared focuses below `ID`) without
-  `unresolved_focus_position`. `validate_focus_tree` takes
-  `shared_focus_parents=` for that.
+  `unresolved_focus_position`, and a focus below such a shared focus is
+  hidden with it (its `allow_branch` counts for the position check).
+  `validate_focus_tree` takes `shared_focus_parents=` and
+  `shared_focus_conditions=` for that.
 - `ALL` and `ANY` are country tags when a mod defines them, not keywords.
 - The reference checks know the characters, so what stands inside a
   character scope keeps its scope: `GER_erwin_rommel = { owner = {

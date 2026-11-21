@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
-from .syntax import parse
+from .syntax import Block, parse
 from .types import Focus, FocusTree
 
 
@@ -100,7 +101,7 @@ def _condition(text: str) -> str:
     return "" if condition.lower() == "always = yes" else condition
 
 
-def _own_condition(focus: Focus) -> str | None:
+def allow_branch_condition(focus: Focus) -> str | None:
     """The ``allow_branch`` condition of a focus, as ``save()`` will write it.
 
     ``None``: the focus has no ``allow_branch`` block. ``""``: it has one that
@@ -136,6 +137,19 @@ def _own_condition(focus: Focus) -> str | None:
     return found
 
 
+def block_allow_branch_condition(block: Block) -> str | None:
+    """The ``allow_branch`` condition of a focus block as it stands in a file.
+
+    ``None`` without such a block, ``""`` when it always holds. For the
+    shared focuses of other files, which are read from their text.
+    """
+
+    for item in block.assignments("allow_branch", fold=True):
+        if item.block is not None:
+            return _condition(item.block.body)
+    return None
+
+
 class FocusBranches:
     """Which focuses of one tree the game can show at the same time.
 
@@ -167,10 +181,26 @@ class FocusBranches:
     together when it holds, two focuses moved by the same ``offset`` blocks
     move together, and two focuses that are both always drawn meet whenever
     the trigger of the offset does not hold.
+
+    A prerequisite may be a shared focus of another file, which the tree
+    pulls in with ``shared_focus = ID``. ``shared_parents`` (the
+    prerequisites of each shared focus, by id) and ``shared_conditions``
+    (its ``allow_branch`` condition: ``None`` without one, ``""`` when it
+    always holds) say what such a focus hangs on, so that a focus below it
+    is hidden with it. Without them a prerequisite outside the tree counts
+    as always drawn.
     """
 
-    def __init__(self, tree: FocusTree) -> None:
+    def __init__(
+        self,
+        tree: FocusTree,
+        *,
+        shared_parents: Mapping[str, Collection[str]] | None = None,
+        shared_conditions: Mapping[str, str | None] | None = None,
+    ) -> None:
         self._by_id = {focus.id: focus for focus in tree.focuses if focus.id}
+        self._shared_parents = shared_parents or {}
+        self._shared_conditions = shared_conditions or {}
         self._needs: dict[str, frozenset[str]] = {}
         self._offsets: dict[str, bool] = {}
         self._movers: dict[str, frozenset[str]] = {}
@@ -178,7 +208,7 @@ class FocusBranches:
     def _parents(self, focus_id: str) -> list[str]:
         focus = self._by_id.get(focus_id)
         if focus is None:
-            return []
+            return list(self._shared_parents.get(focus_id, ()))
         return [ref for group in focus.prerequisites for ref in group]
 
     def _post_order(self, focus_id: str) -> list[str]:
@@ -221,14 +251,17 @@ class FocusBranches:
                 continue
             focus = self._by_id.get(current)
             found: set[str] = set()
-            if focus is not None:
-                own = _own_condition(focus)
-                if own is not None:
-                    if own:
-                        found.add(own)
-                else:
-                    for ref in self._parents(current):
-                        found |= self._needs.get(ref, frozenset())
+            own = (
+                allow_branch_condition(focus)
+                if focus is not None
+                else self._shared_conditions.get(current)
+            )
+            if own is not None:
+                if own:
+                    found.add(own)
+            else:
+                for ref in self._parents(current):
+                    found |= self._needs.get(ref, frozenset())
             self._needs[current] = frozenset(found)
         return self._needs[focus_id]
 
@@ -309,12 +342,19 @@ def continuous_focus_position_issue(
 
 
 def visual_overlap_issues(
-    tree: FocusTree, layout: FocusPositions, *, min_continuous_padding: int = 100
+    tree: FocusTree,
+    layout: FocusPositions,
+    *,
+    min_continuous_padding: int = 100,
+    shared_focus_parents: Mapping[str, Collection[str]] | None = None,
+    shared_focus_conditions: Mapping[str, str | None] | None = None,
 ) -> list[str]:
     """Check known positions; continuous bounds require a complete layout.
 
     Two focuses may share a position when the game never draws both there
     (see :class:`FocusBranches`), which is how variant branches are drawn.
+    ``shared_focus_parents`` and ``shared_focus_conditions`` describe the
+    shared focuses of other files, for a focus that hangs below one.
     """
     occupied: dict[tuple[int, int], list[str]] = {}
     issues: list[str] = []
@@ -322,7 +362,9 @@ def visual_overlap_issues(
         # Top-level shared/joint focuses of one file are placed into different
         # trees, so they do not share one canvas.
         return issues
-    branches = FocusBranches(tree)
+    branches = FocusBranches(
+        tree, shared_parents=shared_focus_parents, shared_conditions=shared_focus_conditions
+    )
     for focus in tree.focuses:
         pos = layout.positions.get(focus.id)
         if pos is None:

@@ -11,6 +11,7 @@ from pathlib import Path
 from .._file_cache import cached_file_result
 from ..characters import AdvisorRole
 from ..events import VALID_EVENT_TYPES
+from ..focus_layout import allow_branch_condition, block_allow_branch_condition
 from ..ideas import idea_ids_in_text
 from ..parser import (
     iter_assignment_blocks,
@@ -76,26 +77,29 @@ def _focus_ids(text: str) -> frozenset[str]:
     return frozenset(ids)
 
 
-def _shared_focus_parents_in(text: str) -> dict[str, frozenset[str]]:
-    """The prerequisites of every top-level focus of a focus file, by id.
+def _shared_focuses_in(text: str) -> dict[str, tuple[frozenset[str], str | None]]:
+    """What a tree needs to know of every top-level focus of a focus file, by id.
 
     These are the ``shared_focus`` and ``joint_focus`` blocks (and a bare
-    ``focus``) that a tree pulls in with ``shared_focus = ID``.
+    ``focus``) that a tree pulls in with ``shared_focus = ID``. For each: its
+    prerequisites and its ``allow_branch`` condition (``None`` without one,
+    ``""`` when it always holds).
     """
 
-    parents: dict[str, frozenset[str]] = {}
+    found: dict[str, tuple[frozenset[str], str | None]] = {}
     root = parse(text).root
     for key in _FOCUS_KEYS:
         for block in root.blocks(key, fold=True):
             focus_id = block.scalar("id", fold=True)
             if focus_id:
-                parents[focus_id] = frozenset(
+                parents = frozenset(
                     item.scalar
                     for group in block.blocks("prerequisite", fold=True)
                     for item in group.assignments("focus", fold=True)
                     if item.scalar
                 )
-    return parents
+                found[focus_id] = (parents, block_allow_branch_condition(block))
+    return found
 
 
 def _sprite_names(text: str) -> frozenset[str]:
@@ -282,28 +286,38 @@ class CatalogsLayer(SourcesLayer):
         trees |= self._definitions_in("common/national_focus", skip=replaced).focus_trees
         return trees
 
-    def _shared_focus_parents(self) -> dict[str, frozenset[str]]:
-        """The prerequisites of every shared or joint focus the game will know.
+    def _shared_focuses(
+        self,
+    ) -> tuple[dict[str, frozenset[str]], dict[str, str | None]]:
+        """The prerequisites and the ``allow_branch`` condition of every shared or joint focus.
 
+        Two maps by focus id, for every such focus the game will know.
         ``shared_focus = ID`` in a tree puts ``ID`` on its canvas, and with it
-        the shared focuses below it. The mod's own come from the models (with
-        pending edits), the inherited ones from a scan of each file.
+        the shared focuses below it; a focus of the tree that hangs below one
+        is hidden with it. The mod's own come from the models (with pending
+        edits), the inherited ones from a scan of each file.
         """
 
-        parents: dict[str, frozenset[str]] = {
-            focus.id: frozenset(ref for group in focus.prerequisites for ref in group)
-            for tree in self._focus_trees.values()
-            if tree.kind == "file"
-            for focus in tree.focuses
-            if focus.id
-        }
+        parents: dict[str, frozenset[str]] = {}
+        conditions: dict[str, str | None] = {}
+        for tree in self._focus_trees.values():
+            if tree.kind != "file":
+                continue
+            for focus in tree.focuses:
+                if focus.id:
+                    parents[focus.id] = frozenset(
+                        ref for group in focus.prerequisites for ref in group
+                    )
+                    conditions[focus.id] = allow_branch_condition(focus)
         replaced = set(self._group_focus_trees_by_file(dirty_only=True))
         for _, found in self._effective_script_results(
-            "common/national_focus", "shared_focus_parents", _shared_focus_parents_in, skip=replaced
+            "common/national_focus", "shared_focuses", _shared_focuses_in, skip=replaced
         ):
-            for focus_id, refs in found.items():
-                parents.setdefault(focus_id, refs)
-        return parents
+            for focus_id, (refs, condition) in found.items():
+                if focus_id not in parents:
+                    parents[focus_id] = refs
+                    conditions[focus_id] = condition
+        return parents, conditions
 
     def _own_focus_tree_ids(self) -> set[str]:
         """The mod's own focus trees, with pending edits.

@@ -524,6 +524,59 @@ def test_allow_branch_cleared_through_the_api_counts_before_save(tmp_path):
     assert overlaps(Mod(root)) == ["F"]
 
 
+@pytest.mark.parametrize("where", ["mod", "base"])
+def test_a_focus_below_a_shared_focus_of_another_file_is_hidden_with_it(tmp_path, where):
+    """The parent's ``allow_branch`` counts wherever the parent is defined."""
+
+    root = mod_root(tmp_path)
+    base = tmp_path / "base"
+    shared_root = root if where == "mod" else base
+
+    def shared(root_gate: str) -> None:
+        write(
+            shared_root,
+            "common/national_focus/s.txt",
+            f"shared_focus = {{ id = S_root x = 0 y = 0 cost = 1 {root_gate} }}\n"
+            "shared_focus = { id = S_child x = 0 y = 1 cost = 1"
+            " prerequisite = { focus = S_root } }\n",
+        )
+
+    def tree(parent: str, other_gate: str) -> None:
+        write(
+            root,
+            "common/national_focus/t.txt",
+            "focus_tree = {\n\tid = t_tree\n\tcountry = { factor = 0 }\n"
+            "\tshared_focus = S_root\n"
+            f"\tfocus = {{ id = F x = 5 y = 5 cost = 1 prerequisite = {{ focus = {parent} }} }}\n"
+            f"\tfocus = {{ id = H x = 5 y = 5 cost = 1 {other_gate} }}\n"
+            "}\n",
+        )
+
+    def overlaps() -> list[str]:
+        mod = Mod(root, base_mod_paths=[base] if where == "base" else [])
+        found = [f.focus_id for f in codes(mod.validate(stage="build"), "visual_overlap")]
+        if found:
+            with pytest.raises(ValueError, match="overlaps"):
+                mod.assert_no_visual_overlap("t_tree")
+        else:
+            assert mod.assert_no_visual_overlap("t_tree")
+        return found
+
+    gate_x, gate_y = 'allow_branch = { has_dlc = "X" }', 'allow_branch = { has_dlc = "Y" }'
+    shared(gate_x)
+    # F is hidden with S_root (X), H hangs on Y: two variants.
+    for parent in ("S_root", "S_child"):
+        tree(parent, gate_y)
+        assert overlaps() == [], parent
+        # H behind the same condition as S_root appears together with F.
+        tree(parent, gate_x)
+        assert overlaps() == ["H"], parent
+    # A shared parent that is always drawn hides nothing.
+    shared("")
+    tree("S_root", gate_y)
+    assert overlaps() == ["H"]
+
+
 def test_allow_branch_is_read_in_any_case(tmp_path):
     root = mod_root(tmp_path)
     write(

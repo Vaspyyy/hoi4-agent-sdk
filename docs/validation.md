@@ -145,7 +145,10 @@ the content checks read them the way the game does:
   parents." So a focus with `allow_branch` needs its own condition and
   nothing else (an empty block and `always = yes` hide nothing), and a
   focus without one needs every condition that one of its prerequisite
-  focuses needs, whichever `prerequisite` block names them. A pair may
+  focuses needs, whichever `prerequisite` block names them. That holds
+  also for a prerequisite that is a shared focus of another file
+  (`shared_focus = ID` in the tree): what hangs below it is hidden with
+  it. A pair may
   share a position in two cases. One: an `offset` block moves one of them
   and not the other (a focus moves while the trigger of its own `offset`
   block holds, or of one on a focus it is placed relative to; an offset of

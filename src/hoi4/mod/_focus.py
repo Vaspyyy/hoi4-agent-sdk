@@ -221,8 +221,21 @@ class FocusLayer(ContextLayer, EffectsLayer):
         tree = self.get_focus_tree(tree_id)
         layout = resolve_focus_positions(tree)
         layout.require_complete()
+        own = {focus.id for focus in tree.focuses}
+        outside = any(
+            ref not in own
+            for focus in tree.focuses
+            for group in focus.prerequisites
+            for ref in group
+        )
+        # A focus below a shared focus of another file is hidden with it.
+        parents, conditions = self._shared_focuses() if outside else (None, None)
         issues = visual_overlap_issues(
-            tree, layout, min_continuous_padding=min_continuous_padding
+            tree,
+            layout,
+            min_continuous_padding=min_continuous_padding,
+            shared_focus_parents=parents,
+            shared_focus_conditions=conditions,
         )
         if issues:
             raise ValueError("; ".join(issues))

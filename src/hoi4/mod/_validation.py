@@ -919,23 +919,26 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             if diagnostic.error_type == "DuplicateIdentifierError"
             and diagnostic.section == "focus"
         }
-        # Which focuses of other files a tree has on its canvas is read only
-        # when a tree with shared focuses anchors to a focus it does not hold.
+        # The shared focuses of other files are read only when a tree anchors
+        # to a focus it does not hold, or has one as a prerequisite.
         shared_parents: dict[str, frozenset[str]] | None = None
+        shared_conditions: dict[str, str | None] | None = None
         for tree in self._focus_trees.values():
-            if tree.kind != "file" and tree.shared_focuses and shared_parents is None:
+            if tree.kind != "file" and shared_parents is None:
                 own = {focus.id for focus in tree.focuses}
                 if any(
-                    focus.relative_position_id and focus.relative_position_id not in own
+                    (focus.relative_position_id and focus.relative_position_id not in own)
+                    or any(ref not in own for group in focus.prerequisites for ref in group)
                     for focus in tree.focuses
                 ):
-                    shared_parents = self._shared_focus_parents()
+                    shared_parents, shared_conditions = self._shared_focuses()
             tree_errors = validate_focus_tree(
                 tree,
                 known_focus_ids=all_focus_ids,
                 known_state_ids=known_state_ids if known_state_ids else None,
                 known_search_filters=search_filters,
                 shared_focus_parents=shared_parents,
+                shared_focus_conditions=shared_conditions,
             )
             errors.extend(
                 error

@@ -50,7 +50,7 @@ only the ones it does not already reach through another base.
 * ``_context``: Country context reports, icon suggestions and territory checks. Uses
   ``_catalogs``, ``_countries``, ``_states``.
 * ``_focus``: Focus tree authoring and layout. Uses ``_effects``, ``_localisation``,
-  ``_context``.
+  ``_context``, ``_catalogs``.
 * ``_definitions``: Script imports and the keyed ``common/`` definition API. Uses only
   ``_core``.
 * ``_assets``: Flag, portrait, icon and picture imports. Uses only ``_core``.
