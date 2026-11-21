@@ -42,7 +42,7 @@ from ..script_vocabulary import (
 from ..tags import (
     load_all_tags,
 )
-from ..syntax import parse, require_well_formed
+from ..syntax import Block, Scalar, parse, require_well_formed
 from ..textio import read_text
 from ..types import (
     Event,
@@ -225,6 +225,19 @@ def _source_file_findings(
         # The syntax failure above already reports malformed source.
         pass
     return tuple(errors)
+
+
+def _assigned_idea_line(history: str, idea_id: str) -> int | None:
+    """The line of ``idea_id`` in a direct ``add_ideas`` of a country history text."""
+
+    document = parse(history)
+    for assignment in document.root.assignments("add_ideas"):
+        value = assignment.value
+        tokens = value.values() if type(value) is Block else [value]
+        for token in tokens:
+            if type(token) is Scalar and token.value == idea_id:
+                return document.line_col(token.start)[0]
+    return None
 
 
 def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
@@ -714,7 +727,12 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             for country in self._countries.values()
             for idea_id in country.ideas
         )
-        known_ideas = self._known_idea_ids() if need_ideas else set(self._ideas)
+        # An advisor's idea_token is hired and assigned like an idea.
+        known_ideas = (
+            self._known_idea_ids() | self._known_advisor_idea_ids()
+            if need_ideas
+            else set(self._ideas)
+        )
         known_focus_icons = (
             self._known_focus_icons()
             if validate_icons and (self._focus_trees or self._ideas)
@@ -854,6 +872,13 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         for country in self._countries.values():
             for idea_id in country.ideas:
                 if idea_id not in self._ideas and idea_id not in known_ideas:
+                    # The saved text is current only while the country has
+                    # no unsaved edit.
+                    line = (
+                        _assigned_idea_line(country.raw_history, idea_id)
+                        if country.raw_history and country.tag not in self._dirty_countries
+                        else None
+                    )
                     errors.append(
                         ValidationError(
                             message=f"Country '{country.tag}' assigns unknown idea '{idea_id}'",
@@ -861,6 +886,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                             code="unknown_assigned_idea",
                             country_tag=country.tag,
                             idea_id=idea_id,
+                            file_path=(
+                                str(country.history_path) if country.history_path else None
+                            ),
+                            line=line,
                         )
                     )
 
