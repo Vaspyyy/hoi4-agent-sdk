@@ -507,6 +507,34 @@ def test_mod_findings_carry_file_lines(game: Path, tmp_path: Path) -> None:
     assert all(item.focus_id == "TST_one" for item in findings)
 
 
+def test_a_definition_counts_before_it_is_saved(game: Path, tmp_path: Path) -> None:
+    mod_root = tmp_path / "mod"
+    ideas = mod_root / "common/ideas/test.txt"
+    ideas.parent.mkdir(parents=True)
+    ideas.write_text(
+        "ideas = { country = { TST_works = { modifier = { production_speed_probe_bunker_factor = 0.1 } } } }\n"
+    )
+    focus = mod_root / "common/national_focus/test.txt"
+    focus.parent.mkdir(parents=True)
+    focus.write_text(
+        "focus_tree = { id = t focus = { id = TST_one completion_reward = {\n"
+        "capital_scope = { if = { limit = { probe_bunker > 1 } set_state_flag = x } }\n"
+        "} } }\n"
+    )
+    mod = Mod(mod_root, hoi4_install=game)
+
+    def codes() -> list[str]:
+        return sorted(item.code for item in mod.validate_script_vocabulary() if item.severity != "info")
+
+    assert codes() == ["unknown_modifier_token", "unknown_trigger_token"]
+    mod.create_definition("building", "probe_bunker", "base_cost = 500\nvalue = 1")
+    assert codes() == []
+    mod.save()
+    assert codes() == []
+    mod.delete_definition("building", "probe_bunker")
+    assert codes() == ["unknown_modifier_token", "unknown_trigger_token"]
+
+
 def test_a_template_learns_only_from_its_own_folders(game: Path) -> None:
     modifiers = game / "documentation" / "modifiers_documentation.md"
     modifiers.write_text(

@@ -220,18 +220,24 @@ class GameScriptVocabulary:
         scripted_triggers: Iterable[str] = (),
         ideology_ids: Iterable[str] = (),
         characters: Iterable[str] = (),
+        pending: Mapping[Path, str | None] | None = None,
     ) -> GameScriptVocabulary:
         """Add what mods define: modifier family members, modifier definitions and more names.
 
         ``roots`` are mod folders in load order. Their family definitions
         (``common/buildings``, ``common/ideologies``, ...) and
-        ``common/modifier_definitions`` are read through the syntax tree. The
-        keyword arguments add names the caller already has: scripted effects
-        and triggers, ideologies and character ids, including pending edits
-        that are not on disk yet.
+        ``common/modifier_definitions`` are read through the syntax tree.
+        ``pending`` maps files under those folders to the text they will have
+        after a save (``None``: the file will be deleted); it wins over the
+        disk, so definitions made through the API count before ``save()``.
+        The keyword arguments add names the caller already has: scripted
+        effects and triggers, ideologies and character ids, including pending
+        edits that are not on disk yet.
         """
 
-        extra = _read_definitions([Path(root) for root in roots], usage=False, scripts=False)
+        extra = _read_definitions(
+            [Path(root) for root in roots], usage=False, scripts=False, pending=pending
+        )
         effects = set(scripted_effects)
         triggers = set(scripted_triggers)
         members: dict[str, dict[str, str]] = {
@@ -715,13 +721,21 @@ class _Definitions:
     domains: dict[str, Counter[str]] = field(default_factory=lambda: defaultdict(Counter))
 
 
-def _script_files(root: Path, relative: str) -> list[Path]:
+def _script_files(
+    root: Path, relative: str, pending: Mapping[Path, str | None] | None = None
+) -> list[Path]:
+    """The files of a folder (or the one file) under ``root``, with pending ones."""
+
     path = root / relative
+    found: set[Path] = set()
     if path.is_file():
-        return [path]
-    if path.is_dir():
-        return sorted(item for item in path.rglob("*.txt") if item.is_file())
-    return []
+        found.add(path)
+    elif path.is_dir():
+        found.update(item for item in path.rglob("*.txt") if item.is_file())
+    for item in pending or ():
+        if item == path or (item.suffix == ".txt" and item.is_relative_to(path)):
+            found.add(item)
+    return sorted(found)
 
 
 def _root_block(path: Path) -> Block | None:
@@ -732,27 +746,41 @@ def _root_block(path: Path) -> Block | None:
 
 
 def _read_definitions(
-    roots: Sequence[Path], *, usage: bool, scripts: bool = True
+    roots: Sequence[Path],
+    *,
+    usage: bool,
+    scripts: bool = True,
+    pending: Mapping[Path, str | None] | None = None,
 ) -> _Definitions:
+    """What the folders define; ``pending`` texts win over the disk (``None`` deletes)."""
+
     result = _Definitions()
     documents: dict[Path, Block | None] = {}
+    waiting = pending or {}
 
     def block_of(path: Path) -> Block | None:
         if path not in documents:
-            documents[path] = _root_block(path)
+            if path in waiting:
+                text = waiting[path]
+                try:
+                    documents[path] = parse(text).root if text is not None else None
+                except ValueError:
+                    documents[path] = None
+            else:
+                documents[path] = _root_block(path)
         return documents[path]
 
     for root in roots:
         for placeholder, sources in FAMILY_SOURCES.items():
             found = result.members.setdefault(placeholder, {})
             for relative, how, key in sources:
-                for path in _script_files(root, relative):
+                for path in _script_files(root, relative, waiting):
                     block = block_of(path)
                     if block is None:
                         continue
                     for member in _family_members(block, how, key):
                         found.setdefault(member, relative)
-        for path in _script_files(root, "common/modifier_definitions"):
+        for path in _script_files(root, "common/modifier_definitions", waiting):
             block = block_of(path)
             if block is not None:
                 for item in block.assignments():
@@ -761,7 +789,7 @@ def _read_definitions(
                             item.name, "common/modifier_definitions"
                         )
         for kind in ("effect", "trigger") if scripts else ():
-            for path in _script_files(root, f"common/scripted_{kind}s"):
+            for path in _script_files(root, f"common/scripted_{kind}s", waiting):
                 block = block_of(path)
                 if block is not None:
                     result.scripted[kind].update(
@@ -769,7 +797,7 @@ def _read_definitions(
                     )
     characters: set[str] = set()  # folded to lower case
     for root in roots if scripts else ():
-        for path in _script_files(root, "common/characters"):
+        for path in _script_files(root, "common/characters", waiting):
             block = block_of(path)
             if block is None:
                 continue

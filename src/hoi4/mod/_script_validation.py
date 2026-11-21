@@ -338,7 +338,8 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         The install's names (with usage counts) are read once and cached on
         disk; the mod's scripted effects and triggers, ideologies, characters
         and modifier family members are added on every call, so pending edits
-        count.
+        count (a building made with ``create_definition()`` is known before
+        ``save()``, a deleted one is gone).
         """
 
         if self.hoi4_install is None:
@@ -355,7 +356,13 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             scripted_triggers=custom.get("trigger", ()),
             ideology_ids=self._ideologies,
             characters=self._characters,
+            pending=self._pending_texts(),
         )
+
+    def _pending_texts(self) -> dict[Path, str | None]:
+        """What ``save()`` would write, shared by the checks of one validate() run."""
+
+        return self._run_cached("pending_script_texts", self._pending_script_texts)
 
     def validate_script_vocabulary(
         self,
@@ -405,7 +412,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         count, and a file that ``save()`` deletes is left out.
         """
 
-        pending = self._pending_script_texts()
+        pending = self._pending_texts()
         paths: dict[str, Path] = {}
         for top in ("common", "events"):
             folder = self.mod_root / top
