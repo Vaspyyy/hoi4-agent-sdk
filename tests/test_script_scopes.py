@@ -591,6 +591,51 @@ def test_character_instances_and_bookmark_countries_are_checked(
     ]
 
 
+def test_references_inside_a_character_scope_keep_their_scope(
+    game: Path, tmp_path: Path
+) -> None:
+    # ``GER_erwin_rommel = { ... }`` opens a character scope; ``owner`` and
+    # ``PREV`` inside it are countries, where a core effect is a mistake.
+    mod_root = tmp_path / "mod"
+    event_file = mod_root / "events/chev.txt"
+    event_file.parent.mkdir(parents=True)
+    event_file.write_text(
+        "add_namespace = chev\n"
+        "country_event = {\n"
+        "\tid = chev.1\n"
+        "\tis_triggered_only = yes\n"
+        "\thidden = yes\n"
+        "\timmediate = {\n"
+        "\t\tGER_erwin_rommel = {\n"
+        "\t\t\towner = { add_core_of = GER }\n"
+        "\t\t}\n"
+        "\t}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    mod = Mod(mod_root, hoi4_install=game)
+    found = [f for f in mod.validate(stage="build") if f.code == "country_scope_core_effect"]
+    assert [(Path(f.file_path or "").name, f.line) for f in found] == [("chev.txt", 8)]
+    for script in (
+        "GER_erwin_rommel = { owner = { add_core_of = GER } }",
+        "GER_erwin_rommel = { PREV = { add_core_of = GER } }",
+    ):
+        assert [f.code for f in mod.validate_effect(script, advice=False)] == [
+            "country_scope_core_effect"
+        ]
+    # A character the mod creates opens a scope too, before save().
+    from hoi4.characters import Character
+
+    mod.create_country("TST", "Test")
+    mod.create_character("TST", Character(id="TST_someone", name="Someone"))
+    assert [
+        f.code
+        for f in mod.validate_effect(
+            "TST_someone = { owner = { add_core_of = GER } }", advice=False
+        )
+    ] == ["country_scope_core_effect"]
+
+
 def test_a_definition_counts_before_it_is_saved(game: Path, tmp_path: Path) -> None:
     mod_root = tmp_path / "mod"
     ideas = mod_root / "common/ideas/test.txt"

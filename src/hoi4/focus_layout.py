@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .syntax import parse
@@ -75,6 +76,17 @@ def _moves(value: str | None) -> bool:
         return True
 
 
+_COMMENT_RE = re.compile(r'("[^"\n]*")|#[^\n]*')
+_OPERATOR_RE = re.compile(r"\s*([={}<>])\s*")
+
+
+def _condition(text: str) -> str:
+    """An ``allow_branch`` body as one line: no comments, one space between tokens."""
+
+    text = _COMMENT_RE.sub(lambda match: match.group(1) or "", text)
+    return " ".join(_OPERATOR_RE.sub(r" \1 ", text).split())
+
+
 class FocusBranches:
     """Which focuses of one tree the game can show at the same time.
 
@@ -91,10 +103,10 @@ class FocusBranches:
 
     So two focuses may share a spot when an ``offset`` block moves one of
     them and not the other and ``allow_branch`` can hide at least one of
-    them, or when each of them is hidden behind an ``allow_branch`` condition
-    the other does not depend on (a condition is its text: two focuses that
-    each write ``allow_branch = { has_dlc = "X" }`` appear together). The
-    game's own trees use both forms for
+    them, or when each of them needs an ``allow_branch`` condition the other
+    does not need (see :meth:`needs`; a condition is its text, so two focuses
+    that each write ``allow_branch = { has_dlc = "X" }`` appear together).
+    The game's own trees use both forms for
     variant branches: Ethiopia's Italian branch steps aside by an ``offset``
     on its first focus when the exile branch appears. Two focuses behind the
     same condition are shown together when it holds, two focuses moved by
@@ -104,7 +116,7 @@ class FocusBranches:
 
     def __init__(self, tree: FocusTree) -> None:
         self._by_id = {focus.id: focus for focus in tree.focuses if focus.id}
-        self._gates: dict[str, frozenset[str]] = {}
+        self._needs: dict[str, frozenset[str]] = {}
         self._hidden: dict[str, bool] = {}
         self._offsets: dict[str, bool] = {}
         self._movers: dict[str, frozenset[str]] = {}
@@ -142,20 +154,30 @@ class FocusBranches:
             stack.extend((ref, False) for ref in self._parents(current) if ref not in state)
         return order
 
-    def gates(self, focus_id: str) -> frozenset[str]:
-        """The focuses with ``allow_branch`` that ``focus_id`` depends on, itself included.
+    def needs(self, focus_id: str) -> frozenset[str]:
+        """The ``allow_branch`` conditions that all have to hold for ``focus_id`` to be drawn.
 
-        Every prerequisite counts, also each focus of an "either" group.
+        Its own, and those of what it depends on. A focus needs every one of
+        its ``prerequisite`` blocks, so their conditions add up. Within one
+        block any focus is enough, so only a condition that all of them need
+        counts. A condition is its text without comments and spacing, so the
+        same condition on two focuses is one condition.
         """
 
         for current in self._post_order(focus_id):
-            if current in self._gates:
+            if current in self._needs:
                 continue
-            found: set[str] = {current} if self._has_gate(current) else set()
-            for ref in self._parents(current):
-                found |= self._gates.get(ref, frozenset())
-            self._gates[current] = frozenset(found)
-        return self._gates[focus_id]
+            focus = self._by_id.get(current)
+            found: set[str] = set()
+            if focus is not None:
+                if focus.allow_branch.strip():
+                    found.add(_condition(focus.allow_branch))
+                for group in focus.prerequisites:
+                    shared = [self._needs.get(ref, frozenset()) for ref in group]
+                    if shared:
+                        found |= frozenset.intersection(*shared)
+            self._needs[current] = frozenset(found)
+        return self._needs[focus_id]
 
     def conditional(self, focus_id: str) -> bool:
         """Whether ``allow_branch`` can hide ``focus_id``.
@@ -221,19 +243,10 @@ class FocusBranches:
             self.conditional(first) or self.conditional(second)
         ):
             return True
-        if not (self.conditional(first) and self.conditional(second)):
-            return False
-        # Each has to hang on a condition the other does not: two gate
-        # focuses with the same ``allow_branch`` text appear together.
-        first_gates, second_gates = self.gates(first), self.gates(second)
-        first_only = self._conditions(first_gates - second_gates)
-        second_only = self._conditions(second_gates - first_gates)
-        return bool(first_only - second_only) and bool(second_only - first_only)
-
-    def _conditions(self, gates: frozenset[str]) -> set[str]:
-        """The ``allow_branch`` texts of some gate focuses, spacing aside."""
-
-        return {" ".join(self._by_id[gate].allow_branch.split()) for gate in gates}
+        # Each has to need a condition the other does not need. A focus whose
+        # conditions the other needs as well is drawn whenever the other is.
+        first_needs, second_needs = self.needs(first), self.needs(second)
+        return bool(first_needs - second_needs) and bool(second_needs - first_needs)
 
 
 def continuous_focus_position_issue(

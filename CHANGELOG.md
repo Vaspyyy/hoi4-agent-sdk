@@ -325,9 +325,10 @@ All notable changes to this project are documented here. The format follows
   may share a position only when the game never draws both there, because
   an `offset` block moves one and not the other (its own, or one on a focus
   it is placed relative to) while `allow_branch` can hide at least one of
-  them, or each hangs on an `allow_branch` condition the other does not
-  depend on (two focuses with the same `allow_branch` text appear
-  together). Mutually exclusive focuses are both drawn, so they must not
+  them, or each needs an `allow_branch` condition the other does not need
+  (two focuses with the same `allow_branch` text appear together, and a
+  focus whose conditions the other needs as well is drawn whenever the
+  other is). Mutually exclusive focuses are both drawn, so they must not
   share a position.
 - `validate()` and `validate_effect()` load a catalog of the game (ideas,
   events, technologies, equipment) only when a name is not among the mod's
@@ -375,6 +376,10 @@ All notable changes to this project are documented here. The format follows
   `unresolved_focus_position`. `validate_focus_tree` takes
   `shared_focus_parents=` for that.
 - `ALL` and `ANY` are country tags when a mod defines them, not keywords.
+- The reference checks know the characters, so what stands inside a
+  character scope keeps its scope: `GER_erwin_rommel = { owner = {
+  add_core_of = GER } }` is reported (`country_scope_core_effect`), and so
+  is an unknown tag in there. Before, such a block was read as data.
 - The roles inside a character's `instance = { ... }` blocks and the
   `available` block of a bookmark country are checked like other script.
 - `unused_localization` no longer reports a key that another text of the

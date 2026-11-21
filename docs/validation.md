@@ -139,11 +139,14 @@ the content checks read them the way the game does:
   block moves one of them and not the other (a focus moves while the
   trigger of its own `offset` block holds, or of one on a focus it is
   placed relative to; an offset of 0 0 moves nothing), and `allow_branch`
-  can hide at least one of them. Two: `allow_branch` can hide each of them,
-  and each depends on a focus whose `allow_branch` condition (its text) the
-  other does not depend on. The SDK does not work out whether two
-  conditions can hold at the same time. Two
-  focuses behind the same `allow_branch` focuses are shown together.
+  can hide at least one of them. Two: each of them needs an `allow_branch`
+  condition that the other does not need. A focus needs its own condition
+  and the conditions of what it depends on: those of every `prerequisite`
+  block, and within one block (where one focus is enough) only a condition
+  that all of its focuses need. A condition is its text without comments
+  and spacing, so two focuses that write the same `allow_branch` are behind
+  one condition and appear together. The SDK does not work out whether two
+  different conditions can hold at the same time.
 - Hidden events (`hidden = yes`) need no title, description or option.
 - Tag aliases from `common/country_tag_aliases` count as country tags, and
   tags declared after `dynamic_tags = yes` are named at runtime.

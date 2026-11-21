@@ -1138,6 +1138,7 @@ def validate_focus_tree(
     seen_ids: set[str] = set()
     layout = resolve_focus_positions(tree)
     by_id = {focus.id: focus for focus in tree.focuses}
+    canvas: set[str] | None = None
     for focus_id, reason in layout.unresolved.items():
         # A focus may anchor to a focus of another file: a top-level shared
         # or joint focus to the tree it is shared into, and a focus of a tree
@@ -1152,11 +1153,13 @@ def validate_focus_tree(
         if anchor not in by_id and anchor in all_known:
             if tree.kind == "file":
                 continue
-            if tree.shared_focuses and (
-                shared_focus_parents is None
-                or anchor in _pulled_in_focuses(tree.shared_focuses, shared_focus_parents)
-            ):
-                continue
+            if tree.shared_focuses:
+                if shared_focus_parents is None:
+                    continue
+                if canvas is None:
+                    canvas = _pulled_in_focuses(tree.shared_focuses, shared_focus_parents)
+                if anchor in canvas:
+                    continue
         errors.append(
             ValidationError(
                 message=f"Focus '{focus_id}' position unresolved: {reason}",
@@ -1584,9 +1587,9 @@ def validate_event(
     declared: Collection[str] | None = namespaces
     if declared is None and namespace is not _UNSET:
         declared = [namespace] if isinstance(namespace, str) and namespace else []
-    if declared is not None and "." in event.id:
-        # ``a.b.1`` may be declared as ``a.b`` or as ``a``.
-        candidates = event_namespace_candidates(event.id)
+    # ``a.b.1`` may be declared as ``a.b`` or as ``a``.
+    candidates = tuple(name for name in event_namespace_candidates(event.id) if name)
+    if declared is not None and candidates:
         prefix = candidates[0]
         known = {name.lower() for name in declared}
         if not any(candidate.lower() in known for candidate in candidates):

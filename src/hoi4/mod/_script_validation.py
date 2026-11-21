@@ -452,8 +452,14 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         """
 
         if entries is not None:
+            characters = self._character_scope_names()
             return [
-                (fragment_owner(script, kind, obj_id or "", entry_scope), file_path)
+                (
+                    fragment_owner(
+                        script, kind, obj_id or "", entry_scope, characters=characters
+                    ),
+                    file_path,
+                )
                 for script, kind, obj_id, file_path in entries
                 if script
             ]

@@ -385,6 +385,32 @@ def test_two_branches_behind_the_same_condition_are_shown_together():
     assert pair("has_country_flag = f", "NOT = { has_country_flag = f }") == []
 
 
+def test_a_branch_whose_conditions_the_other_needs_too_is_shown_with_it():
+    def overlaps(*focuses: Focus) -> list[str]:
+        return [f.focus_id for f in codes(validate_focus_tree(tree(*focuses)), "visual_overlap")]
+
+    # B needs X and Y, C needs only X: whenever B is drawn, so is C.
+    assert overlaps(
+        Focus(id="A", x=0, y=0, allow_branch='has_dlc = "X"'),
+        Focus(id="B", x=0, y=1, prerequisites=[["A"]], allow_branch='has_dlc = "Y"'),
+        Focus(id="C", x=0, y=1, prerequisites=[["A"]], allow_branch='has_dlc="X" # again'),
+    ) == ["C"]
+    # One focus of a prerequisite block is enough, so C needs neither a nor b.
+    assert overlaps(
+        Focus(id="G1", x=0, y=0, allow_branch="has_country_flag = a"),
+        Focus(id="G2", x=4, y=0, allow_branch="has_country_flag = b"),
+        Focus(id="C", x=2, y=1, prerequisites=[["G1", "G2"]]),
+        Focus(id="D", x=2, y=1, prerequisites=[["G1"]], allow_branch="has_country_flag = c"),
+    ) == ["D"]
+    # Two prerequisite blocks are both needed, so their conditions add up.
+    assert overlaps(
+        Focus(id="G1", x=0, y=0, allow_branch="has_country_flag = a"),
+        Focus(id="G2", x=4, y=0, allow_branch="has_country_flag = b"),
+        Focus(id="C", x=2, y=1, prerequisites=[["G1"]]),
+        Focus(id="D", x=2, y=1, prerequisites=[["G2"]]),
+    ) == []
+
+
 def test_an_offset_block_that_moves_nothing_excuses_nothing():
     findings = validate_focus_tree(
         tree(

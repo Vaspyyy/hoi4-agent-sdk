@@ -157,7 +157,8 @@ class CoreLayer:
         self._scan_cache: dict[str, set[str]] = {}
         # The references of each of the mod's own script files, with the text
         # they were read from; a changed text is read again.
-        self._own_reference_cache: dict[Path, tuple[str, FileReferences]] = {}
+        # ``path -> (text, character ids, references)`` of the mod's own files.
+        self._own_reference_cache: dict[Path, tuple[str, frozenset[str], FileReferences]] = {}
         # Data built once per validate() call and shared by its checks; None
         # outside a run, because edits between runs change it.
         self._validation_run: dict[str, object] | None = None

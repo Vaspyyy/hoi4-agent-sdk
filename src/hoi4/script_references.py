@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Iterable, Iterator
+from typing import Collection, Iterable, Iterator
 
 from ._script_corpus import split_file
 from .script_scopes import CONTROL, BlockKind, Role, WalkState, walk_data, walk_script
@@ -380,14 +380,19 @@ def _nested(block: Block, depth: int) -> Iterator[Assignment]:
     return iter(level)
 
 
-def owners_of(doc: Document, relative: str) -> list[ScriptOwner]:
+def owners_of(
+    doc: Document, relative: str, *, characters: Collection[str] = ()
+) -> list[ScriptOwner]:
     """Every owner in a file, each with the references of its script.
 
     ``relative`` is the path inside the game or mod folder, such as
     ``events/Germany.txt``; it decides how the file is split
     (:func:`hoi4._script_corpus.split_file`). Each script block of an owner is
     walked by the scope walker; the rest of the owner, and whatever lies
-    outside every owner, is read as data.
+    outside every owner, is read as data. ``characters`` are the character
+    ids (lower case) that open a character scope when used as a key, as in
+    ``GER_erwin_rommel = { owner = { ... } }``; without them such a block is
+    read as data, which loses the scope of what is inside.
     """
 
     owners: list[ScriptOwner] = []
@@ -405,6 +410,7 @@ def owners_of(doc: Document, relative: str) -> list[ScriptOwner]:
                 part.kind,
                 scope=part.scope,
                 from_scope=part.from_scope,
+                characters=characters,
                 arguments=part.arguments,
                 visit=collector.visit,
             )
@@ -430,7 +436,14 @@ def owners_of(doc: Document, relative: str) -> list[ScriptOwner]:
     return owners
 
 
-def fragment_owner(text: str, kind: str, owner_id: str, scope: str = COUNTRY) -> ScriptOwner:
+def fragment_owner(
+    text: str,
+    kind: str,
+    owner_id: str,
+    scope: str = COUNTRY,
+    *,
+    characters: Collection[str] = (),
+) -> ScriptOwner:
     """The references of a loose piece of effect script, such as one event option."""
 
     doc = parse(text)
@@ -438,7 +451,11 @@ def fragment_owner(text: str, kind: str, owner_id: str, scope: str = COUNTRY) ->
     collector = _Collector(doc, owner)
     collector.root = doc.root.start
     walk_script(
-        doc.root, "effect", scope=None if scope == UNKNOWN else scope, visit=collector.visit
+        doc.root,
+        "effect",
+        scope=None if scope == UNKNOWN else scope,
+        characters=characters,
+        visit=collector.visit,
     )
     return owner
 
@@ -601,8 +618,16 @@ class FileReferences:
                 yield owner, ref
 
 
-def file_references(path: str, relative: str, text: str, *, own: bool) -> FileReferences:
+def file_references(
+    path: str, relative: str, text: str, *, own: bool, characters: Collection[str] = ()
+) -> FileReferences:
     """Read one file. ``relative`` is its path inside the game or mod folder."""
 
     doc = parse(text)
-    return FileReferences(path, relative, own, owners_of(doc, relative), definitions_of(doc, relative))
+    return FileReferences(
+        path,
+        relative,
+        own,
+        owners_of(doc, relative, characters=characters),
+        definitions_of(doc, relative),
+    )

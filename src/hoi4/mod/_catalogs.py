@@ -418,6 +418,7 @@ class CatalogsLayer(SourcesLayer):
                 if relative.split("/", 1)[0] in _CORPUS_DIRECTORIES:
                     sources[relative] = path
         cache = self._own_reference_cache
+        characters = self._character_scope_names()
         corpus: list[FileReferences] = []
         for relative, path in sorted(sources.items()):
             if not relative.endswith(".txt"):
@@ -437,11 +438,28 @@ class CatalogsLayer(SourcesLayer):
                 except (OSError, ValueError):
                     continue
             cached = cache.get(path)
-            if cached is None or cached[0] != text:
-                cached = (text, file_references(str(path), relative, text, own=True))
+            if cached is None or cached[0] != text or cached[1] != characters:
+                found = file_references(
+                    str(path), relative, text, own=True, characters=characters
+                )
+                cached = (text, characters, found)
                 cache[path] = cached
-            corpus.append(cached[1])
+            corpus.append(cached[2])
         return corpus
+
+    def _character_scope_names(self) -> frozenset[str]:
+        """The ids of every character, lower case: used as a key, one opens its scope.
+
+        The references of the mod's own files are read with them, so what
+        stands inside ``GER_erwin_rommel = { owner = { ... } }`` keeps its
+        scope. The files of the game are read without: their references are
+        only counted as uses.
+        """
+
+        return self._run_cached(
+            "character_scope_names",
+            lambda: frozenset(name.lower() for name in self._known_character_ids()),
+        )
 
     def _known_idea_ids(self) -> set[str]:
         ids = set(self._ideas)
