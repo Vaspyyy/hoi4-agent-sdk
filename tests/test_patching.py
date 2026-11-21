@@ -12,9 +12,12 @@ from hoi4.patching import (
     move_assignment_before,
     replace_assignment,
     replace_assignment_body,
+    same_block_body,
     scalar_values_equivalent,
     set_block,
     set_scalar,
+    statement_spans,
+    sync_body,
     top_level_assignments,
 )
 from hoi4.syntax import parse
@@ -186,3 +189,126 @@ def test_equivalence_helpers() -> None:
     assert not block_bodies_equivalent("x = 1 y = 2", "y = 2 x = 1")
     assert block_bodies_equivalent('x = "open', 'x = "open')
     assert dedent_block_body("\n\t\tx = 1\n\t\ty = 2\n") == "x = 1\ny = 2"
+
+
+# ── statement-by-statement edits ────────────────────────────────
+
+
+def test_a_list_gets_one_more_entry_and_keeps_its_comments() -> None:
+    source = "traits = { # leading\n\twarmonger # earned in 1936\n}\n"
+    assert set_block(source, "traits", "warmonger honest") == (
+        "traits = { # leading\n\twarmonger # earned in 1936\n\thonest\n}\n"
+    )
+
+
+def test_a_one_line_list_stays_on_one_line() -> None:
+    assert set_block("events = { a.1 b.1 }\n", "events", "a.1 b.1 c.1") == "events = { a.1 b.1 c.1 }\n"
+    assert set_block("events = { a.1 b.1 }\n", "events", "b.1") == "events = { b.1 }\n"
+
+
+def test_a_removed_entry_takes_the_comment_on_its_line_with_it() -> None:
+    source = "list = {\n\ta\n\tb # only about b\n\t# about what follows\n\tc\n}\n"
+    assert set_block(source, "list", "a c") == (
+        "list = {\n\ta\n\t# about what follows\n\tc\n}\n"
+    )
+
+
+def test_entries_that_share_lines_keep_sharing_them() -> None:
+    source = "provinces = {\n\t1 2 3 4\n\t5 6\n}\n"
+    assert set_block(source, "provinces", "1 2 4 5 6 9") == "provinces = {\n\t1 2 4\n\t5 6 9\n}\n"
+
+
+def test_one_changed_statement_leaves_the_others_byte_identical() -> None:
+    source = (
+        "reward = {\n"
+        "\tadd_stability   =   0.10 # odd spacing stays\n"
+        "\t# a free comment\n"
+        "\tif = {\n"
+        "\t\tlimit = { has_war = yes } # why\n"
+        "\t\tadd_political_power = 5\n"
+        "\t}\n"
+        "}\n"
+    )
+    new = "add_stability = 0.1\nif = {\n\tlimit = { has_war = yes }\n\tadd_political_power = 50\n}"
+    assert set_block(source, "reward", new) == source.replace(
+        "add_political_power = 5\n", "add_political_power = 50\n"
+    )
+
+
+def test_comments_count_as_soon_as_the_new_body_has_any() -> None:
+    source = "effect = {\n\tadd_stability = 1 # old\n\tadd_pp = 2 # stays\n}\n"
+    # Changed and dropped comments are written; the rest keeps its bytes.
+    assert set_block(source, "effect", "add_stability = 1 # new\nadd_pp = 2 # stays") == (
+        source.replace("# old", "# new")
+    )
+    assert set_block(source, "effect", "add_stability = 1\nadd_pp = 2 # stays") == (
+        source.replace(" # old", "")
+    )
+    # A body without comments says nothing about the ones in the file.
+    assert set_block(source, "effect", "add_stability = 1\nadd_pp = 2") == source
+    assert set_block(source, "effect", "add_stability = 3\nadd_pp = 2") == (
+        source.replace("add_stability = 1", "add_stability = 3")
+    )
+    # Unless the caller says that comments count.
+    assert set_block(source, "effect", "add_stability = 1\nadd_pp = 2", comments=True) == (
+        "effect = {\n\tadd_stability = 1\n\tadd_pp = 2\n}\n"
+    )
+
+
+def test_same_block_body() -> None:
+    assert same_block_body("x = 1 # note", "x = 1.0")
+    assert same_block_body("x = 1 # note", "x = 1 # note")
+    assert not same_block_body("x = 1 # note", "x = 1 # other")
+    assert not same_block_body("x = 1 # note", "x = 1", comments=True)
+    assert not same_block_body("x = 1", "x = 2")
+    assert block_bodies_equivalent("x = 1 # a", "x = 1 # a", comments=True)
+    assert not block_bodies_equivalent("x = 1 # a", "x = 1 # b", comments=True)
+
+
+def test_sync_body_leaves_kept_statements_alone() -> None:
+    body = "\n\tname = a # the good one\n\t# lead\n\tadd_stability = 1 # old\n\tai_chance = { factor = 1 }\n"
+    assert sync_body(body, "# lead\nadd_stability = 2 # old", keep=("name", "ai_chance")) == (
+        body.replace("add_stability = 1", "add_stability = 2")
+    )
+    assert statement_spans("a = 1 # x\n# free\nb = 2\n", keep=("b",)) == [(0, 9), (10, 16)]
+
+
+def test_sync_body_gives_up_instead_of_writing_something_else() -> None:
+    # A comment cannot go into a one-line body: the brace would be commented out.
+    assert sync_body(" a = 1 ", "a = 1 # note") is None
+    assert sync_body(" a = { ", "a = 1") is None
+    # set_block then replaces the body as a whole.
+    assert set_block("x = { a = 1 }\n", "x", "a = 1 # note") == "x = {\n\ta = 1 # note\n}\n"
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_sync_body_keeps_the_line_endings(newline: str) -> None:
+    source = "x = {\n\ta = 1 # one\n\t# free\n\tb = 2\n}\n".replace("\n", newline)
+    result = set_block(source, "x", "a = 1 # uno\n# free\nb = 2\nc = 3")
+    assert result == "x = {\n\ta = 1 # uno\n\t# free\n\tb = 2\n\tc = 3\n}\n".replace("\n", newline)
+
+
+def test_a_multi_line_replacement_is_indented_like_the_statement() -> None:
+    assert set_block("\ta = 1\n\tb = 2\n", "a", "x = 1\ny = 2") == (
+        "\ta = {\n\t\tx = 1\n\t\ty = 2\n\t}\n\tb = 2\n"
+    )
+    source = "\tdec = {\n\t\tcost = 5\n\t}\n"
+    span = assignment_spans(source, "dec")[0]
+    assert replace_assignment(source, span, "dec = {\n\tcost = 50\n}") == (
+        "\tdec = {\n\t\tcost = 50\n\t}\n"
+    )
+    # Text that already carries the indentation is not indented twice.
+    assert replace_assignment(source, span, "dec = {\n\t\tcost = 50\n\t}") == (
+        "\tdec = {\n\t\tcost = 50\n\t}\n"
+    )
+
+
+def test_the_first_statement_of_an_empty_block_gets_its_own_line() -> None:
+    assert append_assignment("\n\t", 'name = "John Doe"') == '\n\t\tname = "John Doe"\n\t'
+    assert append_assignment("\n", "dec = {\n\tcost = 15\n}") == "\n\tdec = {\n\t\tcost = 15\n\t}\n"
+    assert append_assignment("\r\n\t", "a = 1") == "\r\n\t\ta = 1\r\n\t"
+    assert append_assignment(" ", "a = 1") == " a = 1 "
+
+
+def test_removing_a_statement_leaves_no_line_of_spaces() -> None:
+    assert set_scalar("a = 1\nb = 2   \nc = 3\n", "b", None) == "a = 1\nc = 3\n"

@@ -8,24 +8,28 @@ without forcing agents to manually write common/on_actions files.
 Reading is a query of the syntax tree in :mod:`hoi4.syntax`. A hook may repeat
 ``events``, ``random_events`` and ``effect`` blocks (the game runs all of
 them); the model joins them in source order. Writing compares the model with
-the hook's source text and touches only the blocks whose content changed, so
-comments, unknown keys and repeated blocks of unchanged fields stay
-byte-identical. A changed field is written into its first block and its other
-blocks are removed.
+the hook's source text and touches only what changed, so comments, unknown
+keys and repeated blocks stay byte-identical. An event list is edited entry by
+entry: an entry that stays keeps its block and its comment, a dropped one is
+cut out and a new one goes into the last block. Only a reordered list, or a
+changed ``effect``, is written into the first block with the other blocks
+removed.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 from .patching import (
     AssignmentSpan,
     append_assignment,
-    block_bodies_equivalent,
     dedent_block_body,
     replace_assignment,
     replace_assignment_body,
+    same_block_body,
     set_block,
+    sync_body,
 )
 from .script import normalize_block_body
 from .syntax import Assignment, Block, Scalar, parse
@@ -194,17 +198,21 @@ def _render_random_events(values: list[str]) -> str:
     a weight.
     """
 
-    lines: list[str] = []
+    return "\n".join(" = ".join(entry) for entry in _weighted_entries(values))
+
+
+def _weighted_entries(values: list[str]) -> list[tuple[str, ...]]:
+    entries: list[tuple[str, ...]] = []
     index = 0
     while index < len(values):
         value = values[index]
         if _is_number(value) and index + 1 < len(values):
-            lines.append(f"{value} = {values[index + 1]}")
+            entries.append((value, values[index + 1]))
             index += 2
         else:
-            lines.append(value)
+            entries.append((value,))
             index += 1
-    return "\n".join(lines)
+    return entries
 
 
 def _is_number(value: str) -> bool:
@@ -224,15 +232,68 @@ def _set_field(body: str, key: str, value: str | None) -> str:
     return set_block(body, key, value)
 
 
+def _set_entries(body: str, key: str, wanted: list[tuple[str, ...]]) -> str:
+    """Make the ``key`` blocks of a hook hold ``wanted``, entry by entry.
+
+    Entries that stay keep their block, spelling and comment; new ones go into
+    the last block that still has entries. A changed order cannot be expressed
+    that way and rewrites the list into the first block.
+    """
+
+    rendered = "\n".join(" = ".join(entry) for entry in wanted)
+    blocks = _field_blocks(parse(body).root, key)
+    remaining = Counter(wanted)
+    kept: list[list[tuple[str, ...]]] = []
+    for item in blocks:
+        assert type(item.value) is Block
+        staying: list[tuple[str, ...]] = []
+        for entry in item.value.items:
+            if type(entry) is Scalar:
+                held: tuple[str, ...] = (entry.value,)
+            elif type(entry) is Assignment and type(entry.value) is Scalar:
+                held = (entry.name, entry.value.value)
+            else:
+                return _set_field(body, key, rendered or None)
+            if remaining[held] > 0:
+                remaining[held] -= 1
+                staying.append(held)
+        kept.append(staying)
+    flat = [held for staying in kept for held in staying]
+    unplaced = Counter(flat)
+    added: list[tuple[str, ...]] = []
+    for target in wanted:
+        if unplaced[target] > 0:
+            unplaced[target] -= 1
+        else:
+            added.append(target)
+    if not flat or flat + added != wanted:
+        return _set_field(body, key, rendered or None)
+    last = max(index for index, staying in enumerate(kept) if staying)
+    kept[last] = kept[last] + added
+    patched = body
+    for item, staying in reversed(list(zip(blocks, kept))):
+        span = _span(item)
+        if not staying:
+            patched = replace_assignment(patched, span, None)
+            continue
+        assert span.body_start is not None and span.body_end is not None
+        synced = sync_body(
+            patched[span.body_start : span.body_end],
+            "\n".join(" = ".join(entry) for entry in staying),
+        )
+        if synced is None:
+            return _set_field(body, key, rendered or None)
+        patched = replace_assignment_body(patched, span, synced)
+    return patched
+
+
 def _patch_on_action_body(action: OnAction, body: str) -> str:
     effect, events, random_events = _read_fields(parse(body).root)
     if action.events != events:
-        body = _set_field(body, "events", "\n".join(action.events) or None)
+        body = _set_entries(body, "events", [(event_id,) for event_id in action.events])
     if action.random_events != random_events:
-        body = _set_field(
-            body, "random_events", _render_random_events(action.random_events) or None
-        )
-    if not block_bodies_equivalent(effect, action.effect):
+        body = _set_entries(body, "random_events", _weighted_entries(action.random_events))
+    if not same_block_body(effect, action.effect):
         body = _set_field(body, "effect", normalize_block_body(action.effect) or None)
     return body
 

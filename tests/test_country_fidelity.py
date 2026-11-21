@@ -472,3 +472,42 @@ def test_vanilla_character_ids_with_non_ascii_letters_can_be_edited(tmp_path: Pa
     )
     with pytest.raises(ValueError):
         mod.get_character("bad id")
+
+
+# ── a list or mapping gets one more entry, nothing else changes ──
+
+
+COMMENTED_HISTORY = (
+    "capital = 1\n"
+    "add_ideas = { # starting spirits\n\tfirst_idea # the first\n\t# laws\n\tsecond_idea\n}\n"
+    "set_technology = {\n\tinfantry_weapons = 1 # basics\n\ttech_support = 1\n}\n"
+)
+
+
+def test_adding_an_idea_and_a_technology_keeps_the_comments_in_both_blocks(tmp_path: Path) -> None:
+    _write(tmp_path / "common/country_tags/00_countries.txt", 'ABC = "countries/Abcland.txt"\n')
+    _write(tmp_path / "common/countries/Abcland.txt", "color = { 1 2 3 }\n")
+    history = _write(tmp_path / "history/countries/ABC - Abcland.txt", COMMENTED_HISTORY)
+    mod = Mod(tmp_path)
+    country = mod.get_country("ABC")
+    mod.update_country(
+        "ABC",
+        ideas=[*country.ideas, "third_idea"],
+        technologies={**country.technologies, "gw_artillery": 1},
+    )
+    mod.save(require_changes=True)
+    assert history.read_text(encoding="utf-8") == COMMENTED_HISTORY.replace(
+        "\tsecond_idea\n", "\tsecond_idea\n\tthird_idea\n"
+    ).replace("\ttech_support = 1\n", "\ttech_support = 1\n\tgw_artillery = 1\n")
+
+
+def test_adding_a_trait_keeps_the_comments_in_the_list(tmp_path: Path) -> None:
+    path = _write(tmp_path / "common/characters/ABC.txt", CHARACTERS)
+    mod = Mod(tmp_path)
+    assert mod.update_character_role(
+        "ABC_rommel", "field_marshal", traits=["armor_officer", "trickster"]
+    )
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == CHARACTERS.replace(
+        "\t\t\t\tarmor_officer\n", "\t\t\t\tarmor_officer\n\t\t\t\ttrickster\n"
+    )

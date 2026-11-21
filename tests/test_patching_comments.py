@@ -56,4 +56,11 @@ def test_comment_free_replacements_stay_compact(body):
 def test_semantically_unchanged_source_is_byte_identical():
     source = "trigger = {\r\n  # retained\r\n  always = yes }\r\n"
     assert set_block(source, "trigger", "always = yes") == source
-    assert set_block(source, "trigger", "# new comment\nalways = yes") == source
+    assert set_block(source, "trigger", "# retained\nalways = yes") == source
+
+
+def test_a_changed_comment_is_written():
+    source = "trigger = {\r\n  # retained\r\n  always = yes }\r\n"
+    assert set_block(source, "trigger", "# new comment\nalways = yes") == (
+        "trigger = {\r\n  # new comment\r\n  always = yes }\r\n"
+    )

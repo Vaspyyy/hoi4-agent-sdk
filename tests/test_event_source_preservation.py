@@ -55,10 +55,22 @@ def test_unrelated_edits_preserve_conditional_descriptions(tmp_path, operation):
         assert event.options[0].effect == "add_political_power = 2"
 
 
-@pytest.mark.parametrize("replacement", ["source.replacement", ""])
-def test_explicit_description_replaces_all_conditional_alternatives(tmp_path, replacement):
+def test_plain_description_keeps_the_conditional_alternatives(tmp_path):
     mod, path = make_mod(tmp_path)
-    mod.update_event("source.1", description=replacement)
+    mod.update_event("source.1", description="source.replacement")
+    mod.save(require_changes=True)
+    # The plain key is the fallback, so it goes after the conditional ones.
+    assert path.read_text() == SOURCE.replace(
+        "    desc = { trigger = { tag = FRA } text = source.french }\n",
+        "    desc = { trigger = { tag = FRA } text = source.french }\n"
+        "    desc = source.replacement\n",
+    )
+
+
+@pytest.mark.parametrize("replacement", ["source.replacement", ""])
+def test_an_empty_conditional_list_removes_the_alternatives(tmp_path, replacement):
+    mod, path = make_mod(tmp_path)
+    mod.update_event("source.1", description=replacement, conditional_descriptions=[])
     mod.save(require_changes=True)
     saved = path.read_text()
     assert "source.german" not in saved

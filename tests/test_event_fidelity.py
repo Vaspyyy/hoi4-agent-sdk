@@ -186,16 +186,34 @@ def test_adding_and_removing_conditional_titles(tmp_path):
     assert path.read_text(encoding="utf-8") == PROBE
 
 
-def test_plain_title_update_replaces_conditional_alternatives(tmp_path):
+def test_plain_title_update_keeps_conditional_alternatives(tmp_path):
     mod, path = make_mod(tmp_path, PROBE)
     mod.update_event("probe.1", title="probe.1.t_new")
-    assert mod.get_event("probe.1").conditional_titles == []
+    assert mod.get_event("probe.1").conditional_titles == [
+        EventText("probe.1.t_a", "has_war = yes")
+    ]
     mod.save(require_changes=True)
-    text = path.read_text(encoding="utf-8")
-    assert "probe.1.t_a" not in text
-    assert "\ttitle = { text = probe.1.t_new }\n" in text
-    assert text.count("desc = probe.1.d") == 1
-    assert text.count("option = { name = probe.1.a }") == 1
+    assert path.read_text(encoding="utf-8") == PROBE.replace(
+        "title = { text = probe.1.t_b }", "title = { text = probe.1.t_new }"
+    )
+
+
+def test_plain_option_name_update_keeps_conditional_names(tmp_path):
+    mod, path = make_mod(tmp_path, CONDITIONAL)
+    mod.update_event_option("cond.1", 0, name="cond.1.a2")
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == CONDITIONAL.replace(
+        "\t\tname = cond.1.a\n", "\t\tname = cond.1.a2\n"
+    )
+
+
+def test_an_empty_conditional_list_removes_the_alternatives(tmp_path):
+    mod, path = make_mod(tmp_path, PROBE)
+    mod.update_event("probe.1", conditional_titles=[])
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == PROBE.replace(
+        "\ttitle = {\n\t\ttext = probe.1.t_a\n\t\ttrigger = { has_war = yes }\n\t}\n", ""
+    )
 
 
 def test_option_name_block_survives_effect_edit(tmp_path):
@@ -272,3 +290,67 @@ def test_validation_accepts_conditional_only_titles_and_descriptions(tmp_path):
     assert any(
         error.code == "event_conditional_text_missing" for error in validate_event(event)
     )
+
+
+COMMENTED_OPTION = """add_namespace = ev
+country_event = {
+\tid = ev.1
+\ttitle = ev.1.t
+\ttrigger = {
+\t\thas_war = yes # why
+\t}
+\toption = {
+\t\tname = ev.1.a # the good one
+\t\t# lead comment
+\t\tai_chance = { factor = 1 }
+\t\tadd_stability = 0.1 # stab
+\t}
+}
+"""
+
+
+def test_editing_an_option_effect_never_copies_its_comments(tmp_path):
+    mod, path = make_mod(tmp_path, COMMENTED_OPTION)
+    expected = COMMENTED_OPTION
+    for power in (1, 2, 3):
+        option = mod.get_event("ev.1").options[0]
+        mod.update_event_option(
+            "ev.1", 0, effect=option.effect + f"\nadd_political_power = {power}"
+        )
+        mod.save(require_changes=True)
+        expected = expected.replace("\t}\n}\n", f"\t\tadd_political_power = {power}\n\t}}\n}}\n")
+        assert path.read_text(encoding="utf-8") == expected
+        mod.reload()
+        assert mod.preview() == ""
+
+
+def test_a_new_option_effect_keeps_the_comment_of_a_changed_statement(tmp_path):
+    mod, path = make_mod(tmp_path, COMMENTED_OPTION)
+    mod.update_event_option("ev.1", 0, effect="add_stability = 0.2")
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == COMMENTED_OPTION.replace(
+        "add_stability = 0.1", "add_stability = 0.2"
+    )
+
+
+def test_the_comment_on_the_name_line_is_not_part_of_the_effect(tmp_path):
+    mod, _ = make_mod(tmp_path, COMMENTED_OPTION)
+    assert mod.get_event("ev.1").options[0].effect == "# lead comment\nadd_stability = 0.1 # stab"
+
+
+def test_a_comment_only_trigger_edit_is_written(tmp_path):
+    mod, path = make_mod(tmp_path, COMMENTED_OPTION)
+    mod.update_event("ev.1", trigger="has_war = yes # because")
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == COMMENTED_OPTION.replace("# why", "# because")
+
+
+def test_a_picture_that_needs_quotes_gets_them(tmp_path):
+    mod, path = make_mod(tmp_path, PROBE)
+    mod.update_event("probe.1", picture="GFX a#b")
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == PROBE.replace(
+        "picture = GFX_report_event_generic", 'picture = "GFX a#b"'
+    )
+    mod.reload()
+    assert mod.get_event("probe.1").picture == "GFX a#b"

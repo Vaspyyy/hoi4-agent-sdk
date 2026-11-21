@@ -36,16 +36,13 @@ def _normalize_event_option(option: EventOption) -> EventOption:
     return option
 
 
-# Setting the plain key through the facade replaces every alternative, unless
-# the caller passes the conditional list too.
-_EVENT_TEXT_LISTS = {"title": "conditional_titles", "description": "conditional_descriptions"}
+_EVENT_TEXT_LISTS = ("conditional_titles", "conditional_descriptions")
 
 
-def _replace_conditional_texts(kwargs: dict, lists: dict[str, str]) -> None:
-    for plain, conditional in lists.items():
-        if plain in kwargs and conditional not in kwargs:
-            kwargs[conditional] = []
-    for conditional in lists.values():
+def _normalize_conditional_texts(kwargs: dict, lists: tuple[str, ...]) -> None:
+    """Turn the entries of a conditional text list into ``EventText`` objects."""
+
+    for conditional in lists:
         if conditional in kwargs:
             kwargs[conditional] = [_event_text(entry) for entry in kwargs[conditional] or ()]
 
@@ -145,9 +142,10 @@ class EventsLayer(CoreLayer):
     def update_event(self, event_id: str, **kwargs) -> bool:
         """Patch fields of an event; only the changed fields are rewritten on save.
 
-        Passing ``title`` (or ``description``) without ``conditional_titles``
-        (or ``conditional_descriptions``) replaces every conditional
-        alternative with the one plain key. Pass both to keep or change them.
+        ``title`` and ``description`` are the plain keys the game falls back
+        to. Setting one leaves the conditional alternatives alone; change
+        those with ``conditional_titles`` / ``conditional_descriptions``
+        (an empty list removes them).
         """
         event = self._events.get(event_id)
         if event is None:
@@ -167,7 +165,7 @@ class EventsLayer(CoreLayer):
                 kwargs[key] = normalize_block_body(kwargs[key])
         if "options" in kwargs and isinstance(kwargs["options"], list):
             kwargs["options"] = [_normalize_event_option(option) for option in kwargs["options"]]
-        _replace_conditional_texts(kwargs, _EVENT_TEXT_LISTS)
+        _normalize_conditional_texts(kwargs, _EVENT_TEXT_LISTS)
         _set_fields(event, kwargs, allow_path=True)
         event.touched_fields.update(kwargs)
         event.touched = True
@@ -245,7 +243,7 @@ class EventsLayer(CoreLayer):
         for key in ("trigger", "ai_chance"):
             if key in kwargs and isinstance(kwargs[key], str):
                 kwargs[key] = normalize_block_body(kwargs[key])
-        _replace_conditional_texts(kwargs, {"name": "conditional_names"})
+        _normalize_conditional_texts(kwargs, ("conditional_names",))
         assert event_option is not None
         _set_fields(event_option, kwargs)
         _normalize_event_option(event_option)

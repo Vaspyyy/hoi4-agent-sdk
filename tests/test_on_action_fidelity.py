@@ -113,3 +113,56 @@ def test_hook_in_second_root_can_be_edited(tmp_path):
     mod.update_on_action("on_weekly", events=["weekly.2"])
     mod.save(require_changes=True)
     assert path.read_text(encoding="utf-8") == SOURCE.replace("weekly.1", "weekly.2")
+
+
+REPEATED = """on_actions = {
+\ton_startup = {
+\t\tevents = { a.1 }
+\t\tevents = { b.1 # keep me
+\t\t}
+\t\teffect = { add_stability = 1 # old
+\t\t}
+\t}
+}
+"""
+
+
+def _repeated(tmp_path: Path) -> tuple[Mod, Path]:
+    path = tmp_path / "common" / "on_actions" / "repeated.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(REPEATED, encoding="utf-8")
+    return Mod(tmp_path), path
+
+
+def test_adding_an_event_keeps_the_repeated_blocks_and_their_comments(tmp_path):
+    mod, path = _repeated(tmp_path)
+    mod.update_on_action("on_startup", events=["a.1", "b.1", "c.1"])
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == REPEATED.replace(
+        "b.1 # keep me\n", "b.1 # keep me\n\t\t\tc.1\n"
+    )
+    mod.reload()
+    assert mod.get_on_action("on_startup").events == ["a.1", "b.1", "c.1"]
+
+
+def test_removing_an_event_cuts_only_that_entry(tmp_path):
+    mod, path = _repeated(tmp_path)
+    mod.update_on_action("on_startup", events=["b.1"])
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == REPEATED.replace("\t\tevents = { a.1 }\n", "")
+
+
+def test_a_comment_only_effect_edit_is_written(tmp_path):
+    mod, path = _repeated(tmp_path)
+    mod.update_on_action("on_startup", effect="add_stability = 1 # new")
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == REPEATED.replace("# old", "# new")
+
+
+def test_a_weighted_entry_is_added_next_to_the_commented_ones(tmp_path):
+    mod, path = make_mod(tmp_path)
+    mod.update_on_action("on_daily", random_events=["10", "daily.1", "90", "0", "5", "daily.2"])
+    mod.save(require_changes=True)
+    assert path.read_text(encoding="utf-8") == SOURCE.replace(
+        "\t\t\t90 = 0\n", "\t\t\t90 = 0\n\t\t\t5 = daily.2\n"
+    )

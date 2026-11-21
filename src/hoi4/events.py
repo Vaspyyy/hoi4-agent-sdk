@@ -28,13 +28,15 @@ from typing import Optional
 from .patching import (
     AssignmentSpan,
     append_assignment,
-    block_bodies_equivalent,
     dedent_block_body,
     replace_assignment,
     replace_assignment_body,
+    same_block_body,
     scalar_values_equivalent,
     set_block,
     set_scalar,
+    statement_spans,
+    sync_body,
 )
 from .script import normalize_block_body
 from .syntax import Assignment, Block, Scalar, Tagged, parse, quote
@@ -181,14 +183,22 @@ def _read_text_entries(block: Block, key: str) -> tuple[str, list[EventText]]:
 def _option_effect(body: str) -> str:
     """The option's script without its ``name``, ``ai_chance`` and ``trigger``."""
 
-    known = [
-        _span(item)
-        for item in _parse_body(body).items
-        if type(item) is Assignment and item.name in _OPTION_KNOWN_KEYS
-    ]
-    for span in reversed(known):
-        body = replace_assignment(body, span, None)
-    lines = [line.strip() for line in body.strip().splitlines()]
+    spans = statement_spans(body, keep=_OPTION_KNOWN_KEYS)
+    if spans is None:
+        # Malformed body: everything that is not one of the known statements.
+        known = [
+            _span(item)
+            for item in _parse_body(body).items
+            if type(item) is Assignment and item.name in _OPTION_KNOWN_KEYS
+        ]
+        for span in reversed(known):
+            body = replace_assignment(body, span, None)
+        pieces = [body]
+    else:
+        # The effect statements with their comments. A comment on the line of
+        # ``name``, ``ai_chance`` or ``trigger`` belongs to that statement.
+        pieces = [body[start:end] for start, end in spans]
+    lines = [line.strip() for piece in pieces for line in piece.strip().splitlines()]
     return normalize_block_body("\n".join(lines).strip())
 
 
@@ -242,7 +252,7 @@ def serialize_event(event: Event) -> str:
         parts.append(f"\t{line}")
     for line in _render_text_entries("desc", event.description, event.conditional_descriptions):
         parts.append(f"\t{line}")
-    parts.append(f"\tpicture = {event.picture}")
+    parts.append(f"\tpicture = {quote(event.picture)}")
 
     if event.is_triggered_only:
         parts.append("\tis_triggered_only = yes")
@@ -355,7 +365,9 @@ def _patch_event_body(event: Event, body: str) -> str:
     )
     anchors: tuple[str, ...] = ("desc", "title", "id")
     if event.picture != source.picture:
-        body = _set_scalar_near(body, "picture", event.picture or None, anchors)
+        body = _set_scalar_near(
+            body, "picture", quote(event.picture) if event.picture else None, anchors
+        )
     anchors = ("picture", *anchors)
     if event.is_triggered_only != source.is_triggered_only:
         body = _set_scalar_near(
@@ -370,7 +382,7 @@ def _patch_event_body(event: Event, body: str) -> str:
         ("immediate", event.immediate, source.immediate),
         ("mean_time_to_happen", event.mean_time_to_happen, source.mean_time_to_happen),
     ):
-        if not block_bodies_equivalent(old, value):
+        if not same_block_body(old, value):
             body = _set_block_before_options(body, key, value or None)
     return _patch_options(event.options, body)
 
@@ -413,21 +425,33 @@ def _patch_options(options: list[EventOption], body: str) -> str:
 def _patch_option_body(option: EventOption, body: str) -> str:
     source = _option_from_block(_parse_body(body))
     body = _patch_text_entries(body, "name", option.name, option.conditional_names, ())
-    if not block_bodies_equivalent(source.ai_chance, option.ai_chance):
+    if not same_block_body(source.ai_chance, option.ai_chance):
         body = set_block(body, "ai_chance", option.ai_chance or None)
-    if not block_bodies_equivalent(source.trigger, option.trigger):
+    if not same_block_body(source.trigger, option.trigger):
         body = set_block(body, "trigger", option.trigger or None)
-    if not block_bodies_equivalent(source.effect, option.effect):
-        effect_items = [
-            _span(item)
+    if not same_block_body(source.effect, option.effect):
+        # The effect is every statement and comment of the option that is not
+        # one of the known keys: change it statement by statement.
+        synced = sync_body(body, option.effect, keep=_OPTION_KNOWN_KEYS)
+        if synced is None:
+            synced = _replace_option_effect(body, option.effect)
+        body = synced
+    return body
+
+
+def _replace_option_effect(body: str, effect: str) -> str:
+    """Cut the whole effect (statements and their comments) and write the new one."""
+
+    spans = statement_spans(body, keep=_OPTION_KNOWN_KEYS)
+    if spans is None:
+        spans = [
+            (item.start, item.end)
             for item in _parse_body(body).items
             if not (type(item) is Assignment and item.name in _OPTION_KNOWN_KEYS)
         ]
-        for span in reversed(effect_items):
-            body = replace_assignment(body, span, None)
-        if option.effect:
-            body = append_assignment(body, option.effect)
-    return body
+    for start, end in reversed(spans):
+        body = replace_assignment(body, AssignmentSpan("", start, end, start, end, False), None)
+    return append_assignment(body, effect) if effect else body
 
 
 def _text_entries_equal(left: list[EventText], right: list[EventText]) -> bool:
@@ -437,7 +461,7 @@ def _text_entries_equal(left: list[EventText], right: list[EventText]) -> bool:
 
 
 def _text_entry_equal(left: EventText, right: EventText) -> bool:
-    return left.text == right.text and block_bodies_equivalent(left.trigger, right.trigger)
+    return left.text == right.text and same_block_body(right.trigger, left.trigger)
 
 
 def _patch_text_entries(
@@ -517,7 +541,7 @@ def _patch_conditional_entry(body: str, item: Assignment, entry: EventText) -> s
         inner = set_scalar(inner, "text", quote(entry.text))
     trigger = _entry_trigger(item)
     old_trigger = dedent_block_body(trigger.body) if trigger is not None else ""
-    if not block_bodies_equivalent(old_trigger, entry.trigger):
+    if not same_block_body(old_trigger, entry.trigger):
         inner = set_block(inner, "trigger", normalize_block_body(entry.trigger) or None)
     return replace_assignment_body(body, span, inner)
 
