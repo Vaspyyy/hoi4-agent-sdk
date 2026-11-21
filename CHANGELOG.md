@@ -141,6 +141,21 @@ All notable changes to this project are documented here. The format follows
 
 - Editing one field of a focus deleted its conditional `icon = { ... }` blocks
   and truncated `cost = 7.2` to `7`.
+- Editing the `icon = { ... }` blocks of a focus that had no plain `icon`
+  added a stale `icon = GFX_...` line. The icon a block-only focus reports is
+  now never written back; a plain `icon` is written only when you set it, and
+  setting it to `""` removes it.
+- Adding a prerequisite, mutually exclusive group, icon block or
+  `shared_focus` after a line such as `prerequisite = { focus = A } # note`
+  moved the comment (or the rest of the line) onto the new statement. The new
+  statement now gets its own line below.
+- A `focus_tree` without its own `id` was written twice on save. Unnamed trees
+  are now known by the file name (`name`, then `name_2`, ...) both when
+  loading and when saving, and are patched in place.
+- Focus and focus-tree strings (icons, ids, `relative_position_id`,
+  `will_lead_to_war_with`, prerequisite and search filter entries,
+  `shared_focus`) were written without quotes, so a value with a space or a
+  `#` produced broken script. They are now quoted when they need it.
 - An event with conditional `title = { ... }` blocks read its title as `{`,
   and any edit deleted the first block and duplicated other lines.
 - An idea with only `equipment_bonus`, `targeted_modifier`, `rule` or

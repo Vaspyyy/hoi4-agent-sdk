@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from hoi4 import Mod
-from hoi4.focus import load_focus_trees, serialize_focus_file
+from hoi4.focus import load_focus_trees, serialize_focus_file, serialize_focus_tree
 from hoi4.focus_layout import resolve_focus_positions, visual_overlap_issues
 from hoi4.types import Focus, FocusTree
 from hoi4.validation import validate_focus_tree
@@ -484,3 +484,282 @@ def test_insert_into_one_line_focus_keeps_comment_lines_apart(tmp_path: Path) ->
     assert focus.x == 0
     assert focus.icon_names()[-2:] == ["GFX_x", "GFX_y"]
     assert "focus = { id = A icon = { GFX_x = yes } icon = {" in path.read_text()
+
+
+# ── a stand-in icon is never written back ────────────────────────
+
+BLOCK_ICON_FOCUS = """\
+focus_tree = {
+	id = t1
+	focus = {
+		id = f1
+		icon = { trigger = { has_government = fascism } value = GFX_old }
+		x = 0
+	}
+}
+"""
+
+
+def test_icon_block_edit_on_block_only_focus_adds_no_plain_icon(tmp_path: Path) -> None:
+    path = _write(tmp_path, BLOCK_ICON_FOCUS)
+    mod = Mod(tmp_path)
+    focus = mod.get_focus("t1", "f1")
+    assert focus is not None and focus.icon == "GFX_old"
+    mod.update_focus(
+        "t1", "f1", icon_blocks=["trigger = { has_government = fascism } value = GFX_new"]
+    )
+    mod.save()
+    assert path.read_text() == BLOCK_ICON_FOCUS.replace("GFX_old", "GFX_new")
+
+
+def test_plain_icon_set_on_block_only_focus_goes_after_the_block(tmp_path: Path) -> None:
+    path = _write(tmp_path, BLOCK_ICON_FOCUS)
+    mod = Mod(tmp_path)
+    mod.update_focus("t1", "f1", icon="GFX_plain")
+    mod.save()
+    assert path.read_text() == BLOCK_ICON_FOCUS.replace(
+        "value = GFX_old }\n", "value = GFX_old }\n\t\ticon = GFX_plain\n"
+    )
+
+
+def test_icon_and_icon_blocks_changed_in_one_call(tmp_path: Path) -> None:
+    path = _write(tmp_path, BLOCK_ICON_FOCUS)
+    mod = Mod(tmp_path)
+    mod.update_focus(
+        "t1",
+        "f1",
+        icon="GFX_plain",
+        icon_blocks=["trigger = { has_government = fascism } value = GFX_new"],
+    )
+    mod.save()
+    assert path.read_text() == BLOCK_ICON_FOCUS.replace(
+        "value = GFX_old }\n", "value = GFX_new }\n\t\ticon = GFX_plain\n"
+    )
+
+
+def test_clearing_the_icon_removes_only_the_plain_statement(tmp_path: Path) -> None:
+    path = _write(tmp_path, ICON_FOCUS)
+    mod = Mod(tmp_path)
+    mod.update_focus("TST_tree", "TST_a", icon="")
+    mod.save()
+    assert path.read_text() == ICON_FOCUS.replace("\t\ticon = GFX_goal_generic_peace\n", "")
+    focus = Mod(tmp_path).get_focus("TST_tree", "TST_a")
+    assert focus is not None and focus.icon == "GFX_goal_generic_war"
+
+
+def test_first_icon_block_on_a_focus_without_icon_adds_no_default_icon(tmp_path: Path) -> None:
+    text = "focus_tree = {\n\tid = t1\n\tfocus = {\n\t\tid = f1\n\t\tx = 0\n\t}\n}\n"
+    path = _write(tmp_path, text)
+    mod = Mod(tmp_path)
+    mod.update_focus("t1", "f1", icon_blocks=["GFX_a = yes"])
+    mod.save()
+    assert path.read_text() == text.replace("x = 0\n", "x = 0\n\t\ticon = { GFX_a = yes }\n")
+
+
+# ── a new statement does not steal the rest of the line ─────────
+
+
+def _prerequisite_focus(line: str) -> str:
+    return (
+        "focus_tree = {\n\tid = t1\n\tfocus = { id = f0 }\n\tfocus = { id = f2 }\n"
+        f"\tfocus = {{\n\t\tid = f1\n{line}\t\ty = 1\n\t}}\n}}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "trailer", [" # unlocks f1", " x = 1", "\t# tab before the comment", " x = 1 # both"]
+)
+def test_new_prerequisite_goes_on_its_own_line_after_the_rest(
+    tmp_path: Path, trailer: str
+) -> None:
+    text = _prerequisite_focus(f"\t\tprerequisite = {{ focus = f0 }}{trailer}\n")
+    path = _write(tmp_path, text)
+    mod = Mod(tmp_path)
+    mod.update_focus("t1", "f1", prerequisites=[["f0"], ["f2"]])
+    mod.save()
+    assert path.read_text() == text.replace(
+        trailer + "\n", trailer + "\n\t\tprerequisite = { focus = f2 }\n"
+    )
+
+
+def test_new_prerequisite_never_lands_inside_a_block_opened_on_the_line(
+    tmp_path: Path,
+) -> None:
+    line = "\t\tprerequisite = { focus = f0 } bypass = {\n\t\t\thas_war = yes\n\t\t}\n"
+    text = _prerequisite_focus(line)
+    path = _write(tmp_path, text)
+    mod = Mod(tmp_path)
+    mod.update_focus("t1", "f1", prerequisites=[["f0"], ["f2"]])
+    mod.save()
+    assert path.read_text() == text.replace(
+        "{ focus = f0 } bypass", "{ focus = f0 } prerequisite = { focus = f2 } bypass"
+    )
+    focus = Mod(tmp_path).get_focus("t1", "f1")
+    assert focus is not None
+    assert focus.prerequisites == [["f0"], ["f2"]]
+    assert focus.bypass == "has_war = yes"
+
+
+def test_new_shared_focus_reference_keeps_the_comment_on_its_line(tmp_path: Path) -> None:
+    text = "focus_tree = {\n\tid = t1\n\tshared_focus = SH_a # first\n\tfocus = { id = f1 }\n}\n"
+    path = _write(tmp_path, text)
+    mod = Mod(tmp_path)
+    mod.update_focus_tree("t1", shared_focuses=["SH_a", "SH_b"])
+    mod.save()
+    assert path.read_text() == text.replace("# first\n", "# first\n\tshared_focus = SH_b\n")
+
+
+# ── trees without their own id ───────────────────────────────────
+
+
+def test_tree_without_id_is_patched_in_place(tmp_path: Path) -> None:
+    text = "focus_tree = { focus = { id = f1 icon = GFX_a x = 0 y = 0 cost = 10 } }\n"
+    path = _write(tmp_path, text, name="nameless.txt")
+    mod = Mod(tmp_path)
+    assert mod.list_focus_trees() == ["nameless"]
+    mod.update_focus("nameless", "f1", x=2)
+    mod.save()
+    assert path.read_text() == text.replace("x = 0", "x = 2")
+
+
+MANY_TREES = """\
+focus_tree = {
+	focus = { id = a1 x = 0 }
+}
+focus_tree = {
+	id = named
+	focus = { id = b1 x = 0 }
+}
+shared_focus = { id = sh1 x = 0 }
+focus_tree = {
+	focus = { id = c1 x = 0 }
+}
+"""
+
+
+def test_several_trees_with_and_without_id_in_one_file(tmp_path: Path) -> None:
+    path = _write(tmp_path, MANY_TREES, name="many.txt")
+    mod = Mod(tmp_path)
+    assert not mod.load_diagnostics
+    # The container of top-level blocks is ``many``; the unnamed trees skip it.
+    assert sorted(mod.list_focus_trees()) == ["many", "many_2", "many_3", "named"]
+    assert mod.get_focus_tree("many").kind == "file"
+    assert [f.id for f in mod.get_focus_tree("many_2").focuses] == ["a1"]
+    assert [f.id for f in mod.get_focus_tree("many_3").focuses] == ["c1"]
+
+    mod.update_focus("many_2", "a1", x=1)
+    mod.update_focus("named", "b1", x=2)
+    mod.update_focus("many", "sh1", x=3)
+    mod.update_focus("many_3", "c1", x=4)
+    mod.save()
+    assert path.read_text() == (
+        MANY_TREES.replace("a1 x = 0", "a1 x = 1")
+        .replace("b1 x = 0", "b1 x = 2")
+        .replace("sh1 x = 0", "sh1 x = 3")
+        .replace("c1 x = 0", "c1 x = 4")
+    )
+
+
+def test_deleting_an_unnamed_tree_removes_only_that_block(tmp_path: Path) -> None:
+    path = _write(tmp_path, MANY_TREES, name="many.txt")
+    mod = Mod(tmp_path)
+    assert mod.delete_focus_tree("many_3")
+    mod.save()
+    assert path.read_text() == MANY_TREES.replace(
+        "focus_tree = {\n\tfocus = { id = c1 x = 0 }\n}\n", ""
+    )
+
+
+def test_duplicate_tree_id_edits_the_first_block_and_keeps_the_copy() -> None:
+    text = (
+        "focus_tree = {\n\tid = t\n\tfocus = { id = a x = 0 }\n}\n"
+        "focus_tree = {\n\tid = t\n\tfocus = { id = b x = 0 }\n}\n"
+    )
+    first = load_focus_trees(Path("dup.txt"), text=text)[0]
+    first.focuses[0].x = 5
+    first.focuses[0].touched = first.touched = True
+    assert serialize_focus_file([first], text) == text.replace("a x = 0", "a x = 5")
+
+
+# ── written strings are quoted when they need it ────────────────
+
+
+def test_edited_strings_are_quoted_when_needed(tmp_path: Path) -> None:
+    text = """\
+focus_tree = {
+	id = t1
+	shared_focus = SH_a
+	focus = {
+		id = f1
+		icon = GFX_a
+		relative_position_id = f0
+		will_lead_to_war_with = GER
+		prerequisite = { focus = f0 }
+		search_filters = { FOCUS_FILTER_A }
+		x = 0
+	}
+}
+"""
+    path = _write(tmp_path, text)
+    mod = Mod(tmp_path)
+    mod.update_focus(
+        "t1",
+        "f1",
+        icon="GFX a#b",
+        relative_position_id="f 0",
+        will_lead_to_war_with='G"R',
+        prerequisites=[["f 0"]],
+        search_filters=["FILTER A", "FOCUS_FILTER_B"],
+    )
+    mod.update_focus_tree("t1", shared_focuses=["SH a"])
+    mod.save()
+    assert path.read_text() == (
+        text.replace("icon = GFX_a", 'icon = "GFX a#b"')
+        .replace("relative_position_id = f0", 'relative_position_id = "f 0"')
+        .replace("will_lead_to_war_with = GER", 'will_lead_to_war_with = "G\\"R"')
+        .replace("{ focus = f0 }", '{ focus = "f 0" }')
+        .replace("{ FOCUS_FILTER_A }", '{ "FILTER A" FOCUS_FILTER_B }')
+        .replace("shared_focus = SH_a", 'shared_focus = "SH a"')
+    )
+    focus = Mod(tmp_path).get_focus("t1", "f1")
+    assert focus is not None
+    assert (focus.icon, focus.relative_position_id, focus.will_lead_to_war_with) == (
+        "GFX a#b",
+        "f 0",
+        'G"R',
+    )
+    assert focus.prerequisites == [["f 0"]]
+    assert focus.search_filters == ["FILTER A", "FOCUS_FILTER_B"]
+
+
+def test_new_focus_and_tree_quote_strings_when_needed() -> None:
+    focus = Focus(
+        id="f 1",
+        icon="GFX a#b",
+        relative_position_id="f 0",
+        prerequisites=[["f 0", "f2"]],
+        mutually_exclusive=[["f#3"]],
+        search_filters=["FILTER A"],
+        will_lead_to_war_with="G R",
+    )
+    tree = FocusTree(id="my tree", country_tag="TST", focuses=[focus], shared_focuses=["SH a"])
+    written = serialize_focus_tree(tree)
+    for line in (
+        '\tid = "my tree"',
+        '\tshared_focus = "SH a"',
+        '\t\tid = "f 1"',
+        '\t\ticon = "GFX a#b"',
+        '\t\trelative_position_id = "f 0"',
+        '\t\tprerequisite = { focus = "f 0" focus = f2 }',
+        '\t\tmutually_exclusive = { focus = "f#3" }',
+        '\t\tsearch_filters = { "FILTER A" }',
+        '\t\twill_lead_to_war_with = "G R"',
+    ):
+        assert line in written.splitlines()
+    reloaded = load_focus_trees(Path("new.txt"), text=written)[0]
+    assert reloaded.id == "my tree"
+    assert reloaded.shared_focuses == ["SH a"]
+    loaded = reloaded.focuses[0]
+    assert (loaded.id, loaded.icon, loaded.will_lead_to_war_with) == ("f 1", "GFX a#b", "G R")
+    assert loaded.prerequisites == [["f 0", "f2"]]
+    assert loaded.mutually_exclusive == [["f#3"]]
