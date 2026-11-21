@@ -699,13 +699,13 @@ def _script_warnings(
     file_path: str | None = None,
     focus_id: str | None = None,
     event_id: str | None = None,
-    known_tags: set[str] | None = None,
-    root_scope: str = "COUNTRY",
 ) -> list[ValidationError]:
-    """Scope and shape hints for one effect script, read from its syntax tree.
+    """Shape hints for one effect script, read from its syntax tree.
 
-    ``root_scope`` is the scope the script starts in: ``"COUNTRY"`` for
-    focuses and country events, ``"STATE"`` for state events.
+    Hints that depend on the scope a statement runs in (core effects, faction
+    and civil-war advice, unknown country tags) come from the reference
+    checks of ``Mod.validate()`` and ``Mod.validate_effect()``, which know
+    the scope.
     """
 
     errors: list[ValidationError] = []
@@ -727,42 +727,6 @@ def _script_warnings(
 
     statements = list(parse(script).root.walk())
 
-    def at_root_scope(parents: tuple[Assignment, ...]) -> bool:
-        return all(_keeps_scope(parent, parents[:index]) for index, parent in enumerate(parents))
-
-    for item, parents in statements:
-        name = item.name.lower()
-        if name not in {"add_core_of", "remove_core_of"}:
-            continue
-        value = item.scalar or ""
-        scoping = next(
-            (
-                parent
-                for index, parent in reversed(list(enumerate(parents)))
-                if not _keeps_scope(parent, parents[:index])
-            ),
-            None,
-        )
-        if value.isdigit() and scoping is not None and _TAG_SCOPE_RE.match(scoping.name):
-            errors.append(
-                finding(
-                    f"'{scoping.name} = {{ {item.name} = {value} }}' looks country-scoped. "
-                    f"Use '{value} = {{ {item.name} = {scoping.name} }}' for a state-scoped "
-                    "core change.",
-                    "warning",
-                    "country_scope_core_effect",
-                )
-            )
-        elif root_scope == "COUNTRY" and at_root_scope(parents):
-            errors.append(
-                finding(
-                    f"'{item.name}' appears at country scope. Use a state scope such as "
-                    f"'115 = {{ {item.name} = TAG }}' to avoid changing every owned state.",
-                    "warning",
-                    "country_scope_core_effect",
-                )
-            )
-
     if any(item.name.lower() == "set_owner" for item, _ in statements):
         errors.append(
             finding(
@@ -772,51 +736,6 @@ def _script_warnings(
                 "history_set_owner_in_effect",
             )
         )
-
-    for item, parents in statements:
-        if item.name.lower() != "add_to_faction":
-            continue
-        if any(parent.name.lower() in {"every_country", "every_other_country"} for parent in parents):
-            message = (
-                "'add_to_faction' inside every_country/every_other_country is usually wrong "
-                "because the target joins each iterated country's faction. Use an explicit "
-                "leader scope."
-            )
-        elif at_root_scope(parents):
-            message = (
-                "'add_to_faction = TAG' adds TAG to the current scope's faction. "
-                "Use Mod.effect_add_target_to_faction(leader, target) or "
-                "Mod.effect_join_faction(actor, leader) to make direction explicit."
-            )
-        else:
-            continue
-        errors.append(finding(message, "info", "faction_scope_footgun"))
-        break
-
-    civil_wars = [item for item, _ in statements if item.name.lower() == "start_civil_war"]
-    if civil_wars:
-        if any(
-            item.block is None or item.block.first("capital", fold=True) is None
-            for item in civil_wars
-        ):
-            errors.append(
-                finding(
-                    "'start_civil_war' has no capital = state_id. Civil wars without explicit "
-                    "capital/target setup often spawn fragile revolts; consider "
-                    "Mod.effect_spawn_revolution(...).",
-                    "info",
-                    "civil_war_scope_footgun",
-                )
-            )
-        if not any(item.name.lower() == "load_focus_tree" for item, _ in statements):
-            errors.append(
-                finding(
-                    "'start_civil_war' is not paired with load_focus_tree. Dynamic civil-war "
-                    "countries often get a generic tree unless the revolt explicitly loads one.",
-                    "info",
-                    "civil_war_focus_tree_missing",
-                )
-            )
 
     for item, _ in statements:
         if item.name.lower() != "add_tech_bonus" or item.block is None:
@@ -855,62 +774,7 @@ def _script_warnings(
                 )
             )
 
-    if known_tags is not None:
-        for item, _ in statements:
-            tag = item.name
-            if (
-                item.block is None
-                or not _TAG_SCOPE_RE.match(tag)
-                or tag in _LOGIC_KEYS
-                or tag in known_tags
-                or re.fullmatch(r"D[0-9]{2}", tag)
-            ):
-                continue
-            errors.append(
-                finding(
-                    f"Script scopes into unknown country tag '{tag}'",
-                    "warning",
-                    "unknown_country_scope",
-                )
-            )
-
     return errors
-
-
-_TAG_SCOPE_RE = re.compile(r"^[A-Z][A-Z0-9]{2}$")
-_LOGIC_KEYS = frozenset({"AND", "NOT", "NOR"})
-# Blocks that run their content in the scope around them.
-_SCOPE_KEEPING_BLOCKS = frozenset({
-    "if",
-    "else_if",
-    "else",
-    "limit",
-    "hidden_effect",
-    "effect_tooltip",
-    "custom_effect_tooltip",
-    "random",
-    "random_list",
-    "and",
-    "or",
-    "not",
-    "nor",
-    "nand",
-    "count_triggers",
-    "custom_trigger_tooltip",
-})
-
-
-def _keeps_scope(item: Assignment, parents: tuple[Assignment, ...]) -> bool:
-    """Return whether ``item``'s block runs in the scope around it.
-
-    A weight inside ``random_list`` is a number like a state id, but keeps
-    the scope.
-    """
-
-    name = item.name.lower()
-    if name in _SCOPE_KEEPING_BLOCKS:
-        return True
-    return bool(parents) and parents[-1].name.lower() == "random_list"
 
 
 def validate_country(
@@ -1113,7 +977,6 @@ def validate_focus_tree(
     tree: FocusTree,
     known_focus_ids: set[str] | None = None,
     known_state_ids: set[int] | None = None,
-    known_tags: set[str] | None = None,
     *,
     known_search_filters: Collection[str] | None = None,
 ) -> list[ValidationError]:
@@ -1303,7 +1166,6 @@ def validate_focus_tree(
                 script,
                 file_path=str(tree.path) if tree.path else None,
                 focus_id=focus.id,
-                known_tags=known_tags,
             )
         )
 
@@ -1458,7 +1320,6 @@ def validate_state(
 def validate_event(
     event: Event,
     namespace: str | None | object = _UNSET,
-    known_tags: set[str] | None = None,
     *,
     namespaces: Collection[str] | None = None,
 ) -> list[ValidationError]:
@@ -1601,12 +1462,6 @@ def validate_event(
             effect_script,
             file_path=file_path,
             event_id=event.id,
-            known_tags=known_tags,
-            root_scope=(
-                "COUNTRY"
-                if event.event_type in {"country_event", "news_event"}
-                else event.event_type.removesuffix("_event").upper()
-            ),
         )
     )
 

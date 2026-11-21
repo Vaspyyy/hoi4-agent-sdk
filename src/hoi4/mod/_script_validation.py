@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable, Literal, Sequence, cast
 
@@ -11,12 +12,10 @@ from ..characters import (
 from ..localisation import (
     DEFAULT_LOCALISATION_LANGUAGE,
 )
-from ..patching import (
-    top_level_assignments,
-)
 from ..script_references import (
     COUNTRY,
     DYNAMIC_TAG_RE,
+    UNKNOWN,
     ScriptOwner,
     ScriptRef,
     fragment_owner,
@@ -36,9 +35,6 @@ from ..states import (
     read_state,
 )
 from ..syntax import Assignment, Block, parse
-from ..tags import (
-    load_all_tags,
-)
 from ..textio import read_text
 from ..types import (
     Event,
@@ -263,8 +259,6 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         script_token_allowlist: Sequence[str] = (),
         scope: str | None = "COUNTRY",
     ) -> list[ValidationError]:
-        known_tags = set(load_all_tags(self._base_content_root, self.mod_root))
-        known_tags.update(self._countries.keys())
         known_ideas = (
             self._known_idea_ids()
             if (_IDEA_EFFECT_RE.search(script) or _HAS_IDEA_RE.search(script))
@@ -288,7 +282,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 EventOption(name="effect_probe.1.a", effect=script),
             ],
         )
-        errors = validate_event(probe, namespace="effect_probe", known_tags=known_tags)
+        errors = validate_event(probe, namespace="effect_probe")
         entries: list[tuple[str, str, str | None, str | None]] = [
             (script, "effect", "effect_probe", None)
         ]
@@ -300,6 +294,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 known_equipment=known_equipment,
                 known_focus_trees=known_focus_trees,
                 entries=entries,
+                entry_scope=(scope or UNKNOWN).upper(),
             )
         )
         errors.extend(self._validate_state_effect_assumptions(entries=entries))
@@ -718,17 +713,18 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
     def _reference_owners(
         self,
         entries: list[tuple[str, str, str | None, str | None]] | None,
+        entry_scope: str = COUNTRY,
     ) -> list[tuple[ScriptOwner, str | None]]:
         """The script to check, owner by owner, with the file it is in.
 
-        Loose ``entries`` (``validate_effect``) are read as country-scope
-        effects. Otherwise every script file of the mod is read, with its
+        Loose ``entries`` (``validate_effect``) are read as effects that start
+        in ``entry_scope``. Otherwise every script file of the mod is read, with its
         pending edits; inherited files are the game's and never reported.
         """
 
         if entries is not None:
             return [
-                (fragment_owner(script, kind, obj_id or "", COUNTRY), file_path)
+                (fragment_owner(script, kind, obj_id or "", entry_scope), file_path)
                 for script, kind, obj_id, file_path in entries
                 if script
             ]
@@ -749,6 +745,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         known_equipment: set[str],
         known_focus_trees: set[str],
         entries: list[tuple[str, str, str | None, str | None]] | None = None,
+        entry_scope: str = COUNTRY,
     ) -> list[ValidationError]:
         """Check what the mod's script names against what exists.
 
@@ -758,7 +755,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         """
 
         errors: list[ValidationError] = []
-        owners = self._reference_owners(entries)
+        owners = self._reference_owners(entries, entry_scope)
         catalogs = _LazyCatalogs(
             self,
             lambda: {entry["id"] for entry in self.state_index()},
@@ -769,7 +766,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             focus_trees=known_focus_trees,
         )
 
-        def report(
+        def report_reference(
             message: str,
             code: str,
             owner: ScriptOwner,
@@ -793,7 +790,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             has_tree_load = any(True for _ in owner.of("focus_tree"))
             for ref in owner.refs:
                 if ref.kind == "recruit_character" and kind in _RUNTIME_OWNERS:
-                    report(
+                    report_reference(
                         (
                             f"{kind} '{obj_id}' uses recruit_character at runtime. "
                             "HOI4 only executes recruit_character from game/history "
@@ -807,7 +804,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                     continue
                 elif ref.kind == "idea":
                     if not catalogs.has_idea(ref.value, show=ref.action == "show"):
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}' references unknown idea '{ref.value}'"
                             + catalogs.case_hint("ideas", ref.value),
                             "unknown_idea_reference", owner, file_path, ref, idea_id=ref.value,
@@ -815,39 +812,39 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                     elif ref.key == "add_ideas":
                         idea = self._ideas.get(ref.value)
                         if idea is not None and idea.category in _HIRED_IDEA_CATEGORIES:
-                            report(
+                            report_reference(
                                 f"{kind} '{obj_id}' adds idea '{ref.value}', but its category "
                                 f"is '{idea.category}', an advisor slot that is hired, not added",
                                 "idea_not_addable", owner, file_path, ref, idea_id=ref.value,
                             )
                 elif ref.kind == "event":
                     if not catalogs.has("events", ref.value):
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}' references unknown event '{ref.value}'"
                             + catalogs.case_hint("events", ref.value),
                             "unknown_event_reference", owner, file_path, ref, event_id=ref.value,
                         )
                 elif ref.kind == "focus_tree":
                     if not catalogs.has("focus_trees", ref.value):
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}' references unknown focus tree '{ref.value}'",
                             "unknown_focus_tree_reference", owner, file_path, ref,
                         )
                 elif ref.kind == "technology":
                     if not catalogs.has("technologies", ref.value):
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}' references unknown technology '{ref.value}'",
                             "unknown_technology_reference", owner, file_path, ref,
                         )
                 elif ref.kind == "equipment":
                     if not catalogs.has("equipment", ref.value):
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}' references unknown equipment '{ref.value}'",
                             "unknown_equipment_reference", owner, file_path, ref,
                         )
                 elif ref.kind == "civil_war_capital":
                     if ref.value.isdigit() and not catalogs.has_state(int(ref.value)):
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}' uses civil-war capital {ref.value}, "
                             "which is not a known state ID",
                             "civil_war_capital_ref", owner, file_path, ref,
@@ -859,19 +856,19 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                         and not DYNAMIC_TAG_RE.match(ref.value)
                         and not catalogs.has_tag(ref.value)
                     ):
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}' scopes into unknown country tag '{ref.value}'",
                             "unknown_country_scope", owner, file_path, ref,
                         )
                 elif ref.kind == "core_effect":
                     if ref.certain and ref.scope == COUNTRY and kind in _SCRIPT_OWNERS:
-                        report(
+                        report_reference(
                             _core_effect_message(ref),
                             "country_scope_core_effect", owner, file_path, ref,
                         )
                 elif ref.kind == "faction_effect":
                     if ref.iterator == "country" and ref.certain:
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}': 'add_to_faction' inside "
                             f"'{ref.scope_key}' runs once for every matched country, and "
                             "each of them adds the target to its own faction. Scope to the "
@@ -882,14 +879,14 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 elif ref.kind == "civil_war":
                     fields = set(ref.value.split("+"))
                     if not fields & {"capital", "states"}:
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}': 'start_civil_war' names neither a capital "
                             "nor states, so the game picks the revolt's territory; "
                             "consider Mod.effect_spawn_revolution(...) for an explicit setup.",
                             "civil_war_scope_footgun", owner, file_path, ref, severity="info",
                         )
                     if not has_tree_load:
-                        report(
+                        report_reference(
                             f"{kind} '{obj_id}': 'start_civil_war' is not paired with "
                             "load_focus_tree; the breakaway country keeps a copy of its "
                             "original's tree unless the script loads another one.",

@@ -31,7 +31,6 @@ import pytest
 from hoi4 import Mod
 from hoi4.localisation import YML_ENTRY_RE, normalize_localization_key
 from hoi4.mod._shared import _filter_validation_errors
-from hoi4.tags import load_all_tags
 from hoi4.textio import read_text
 from hoi4.types import ValidationError
 from hoi4.validation import (
@@ -79,8 +78,6 @@ def game_mod(tmp_path_factory: pytest.TempPathFactory) -> Mod:
 
 
 def _content_findings(mod: Mod) -> list[ValidationError]:
-    known_tags = set(load_all_tags(mod._base_content_root, mod.mod_root))
-    known_tags |= set(mod._countries) | mod._country_tag_aliases()
     known_state_ids = {entry["id"] for entry in mod.state_index()}
     focus_ids = {focus.id for tree in mod._focus_trees.values() for focus in tree.focuses}
     filters = mod._known_focus_search_filters()
@@ -92,13 +89,12 @@ def _content_findings(mod: Mod) -> list[ValidationError]:
             tree,
             known_focus_ids=focus_ids,
             known_state_ids=known_state_ids,
-            known_tags=known_tags,
             known_search_filters=filters,
         )
         for focus in tree.focuses:
             findings += mod._focus_localization_findings(tree, focus)
     for event in mod._events.values():
-        findings += validate_event(event, known_tags=known_tags, namespaces=namespaces)
+        findings += validate_event(event, namespaces=namespaces)
     for idea in mod._ideas.values():
         findings += validate_idea(idea)
         findings += validate_idea_category(idea, categories)

@@ -288,7 +288,7 @@ the content checks read them the way the game does:
 | `continuous_focus_position_high` | info | The continuous focus panel starts above the bottom row of the focus tree. |
 | `event_option_no_effect` | info | An event option only closes the event. That is normal for flavour events. |
 | `faction_scope_footgun` | info | Faction effect direction depends on current scope. |
-| `idea_not_addable` | info | An effect adds an idea whose category is not 'country'. The game accepts ideas of any category. |
+| `idea_not_addable` | info | An effect adds an idea of an advisor category with add_ideas. Advisors are hired through their character, not added as ideas. |
 | `idea_without_effect` | info | An idea has no modifier, bonus, rule or effect block. |
 | `invalid_idea_picture_prefix` | info | An idea picture repeats the GFX_idea_ prefix. The game accepts it; the bare stem is the convention. |
 | `leader_party_mismatch` | info | No recruited leader of the country leads its ruling party; the game shows a generated one. |

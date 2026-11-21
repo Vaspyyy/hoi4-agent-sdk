@@ -918,7 +918,9 @@ class TestAgentFacingApis:
         mod.create_country("AUS", "Austria")
         mod.create_country("BAY", "Bavaria")
         bare_errors = mod.validate_effect("add_to_faction = BAY")
-        assert any(error.code == "faction_scope_footgun" for error in bare_errors)
+        assert not any(error.code == "faction_scope_footgun" for error in bare_errors)
+        iterated_errors = mod.validate_effect("every_country = { add_to_faction = ROOT }")
+        assert [error.severity for error in iterated_errors if error.code == "faction_scope_footgun"] == ["info"]
         scoped_errors = mod.validate_effect(Mod.effect_add_target_to_faction("AUS", "BAY"))
         assert not any(error.code == "faction_scope_footgun" for error in scoped_errors)
         multiline_scoped_errors = mod.validate_effect("AUS = {\n\tadd_to_faction = BAY\n}")

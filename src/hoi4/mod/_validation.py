@@ -746,7 +746,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         declared_namespaces = self._declared_event_namespaces()
         for event in self._events.values():
             errors.extend(
-                validate_event(event, known_tags=known_tags, namespaces=declared_namespaces)
+                validate_event(event, namespaces=declared_namespaces)
             )
 
         for occurrences in self._on_action_occurrences.values():
@@ -761,7 +761,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                         ],
                     )
                     errors.extend(
-                        validate_event(probe, namespace="on_action", known_tags=known_tags)
+                        validate_event(probe, namespace="on_action")
                     )
 
         for decision in self._decisions.values():
@@ -842,7 +842,6 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 tree,
                 known_focus_ids=all_focus_ids,
                 known_state_ids=known_state_ids if known_state_ids else None,
-                known_tags=known_tags,
                 known_search_filters=search_filters,
             )
             errors.extend(tree_errors)

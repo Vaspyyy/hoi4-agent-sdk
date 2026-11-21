@@ -14,7 +14,6 @@ import pytest
 from hoi4 import Mod
 from hoi4.types import Event, EventOption, Focus, FocusTree, Idea, ValidationError
 from hoi4.validation import (
-    _script_warnings,
     validate_event,
     validate_focus_tree,
     validate_idea,
@@ -284,22 +283,22 @@ def test_search_filter_needs_a_sprite(tmp_path):
 # ── Script hints ────────────────────────────────────────────────────
 
 
-def test_core_effect_at_country_scope_warns_but_not_inside_a_state_scope():
-    assert codes(_script_warnings("add_core_of = ROOT"), "country_scope_core_effect")
-    assert codes(
-        _script_warnings("if = { limit = { always = yes }\n add_core_of = ROOT\n}"),
-        "country_scope_core_effect",
-    )
+def test_core_effect_at_country_scope_warns_but_not_inside_a_state_scope(tmp_path):
+    mod = Mod(mod_root(tmp_path))
+
+    def core(script: str, **kwargs: str) -> list:
+        return codes(mod.validate_effect(script, **kwargs), "country_scope_core_effect")
+
+    assert core("add_core_of = ROOT")
+    assert core("if = { limit = { always = yes }\n add_core_of = ROOT\n}")
     for valid in (
         "every_owned_state = {\n\tadd_core_of = ROOT\n}",
         "random_list = { 50 = { 64 = { add_core_of = ROOT } } }",
         "64 = { add_core_of = ROOT }",
     ):
-        assert not codes(_script_warnings(valid), "country_scope_core_effect"), valid
-    assert not codes(
-        _script_warnings("add_core_of = ROOT", root_scope="STATE"), "country_scope_core_effect"
-    )
-    assert codes(_script_warnings("GER = { add_core_of = 64 }"), "country_scope_core_effect")
+        assert not core(valid), valid
+    assert not core("add_core_of = ROOT", scope="STATE")
+    assert core("GER = { add_core_of = 64 }")
 
 
 def test_tag_alias_is_a_known_scope(tmp_path, game):
