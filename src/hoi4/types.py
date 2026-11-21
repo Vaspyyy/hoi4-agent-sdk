@@ -346,13 +346,17 @@ class DecisionCategory:
     visible: str = ""
     decisions: list[Decision] = field(default_factory=list)
     # Category presentation belongs in common/decisions/categories while
-    # decision content belongs in common/decisions. ``path`` remains the
-    # decision-content path for public API compatibility.
+    # decision content belongs in common/decisions. ``path`` is the
+    # decision-content file new decisions go to: the last file, in load
+    # order, that holds a block of the category.
     path: Optional[Path] = None
     definition_path: Optional[Path] = None
     raw_block: str = ""
     definition_raw_block: str = ""
     touched: bool = False
+    # Every common/decisions file that holds a block of this category, in
+    # load order. The game merges them all into one category.
+    paths: list[Path] = field(default_factory=list)
 
 
 @dataclass

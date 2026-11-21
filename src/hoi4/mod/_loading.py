@@ -20,6 +20,7 @@ from ..countries import (
 from ..decisions import (
     load_decision_categories_file,
     load_decisions_file,
+    merge_decision_category,
 )
 from ..dynamic_modifiers import (
     load_dynamic_modifiers_text,
@@ -44,6 +45,7 @@ from ..textio import read_text
 from ..types import (
     Country,
     Decision,
+    DecisionCategory,
     LoadDiagnostic,
 )
 from ._countries import CountriesLayer
@@ -444,6 +446,10 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                 except Exception as error:
                     self._record_load_error("decision_category", f, error)
                     continue
+        # Categories seen in decision-content files so far. The game merges a
+        # category's blocks from every file (and from repeated blocks in one
+        # file) into one category, so a later file adds to it.
+        content_categories: dict[str, DecisionCategory] = {}
         for f in sorted(decisions_dir.glob("*.txt")):
             try:
                 self._require_well_formed(f)
@@ -474,6 +480,16 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                     for decision in unique_decisions:
                         self._decisions[decision.id] = decision
                     category.decisions = unique_decisions
+                    loaded = content_categories.get(category.id)
+                    if loaded is not None:
+                        # Presentation from a categories file wins; legacy
+                        # inline copies only count when there is none.
+                        merge_decision_category(
+                            loaded,
+                            category,
+                            presentation=category.id not in category_sources,
+                        )
+                        continue
                     definition = self._decision_categories.get(category.id)
                     if definition is not None:
                         category.icon = definition.icon
@@ -488,6 +504,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                             self.mod_root, category.path or f, self._shadows_inherited
                         )
                     self._decision_categories[category.id] = category
+                    content_categories[category.id] = category
                 self._original_files[f] = read_text(f)
             except _DuplicateIdentifierError:
                 raise

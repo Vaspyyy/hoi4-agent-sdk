@@ -167,6 +167,16 @@ All notable changes to this project are documented here. The format follows
   file of a category spread over several files deleted that category's
   decisions from the saved file. A generated category file could take the name
   of a game file and replace it.
+- A decision category spread over several `common/decisions` files kept only
+  the decisions of the last file, and a category edit left the old inline
+  `icon`, `allowed` and `visible` in the earlier files. The category now holds
+  the decisions of every file in load order, lists those files in the new
+  `DecisionCategory.paths`, and a category edit removes the inline copies from
+  each of them.
+- Decision and category strings were written without quotes, so
+  `update_decision("x", icon="a b")` wrote the invalid `icon = a b`. Every
+  string the decision code writes is now quoted when it needs quotes, and a
+  quoted category `icon` reads without its quotes.
 - A comment inside `traits = { ... }` became trait ids. Editing a typed colour
   (`color = rgb { ... }`) left a dangling block. `colors.txt` values written
   as `HSV { }` were ignored.

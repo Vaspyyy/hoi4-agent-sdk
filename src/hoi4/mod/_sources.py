@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 from typing import Iterator, Optional, cast
 
 from ..characters import (
     Character,
 )
+from ..decisions import category_files, category_in_file
 from ..patching import (
     block_bodies_equivalent,
     set_block,
@@ -21,7 +21,6 @@ from ..script_vocabulary import (
     ScriptTokenKind,
 )
 from ..types import (
-    Decision,
     DecisionCategory,
     Event,
     FocusTree,
@@ -42,7 +41,7 @@ def _definition_only(category: DecisionCategory) -> bool:
     create one.
     """
 
-    return category.path is None and not category.decisions
+    return category.path is None and not category.paths and not category.decisions
 
 
 class SourcesLayer(LocalisationLayer):
@@ -230,73 +229,35 @@ class SourcesLayer(LocalisationLayer):
     def _group_decisions_by_file(
         self, dirty_only: bool = False
     ) -> dict[Path, list[DecisionCategory]]:
-        file_categories: dict[Path, list[DecisionCategory]] = {}
+        """Map each decisions file to the categories it should hold.
+
+        A category spread over several files appears once per file, holding
+        only that file's decisions (see ``category_in_file``). A file whose
+        last decision of a category was deleted still lists the category, so
+        its block stays and only the decision span goes. A file the category
+        moved away from no longer lists it, so its blocks leave.
+        """
+
+        default = self.mod_root / "common" / "decisions" / "mod_decisions.txt"
         dirty_files: set[Path] = set(self._dirty_decision_files) if dirty_only else set()
         if dirty_only:
             for category_id in self._dirty_decision_categories:
                 category = self._decision_categories.get(category_id)
                 if category is None or _definition_only(category):
                     continue
-                dirty_files.add(
-                    category.path or self.mod_root / "common" / "decisions" / "mod_decisions.txt"
-                )
-        for path in dirty_files:
-            file_categories[path] = []
-        owned: set[int] = set()
+                dirty_files.update(category_files(category) or [default])
+        file_categories: dict[Path, list[DecisionCategory]] = {
+            path: [] for path in dirty_files
+        }
         for category in self._decision_categories.values():
-            owned.update(id(decision) for decision in category.decisions)
             if _definition_only(category):
                 continue
-            p = category.path or self.mod_root / "common" / "decisions" / "mod_decisions.txt"
-            if dirty_only and p not in dirty_files:
-                continue
-            if p not in file_categories:
-                file_categories[p] = []
-            file_categories[p].append(category)
-        # A category extended across files is modeled once, from the file
-        # loaded last. Its decisions in the other files are in no category's
-        # list; render them as part of their own file, or rewriting that file
-        # would delete them.
-        extensions: dict[tuple[Path, str], list[Decision]] = {}
-        for decision in self._decisions.values():
-            if id(decision) in owned or decision.path is None:
-                continue
-            if dirty_only and decision.path not in dirty_files:
-                continue
-            extensions.setdefault((decision.path, decision.category), []).append(decision)
-        for (path, category_id), decisions in extensions.items():
-            listed = file_categories.setdefault(path, [])
-            index = next(
-                (i for i, category in enumerate(listed) if category.id == category_id),
-                None,
-            )
-            if index is None:
-                listed.append(DecisionCategory(id=category_id, path=path, decisions=decisions))
-            else:
-                listed[index] = replace(
-                    listed[index], decisions=[*listed[index].decisions, *decisions]
-                )
-        # A file whose last decision of such a category was deleted keeps the
-        # category block; only the decision span goes. (A category that moved
-        # away still has its own decisions recorded at this path, and leaves.)
-        for path, listed in file_categories.items():
-            original = self._original_files.get(path)
-            if not original:
-                continue
-            present = {category.id for category in listed}
-            for span in top_level_assignments(original):
-                category = self._decision_categories.get(span.key)
-                if (
-                    span.key in present
-                    or not span.is_block
-                    or category is None
-                    or category.path is None
-                    or category.path == path
-                    or any(decision.path == path for decision in category.decisions)
-                ):
+            for path in category_files(category) or [default]:
+                if dirty_only and path not in dirty_files:
                     continue
-                present.add(span.key)
-                listed.append(DecisionCategory(id=span.key, path=path))
+                file_categories.setdefault(path, []).append(
+                    category_in_file(category, path)
+                )
         return file_categories
 
     def _group_decision_categories_by_file(

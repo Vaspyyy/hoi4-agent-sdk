@@ -368,17 +368,37 @@ DecisionCategory(id: str, icon: str = "",
                  allowed: str = "",
                  visible: str = "",
                  decisions: list[Decision] = [],
-                 path: Path | None = None,             # decision content
-                 definition_path: Path | None = None)  # category metadata
+                 path: Path | None = None,             # where new decisions go
+                 definition_path: Path | None = None,  # category metadata
+                 paths: list[Path] = [])               # every decisions file
 ```
 
 A category block may appear more than once in one file (the game reopens it)
-and may continue in other files. All of its decisions load, and each one is
-edited in the block and file that holds it; new decisions go to the last block
-of `path`. Every `key = { ... }` block directly inside a category is a
-decision, except the category's own keys (`icon`, `allowed`, `visible`,
-`picture`, `priority`, `visibility_type`, `on_map_area`, `custom_icon`,
-`scripted_gui`).
+and may continue in other files. The game merges them all, and so does the
+SDK: `decisions` holds the decisions of every block in load order (files
+sorted by name), and `paths` lists every `common/decisions` file that holds a
+block of the category. `path` is the last of them. Each decision is edited in
+the block and file that holds it.
+
+- `create_decision` puts a new decision at the end of the last block of
+  `path`, so it comes after every existing decision, as it will after a
+  reload. With `path=` naming one of `paths`, it goes to the last block of that
+  file instead.
+- `update_decision_category(..., path=...)` with one of `paths` only changes
+  where new decisions go. Any other file receives the whole category: every
+  decision moves there and the old blocks go.
+- A category edit moves the presentation fields to `definition_path` and
+  removes the legacy inline `icon`, `allowed` and `visible` from every file in
+  `paths`. A decision edit leaves them where they are.
+- Only the mod's own decision files load. A category that the game defines
+  and the mod extends holds the mod's decisions only.
+
+Every `key = { ... }` block directly inside a category is a decision, except
+the category's own keys (`icon`, `allowed`, `visible`, `picture`, `priority`,
+`visibility_type`, `on_map_area`, `custom_icon`, `scripted_gui`).
+
+Decision and category strings are written with quotes only when they need
+them (`icon = "a b"`, but `icon = GFX_idea`), and are read without them.
 
 ### Event
 ```python

@@ -334,3 +334,322 @@ def test_decision_added_to_an_existing_category_is_indented_like_its_siblings(tm
         "\t}\n"
         "}\n"
     )
+
+
+# ── A category spread over several files is one category ──────────
+
+SPREAD_A = """shared_cat = {
+\ticon = GFX_old
+\t# keep this note
+\tdec_a = {
+\t\tcost = 10
+\t}
+}
+"""
+SPREAD_B = """shared_cat = {
+\tvisible = { always = yes }
+\tdec_b = {
+\t\tcost = 20
+\t}
+}
+"""
+
+
+def _spread_mod(tmp_path: Path) -> tuple[Mod, Path, Path]:
+    _write(tmp_path / "descriptor.mod", 'name = "test"\n')
+    first = _write(tmp_path / "common/decisions/a.txt", SPREAD_A)
+    second = _write(tmp_path / "common/decisions/b.txt", SPREAD_B)
+    return Mod(tmp_path), first, second
+
+
+def _decision_model(mod: Mod) -> dict[str, list[tuple[str, str, int | None]]]:
+    """Every category with its decisions: id, file name and cost, in model order."""
+
+    return {
+        category_id: [
+            (decision.id, decision.path.name if decision.path else "", decision.cost)
+            for decision in mod.get_decision_category(category_id).decisions
+        ]
+        for category_id in mod.list_decision_categories()
+    }
+
+
+def _assert_stable_after_reload(root: Path, expected: dict, **kwargs) -> None:
+    reloaded = Mod(root, **kwargs)
+    assert not reloaded.load_diagnostics
+    assert _decision_model(reloaded) == expected
+    assert reloaded.preview() == ""
+
+
+def test_category_spread_over_files_holds_the_decisions_of_every_file(
+    tmp_path: Path,
+) -> None:
+    mod, first, second = _spread_mod(tmp_path)
+
+    category = mod.get_decision_category("shared_cat")
+    assert [decision.id for decision in category.decisions] == ["dec_a", "dec_b"]
+    assert category.paths == [first, second]
+    assert category.path == second
+    # Legacy inline presentation is read from the first file that has it.
+    assert category.icon == "GFX_old"
+    assert category.visible == "always = yes"
+    assert mod.list_decisions() == ["dec_a", "dec_b"]
+
+
+def test_category_edit_removes_inline_presentation_from_every_file(tmp_path: Path) -> None:
+    mod, first, second = _spread_mod(tmp_path)
+
+    assert mod.update_decision_category("shared_cat", icon="GFX_new")
+    _save(mod)
+
+    assert first.read_text(encoding="utf-8") == SPREAD_A.replace("\ticon = GFX_old\n", "")
+    assert second.read_text(encoding="utf-8") == SPREAD_B.replace(
+        "\tvisible = { always = yes }\n", ""
+    )
+    definition = tmp_path / "common/decisions/categories/a_decision_categories.txt"
+    assert definition.read_text(encoding="utf-8") == (
+        "shared_cat = {\n\ticon = GFX_new\n\tvisible = {\n\t\talways = yes\n\t}\n}\n"
+    )
+    expected = {"shared_cat": [("dec_a", "a.txt", 10), ("dec_b", "b.txt", 20)]}
+    _assert_stable_after_reload(tmp_path, expected)
+    assert Mod(tmp_path).get_decision_category("shared_cat").icon == "GFX_new"
+
+
+@pytest.mark.parametrize(("decision_id", "path_index"), [("dec_a", 0), ("dec_b", 1)])
+def test_decision_edit_in_a_spread_category_changes_one_value(
+    tmp_path: Path, decision_id: str, path_index: int
+) -> None:
+    mod, first, second = _spread_mod(tmp_path)
+    sources = [SPREAD_A, SPREAD_B]
+
+    assert mod.update_decision(decision_id, cost=99)
+    result = mod.save(require_changes=True)
+
+    edited = [first, second][path_index]
+    assert result.written_files == [edited]
+    old = "cost = 10" if path_index == 0 else "cost = 20"
+    sources[path_index] = sources[path_index].replace(old, "cost = 99")
+    assert first.read_text(encoding="utf-8") == sources[0]
+    assert second.read_text(encoding="utf-8") == sources[1]
+    assert not (tmp_path / "common/decisions/categories").exists()
+
+
+def test_new_decision_in_a_spread_category_goes_to_the_last_file(tmp_path: Path) -> None:
+    mod, first, second = _spread_mod(tmp_path)
+
+    mod.create_decision("shared_cat", "dec_c", cost=30)
+    assert [d.id for d in mod.get_decision_category("shared_cat").decisions] == [
+        "dec_a",
+        "dec_b",
+        "dec_c",
+    ]
+    _save(mod)
+
+    assert first.read_text(encoding="utf-8") == SPREAD_A
+    assert second.read_text(encoding="utf-8") == SPREAD_B.replace(
+        "\t}\n}\n", "\t}\n\tdec_c = {\n\t\tcost = 30\n\t}\n}\n"
+    )
+    expected = {
+        "shared_cat": [("dec_a", "a.txt", 10), ("dec_b", "b.txt", 20), ("dec_c", "b.txt", 30)]
+    }
+    _assert_stable_after_reload(tmp_path, expected)
+
+
+def test_new_decision_can_target_an_earlier_file_of_a_spread_category(
+    tmp_path: Path,
+) -> None:
+    mod, first, second = _spread_mod(tmp_path)
+
+    mod.create_decision("shared_cat", "dec_c", cost=30, path="common/decisions/a.txt")
+    expected = {
+        "shared_cat": [("dec_a", "a.txt", 10), ("dec_c", "a.txt", 30), ("dec_b", "b.txt", 20)]
+    }
+    assert _decision_model(mod) == expected
+    _save(mod)
+
+    assert first.read_text(encoding="utf-8") == SPREAD_A.replace(
+        "\t}\n}\n", "\t}\n\tdec_c = {\n\t\tcost = 30\n\t}\n}\n"
+    )
+    assert second.read_text(encoding="utf-8") == SPREAD_B
+    _assert_stable_after_reload(tmp_path, expected)
+
+
+def test_deleting_a_decision_of_the_earlier_file_of_a_spread_category(
+    tmp_path: Path,
+) -> None:
+    mod, first, second = _spread_mod(tmp_path)
+
+    assert mod.delete_decision("dec_a")
+    assert [d.id for d in mod.get_decision_category("shared_cat").decisions] == ["dec_b"]
+    _save(mod)
+
+    assert first.read_text(encoding="utf-8") == "shared_cat = {\n\ticon = GFX_old\n\t# keep this note\n}\n"
+    assert second.read_text(encoding="utf-8") == SPREAD_B
+    _assert_stable_after_reload(tmp_path, {"shared_cat": [("dec_b", "b.txt", 20)]})
+
+
+REOPENED_A = """cat = {
+\ticon = GFX_one
+\td1 = { cost = 1 }
+}
+other = {
+\tother_dec = { cost = 5 }
+}
+cat = {
+\tallowed = { tag = SOV }
+\td2 = { cost = 2 }
+}
+"""
+REOPENED_B = """cat = {
+\ticon = GFX_two
+\td3 = { cost = 3 }
+}
+"""
+
+
+def _reopened_spread_mod(tmp_path: Path) -> tuple[Mod, Path, Path]:
+    _write(tmp_path / "descriptor.mod", 'name = "test"\n')
+    first = _write(tmp_path / "common/decisions/a.txt", REOPENED_A)
+    second = _write(tmp_path / "common/decisions/b.txt", REOPENED_B)
+    return Mod(tmp_path), first, second
+
+
+def test_category_reopened_in_one_file_and_continued_in_another(tmp_path: Path) -> None:
+    mod, first, second = _reopened_spread_mod(tmp_path)
+
+    category = mod.get_decision_category("cat")
+    assert [d.id for d in category.decisions] == ["d1", "d2", "d3"]
+    assert category.paths == [first, second]
+    assert category.icon == "GFX_one"
+
+    assert mod.update_decision("d2", cost=22)
+    _save(mod)
+    assert first.read_text(encoding="utf-8") == REOPENED_A.replace("cost = 2 ", "cost = 22 ")
+    assert second.read_text(encoding="utf-8") == REOPENED_B
+
+    mod = Mod(tmp_path)
+    assert mod.update_decision_category("cat", icon="GFX_new")
+    _save(mod)
+    assert first.read_text(encoding="utf-8") == (
+        REOPENED_A.replace("cost = 2 ", "cost = 22 ")
+        .replace("\ticon = GFX_one\n", "")
+        .replace("\tallowed = { tag = SOV }\n", "")
+    )
+    assert second.read_text(encoding="utf-8") == REOPENED_B.replace("\ticon = GFX_two\n", "")
+    expected = {
+        "cat": [("d1", "a.txt", 1), ("d2", "a.txt", 22), ("d3", "b.txt", 3)],
+        "other": [("other_dec", "a.txt", 5)],
+    }
+    _assert_stable_after_reload(tmp_path, expected)
+    reloaded = Mod(tmp_path).get_decision_category("cat")
+    assert (reloaded.icon, reloaded.allowed) == ("GFX_new", "tag = SOV")
+
+
+def test_mod_files_extending_a_game_category(tmp_path: Path) -> None:
+    game = tmp_path / "game"
+    game_category = _write(
+        game / "common/decisions/categories/00_decision_categories.txt",
+        "shared_cat = {\n\ticon = GFX_game\n}\n",
+    )
+    game_decisions = _write(
+        game / "common/decisions/shared.txt",
+        "shared_cat = {\n\tgame_dec = { cost = 1 }\n}\n",
+    )
+    root = tmp_path / "mod"
+    _write(root / "descriptor.mod", 'name = "test"\n')
+    first = _write(root / "common/decisions/mod_a.txt", "shared_cat = {\n\tdec_a = { cost = 10 }\n}\n")
+    second = _write(root / "common/decisions/mod_b.txt", "shared_cat = {\n\tdec_b = { cost = 20 }\n}\n")
+    game_bytes = (game_category.read_bytes(), game_decisions.read_bytes())
+    mod = Mod(root, hoi4_install=game)
+
+    category = mod.get_decision_category("shared_cat")
+    assert [d.id for d in category.decisions] == ["dec_a", "dec_b"]
+    assert category.paths == [first, second]
+
+    mod.create_decision("shared_cat", "dec_c", cost=30)
+    assert mod.delete_decision("dec_a")
+    _save(mod)
+
+    assert first.read_text(encoding="utf-8") == "shared_cat = {\n}\n"
+    assert second.read_text(encoding="utf-8") == (
+        "shared_cat = {\n\tdec_b = { cost = 20 }\n\tdec_c = {\n\t\tcost = 30\n\t}\n}\n"
+    )
+    assert (game_category.read_bytes(), game_decisions.read_bytes()) == game_bytes
+    assert not (root / "common/decisions/categories").exists()
+    _assert_stable_after_reload(
+        root,
+        {"shared_cat": [("dec_b", "mod_b.txt", 20), ("dec_c", "mod_b.txt", 30)]},
+        hoi4_install=game,
+    )
+
+
+# ── Strings are quoted when they need it ──────────────────────────
+
+
+def test_decision_string_edits_are_quoted_when_needed(tmp_path: Path) -> None:
+    mod, first, _ = _spread_mod(tmp_path)
+
+    assert mod.update_decision(
+        "dec_a", icon="a b", custom_cost_text="cost text", on_map_mode="map_only"
+    )
+    _save(mod)
+
+    saved = first.read_text(encoding="utf-8")
+    assert '\t\ticon = "a b"\n' in saved
+    assert '\t\tcustom_cost_text = "cost text"\n' in saved
+    assert "\t\ton_map_mode = map_only\n" in saved
+    decision = Mod(tmp_path).get_decision("dec_a")
+    assert (decision.icon, decision.custom_cost_text) == ("a b", "cost text")
+
+
+def test_new_decision_and_category_quote_strings_when_needed(tmp_path: Path) -> None:
+    _write(tmp_path / "descriptor.mod", 'name = "test"\n')
+    mod = Mod(tmp_path)
+
+    mod.create_decision_category("new_cat", icon="GFX new")
+    mod.create_decision(
+        "new_cat",
+        "new_dec",
+        icon="GFX dec",
+        war_with_on_remove="FROM",
+        target_array="my array",
+        cost=5,
+    )
+    _save(mod)
+
+    assert (tmp_path / "common/decisions/mod_decisions.txt").read_text(encoding="utf-8") == (
+        "new_cat = {\n"
+        "\tnew_dec = {\n"
+        '\t\ticon = "GFX dec"\n'
+        "\t\tcost = 5\n"
+        '\t\ttarget_array = "my array"\n'
+        "\t\twar_with_on_remove = FROM\n"
+        "\t}\n"
+        "\n"
+        "}\n"
+    )
+    assert (
+        tmp_path / "common/decisions/categories/mod_decision_categories.txt"
+    ).read_text(encoding="utf-8") == 'new_cat = {\n\ticon = "GFX new"\n}\n'
+    reloaded = Mod(tmp_path)
+    assert reloaded.get_decision_category("new_cat").icon == "GFX new"
+    assert reloaded.get_decision("new_dec").icon == "GFX dec"
+    assert reloaded.preview() == ""
+
+
+def test_category_icon_edit_is_quoted_and_quoted_source_round_trips(tmp_path: Path) -> None:
+    _write(tmp_path / "descriptor.mod", 'name = "test"\n')
+    source = 'cat = {\n\ticon = "GFX_quoted"\n}\n'
+    path = _write(tmp_path / "common/decisions/categories/x_decision_categories.txt", source)
+    mod = Mod(tmp_path)
+
+    assert mod.get_decision_category("cat").icon == "GFX_quoted"
+    mod.update_decision_category("cat", icon="GFX_quoted")
+    _save(mod)
+    assert path.read_text(encoding="utf-8") == source
+
+    mod = Mod(tmp_path)
+    mod.update_decision_category("cat", icon="GFX two words")
+    _save(mod)
+    assert path.read_text(encoding="utf-8") == 'cat = {\n\ticon = "GFX two words"\n}\n'
+    assert Mod(tmp_path).get_decision_category("cat").icon == "GFX two words"

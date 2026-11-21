@@ -9,10 +9,10 @@ preserving common trigger/effect blocks as raw Paradox script strings.
 from __future__ import annotations
 
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ._scalar import needs_quotes
 from .patching import (
     AssignmentSpan,
     append_assignment,
@@ -23,7 +23,7 @@ from .patching import (
     set_scalar,
     top_level_assignments,
 )
-from .syntax import Scalar, parse, unquote
+from .syntax import Scalar, parse, quote, unquote
 from .textio import read_text, write_text
 from .types import Decision, DecisionCategory
 
@@ -183,12 +183,6 @@ def _read_decision_fields(body: str) -> dict[str, Any]:
     }
 
 
-def _quote_if_needed(value: str) -> str:
-    if needs_quotes(value):
-        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return value
-
-
 def _normalized_targets(value: Any) -> list[str]:
     if not value:
         return []
@@ -205,12 +199,14 @@ def _render_scalar(kind: str, value: Any) -> str | None:
     text = "" if value is None else str(value)
     if not text:
         return None
-    return text if kind == "atom" else _quote_if_needed(text)
+    # "atom" and "str" fields are both written as one scalar: quotes are added
+    # only when the value needs them, so ``GFX_icon`` stays bare.
+    return quote(text)
 
 
 def _render_list(value: Any) -> str | None:
     items = _normalized_targets(value)
-    return " ".join(_quote_if_needed(item) for item in items) if items else None
+    return " ".join(quote(item) for item in items) if items else None
 
 
 def _model_value(decision: Decision, key: str) -> Any:
@@ -282,7 +278,7 @@ def _extract_category_metadata(body: str) -> dict[str, str]:
         if span.key in metadata:
             continue
         if span.key == "icon" and not span.is_block:
-            metadata[span.key] = body[span.value_start : span.value_end]
+            metadata[span.key] = unquote(body[span.value_start : span.value_end])
         elif (
             span.key in {"allowed", "visible"}
             and span.is_block
@@ -312,7 +308,7 @@ def load_decisions_file(path: Path) -> list[DecisionCategory]:
         metadata = _extract_category_metadata(category_body)
         category = categories.get(category_id)
         if category is None:
-            category = DecisionCategory(id=category_id, path=path)
+            category = DecisionCategory(id=category_id, path=path, paths=[path])
             categories[category_id] = category
         category.icon = category.icon or metadata.get("icon", "")
         category.allowed = category.allowed or metadata.get("allowed", "")
@@ -330,6 +326,60 @@ def load_decisions_file(path: Path) -> list[DecisionCategory]:
     for category_id, category in categories.items():
         category.raw_block = "\n\n".join(body for body in bodies[category_id] if body)
     return list(categories.values())
+
+
+def merge_decision_category(
+    category: DecisionCategory, later: DecisionCategory, *, presentation: bool = True
+) -> None:
+    """Add what a later file contributes to a category that is already loaded.
+
+    The game merges every block of a category, in every file, into one
+    category. Decisions keep load order, the later file becomes the one new
+    decisions go to. With ``presentation``, legacy inline presentation keeps
+    the first value found; pass ``False`` when the category has a definition
+    in ``common/decisions/categories``, which wins.
+    """
+
+    category.decisions.extend(later.decisions)
+    for path in category_files(later):
+        if path not in category.paths:
+            category.paths.append(path)
+    category.path = later.path or category.path
+    if presentation:
+        category.icon = category.icon or later.icon
+        category.allowed = category.allowed or later.allowed
+        category.visible = category.visible or later.visible
+    category.raw_block = "\n\n".join(
+        body for body in (category.raw_block, later.raw_block) if body
+    )
+
+
+def category_files(category: DecisionCategory) -> list[Path]:
+    """Every decisions file of a category, in load order, ending with ``path``
+    when that file holds no block of it yet."""
+
+    files = list(category.paths)
+    if category.path is not None and category.path not in files:
+        files.append(category.path)
+    return files
+
+
+def category_in_file(category: DecisionCategory, path: Path) -> DecisionCategory:
+    """The part of a category that one decisions file holds, ready to render.
+
+    It keeps the category's own fields (so a category edit strips legacy
+    inline presentation in every file) and only the decisions of that file.
+    """
+
+    return replace(
+        category,
+        path=path,
+        decisions=[
+            decision
+            for decision in category.decisions
+            if (decision.path or category.path) == path
+        ],
+    )
 
 
 def load_decision_categories_file(path: Path) -> list[DecisionCategory]:
@@ -562,7 +612,7 @@ def _serialize_category_definition(category: DecisionCategory) -> str:
         return f"{category.id} = {{\n{_indent(body, 1)}\n}}"
     parts = [f"{category.id} = {{"]
     if category.icon:
-        parts.append(f"\ticon = {category.icon}")
+        parts.append(f"\ticon = {quote(category.icon)}")
     for key in ("allowed", "visible"):
         body = getattr(category, key)
         if body:
@@ -581,7 +631,7 @@ def _patch_category_definition_body(category: DecisionCategory, body: str) -> st
     # included) changes nothing.
     current = _extract_category_metadata(body)
     if category.icon != current.get("icon", ""):
-        body = set_scalar(body, "icon", category.icon or None)
+        body = set_scalar(body, "icon", quote(category.icon) if category.icon else None)
     for key in ("allowed", "visible"):
         value = getattr(category, key)
         if value != current.get(key, ""):
