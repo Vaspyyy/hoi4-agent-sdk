@@ -107,19 +107,6 @@ class DiskAnalysis(Generic[T]):
     decode: Callable[[Any], T]
 
 
-@dataclass(frozen=True, slots=True)
-class FileOrigin:
-    """The file a private copy was made from, as it was when copied.
-
-    Results of the copy are stored under the original's path, size and
-    modification time, so a new copy of the same file finds them.
-    """
-
-    path: str
-    size: int
-    mtime_ns: int
-
-
 def _sorted_strings(values: frozenset[str]) -> list[str]:
     return sorted(values)
 
@@ -249,29 +236,6 @@ def _prune(directory: Path, name: str, current: Path) -> None:
 
 _LOCK = threading.RLock()
 _STORES: dict[str, _Store] = {}
-# Folders that hold private, temporary copies of inherited files (the
-# snapshot of ``hoi4.layers.ContentLayers``). Results of a copy are stored
-# only under its original (see ``FileOrigin``), never under the copy's path.
-_PRIVATE_COPY_ROOTS: set[str] = set()
-
-
-def add_private_copy_root(root: Path) -> None:
-    """Never store results under the paths in ``root`` (a temporary copy)."""
-
-    with _LOCK:
-        _PRIVATE_COPY_ROOTS.add(os.path.join(os.fspath(root), ""))
-
-
-def remove_private_copy_root(root: Path) -> None:
-    with _LOCK:
-        _PRIVATE_COPY_ROOTS.discard(os.path.join(os.fspath(root), ""))
-
-
-def in_private_copy(path: str | os.PathLike[str]) -> bool:
-    """True for a path inside a folder given to :func:`add_private_copy_root`."""
-
-    text = os.fspath(path)
-    return any(text.startswith(root) for root in _PRIVATE_COPY_ROOTS)
 
 
 def _store(name: str) -> _Store:
