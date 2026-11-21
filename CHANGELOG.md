@@ -320,6 +320,8 @@ All notable changes to this project are documented here. The format follows
 - `unknown_assigned_idea` no longer reports an advisor's `idea_token` that a
   country history hires with `add_ideas`, and the finding names the history
   file and line.
+- `tag_definition` no longer reports a tag whose country file the mod
+  inherits from the game or a base mod (`replace_path` is respected).
 - Adding an event to an on-action merged its repeated `events` blocks into
   one and dropped the comments inside them. Event lists are now edited entry
   by entry.

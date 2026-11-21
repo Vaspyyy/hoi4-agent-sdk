@@ -740,7 +740,12 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         )
         known_state_ids = {entry["id"] for entry in self.state_index()}
         known_character_ids = self._known_character_ids()
-        errors.extend(validate_tag_definition_targets(self.mod_root))
+        errors.extend(
+            validate_tag_definition_targets(
+                self.mod_root,
+                exists=lambda relative: self.content_source(relative) is not None,
+            )
+        )
         errors.extend(
             validate_country_history_references(
                 self.mod_root,

@@ -594,14 +594,24 @@ def validation_suppressions(entries: Iterable[str]) -> dict[str, set[str]]:
     return rules
 
 
-def validate_tag_definition_targets(mod_root: Path) -> list[ValidationError]:
-    """Report mod tag declarations whose country definition file is absent."""
+def validate_tag_definition_targets(
+    mod_root: Path, exists: Callable[[str], bool] | None = None
+) -> list[ValidationError]:
+    """Report mod tag declarations whose country definition file is absent.
+
+    A declared path such as ``countries/Germany.txt`` is read below
+    ``common/``. ``exists(relative)`` says whether the game will find a file
+    such as ``common/countries/Germany.txt``; pass one that knows the game
+    install and base mods (``Mod.content_source``), because a mod inherits
+    their country files. Without it only the mod's own folder counts.
+    """
 
     issues: list[ValidationError] = []
     tags_dir = mod_root / "common" / "country_tags"
-    countries_dir = mod_root / "common" / "countries"
     if not tags_dir.is_dir():
         return issues
+    if exists is None:
+        exists = lambda relative: (mod_root / relative).is_file()  # noqa: E731
     for path in sorted(tags_dir.glob("*.txt")):
         doc = parse(read_text(path))
         for item in doc.root.assignments():
@@ -610,8 +620,8 @@ def validate_tag_definition_targets(mod_root: Path) -> list[ValidationError]:
                 continue
             tag = item.name
             line_number = doc.line_col(item.start)[0]
-            target = countries_dir / Path(declared_path).name
-            if target.is_file():
+            relative = "common/" + declared_path.replace("\\", "/").lstrip("/")
+            if exists(relative):
                 continue
             issues.append(
                 ValidationError(

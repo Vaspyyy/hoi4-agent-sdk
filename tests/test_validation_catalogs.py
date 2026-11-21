@@ -58,3 +58,29 @@ def test_country_history_may_assign_an_advisor_idea_token_of_the_game(tmp_path):
     assert [(f.idea_id, f.file_path, f.line) for f in findings] == [
         ("TST_typo_idea", str(history.resolve()), 4)
     ]
+
+
+# ── Country tag files ───────────────────────────────────────────────
+
+
+def test_a_tag_may_point_to_a_country_file_the_game_inherits(tmp_path):
+    game = tmp_path / "game"
+    write(game, "common/countries/Germany.txt", "color = { 1 2 3 }\n")
+    root = mod_root(tmp_path)
+    write(
+        root,
+        "common/country_tags/00_countries.txt",
+        'GER = "countries/Germany.txt"\nXXA = "countries/Nowhere.txt"\n',
+    )
+    findings = codes(Mod(root, hoi4_install=game).validate(stage="build"), "tag_definition")
+    assert [(f.country_tag, f.line) for f in findings] == [("XXA", 2)]
+
+
+def test_replace_path_hides_an_inherited_country_file(tmp_path):
+    game = tmp_path / "game"
+    write(game, "common/countries/Germany.txt", "color = { 1 2 3 }\n")
+    root = mod_root(tmp_path)
+    write(root, "descriptor.mod", 'name = "test"\nreplace_path = "common/countries"\n')
+    write(root, "common/country_tags/00_countries.txt", 'GER = "countries/Germany.txt"\n')
+    findings = codes(Mod(root, hoi4_install=game).validate(stage="build"), "tag_definition")
+    assert [f.country_tag for f in findings] == ["GER"]
