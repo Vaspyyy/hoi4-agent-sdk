@@ -121,8 +121,8 @@ VALIDATION_CODES: dict[str, str] = {
         "missing; the game falls back to other text."
     ),
     "idea_not_addable": (
-        "An effect adds an idea whose category is not 'country'. The game accepts "
-        "ideas of any category."
+        "An effect adds an idea of an advisor category with add_ideas. Advisors are "
+        "hired through their character, not added as ideas."
     ),
     "civil_war_focus_tree_missing": "Civil war script starts a revolt without loading a focus tree.",
     "unknown_focus_tree_reference": "Effect script references a focus tree ID not loaded by the SDK.",
@@ -351,6 +351,7 @@ VALIDATION_CODES: dict[str, str] = {
 
 _ERROR_CODES = {
     "load_failure",
+    "runtime_recruit_character",
     "script_syntax",
     "localization_bom",
     "localization_encoding",

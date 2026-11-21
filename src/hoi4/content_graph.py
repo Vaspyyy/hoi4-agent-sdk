@@ -55,6 +55,8 @@ class LivenessSource(Protocol):
 
     def _reference_corpus(self, *, inherited: bool = True) -> list[FileReferences]: ...
 
+    def _localisation_value_names(self) -> set[str]: ...
+
 
 _BARE_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:-]+")
 
@@ -226,6 +228,8 @@ def analyze_content_liveness(
     # Flags: the mod's own writes and reads, checked against every file.
     written, written_patterns = _referenced(corpus, "flag", {"set", "clear"})
     read, read_patterns = _referenced(corpus, "flag", {"read"})
+    # A localisation text reads a flag too: "[?TAG_flag:days_left] days".
+    read |= mod._localisation_value_names()
     own_written, _ = _referenced(corpus, "flag", {"set", "clear"}, own_only=True)
     own_read, _ = _referenced(corpus, "flag", {"read"}, own_only=True)
     allowed_flags = tuple(flag_allowlist)

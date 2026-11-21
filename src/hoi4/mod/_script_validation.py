@@ -1251,14 +1251,29 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         collisions = sorted(focus_ideas & runtime_ideas)
         if not collisions:
             return []
+        # Point at the first focus that changes one of them.
+        file_path: str | None = None
+        line: int | None = None
+        for owner, owner_path in self._reference_owners(None):
+            if owner.kind != "focus":
+                continue
+            ref = next(
+                (ref for ref in owner.of("idea") if ref.value in collisions and ref.action != "has"),
+                None,
+            )
+            if ref is not None:
+                file_path, line = owner_path, ref.line
+                break
         return [
             ValidationError(
                 message=(
                     "Focuses and runtime events/decisions mutate the same idea IDs "
                     f"({', '.join(collisions)}). Check delayed events cannot downgrade a staged spirit."
                 ),
-                severity="warning",
+                severity="info",
                 code="idea_mutation_collision",
+                file_path=file_path,
+                line=line,
             )
         ]
 

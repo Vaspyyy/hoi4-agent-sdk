@@ -30,6 +30,9 @@ from ..validation import (
 )
 from ._sources import SourcesLayer
 
+# ``[?name]`` in a localisation text reads a variable or a flag
+# (``[?SIA_flag:days_left]``); every dotted part may be the name.
+_LOC_VALUE_RE = re.compile(r"\[\?([A-Za-z_@][A-Za-z0-9_.@]*)")
 # Folders whose script the game reads as effects, triggers and definitions.
 _CORPUS_DIRECTORIES = ("common", "events", "history")
 # References of inherited files, by path. A file is read again only when its
@@ -132,6 +135,37 @@ class CatalogsLayer(SourcesLayer):
         trees = set(self._focus_trees)
         trees |= self._cached_names("focus_trees", "common/national_focus", "focus_trees")
         return trees
+
+    def _localisation_value_names(self) -> set[str]:
+        """Names that localisation texts read with ``[?name]``: variables and flags.
+
+        Read from the mod's entries (with pending edits) and the English
+        localisation it inherits.
+        """
+
+        def names_in(text: str) -> set[str]:
+            found: set[str] = set()
+            for match in _LOC_VALUE_RE.finditer(text):
+                found.update(part for part in match.group(1).split(".") if part)
+            return found
+
+        inherited = self._scan_cache.get("localisation_value_names")
+        if inherited is None:
+            inherited = set()
+            base = self._base_content_root
+            folder = base / "localisation" if base is not None else None
+            if folder is not None and folder.is_dir():
+                for path in folder.rglob("*english*.yml"):
+                    try:
+                        inherited |= names_in(read_text(path))
+                    except (OSError, ValueError):
+                        continue
+            self._scan_cache["localisation_value_names"] = inherited
+        names = set(inherited)
+        for value in self._loc_entries.values():
+            if "[?" in value:
+                names |= names_in(value)
+        return names
 
     def _pending_script_texts(self) -> dict[Path, str | None]:
         """Text every changed file will have after ``save()``; ``None`` deletes it."""

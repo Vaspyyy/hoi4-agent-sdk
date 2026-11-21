@@ -435,39 +435,6 @@ class CoreLayer:
         )
 
     @staticmethod
-    def _mask_script_comments(text: str) -> str:
-        """Replace comments and quoted values while retaining source offsets."""
-
-        chars = list(text)
-        in_quote = False
-        index = 0
-        while index < len(chars):
-            char = chars[index]
-            if char == "\\" and in_quote:
-                chars[index] = " "
-                if index + 1 < len(chars) and chars[index + 1] != "\n":
-                    chars[index + 1] = " "
-                index += 2
-                continue
-            if char == '"':
-                chars[index] = " "
-                in_quote = not in_quote
-                index += 1
-                continue
-            if in_quote:
-                if char != "\n":
-                    chars[index] = " "
-                index += 1
-                continue
-            if char == "#" and not in_quote:
-                while index < len(chars) and chars[index] != "\n":
-                    chars[index] = " "
-                    index += 1
-                continue
-            index += 1
-        return "".join(chars)
-
-    @staticmethod
     def _line_column(text: str, offset: int) -> tuple[int, int]:
         offset = max(0, min(offset, len(text)))
         line = text.count("\n", 0, offset) + 1

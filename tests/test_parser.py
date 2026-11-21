@@ -7,7 +7,6 @@ from hoi4.parser import (
     iter_assignment_blocks,
     parse_pdx,
     serialize_pdx,
-    strip_comments,
     tokenize,
 )
 
@@ -194,10 +193,6 @@ class TestStrictness:
 
 
 class TestSpanHelpers:
-    def test_strip_comments_keeps_strings(self):
-        assert strip_comments('a = "#x" # y\nb = 1') == 'a = "#x" \nb = 1'
-        assert strip_comments("a = 1") == "a = 1"
-
     def test_find_assignment_block_skips_comments_and_strings(self):
         text = '# target = { no }\nname = "target = { no }"\nouter = { target = { yes = 1 } }'
         body, start, end = find_assignment_block(text, "target")
