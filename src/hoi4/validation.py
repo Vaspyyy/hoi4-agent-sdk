@@ -498,6 +498,17 @@ _INFO_CODES = {
     "faction_scope_footgun",
     "civil_war_scope_footgun",
     "civil_war_focus_tree_missing",
+    # A leader of another party is normal; the game makes one up for the
+    # ruling party.
+    "leader_party_mismatch",
+    # Units may start in a subject's or an ally's territory.
+    "oob_location_not_owned",
+    "oob_naval_location_not_owned",
+    "oob_air_location_not_owned",
+    # Documented by the game but never used in its own files: legal, unproven.
+    "unseen_effect_token",
+    "unseen_trigger_token",
+    "unseen_modifier_token",
 }
 
 #: Every validation code with its severity: ``"error"`` (the game rejects

@@ -96,10 +96,7 @@ the content checks read them the way the game does:
 | `duplicate_idea_id` | error | An idea ID is defined more than once. |
 | `duplicate_identifier` | error | A loaded object id is defined more than once. |
 | `duplicate_ideology_id` | error | An ideology ID is defined more than once. |
-| `duplicate_oob_air_wing` | error | An OOB repeats an air wing at one location. |
 | `duplicate_oob_fleet` | error | An OOB repeats a fleet name. |
-| `duplicate_oob_grid_position` | error | A division template repeats a battalion grid position. |
-| `duplicate_oob_ship` | error | An OOB repeats a ship name. |
 | `duplicate_oob_ship_equipment` | error | A ship repeats an equipment type. |
 | `duplicate_oob_task_force` | error | A fleet repeats a task-force name. |
 | `duplicate_oob_template` | error | An OOB repeats a division-template name. |
@@ -181,13 +178,9 @@ the content checks read them the way the game does:
 | `mtg_naval_oob_uses_legacy_equipment` | error | A Man the Guns naval OOB uses legacy equipment types. |
 | `no_owned_territory` | error | A complete country owns no states. |
 | `non_land_state_province` | error | A state lists a sea province. |
-| `oob_air_location_not_owned` | error | An air OOB entry is outside its country's territory. |
 | `oob_fleet_name` | error | A fleet has no name. |
 | `oob_kind_mismatch` | error | An OOB assignment kind does not match its file content. |
 | `oob_load_error` | error | An order of battle referenced by a country could not be read. |
-| `oob_location_not_owned` | error | A starting division is placed outside its country's territory. |
-| `oob_naval_location_not_owned` | error | A naval OOB entry is outside its country's territory. |
-| `oob_ship_name` | error | A ship has no name. |
 | `oob_task_force_name` | error | A task force has no name. |
 | `oob_template_name` | error | A division template has no name. |
 | `oob_water_location` | error | A starting land division is placed in a water province. |
@@ -228,9 +221,12 @@ the content checks read them the way the game does:
 | `character_ref` | warning | A recruited character is not defined in mod or vanilla data. |
 | `civil_war_capital_ref` | warning | A civil-war capital is not a known state ID. |
 | `country_colors_shadow_vanilla` | warning | A mod colors.txt shadows vanilla country color entries that it does not repeat. |
+| `country_popularity_sum` | warning | A country's party popularities do not add up to 100. |
 | `country_scope_core_effect` | warning | Core add/remove effect appears outside an explicit state scope. |
 | `disconnected_country_territory` | warning | Owned territory is significantly disconnected from the capital. |
 | `duplicate_bookmark_country_variant` | warning | A bookmark repeats an indistinguishable country variant. |
+| `duplicate_oob_grid_position` | warning | A division template repeats a battalion grid position. |
+| `duplicate_oob_ship` | warning | An OOB repeats a ship name. |
 | `empty_strategic_region` | warning | A strategic region has no provinces. |
 | `enclosed_foreign_territory` | warning | A foreign land component is completely enclosed by the target country. |
 | `event_conditional_text_missing` | warning | A conditional event title, description or option name has no text key. |
@@ -239,9 +235,7 @@ the content checks read them the way the game does:
 | `history_set_owner_in_effect` | warning | State history owner directive appears in runtime effect script. |
 | `idea_mutation_collision` | warning | Focuses and delayed/runtime events mutate the same idea IDs. |
 | `invalid_idea_icon_key` | warning | Idea definitions must use a bare picture stem, not an icon assignment. |
-| `country_popularity_sum` | warning | A country's party popularities do not add up to 100. |
-| `leader_party_mismatch` | warning | Country ruling party group does not match leader sub-ideology. |
-| `missing_country_name` | warning | A country has no name. |
+| `missing_country_name` | warning | No name localisation exists for a country, in any ideology variant. |
 | `missing_event_description` | warning | A visible event has no description. |
 | `missing_event_title` | warning | A visible event has no title. |
 | `missing_localization` | warning | Shown text (a focus, event, idea, country or leader name) has a localization key that exists nowhere: not in the mod, a base mod or the game. |
@@ -250,6 +244,7 @@ the content checks read them the way the game does:
 | `missing_wargoal_type` | warning | War goal or war declaration block is missing type = <wargoal_type>. |
 | `mission_with_cost` | warning | A mission (days_mission_timeout) also declares a cost. |
 | `mixed_oob_kinds` | warning | One OOB file mixes land, naval, or air content instead of using the engine's separate assignment effects. |
+| `oob_ship_name` | warning | A ship has neither a name nor an ordered_name. |
 | `province_missing_state` | warning | A land province belongs to no state. |
 | `province_missing_strategic_region` | warning | A province belongs to no strategic region. |
 | `resistance_on_core_state` | warning | Resistance effects target a state that is already a core of its owner. |
@@ -274,11 +269,9 @@ the content checks read them the way the game does:
 | `unknown_tech_bonus_category` | warning | add_tech_bonus category is not in the technology category catalog. |
 | `unknown_technology_reference` | warning | Effect script references a technology ID not found in configured data. |
 | `unknown_trigger_token` | warning | Trigger token is absent from installed-game documentation. |
+| `unloaded_missing_oob_reference` | warning | A country that owns no state at the start refers to an OOB file that does not exist. |
 | `unreachable_focus` | warning | A focus cannot be reached from any root focus. |
 | `unresolved_focus_position` | warning | A focus position has a missing or cyclic local anchor. |
-| `unseen_effect_token` | warning | A documented effect has zero installed-game uses. |
-| `unseen_modifier_token` | warning | A documented modifier has zero installed-game uses. |
-| `unseen_trigger_token` | warning | A documented trigger has zero installed-game uses. |
 | `unsupported_effect_scope` | warning | Effect token is used outside its documented scope. |
 | `unsupported_modifier_scope` | warning | Modifier token is used outside its documented scope. |
 | `unsupported_trigger_scope` | warning | Trigger token is used outside its documented scope. |
@@ -298,7 +291,14 @@ the content checks read them the way the game does:
 | `idea_not_addable` | info | An effect adds an idea whose category is not 'country'. The game accepts ideas of any category. |
 | `idea_without_effect` | info | An idea has no modifier, bonus, rule or effect block. |
 | `invalid_idea_picture_prefix` | info | An idea picture repeats the GFX_idea_ prefix. The game accepts it; the bare stem is the convention. |
+| `leader_party_mismatch` | info | No recruited leader of the country leads its ruling party; the game shows a generated one. |
 | `missing_optional_localization` | info | An optional localization key (an idea description, a country's _DEF name) is missing; the game falls back to other text. |
 | `mission_activation_without_timeout` | info | A decision without days_mission_timeout has an activation trigger, which the game ignores. |
+| `oob_air_location_not_owned` | info | An air OOB entry is outside its country's territory. |
+| `oob_location_not_owned` | info | A starting division is placed outside its country's territory. |
+| `oob_naval_location_not_owned` | info | A naval OOB entry is outside its country's territory. |
 | `triggered_only_with_mtth` | info | A triggered-only event also has mean_time_to_happen, which the game ignores. |
+| `unseen_effect_token` | info | A documented effect has zero installed-game uses. |
+| `unseen_modifier_token` | info | A documented modifier has zero installed-game uses. |
+| `unseen_trigger_token` | info | A documented trigger has zero installed-game uses. |
 | `war_declaration_in_immediate` | info | An event declares war in immediate, before the player picks an option. |
