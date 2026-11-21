@@ -38,7 +38,7 @@ from .tags import (
 from .tags import (
     remove_country_tag as _remove_country_tag,
 )
-from .textio import decode_text, read_text
+from .textio import decode_text, read_text, write_text
 from .types import Country, Leader
 
 STANDARD_IDEOLOGY_GROUPS = ("democratic", "fascism", "communism", "neutrality")
@@ -705,7 +705,7 @@ def write_country_definition(mod_root: Path, country: Country) -> None:
     p = country.definition_path or mod_root / f"common/countries/{country.tag}.txt"
     p.parent.mkdir(parents=True, exist_ok=True)
     content = serialize_country_files(mod_root, country)[p]
-    p.write_text(content, encoding="utf-8")
+    write_text(p, content)
 
 
 def write_country_history(mod_root: Path, country: Country) -> None:
@@ -723,7 +723,7 @@ def write_country_history(mod_root: Path, country: Country) -> None:
             old.unlink()
 
     serialized = serialize_country_files(mod_root, country)
-    p.write_text(serialized[p], encoding="utf-8")
+    write_text(p, serialized[p])
 
 
 def write_country_localisation(mod_root: Path, country: Country) -> None:
@@ -737,7 +737,7 @@ def write_country_localisation(mod_root: Path, country: Country) -> None:
         lines.append(f" {country.tag}{suffix}_DEF:0 {pdx_string(name)}")
     lines.append(f" {country.tag}_ADJ:0 {pdx_string(adj)}")
     lines.append("")
-    loc.write_text("\n".join(lines), encoding="utf-8-sig")
+    write_text(loc, "\n".join(lines), bom=True)
 
 
 def write_character_file(mod_root: Path, country: Country) -> None:
@@ -747,7 +747,7 @@ def write_character_file(mod_root: Path, country: Country) -> None:
     tag = country.tag
     p = country.character_path or mod_root / f"common/characters/{tag}_characters.txt"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(serialized[p], encoding="utf-8")
+    write_text(p, serialized[p])
 
 
 def write_all_country_files(mod_root: Path, country: Country) -> list[Path]:

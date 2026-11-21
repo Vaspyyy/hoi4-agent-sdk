@@ -1127,8 +1127,7 @@ targets, missing capital states, and focus prerequisite cycles are errors.
 description or option name without `text`. `oob_load_error` (error) marks an
 assigned OOB file that could not be read. `invalid_decision_category_layout`
 (error) marks category `icon`, `allowed` or `visible` written beside the
-decisions instead of in `common/decisions/categories/`. The first two are not
-yet listed in `VALIDATION_CODES`.
+decisions instead of in `common/decisions/categories/`.
 
 The `history_set_owner_in_effect` warning catches a common HOI4 boundary mistake: `set_owner` is a state history directive, not a runtime event/focus effect. Use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`.
 

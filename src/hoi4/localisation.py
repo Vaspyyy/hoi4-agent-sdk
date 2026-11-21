@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .textio import decode_text, read_text
+from .textio import decode_text, read_text, write_text
 
 YML_ENTRY_RE = re.compile(r'^\s*([^:#\s]+)\s*:\s*(?:\d+\s*)?\s*"')
 _HEADER_RE = re.compile(r"^\s*l_([A-Za-z_]+)\s*:\s*(?:#.*)?$")
@@ -178,9 +178,10 @@ def write_localization_file(
         or localisation_language_for_path(path)
         or DEFAULT_LOCALISATION_LANGUAGE
     )
-    path.write_text(
+    write_text(
+        path,
         serialize_localization_file(entries, original=original, language=resolved),
-        encoding="utf-8-sig",
+        bom=True,
     )
 
 

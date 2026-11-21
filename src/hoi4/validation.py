@@ -102,6 +102,9 @@ VALIDATION_CODES: dict[str, str] = {
     "unknown_focus_tree_reference": "Effect script references a focus tree ID not loaded by the SDK.",
     "resistance_on_core_state": "Resistance effects target a state that is already a core of its owner.",
     "event_option_no_effect": "Triggered event option has no gameplay effect.",
+    "event_conditional_text_missing": (
+        "A conditional event title, description or option name has no text key."
+    ),
     "revolt_state_already_owned": "Revolt script transfers a state already owned by the target country.",
     "state_buildings_outside_history": "State buildings must be declared inside the history block.",
     "duplicate_country_tag": "A country tag is declared in more than one mod file.",
@@ -148,6 +151,7 @@ VALIDATION_CODES: dict[str, str] = {
     "unknown_oob_unit_type": "A division template uses an unknown sub-unit type.",
     "unknown_oob_province": "A starting division references an unknown province.",
     "oob_water_location": "A starting land division is placed in a water province.",
+    "oob_load_error": "An order of battle referenced by a country could not be read.",
     "oob_location_not_owned": "A starting division is placed outside its country's territory.",
     "oob_fleet_name": "A fleet has no name.",
     "duplicate_oob_fleet": "An OOB repeats a fleet name.",
@@ -313,6 +317,7 @@ _ERROR_CODES = {
     "unknown_oob_unit_type",
     "unknown_oob_province",
     "oob_water_location",
+    "oob_load_error",
     "oob_location_not_owned",
     "oob_fleet_name",
     "duplicate_oob_fleet",

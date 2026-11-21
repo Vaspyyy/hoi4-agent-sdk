@@ -310,3 +310,27 @@ def test_category_definition_edit_does_not_create_a_decisions_file(tmp_path: Pat
     assert sorted(p.name for p in (tmp_path / "common/decisions").rglob("*.txt")) == [
         "X_decision_categories.txt"
     ]
+
+
+def test_decision_added_to_an_existing_category_is_indented_like_its_siblings(tmp_path):
+    path = tmp_path / "common/decisions/x_decisions.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text("my_category = {\n\tfirst = {\n\t\tcost = 5\n\t}\n}\n", encoding="utf-8")
+    mod = Mod(tmp_path)
+
+    mod.create_decision("my_category", "second", cost=1, complete_effect="add_political_power = 5")
+    mod.save(require_changes=True)
+
+    assert path.read_text(encoding="utf-8") == (
+        "my_category = {\n"
+        "\tfirst = {\n"
+        "\t\tcost = 5\n"
+        "\t}\n"
+        "\tsecond = {\n"
+        "\t\tcost = 1\n"
+        "\t\tcomplete_effect = {\n"
+        "\t\t\tadd_political_power = 5\n"
+        "\t\t}\n"
+        "\t}\n"
+        "}\n"
+    )

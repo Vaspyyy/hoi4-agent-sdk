@@ -8,6 +8,7 @@ preserving common trigger/effect blocks as raw Paradox script strings.
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -472,6 +473,12 @@ def _patch_decision_body(decision: Decision, body: str) -> str:
     return body
 
 
+def _standalone_decision(decision: Decision) -> str:
+    """Render one decision with no outer indentation, ready to be placed in a block."""
+
+    return textwrap.dedent(serialize_decision(decision)).strip()
+
+
 def _patch_category_body(
     category: DecisionCategory,
     body: str,
@@ -511,10 +518,10 @@ def _patch_category_body(
                 body, span, _patch_decision_body(decision, decision_body)
             )
         else:
-            body = replace_assignment(body, span, serialize_decision(decision).strip())
+            body = replace_assignment(body, span, _standalone_decision(decision))
     if append:
         for decision in pool:
-            body = append_assignment(body, serialize_decision(decision).strip())
+            body = append_assignment(body, _standalone_decision(decision))
         pool.clear()
     return body
 

@@ -205,8 +205,15 @@ def write_text(
     like: bytes | None = None,
     bom: bool | None = None,
 ) -> bytes:
-    """Write ``text`` with :func:`encode_text` and return the bytes written."""
+    """Write ``text`` with :func:`encode_text` and return the bytes written.
 
+    Without ``like``, a file that already exists at ``path`` is its own model:
+    it keeps its encoding, byte-order mark and line endings.
+    """
+
+    target = Path(path)
+    if like is None and target.is_file():
+        like = target.read_bytes()
     data = encode_text(text, like=like, bom=bom)
-    Path(path).write_bytes(data)
+    target.write_bytes(data)
     return data

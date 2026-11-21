@@ -10,7 +10,7 @@ from typing import Optional
 from .patching import replace_assignment, top_level_assignments
 from .paths import COUNTRY_TAG_RE, require_country_tag
 from .syntax import Assignment, Scalar, parse
-from .textio import encode_text, read_text
+from .textio import encode_text, read_text, write_text
 
 
 def _tag_registrations(text: str) -> list[Assignment]:
@@ -112,7 +112,7 @@ def add_country_tag(mod_root: Path, tag: str) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     line = f'{tag} = "countries/{tag}.txt"\n'
     if not p.exists():
-        p.write_text(line, encoding="utf-8")
+        write_text(p, line)
         return p
     original = p.read_bytes()
     content = read_text(p)
