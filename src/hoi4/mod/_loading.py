@@ -22,12 +22,12 @@ from ..decisions import (
     load_decisions_file,
 )
 from ..dynamic_modifiers import (
-    load_dynamic_modifiers_file,
+    load_dynamic_modifiers_text,
 )
 from ..events import load_events_file
 from ..focus import load_focus_trees
-from ..ideas import read_ideas_file
-from ..ideologies import load_ideologies_file
+from ..ideas import read_ideas_text
+from ..ideologies import load_ideologies_text
 from ..on_actions import load_on_actions_file
 from ..oob import (
     OOBReference,
@@ -504,7 +504,8 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             for f in sorted(ideas_dir.glob("*.txt")):
                 try:
                     self._require_well_formed(f)
-                    ideas, container = read_ideas_file(f)
+                    text = read_text(f)
+                    ideas, container = read_ideas_text(text, f)
                     for idea in ideas:
                         existing = self._ideas.get(idea.id)
                         if existing is not None:
@@ -517,7 +518,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                             continue
                         self._ideas[idea.id] = idea
                     self._idea_file_containers[f] = container
-                    self._original_files[f] = read_text(f)
+                    self._original_files[f] = text
                 except _DuplicateIdentifierError:
                     raise
                 except Exception as error:
@@ -532,11 +533,12 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             if directory.is_dir():
                 for path in sorted(directory.glob("*.txt")):
                     try:
-                        self._require_well_formed(path)
-                        for ideology in load_ideologies_file(path, is_vanilla=True):
+                        # Inherited files are read the way the game reads them.
+                        text = read_text(path)
+                        for ideology in load_ideologies_text(text, path, is_vanilla=True):
                             self._vanilla_ideologies[ideology.id] = ideology
                     except Exception:
-                        # Vanilla is reference data; malformed or version-specific files
+                        # Vanilla is reference data; unreadable or version-specific files
                         # must not make an otherwise valid mod impossible to open.
                         continue
 
@@ -546,7 +548,8 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         for path in sorted(directory.glob("*.txt")):
             try:
                 self._require_well_formed(path)
-                for ideology in load_ideologies_file(path):
+                text = read_text(path)
+                for ideology in load_ideologies_text(text, path):
                     existing = self._ideologies.get(ideology.id)
                     if existing is not None:
                         self._record_duplicate_identifier(
@@ -557,7 +560,7 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
                         )
                         continue
                     self._ideologies[ideology.id] = ideology
-                self._original_files[path] = read_text(path)
+                self._original_files[path] = text
             except _DuplicateIdentifierError:
                 raise
             except Exception as error:
@@ -570,8 +573,9 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
         for path in sorted(directory.glob("*.txt")):
             try:
                 self._require_well_formed(path)
-                self._original_files[path] = read_text(path)
-                for modifier in load_dynamic_modifiers_file(path):
+                text = read_text(path)
+                self._original_files[path] = text
+                for modifier in load_dynamic_modifiers_text(text, path):
                     existing = self._dynamic_modifiers.get(modifier.id)
                     if existing is not None:
                         self._record_duplicate_identifier(
@@ -621,6 +625,6 @@ class LoadingLayer(CountriesLayer, LocalisationLayer):
             stem = f.stem.lower()
             for tag, country in self._countries.items():
                 name_lower = country.name.lower()
-                if stem == name_lower or stem == name_lower.replace(" ", "_"):
+                if stem in (tag.lower(), name_lower, name_lower.replace(" ", "_")):
                     self._cached_idea_file[tag] = f
                     break

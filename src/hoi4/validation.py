@@ -16,6 +16,7 @@ from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
 from .syntax import parse as parse_script
 from .script import validate_script_syntax
+from .syntax import Assignment, parse
 from .textio import read_text
 from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationError
 
@@ -1242,6 +1243,19 @@ def validate_event(
     return errors
 
 
+# Idea blocks that give the idea an effect besides ``modifier``.
+_IDEA_EFFECT_KEYS = frozenset({
+    "modifier",
+    "research_bonus",
+    "equipment_bonus",
+    "targeted_modifier",
+    "rule",
+    "on_add",
+    "on_remove",
+    "do_effect",
+})
+
+
 def validate_idea(idea: Idea) -> list[ValidationError]:
     errors: list[ValidationError] = []
 
@@ -1254,18 +1268,24 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
         )
         return errors
 
-    if not idea.modifier:
+    statements = (
+        [item for item in parse(idea.raw_block).root.items if type(item) is Assignment]
+        if idea.raw_block
+        else []
+    )
+    has_effect = bool(idea.modifier or idea.research_bonus) or any(
+        item.key.value in _IDEA_EFFECT_KEYS for item in statements
+    )
+    if not has_effect:
         errors.append(
             ValidationError(
-                message=f"Idea '{idea.id}' has no modifiers",
+                message=f"Idea '{idea.id}' has no modifiers or other effects",
                 severity="warning",
                 idea_id=idea.id,
             )
         )
 
-    if idea.raw_block and any(
-        span.key == "icon" for span in top_level_assignments(idea.raw_block)
-    ):
+    if any(item.op == "=" and item.key.value == "icon" for item in statements):
         errors.append(
             ValidationError(
                 message=(
@@ -1280,17 +1300,14 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
             )
         )
 
-    if idea.raw_block:
+    if statements:
         prefixed_picture = next(
             (
-                span
-                for span in top_level_assignments(idea.raw_block)
-                if span.key == "picture"
-                and not span.is_block
-                and idea.raw_block[span.value_start : span.value_end]
-                .strip()
-                .strip('"')
-                .startswith("GFX_idea_")
+                item
+                for item in statements
+                if item.op == "="
+                and item.key.value == "picture"
+                and (item.scalar or "").strip().startswith("GFX_idea_")
             ),
             None,
         )
@@ -1309,9 +1326,9 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
                 )
             )
 
-    if idea.raw_block and any(
-        span.key == "desc" and not span.is_block
-        for span in top_level_assignments(idea.raw_block)
+    if any(
+        item.op == "=" and item.key.value == "desc" and item.scalar is not None
+        for item in statements
     ):
         errors.append(
             ValidationError(

@@ -370,7 +370,11 @@ class Idea:
     # from older SDK output. Current HOI4 uses ``{idea_id}_desc`` localization.
     desc: str = ""
     removal_cost: str | int | float | None = None
+    # The idea's own body as read from its file (without the braces).
     raw_block: str = ""
+    # The category's own settings (``designer = yes``, ``law = yes``...), not
+    # its sibling ideas. Ideas of one category share the same string; it is
+    # used only to recreate the category when the idea moves to a new file.
     category_raw_block: str = ""
     touched: bool = False
     touched_fields: set[str] = field(default_factory=set)

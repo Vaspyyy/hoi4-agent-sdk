@@ -11,8 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .parser import PdxNode, find_assignment_block, parse_pdx
+from ._mapping_patch import patch_scalar_entries, scalar_entries
 from .patching import (
+    AssignmentSpan,
     append_assignment,
     assignment_spans,
     replace_assignment,
@@ -22,7 +23,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_value
-from .structured_patching import patch_scalar_mapping
+from .syntax import Assignment, Block, parse
 from .textio import read_text
 
 VANILLA_AI_BEHAVIORS = ("democratic", "communist", "fascist", "neutral")
@@ -67,24 +68,51 @@ class Ideology:
         return bool(self.touched_fields)
 
 
+def _is_block_assignment(item: object) -> bool:
+    return type(item) is Assignment and item.op == "=" and type(item.value) is Block
+
+
+def _containers(root: Block) -> list[Assignment]:
+    """Return the top-level ``ideologies = { ... }`` blocks."""
+
+    return [
+        item
+        for item in root.items
+        if type(item) is Assignment
+        and _is_block_assignment(item)
+        and item.key.value == "ideologies"
+    ]
+
+
+def _definitions(container: Assignment) -> list[Assignment]:
+    assert type(container.value) is Block
+    return [
+        item
+        for item in container.value.items
+        if type(item) is Assignment and _is_block_assignment(item)
+    ]
+
+
+def load_ideologies_text(
+    text: str, path: Path | None = None, *, is_vanilla: bool = False
+) -> list[Ideology]:
+    """Load every ideology from one file's text, retaining duplicate definitions."""
+
+    ideologies: list[Ideology] = []
+    for container in _containers(parse(text).root):
+        for item in _definitions(container):
+            assert type(item.value) is Block
+            ideology = _parse_ideology(item.key.value, item.value)
+            ideology.is_vanilla = is_vanilla
+            ideology.path = path
+            ideologies.append(ideology)
+    return ideologies
+
+
 def load_ideologies_file(path: Path, *, is_vanilla: bool = False) -> list[Ideology]:
     """Load every ideology from one file, retaining duplicate definitions."""
 
-    text = read_text(path)
-    match = find_assignment_block(text, "ideologies")
-    if match is None:
-        return []
-    body = match[0]
-    ideologies: list[Ideology] = []
-    for span in top_level_assignments(body):
-        if not span.is_block or span.body_start is None or span.body_end is None:
-            continue
-        ideology_body = body[span.body_start : span.body_end]
-        ideology = _parse_ideology(span.key, ideology_body)
-        ideology.is_vanilla = is_vanilla
-        ideology.path = path
-        ideologies.append(ideology)
-    return ideologies
+    return load_ideologies_text(read_text(path), path, is_vanilla=is_vanilla)
 
 
 def load_ideologies(root: Path, *, is_vanilla: bool = False) -> list[Ideology]:
@@ -99,50 +127,54 @@ def load_ideologies(root: Path, *, is_vanilla: bool = False) -> list[Ideology]:
     return result
 
 
-def _parse_ideology(ideology_id: str, body: str) -> Ideology:
-    root = parse_pdx(body)
-    color = _parse_color(root.get_block("color"))
+def _parse_ideology(ideology_id: str, block: Block) -> Ideology:
     ai_behavior = next(
         (
             behavior
             for behavior in VANILLA_AI_BEHAVIORS
-            if root.get_value(f"ai_{behavior}").lower() == "yes"
+            if (block.scalar(f"ai_{behavior}") or "").lower() == "yes"
         ),
         "",
     )
+    modifiers = _sub_block(block, "modifiers")
     return Ideology(
         id=ideology_id,
-        color=color,
-        types=_parse_types(body),
-        rules=_parse_mapping(root.get_block("rules")),
-        modifiers=_parse_mapping(root.get_block("modifiers")),
-        hidden_modifiers=_parse_hidden_modifiers(root.get_block("modifiers")),
-        faction_modifiers=_parse_mapping(root.get_block("faction_modifiers")),
-        dynamic_faction_names=_parse_bare_values(root.get_block("dynamic_faction_names")),
-        ai_behavior=ai_behavior,
-        ai_ideology_wanted_units_factor=root.get_value(
-            "ai_ideology_wanted_units_factor", "1.0"
+        color=_parse_color(block.block("color")),
+        types=_parse_types(block),
+        rules=_parse_mapping(_sub_block(block, "rules")),
+        modifiers=_parse_mapping(modifiers),
+        hidden_modifiers=_parse_mapping(
+            _sub_block(modifiers, "hidden_modifier") if modifiers is not None else None
         ),
-        ai_give_core_state_control_threshold=root.get_value(
+        faction_modifiers=_parse_mapping(_sub_block(block, "faction_modifiers")),
+        dynamic_faction_names=_parse_bare_values(_sub_block(block, "dynamic_faction_names")),
+        ai_behavior=ai_behavior,
+        ai_ideology_wanted_units_factor=block.scalar("ai_ideology_wanted_units_factor", "1.0"),
+        ai_give_core_state_control_threshold=block.scalar(
             "ai_give_core_state_control_threshold", "0"
         ),
-        war_impact_on_world_tension=root.get_value("war_impact_on_world_tension", "0.25"),
-        faction_impact_on_world_tension=root.get_value(
-            "faction_impact_on_world_tension", "0.1"
-        ),
+        war_impact_on_world_tension=block.scalar("war_impact_on_world_tension", "0.25"),
+        faction_impact_on_world_tension=block.scalar("faction_impact_on_world_tension", "0.1"),
         can_host_government_in_exile=_as_bool(
-            root.get_value("can_host_government_in_exile", "no")
+            block.scalar("can_host_government_in_exile", "no") or "no"
         ),
-        can_collaborate=_as_bool(root.get_value("can_collaborate", "no")),
-        effects=_parse_bare_values(root.get_block("effects")),
-        raw_block=body,
+        can_collaborate=_as_bool(block.scalar("can_collaborate", "no") or "no"),
+        effects=_parse_bare_values(_sub_block(block, "effects")),
+        raw_block=block.body,
     )
 
 
-def _parse_color(node: PdxNode | None) -> tuple[int, ...]:
-    if node is None:
+def _sub_block(block: Block, key: str) -> Block | None:
+    for item in block.assignments(key):
+        if item.op == "=" and type(item.value) is Block:
+            return item.value
+    return None
+
+
+def _parse_color(block: Block | None) -> tuple[int, ...]:
+    if block is None:
         return (128, 128, 128)
-    values = _parse_bare_values(node)
+    values = _parse_bare_values(block)
     try:
         return tuple(int(item) for item in values)
     except (TypeError, ValueError):
@@ -151,58 +183,38 @@ def _parse_color(node: PdxNode | None) -> tuple[int, ...]:
         return ()
 
 
-def _parse_mapping(node: PdxNode | None) -> dict[str, str]:
-    if node is None:
+def _parse_mapping(block: Block | None) -> dict[str, str]:
+    if block is None:
         return {}
     return {
-        child.key: child.value
-        for child in node.children
-        if child.key is not None and child.value is not None and not child.is_comment
+        item.key.value: item.scalar
+        for item in block.assignments()
+        if item.op == "=" and item.scalar is not None
     }
 
 
-def _parse_hidden_modifiers(node: PdxNode | None) -> dict[str, str]:
-    if node is None:
-        return {}
-    hidden = node.get_block("hidden_modifier")
-    return _parse_mapping(hidden)
-
-
-def _parse_bare_values(node: PdxNode | None) -> list[str]:
-    if node is None:
+def _parse_bare_values(block: Block | None) -> list[str]:
+    if block is None:
         return []
-    return [
-        child.value
-        for child in node.children
-        if child.key is None and child.value is not None and not child.is_comment
-    ]
+    return [scalar.value for scalar in block.values()]
 
 
-def _parse_types(source: str) -> list[SubIdeology]:
-    spans = assignment_spans(source, "types")
-    if not spans:
+def _parse_types(block: Block) -> list[SubIdeology]:
+    types = _sub_block(block, "types")
+    if types is None:
         return []
-    types_span = spans[0]
-    if (
-        not types_span.is_block
-        or types_span.body_start is None
-        or types_span.body_end is None
-    ):
-        return []
-    types_body = source[types_span.body_start : types_span.body_end]
     result: list[SubIdeology] = []
-    for child in top_level_assignments(types_body):
-        if not child.is_block or child.body_start is None or child.body_end is None:
+    for child in types.assignments():
+        if child.op != "=" or type(child.value) is not Block:
             continue
-        raw_block = types_body[child.body_start : child.body_end]
-        parsed = parse_pdx(raw_block)
+        subtype = child.value
         result.append(
             SubIdeology(
-                name=child.key,
+                name=child.key.value,
                 can_be_randomly_selected=(
-                    parsed.get_value("can_be_randomly_selected", "yes").lower() != "no"
+                    (subtype.scalar("can_be_randomly_selected", "yes") or "yes").lower() != "no"
                 ),
-                raw_block=raw_block,
+                raw_block=subtype.body,
             )
         )
     return result
@@ -259,7 +271,7 @@ def _patch_field(body: str, ideology: Ideology, field_name: str) -> str:
         if span.body_start is None or span.body_end is None:
             return body
         modifier_body = body[span.body_start : span.body_end]
-        modifier_body = patch_scalar_mapping(modifier_body, ideology.modifiers)
+        modifier_body = patch_scalar_entries(modifier_body, ideology.modifiers)
         modifier_body = _patch_mapping_assignment(
             modifier_body, "hidden_modifier", ideology.hidden_modifiers
         )
@@ -292,43 +304,75 @@ def serialize_ideologies_file(
     *,
     original: str = "",
 ) -> str:
-    """Serialize a complete ideology file while retaining its surrounding text."""
+    """Serialize a complete ideology file while retaining its surrounding text.
+
+    Only touched fields of touched ideologies, removed ideologies and appended
+    new ones change; every other byte of ``original`` is kept.
+    """
 
     if not original:
         rendered = "\n".join(serialize_ideology(item, 1) for item in ideologies)
         return f"ideologies = {{\n{rendered}\n}}\n"
 
-    match = find_assignment_block(original, "ideologies")
-    if match is None:
+    containers = _containers(parse(original).root)
+    if not containers:
         rendered = "\n".join(serialize_ideology(item, 1) for item in ideologies)
         return append_assignment(original, f"ideologies = {{\n{rendered}\n}}")
 
-    body, start, end = match
-    open_brace = original.find("{", start, end)
-    if open_brace < 0:
-        raise ValueError("Malformed ideologies block")
     remaining = list(ideologies)
-    spans = top_level_assignments(body)
-    for span in sorted(spans, key=lambda item: item.start, reverse=True):
-        if not span.is_block or span.body_start is None or span.body_end is None:
+    # Per container: (definition, "remove" | "replace" | "body", text).
+    edits: list[list[tuple[Assignment, str, str]]] = [[] for _ in containers]
+    for index, container in enumerate(containers):
+        for item in _definitions(container):
+            match_index = next(
+                (i for i, ideology in enumerate(remaining) if ideology.id == item.key.value),
+                None,
+            )
+            if match_index is None:
+                edits[index].append((item, "remove", ""))
+                continue
+            ideology = remaining.pop(match_index)
+            if ideology.raw_block and not ideology.touched_fields:
+                continue
+            assert type(item.value) is Block
+            current = item.value.body
+            if ideology.raw_block:
+                patched = current
+                for field_name in sorted(ideology.touched_fields):
+                    patched = _patch_field(patched, ideology, field_name)
+                if patched != current:
+                    edits[index].append((item, "body", patched))
+            else:
+                edits[index].append((item, "replace", serialize_ideology(ideology, 0)))
+
+    result = original
+    for index in reversed(range(len(containers))):
+        appended = remaining if index == len(containers) - 1 else []
+        if not edits[index] and not appended:
             continue
-        match_index = next((i for i, item in enumerate(remaining) if item.id == span.key), None)
-        if match_index is None:
-            body = replace_assignment(body, span, None)
-            continue
-        ideology = remaining.pop(match_index)
-        if ideology.raw_block and not ideology.touched_fields:
-            continue
-        patched = ideology.raw_block
-        if patched:
-            for field_name in sorted(ideology.touched_fields):
-                patched = _patch_field(patched, ideology, field_name)
-            body = body[: span.body_start] + patched + body[span.body_end :]
-        else:
-            body = replace_assignment(body, span, serialize_ideology(ideology, 0))
-    for ideology in remaining:
-        body = append_assignment(body, serialize_ideology(ideology, 0))
-    return original[: open_brace + 1] + body + original[end - 1 :]
+        container = containers[index]
+        block = container.value
+        assert type(block) is Block
+        base = block.body_start
+        body = original[block.body_start : block.body_end]
+        for item, action, text in sorted(edits[index], key=lambda edit: edit[0].start, reverse=True):
+            value = item.value
+            assert type(value) is Block
+            span = AssignmentSpan(
+                item.key.value, item.start - base, value.end - base,
+                value.start - base, value.end - base, True,
+                value.body_start - base, value.body_end - base,
+            )
+            if action == "remove":
+                body = replace_assignment(body, span, None)
+            elif action == "replace":
+                body = replace_assignment(body, span, text)
+            else:
+                body = replace_assignment_body(body, span, text)
+        for ideology in appended:
+            body = append_assignment(body, serialize_ideology(ideology, 0))
+        result = result[: block.body_start] + body + result[block.body_end :]
+    return result
 
 
 def _mapping_body(values: dict[str, str]) -> str:
@@ -375,8 +419,8 @@ def _patch_types_assignment(body: str, subtypes: list[SubIdeology]) -> str:
 def _patch_subideology_body(subtype: SubIdeology) -> str:
     if not subtype.raw_block:
         return "" if subtype.can_be_randomly_selected else "can_be_randomly_selected = no"
-    parsed = parse_pdx(subtype.raw_block)
-    current = parsed.get_value("can_be_randomly_selected", "yes").lower() != "no"
+    current_value = parse(subtype.raw_block).root.scalar("can_be_randomly_selected", "yes")
+    current = (current_value or "yes").lower() != "no"
     if current == subtype.can_be_randomly_selected:
         return subtype.raw_block
     value = "yes" if subtype.can_be_randomly_selected else "no"
@@ -394,10 +438,10 @@ def _patch_mapping_assignment(body: str, key: str, values: dict[str, str]) -> st
     span = spans[0]
     if not span.is_block or span.body_start is None or span.body_end is None:
         return set_block(body, key, _mapping_body(values) or None)
-    if not values:
-        return set_block(body, key, None)
     current = body[span.body_start : span.body_end]
-    patched = patch_scalar_mapping(current, values)
+    if not values:
+        return body if not scalar_entries(current) else set_block(body, key, None)
+    patched = patch_scalar_entries(current, values)
     return replace_assignment_body(body, span, patched)
 
 
