@@ -337,6 +337,9 @@ All notable changes to this project are documented here. The format follows
   which follow the files on disk, so `save()` and `discard()` leave none
   stale. A file's top-level focus container is no longer taken for a focus
   tree id.
+- `validate(suppress="code")` with one string instead of a list raises
+  "takes a list of codes, not one string" instead of complaining about the
+  code `'v'`.
 - Adding an event to an on-action merged its repeated `events` blocks into
   one and dropped the comments inside them. Event lists are now edited entry
   by entry.

@@ -561,6 +561,23 @@ VALIDATION_INFO_CODES: dict[str, str] = {
 SEVERITIES: tuple[str, ...] = ("error", "warning", "info")
 
 
+def suppression_entries(*lists: Iterable[str] | None) -> list[str]:
+    """Join the entries of several suppression lists (``None`` is empty).
+
+    Raises ``ValueError`` for a bare string, which would otherwise be read
+    one character at a time.
+    """
+
+    entries: list[str] = []
+    for found in lists:
+        if found is None:
+            continue
+        if isinstance(found, str):
+            raise ValueError("suppress takes a list of codes, not one string")
+        entries.extend(found)
+    return entries
+
+
 def validation_suppressions(entries: Iterable[str]) -> dict[str, set[str]]:
     """Read suppression entries into ``{code: ids}``.
 

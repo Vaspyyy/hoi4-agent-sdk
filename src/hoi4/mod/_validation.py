@@ -64,6 +64,7 @@ from ..validation import (
     validate_idea_category,
     validate_state,
     validate_tag_definition_targets,
+    suppression_entries,
     validation_suppressions,
 )
 from ..validation_stages import ValidationStage, require_validation_stage
@@ -596,7 +597,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
         stage = require_validation_stage(stage)
         # Fail on a bad suppression before the long run, not after it.
-        validation_suppressions([*(suppress_warnings or ()), *suppress])
+        validation_suppressions(suppression_entries(suppress_warnings, suppress))
         for name in _LOC_KEY_INDEXES:
             self._scan_cache.pop(name, None)
         errors: list[ValidationError] = []

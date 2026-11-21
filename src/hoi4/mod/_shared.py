@@ -107,9 +107,9 @@ def _filter_validation_errors(
       typo or an old message-text entry does not silently hide nothing.
     """
 
-    from ..validation import validation_suppressions
+    from ..validation import suppression_entries, validation_suppressions
 
-    rules = validation_suppressions([*(suppress_warnings or ()), *(suppress or ())])
+    rules = validation_suppressions(suppression_entries(suppress_warnings, suppress))
     kept: list[ValidationError] = []
     for error in errors:
         error = _with_registered_severity(error)

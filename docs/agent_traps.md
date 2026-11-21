@@ -19,7 +19,7 @@ Mod.effect_add_target_to_faction("AUS", "BAY")  # AUS = { add_to_faction = BAY }
 Mod.effect_join_faction("BAY", "AUS")           # Same output, named by intent.
 ```
 
-Validation advice (`info`, shown with `validate(advice=True)`): `faction_scope_footgun` for bare or iterated-scope faction commands.
+Validation advice (`info`, shown with `validate(advice=True)`): `faction_scope_footgun` for `add_to_faction` inside a country iterator (`every_country`, `random_country`, ...), where every matched country adds the target to its own faction.
 
 ## State History vs Runtime Effects
 

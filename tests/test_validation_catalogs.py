@@ -304,3 +304,35 @@ def test_discard_forgets_the_references_of_the_mods_files(tmp_path):
     mod.discard()
     assert not mod._own_reference_cache
 
+
+# ── Small things ────────────────────────────────────────────────────
+
+
+def test_suppress_as_one_string_names_the_mistake(tmp_path):
+    import pytest
+
+    mod = Mod(mod_root(tmp_path))
+    for kwargs in ({"suppress": "visual_overlap"}, {"suppress_warnings": "visual_overlap"}):
+        with pytest.raises(ValueError, match="takes a list of codes, not one string"):
+            mod.validate(stage="build", **kwargs)
+    with pytest.raises(ValueError, match="takes a list of codes, not one string"):
+        mod.validate_effect("add_political_power = 1", suppress_warnings="visual_overlap")
+
+
+def test_every_error_code_is_listed_once():
+    import ast
+    import inspect
+
+    import hoi4.validation as validation
+
+    tree = ast.parse(inspect.getsource(validation))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_ERROR_CODES" for target in node.targets
+        ):
+            assert isinstance(node.value, ast.Set)
+            names = [element.value for element in node.value.elts if isinstance(element, ast.Constant)]
+            assert len(names) == len(set(names))
+            break
+    else:
+        raise AssertionError("_ERROR_CODES not found")
