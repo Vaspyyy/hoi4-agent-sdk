@@ -44,6 +44,11 @@ def test_runtime_exact_body_cache_keeps_evidence_and_reacts_to_edits(tmp_path, m
     mod.discard()
     mod.create_event("test.1", immediate=original)
     assert mod._country_runtime_activation_evidence("AAA")[0] == {1}
+    # The cache is keyed by the exact text, so it stays valid across discard().
+    assert parses.count(original) == 1
+    mod.reload()
+    mod.create_event("test.1", immediate=original)
+    assert mod._country_runtime_activation_evidence("AAA")[0] == {1}
     assert parses.count(original) == 2
 
 

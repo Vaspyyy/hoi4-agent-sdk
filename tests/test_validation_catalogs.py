@@ -295,14 +295,30 @@ def test_a_deleted_idea_does_not_come_back_after_save(tmp_path):
     assert "I_keep" in mod._known_idea_ids()
 
 
-def test_discard_forgets_the_references_of_the_mods_files(tmp_path):
+def test_discard_forgets_the_references_of_changed_files_only(tmp_path):
     root = mod_root(tmp_path)
-    write(root, "common/scripted_effects/e.txt", "my_effect = { add_political_power = 1 }\n")
+    effects = write(
+        root, "common/scripted_effects/e.txt", "my_effect = { add_political_power = 1 }\n"
+    )
+    events = write(
+        root, "events/e.txt", "add_namespace = e\ncountry_event = { id = e.1 }\n"
+    )
     mod = Mod(root)
     mod.validate(stage="release")
-    assert mod._own_reference_cache
+    assert {effects, events} <= set(mod._own_reference_cache)
+    # Nothing changed: the entries (checked against the text on every use) stay.
     mod.discard()
-    assert not mod._own_reference_cache
+    assert {effects, events} <= set(mod._own_reference_cache)
+    # An edit unloads the events section, and its files' entries go with it.
+    mod.update_event("e.1", title="e.1.t")
+    mod.discard()
+    assert effects in mod._own_reference_cache
+    assert events not in mod._own_reference_cache
+    # A file changed on disk is forgotten as well.
+    effects.write_text("my_effect = { add_political_power = 2 }\n", encoding="utf-8")
+    mod.discard()
+    assert effects not in mod._own_reference_cache
+    assert mod.validate(stage="release") == Mod(root).validate(stage="release")
 
 
 # ── Small things ────────────────────────────────────────────────────

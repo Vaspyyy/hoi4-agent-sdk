@@ -66,10 +66,16 @@ reads `_countries`). The rest of the code reads `self._events` as before.
    inherited content loaded for editing);
 4. every section that depends on one of these.
 
-All edit buffers are emptied, derived caches (`_scan_cache`, sprite and
-trigger indexes, the country context cache, ...) are cleared, and
-`_original_files` keeps only the texts owned by sections that are still
-loaded. With base mods, the inherited content is read where it is (see
+All edit buffers are emptied and `_original_files` keeps only the texts owned
+by sections that are still loaded. Derived caches built from several files
+(`_scan_cache`, the sprite and state indexes, the country context cache, ...)
+are cleared; they are rebuilt from per-file results that `hoi4._file_cache`
+keeps, so that is cheap. Caches keyed by a file's exact text check that text
+on every use and stay valid: the references of the mod's own files
+(`_own_reference_cache`) keep the entries of files that were not written,
+staged or changed and that belong to no unloaded section, and the parsed
+sprite, scripted-trigger and runtime-activation texts are kept. `reload()`
+clears all of them. With base mods, the inherited content is read where it is (see
 [`mod_layers.md`](mod_layers.md)), so nothing needs rebuilding after a save. A
 base mod's text files have fingerprints too (`_base_fingerprints`): when one
 changed, appeared or went away, `save()` and `discard()` reload everything.

@@ -6,7 +6,7 @@ import dataclasses
 import os
 import tempfile
 import warnings
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -741,8 +741,9 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             self.reload()
             return
         self._reset_pending_edits()
-        self._unload_sections(names, dropped_files={*written, *staged, *changed})
-        self._clear_derived_caches()
+        dropped = {*written, *staged, *changed}
+        self._unload_sections(names, dropped_files=dropped)
+        self._clear_derived_caches(names, dropped)
         self._fingerprints = fingerprints
         for path in changed:
             self._read_digests.pop(path, None)
@@ -769,16 +770,35 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             names |= readers
         return registry.with_dependents(names), True
 
-    def _clear_derived_caches(self) -> None:
-        """Clear what is built from files or loaded data and rebuilt on demand."""
+    def _clear_derived_caches(
+        self, unloaded: Collection[str] | None = None, dropped: Collection[Path] = ()
+    ) -> None:
+        """Clear what is built from files or loaded data and rebuilt on demand.
+
+        ``None`` clears everything (a full reload). After a partial reload,
+        ``unloaded`` names the sections that were unloaded and ``dropped``
+        the files that were written, staged or changed on disk. Caches keyed
+        by a file's text check that text on every use and stay valid, so
+        they keep the entries of files nothing changed: the references of
+        the mod's own files outside the unloaded sections, and the parsed
+        sprite and runtime-activation texts. Everything else is cleared;
+        it is rebuilt from per-file results that ``hoi4._file_cache`` keeps,
+        so that is cheap.
+        """
 
         self._scan_cache.clear()
-        self._own_reference_cache.clear()
+        if unloaded is None:
+            self._own_reference_cache.clear()
+            self._sprite_text_parse_cache.clear()
+            self._runtime_activation_parse_cache.clear()
+            self._script_trigger_index_cache.clear()
+        else:
+            gone = set(unloaded)
+            for path in list(self._own_reference_cache):
+                if path in dropped or (self._sections_reading(path) or set()) & gone:
+                    del self._own_reference_cache[path]
         self._equipment_unlock_cache = None
         self._sprite_texture_cache = None
-        self._sprite_text_parse_cache.clear()
-        self._runtime_activation_parse_cache.clear()
-        self._script_trigger_index_cache.clear()
         self._state_index_cache.clear()
         self._country_context_cache.clear()
 
