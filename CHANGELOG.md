@@ -145,9 +145,11 @@ All notable changes to this project are documented here. The format follows
   otherwise. List entries are quoted where needed.
   A state's victory points have to be numbers (any spelling the game
   reads, such as `.5` or `1e3`) or script constants (`@points`).
+  A value with a byte-order mark inside, or with text right after inline
+  maths (`@[x]y`), is written in quotes too: the reader ends a word there.
   The effect builders `effect_add_building` and `effect_add_tech_bonus` and
   the flags of `create_decision_chain` follow the same rule.
-  `tests/test_block_body_guard.py` tries eleven attack texts on every text
+  `tests/test_block_body_guard.py` tries thirteen attack texts on every text
   field of every model, on new and on loaded objects.
 - A state edit that only adds quote characters or a space at an end of a
   name, a category or a resource value is written. It used to be taken for

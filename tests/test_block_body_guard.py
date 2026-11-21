@@ -74,7 +74,7 @@ from hoi4 import (
     TaskForce,
 )
 from hoi4.definitions import DEFINITION_KINDS
-from hoi4.syntax import parse
+from hoi4.syntax import Assignment, Block, Scalar, Tagged, parse
 from hoi4.textio import read_text
 
 MARKER = "zz_marker = 1"
@@ -92,6 +92,11 @@ PAYLOADS = {
     "tight": "x}zz_breakout=1{y",
     "pair": "1 10}zz_breakout=1{1",
     "deep": "1 10}}}zz_breakout=1{a={b={1",
+    # One word to a writer that only looks for spaces, braces and operators;
+    # two words to the reader, which also ends a word at a byte-order mark
+    # and after inline maths.
+    "bom": "x﻿zz_loose",
+    "maths": "@[x]zz_loose",
 }
 Shape = Callable[[str], Any]
 
@@ -716,6 +721,39 @@ def _landings(root: Path, name: str) -> tuple[set[tuple[str, tuple[str, ...]]], 
     return found, broken
 
 
+def _loose_words(root: Path, word: str) -> set[tuple[str, tuple[str, ...]]]:
+    """Where ``word`` stands as a word of its own: ``(file, names of the blocks around)``.
+
+    A value that was meant to be one scalar and that the reader takes for two
+    leaves its second half behind as such a word.
+    """
+
+    found: set[tuple[str, tuple[str, ...]]] = set()
+
+    def visit(block: Block, parents: tuple[str, ...], relative: str) -> None:
+        for item in block.items:
+            if type(item) is Scalar:
+                if not item.quoted and item.raw == word:
+                    found.add((relative, parents))
+            elif type(item) is Block:
+                visit(item, parents, relative)
+            elif type(item) is Assignment:
+                key, value = item.key, item.value
+                if not key.quoted and key.raw == word:
+                    found.add((relative, parents))
+                if type(value) is Scalar and not value.quoted and value.raw == word:
+                    found.add((relative, parents))
+                elif type(value) is Block:
+                    visit(value, (*parents, item.name), relative)
+                elif type(value) is Tagged:
+                    visit(value.block, (*parents, item.name), relative)
+
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and path.suffix.lower() in _SCRIPT_SUFFIXES:
+            visit(parse(read_text(path)).root, (), path.relative_to(root).as_posix())
+    return found
+
+
 _PLACES: dict[tuple[str, str, str, int], set[tuple[str, tuple[str, ...]]]] = {}
 
 
@@ -742,14 +780,19 @@ def run_case(
     landings, broken = _landings(root, "zz_breakout")
     if broken:
         return "escaped", broken
-    place = _place(recipe, mode, field, shape) if landings else set()
-    for file, parents in sorted(landings):
-        inside = any(
-            file == place_file and parents[: len(place_parents)] == place_parents
-            for place_file, place_parents in place
-        )
-        if not inside:
-            return "escaped", f"{file}: zz_breakout inside {' > '.join(parents) or 'the file'}"
+    # Half of a value left behind as a word of its own. In a field that holds
+    # script (a block body) two words are what was asked for, so that place
+    # is fine.
+    loose = _loose_words(root, "zz_loose")
+    place = _place(recipe, mode, field, shape) if landings or loose else set()
+    for name, where in (("zz_breakout", landings), ("zz_loose", loose)):
+        for file, parents in sorted(where):
+            inside = any(
+                file == place_file and parents[: len(place_parents)] == place_parents
+                for place_file, place_parents in place
+            )
+            if not inside:
+                return "escaped", f"{file}: {name} inside {' > '.join(parents) or 'the file'}"
     return outcome, detail
 
 

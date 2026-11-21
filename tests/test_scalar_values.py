@@ -391,3 +391,67 @@ def test_a_new_mapping_key_has_to_be_one_word() -> None:
     assert patch_scalar_mapping("a = 1\n", {"a": 1, "b": "two words"}) == 'a = 1\nb = "two words"\n'
     with pytest.raises(ParseError, match="one word as a key"):
         patch_scalar_mapping("a = 1\n", {"a": 1, "b } zz_breakout = 1 { c": 2})
+
+
+def _every_character() -> list[str]:
+    """Every character up to U+30FF and of U+FE00 to U+FFFF, and a sample of the rest."""
+
+    return [
+        chr(code)
+        for code in range(0x110000)
+        if not 0xD800 <= code <= 0xDFFF
+        and (code < 0x3100 or 0xFE00 <= code <= 0xFFFF or code % 97 == 0)
+    ]
+
+
+def test_quote_gives_one_scalar_for_every_character() -> None:
+    """The writer's "does this need quotes" and the reader's "where does a word end" agree.
+
+    A character the reader ends a word at and the writer does not quote (a
+    byte-order mark was one) would split a value in two.
+    """
+
+    from hoi4.script import pdx_value
+    from hoi4.syntax import Scalar, parse, quote, unquote
+
+    def reads_back(spelled: str, text: str) -> bool:
+        doc = parse(spelled)
+        items = doc.root.items
+        return (
+            not doc.problems and not doc.comments and len(items) == 1
+            and type(items[0]) is Scalar
+            and (items[0].start, items[0].end) == (0, len(spelled))
+            and unquote(spelled) == text
+        )
+
+    words = ["@[a]b", "@[a]", "@[", "@[a", "a@[b]c", "@[a][b]", "a\\", "\\", '\\"', "a?", "a!", "a?=b"]
+    for character in _every_character():
+        words += [character, "a" + character, character + "a", "a" + character + "b"]
+    wrong = [text for text in words if not reads_back(quote(text), text)]
+    assert wrong == []
+    # ``pdx_value`` refuses line breaks and NUL; everything else has to read back.
+    wrong = [
+        text for text in words
+        if not any(c in text for c in "\n\r\x00") and not reads_back(pdx_value(text), text)
+    ]
+    assert wrong == []
+
+
+def test_a_byte_order_mark_inside_a_value_does_not_split_it(tmp_path: Path) -> None:
+    from hoi4.events import serialize_events_file
+    from hoi4.states import serialize_state
+    from hoi4.types import State
+
+    mod = Mod(tmp_path)
+    assert mod.effect_add_building(1, "bunker﻿zz_loose") == (
+        '1 = { add_extra_state_shared_building_slots = 1 add_building_construction = '
+        '{ type = "bunker﻿zz_loose" level = 1 instant_build = yes } }'
+    )
+    assert serialize_events_file("zz﻿hidden", []).startswith('add_namespace = "zz﻿hidden"\n')
+    text = serialize_state(State(id=1, name="A﻿zz_loose", provinces=[1]))
+    assert 'name = "A﻿zz_loose"' in text
+    decisions = mod.create_decision_chain(
+        "zz_category", [{"id": "zz_one", "flag": "done﻿zz_loose", "clear_flags": ["old﻿yes"]}]
+    )
+    assert 'set_country_flag = "done﻿zz_loose"' in decisions[0].complete_effect
+    assert 'clr_country_flag = "old﻿yes"' in decisions[0].complete_effect

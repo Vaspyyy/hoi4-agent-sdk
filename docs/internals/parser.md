@@ -269,14 +269,16 @@ checks the text it was given:
   the two rules above together;
 - numbers or script constants (`@name`) only for a state's victory points.
 
-`tests/test_block_body_guard.py` tries eleven attack texts (a closing brace,
+`tests/test_block_body_guard.py` tries thirteen attack texts (a closing brace,
 an unescaped quote, a `#`, a statement where a word belongs, and so on) in
 every text field of every model class, read from the dataclasses themselves,
 on an object that is created with the field, on a new object and on one that
 was saved and loaded again. A new field is covered without touching the test.
 It also works out where each field's text belongs: a field that holds script
 may put statements into its own block or deeper, a field that holds one value
-may never produce a statement.
+may never produce a statement, and it may never be read back as two words
+(the reader ends a word at a byte-order mark and after inline maths, so
+`quote()` asks the reader's own rule, and a test tries every character).
 
 Two limits, both about a guess the patcher cannot make:
 
