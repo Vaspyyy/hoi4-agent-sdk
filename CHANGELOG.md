@@ -138,6 +138,16 @@ All notable changes to this project are documented here. The format follows
 - Script text for a block (an effect, a trigger, a reward) that is not well
   formed on its own, for example one with a stray closing brace that would
   end the block early, is refused with a `ParseError` when it is written.
+  Every writer checks it: an edit of an existing block, a new block in an
+  existing event, focus, decision category or state, and every new object
+  (focuses, decisions, missions, decision categories, dynamic modifiers,
+  on-actions, AI strategies, scripted localisation). The entries of an
+  on-action's `events` and `random_events` lists are checked the same way.
+- In an on-action's `random_events`, a statement that is not a
+  `weight = event` pair (such as `chance_to_fire = 25`) reads as one list
+  entry holding the whole statement, and in `events` any assignment does.
+- A comment that moves from one statement to another, with the same words,
+  counts as a change and is written.
 - A decision edit writes only the file that holds the decision. Category
   presentation that an old layout kept in the decisions file moves to
   `common/decisions/categories/` only when the category itself is edited. A
@@ -191,6 +201,21 @@ All notable changes to this project are documented here. The format follows
 - Changing the weight of a `random_events` entry dropped the comment on its
   line, and inserting an event in the middle of a list merged the hook's
   repeated blocks.
+- A `random_events` block with a statement that is not a `weight = event`
+  pair lost its pairing on the next edit: every entry after it was written
+  with the wrong weight.
+- Editing a decision in one legacy category and the presentation of another
+  category in the same file wrote a second definition of the first category
+  into `common/decisions/categories/`.
+- A localisation file without a byte-order mark gets one on save. A line of
+  it that mixed valid UTF-8 with other bytes was then read differently, so
+  its text changed although nobody edited it. Such a line is now written
+  again from its text.
+- Changing a state's `buildings` rewrote the whole block and lost its
+  comments, and a change of only a comment was not written.
+- A new event statement placed after one that shares its line with another
+  statement and a comment (`id = a.1 desc = a.1.d # note`) went between the
+  statement and its comment.
 - A statement added before one that shares the line of the opening brace
   moved that statement to a new line. Reordering statements lost the
   comments on their lines.

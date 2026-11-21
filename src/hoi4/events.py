@@ -222,6 +222,8 @@ def _span(item: Assignment | Scalar | Block | Tagged) -> AssignmentSpan:
 
 def _render_text_entry(key: str, entry: EventText) -> str:
     trigger = normalize_block_body(entry.trigger)
+    # A trigger with a stray or missing brace would change the script around it.
+    require_well_formed(trigger, f"the trigger of a conditional '{key}'")
     text = quote(entry.text)
     if not trigger:
         return f"{key} = {{ text = {text} }}"
@@ -615,6 +617,7 @@ def _set_block_before_options(body: str, key: str, value: Optional[str]) -> str:
     if value is None or block.first(key) is not None or first_option is None:
         return set_block(body, key, value)
     cleaned = normalize_block_body(value)
+    require_well_formed(cleaned, f"the new body of '{key}'")
     inner = "\n".join("\t" + line.strip() for line in cleaned.splitlines())
     return _insert_statement(body, f"{key} = {{\n{inner}\n}}", before=first_option)
 
@@ -649,7 +652,13 @@ def _insert_statement(
     if after is not None:
         line_end = body.find("\n", anchor.end)
         rest = body[anchor.end : len(body) if line_end < 0 else line_end]
-        rest_is_trailer = not rest.strip() or rest.lstrip().startswith("#")
+        commented = rest.lstrip().startswith("#")
+        rest_is_trailer = not rest.strip() or commented
+        if commented and not owns_line and line_start > 0:
+            # ``a = 1 b = 2 # note``: the comment stays with the statement it
+            # follows, and the new one goes on a line of its own below.
+            owns_line = True
+            indent = prefix[: len(prefix) - len(prefix.lstrip())]
         # On the last line of a body the item shares its line with the ``}``.
         if owns_line and rest_is_trailer and line_end >= 0:
             rendered = "".join(indent + line + "\n" for line in lines)

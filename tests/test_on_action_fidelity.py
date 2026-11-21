@@ -186,3 +186,30 @@ def test_an_event_inserted_in_the_middle_keeps_the_repeated_blocks(tmp_path):
     )
     mod.reload()
     assert mod.get_on_action("on_startup").events == ["x.1", "a.1", "y.1", "b.1"]
+
+
+def test_a_statement_in_random_events_is_not_taken_for_a_weight(tmp_path: Path) -> None:
+    """``chance_to_fire = 25`` is not a ``weight = event`` pair: it stays one
+    entry, and the pairs after it keep their weights when the list is edited."""
+
+    source = (
+        "on_actions = {\n\ton_monthly = {\n\t\trandom_events = {\n"
+        "\t\t\tchance_to_fire = 25 # keep\n\t\t\t100 = 0\n\t\t\t10 = bar.1\n"
+        "\t\t}\n\t}\n}\n"
+    )
+    path = tmp_path / "common/on_actions/zz_on_actions.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    mod = Mod(tmp_path)
+    action = mod.get_on_action("on_monthly")
+    assert action.random_events == ["chance_to_fire = 25", "100", "0", "10", "bar.1"]
+
+    mod.update_on_action("on_monthly", random_events=[*action.random_events, "5", "bar.2"])
+    mod.save()
+
+    assert path.read_text(encoding="utf-8") == source.replace(
+        "\t\t\t10 = bar.1\n", "\t\t\t10 = bar.1\n\t\t\t5 = bar.2\n"
+    )
+    assert Mod(tmp_path).get_on_action("on_monthly").random_events == [
+        "chance_to_fire = 25", "100", "0", "10", "bar.1", "5", "bar.2",
+    ]

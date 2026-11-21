@@ -71,7 +71,9 @@ write_text(path, new_text, like=original) # encode_text, then write; returns the
   as `ß“` is also valid UTF-8, so such a line is written as UTF-8 too.) A
   clean file with one line-ending style is still encoded in one go.
 - Localisation (`.yml`) is always written with the byte-order mark the game
-  requires.
+  requires. Adding or removing the mark changes how a line that mixes valid
+  UTF-8 with stray bytes is read, so such a line is encoded again from its
+  text; every other line keeps its bytes.
 
 When `Mod.save()` creates a file that overrides one from the game or a base
 mod, the new file copies the format of the file it shadows.
@@ -236,7 +238,17 @@ or dropped comment is then written. A new body without comments says nothing
 about the comments in the file, so they are left alone; pass `comments=True`
 to remove them too. `same_block_body(current, new)` answers "would this edit
 change anything?" by the same rule, and is what the content modules use to
-decide whether a text field changed.
+decide whether a text field changed. A compared comment has to say the same
+and sit at the same statement: one that moved to the end of another line is a
+change.
+
+A body with a stray brace is refused wherever script text is wrapped into a
+block, not only by `set_block`. `} x = 1 {` is balanced once it sits inside a
+block, so the file would still parse and the last check before saving could
+not see it: the block would close early and `x = 1` would land in the script
+around it. Each writer that builds a new block or a new object therefore
+calls `require_well_formed` on the text it was given
+(`tests/test_block_body_guard.py` lists them).
 
 Two limits, both about a guess the patcher cannot make:
 

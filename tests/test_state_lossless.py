@@ -416,3 +416,53 @@ def test_new_state_renders_numeric_properties() -> None:
     state = read_state(Path("9.txt"), text)
     assert (state.manpower, state.local_supplies) == ("500", "1.5")
     assert "buildings_max_level_factor" not in text
+
+
+BUILDINGS = (
+    "state = {\n\tid = 1\n\tname = \"STATE_1\"\n\tmanpower = 100\n\tstate_category = town\n"
+    "\thistory = {\n\t\towner = FRA\n\t\tbuildings = {\n"
+    "\t\t\tinfrastructure = 3 # keep road note\n"
+    "\t\t\tindustrial_complex = 1 # keep factory note\n"
+    "\t\t}\n\t}\n\tprovinces = { 1 2 }\n}\n"
+)
+
+
+def _buildings_mod(tmp_path: Path) -> tuple[Mod, Path]:
+    path = _write(tmp_path / "history/states/1-Test.txt", BUILDINGS)
+    return Mod(tmp_path), path
+
+
+def test_a_buildings_edit_changes_one_line_and_keeps_the_comments(tmp_path: Path) -> None:
+    mod, path = _buildings_mod(tmp_path)
+    mod.set_state_properties(1, buildings="infrastructure = 3\nindustrial_complex = 2")
+    mod.save()
+    assert path.read_text(encoding="utf-8") == BUILDINGS.replace(
+        "industrial_complex = 1", "industrial_complex = 2"
+    )
+
+
+def test_a_changed_buildings_comment_is_written(tmp_path: Path) -> None:
+    mod, path = _buildings_mod(tmp_path)
+    mod.set_state_properties(
+        1,
+        buildings=(
+            "infrastructure = 3 # edited road note\n"
+            "industrial_complex = 1 # keep factory note"
+        ),
+    )
+    mod.save()
+    assert path.read_text(encoding="utf-8") == BUILDINGS.replace(
+        "# keep road note", "# edited road note"
+    )
+
+
+def test_buildings_with_a_stray_brace_are_refused(tmp_path: Path) -> None:
+    import pytest
+
+    from hoi4.syntax import ParseError
+
+    mod, path = _buildings_mod(tmp_path)
+    mod.set_state_properties(1, buildings="} add_core_of = FRA {")
+    with pytest.raises(ParseError, match="'buildings'"):
+        mod.preview()
+    assert path.read_text(encoding="utf-8") == BUILDINGS

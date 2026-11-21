@@ -21,9 +21,10 @@ from .patching import (
     block_bodies_equivalent,
     replace_assignment,
     scalar_values_equivalent,
+    set_block,
     top_level_assignments,
 )
-from .syntax import Assignment, Block, parse
+from .syntax import Assignment, Block, parse, require_well_formed
 from .textio import encode_text, read_text
 from .types import State
 
@@ -430,14 +431,23 @@ def _set_direct_block(
     after_keys: Sequence[str] = (),
     before_dated: bool = False,
 ) -> str:
-    """Set the body of ``key = { ... }``, keeping the statement's own wrapper bytes."""
+    """Set the body of ``key = { ... }``.
 
-    spans = [span for span in top_level_assignments(text) if span.key == key and span.is_block]
+    An existing block is edited statement by statement (``patching.set_block``),
+    so its comments and unchanged statements keep their bytes. Raises
+    :class:`~hoi4.syntax.ParseError` for a body with a stray or missing brace.
+    """
+
+    named = [span for span in top_level_assignments(text) if span.key == key]
+    spans = [span for span in named if span.is_block]
     if body is None:
         result = text
         for span in reversed(spans):
             result = replace_assignment(result, span, None)
         return result
+    cleaned = textwrap.dedent(body).strip()
+    # A body with a stray or missing brace would change the script around it.
+    require_well_formed(cleaned, f"the new body of '{key}'")
     if not spans:
         return _insert_statement(
             text, _render_block(key, body, layout.unit), layout,
@@ -445,12 +455,13 @@ def _set_direct_block(
         )
     span = spans[0]
     current = _assignment_body(text, span)
+    if not cleaned:
+        return text if not current.strip() else _replace_body(text, span, " ")
+    if named[0] is span and span.tag is None:
+        return set_block(text, key, cleaned)
     if block_bodies_equivalent(current, body):
         return text
     child = _child_layout(text, span, layout)
-    cleaned = textwrap.dedent(body).strip()
-    if not cleaned:
-        return _replace_body(text, span, " ")
     lines = "".join(
         "\n" + (child.inner + line.rstrip() if line.strip() else "")
         for line in cleaned.splitlines()

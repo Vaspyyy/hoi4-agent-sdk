@@ -184,7 +184,8 @@ def same_block_body(current: str, new: str, *, comments: bool = False) -> bool:
     The two bodies have to mean the same (see :func:`block_bodies_equivalent`).
     Comments are compared as soon as ``new`` has any, or when ``comments`` is
     true: a ``new`` without comments says nothing about the ones in
-    ``current``.
+    ``current``. A compared comment has to say the same and sit at the same
+    statement: one that moved from the end of one line to another is a change.
     """
 
     if not block_bodies_equivalent(current, new):
@@ -192,7 +193,13 @@ def same_block_body(current: str, new: str, *, comments: bool = False) -> bool:
     wanted = _comment_texts(new)
     if not comments and not wanted:
         return True
-    return wanted == _comment_texts(current)
+    if wanted != _comment_texts(current):
+        return False
+    left = _segments(current, True, ())
+    right = _segments(new, True, ())
+    if left is None or right is None:
+        return True
+    return [segment.meaning for segment in left] == [segment.meaning for segment in right]
 
 
 def _comment_texts(text: str) -> tuple[str, ...]:

@@ -35,6 +35,7 @@ from .patching import (
     replace_assignment_body,
     top_level_assignments,
 )
+from .syntax import require_well_formed
 
 DEFINITION_ID_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*")
 
@@ -363,6 +364,8 @@ def render_scalar_mapping(values: Mapping[str, object]) -> str:
 
 
 def render_block(key: str, body: str) -> str:
+    # A body with a stray or missing brace would change the script around it.
+    require_well_formed(body, f"the body of '{key}'")
     return _render_assignment(key, _dedent_block_body(body))
 
 
@@ -396,6 +399,8 @@ def render_ai_strategy(
     if not strategies:
         raise ValueError("An AI strategy needs at least one ai_strategy entry")
     for strategy_type, target, weight in strategies:
+        if not DEFINITION_ID_RE.fullmatch(strategy_type):
+            raise ValueError(f"Invalid AI strategy type: {strategy_type!r}")
         line = f"type = {strategy_type}"
         if target:
             line += f" id = {_scalar(target)}"

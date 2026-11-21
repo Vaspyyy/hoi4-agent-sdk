@@ -31,7 +31,7 @@ from .patching import (
     set_scalar,
 )
 from .paths import require_country_tag, resolve_mod_output_path
-from .syntax import Assignment, Block, parse, quote, unquote
+from .syntax import Assignment, Block, parse, quote, require_well_formed, unquote
 from .textio import read_text, write_text
 from .types import Focus, FocusTree
 
@@ -406,6 +406,8 @@ def _quoted_list(values: list[str]) -> str:
 
 def _render_block(key: str, body: str, *, compact: bool = True) -> str:
     cleaned = _reindent(body.strip(), "")
+    # A body with a stray or missing brace would change the script around it.
+    require_well_formed(cleaned, f"the body of '{key}'")
     if not cleaned:
         return f"{key} = {{ }}"
     if compact and "\n" not in cleaned and "#" not in cleaned and len(cleaned) <= 60:

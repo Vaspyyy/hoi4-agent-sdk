@@ -670,3 +670,34 @@ def test_a_category_edit_writes_no_definition_for_its_untouched_neighbours(tmp_p
     definitions = tmp_path / "common/decisions/categories/a_decision_categories.txt"
     assert definitions.read_text(encoding="utf-8") == "my_cat = {\n\ticon = GFX_new\n}\n"
     assert path.read_text(encoding="utf-8") == source
+
+
+@pytest.mark.parametrize("edit", ["update", "delete", "create"])
+def test_a_decision_edit_does_not_write_a_definition_for_its_category(
+    tmp_path: Path, edit: str
+) -> None:
+    """Two legacy categories in one file. Editing ``cat_b`` itself moves its
+    presentation to the categories file; a decision edit in ``cat_a`` in the
+    same session must not put ``cat_a`` there too."""
+
+    decisions = _write(
+        tmp_path / "common/decisions/01_first.txt",
+        "cat_a = {\n\ticon = icon_a\n\tdec_a = {\n\t\tcost = 10\n\t}\n"
+        "\tdec_a2 = {\n\t\tcost = 11\n\t}\n}\n"
+        "cat_b = {\n\ticon = icon_b\n\tdec_b = {\n\t\tcost = 20\n\t}\n}\n",
+    )
+    mod = Mod(tmp_path)
+    if edit == "update":
+        mod.update_decision("dec_a", cost=99)
+    elif edit == "delete":
+        mod.delete_decision("dec_a2")
+    else:
+        mod.create_decision("cat_a", "dec_a3", cost=5)
+    mod.update_decision_category("cat_b", icon="icon_b_new")
+    _save(mod)
+
+    definitions = tmp_path / "common/decisions/categories/01_first_decision_categories.txt"
+    assert definitions.read_text(encoding="utf-8") == "cat_b = {\n\ticon = icon_b_new\n}\n"
+    written = decisions.read_text(encoding="utf-8")
+    assert "cat_a = {\n\ticon = icon_a\n" in written
+    assert "icon_b" not in written

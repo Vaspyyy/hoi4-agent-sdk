@@ -285,10 +285,11 @@ class SourcesLayer(LocalisationLayer):
                 )
             if dirty_only and path not in dirty_files:
                 continue
-            if not category.touched and category.id not in self._dirty_decision_categories:
-                # Nobody edited this category. It belongs in the file only if
-                # the file defines it already: another category's edit must
-                # not write a definition for it.
+            if not category.touched:
+                # Nobody edited this category itself. It belongs in the file
+                # only if the file defines it already: an edit of another
+                # category, or of one of this category's decisions, must not
+                # write a definition for it.
                 if path not in defined:
                     defined[path] = {
                         span.key

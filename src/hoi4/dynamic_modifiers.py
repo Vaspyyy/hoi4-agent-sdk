@@ -15,7 +15,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_value
-from .syntax import Block, Scalar, parse
+from .syntax import Block, Scalar, parse, require_well_formed
 from .textio import read_text
 
 _RESERVED_SCALARS = {"icon", "attacker_modifier"}
@@ -214,6 +214,8 @@ def _coerce_scalar(value: str) -> str | int | float | bool:
 
 def _wrap_block(key: str, body: str) -> str:
     clean = body.strip("\n")
+    # A body with a stray or missing brace would change the script around it.
+    require_well_formed(clean, f"the body of '{key}'")
     if not clean.strip():
         return f"{key} = {{ }}"
     inner = "\n".join(f"\t{line}" for line in clean.splitlines())

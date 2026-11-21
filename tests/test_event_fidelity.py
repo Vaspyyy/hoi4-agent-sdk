@@ -446,3 +446,19 @@ def test_new_events_and_options_with_a_stray_brace_are_refused(tmp_path, create,
     with pytest.raises(ValueError, match=where):
         mod.save()
     assert path.read_text(encoding="utf-8") == ONE_LINE_OPTIONS
+
+
+def test_new_statement_goes_below_a_shared_line_that_ends_in_a_comment(tmp_path: Path) -> None:
+    source = (
+        "add_namespace = t\ncountry_event = {\n\tid = t.1 desc = t.1.d # note\n"
+        "\toption = { name = t.1.a }\n}\n"
+    )
+    path = tmp_path / "events/t.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    mod = Mod(tmp_path)
+    mod.update_event("t.1", picture="GFX_x")
+    mod.save()
+    assert path.read_text(encoding="utf-8") == source.replace(
+        "# note\n", "# note\n\tpicture = GFX_x\n"
+    )

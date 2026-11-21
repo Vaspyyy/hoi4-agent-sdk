@@ -314,21 +314,50 @@ def encode_text(
         # it at once gives every unchanged line its old bytes back.
         whole = _encode_whole(text if newline == "\n" else text.replace("\n", newline), encoding)
     if whole is None:
-        whole = _merge_lines(decoded.payload, original, text, newline, encoding, use_bom)
+        whole = _merge_lines(
+            decoded.payload,
+            original,
+            text,
+            newline,
+            encoding,
+            use_bom,
+            reread=use_bom != decoded.bom,
+        )
     return (codecs.BOM_UTF8 + whole) if use_bom else whole
 
 
 def _merge_lines(
-    payload: bytes, original: str, text: str, newline: str, encoding: str, bom: bool
+    payload: bytes,
+    original: str,
+    text: str,
+    newline: str,
+    encoding: str,
+    bom: bool,
+    *,
+    reread: bool = False,
 ) -> bytes:
     """Rebuild ``text`` as bytes where every unchanged line keeps its original
-    bytes, line ending included, and only edited lines are encoded."""
+    bytes, line ending included, and only edited lines are encoded.
+
+    ``reread`` is set when the byte-order mark is added or removed. A line
+    that mixes valid UTF-8 with stray bytes is read differently with and
+    without the mark, so such a line is encoded again from its text instead
+    of being copied: the file must read back as the text that was saved.
+    """
 
     raw_lines = _RAW_LINE_RE.findall(payload)
     old_lines = _split_lines(original)
     new_lines = _split_lines(text)
     if len(raw_lines) != len(old_lines):  # pragma: no cover - defensive
         raise AssertionError("line breaks are the same bytes in every encoding")
+    if reread:
+        for index, raw_line in enumerate(raw_lines):
+            content = raw_line.rstrip(b"\r\n")
+            wanted = old_lines[index].removesuffix("\n")
+            if _read_line(content, bom)[0] != wanted:
+                raw_lines[index] = (
+                    _encode_line(wanted, encoding, bom) + raw_line[len(content) :]
+                )
     default_ending = newline.encode("ascii")
     # Unchanged lines at the start and the end are matched first. The diff
     # below would otherwise be free to pair an edited line's neighbours with

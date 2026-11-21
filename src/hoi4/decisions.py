@@ -23,7 +23,7 @@ from .patching import (
     set_scalar,
     top_level_assignments,
 )
-from .syntax import Scalar, parse, quote, unquote
+from .syntax import Scalar, parse, quote, require_well_formed, unquote
 from .textio import read_text, write_text
 from .types import Decision, DecisionCategory
 
@@ -425,6 +425,7 @@ def serialize_decision(decision: Decision) -> str:
         value = getattr(decision, key)
         if kind == "block":
             if value:
+                require_well_formed(value, f"'{key}' of decision '{decision.id}'")
                 lines.append(f"\t\t{key} = {{")
                 for line in value.strip().split("\n"):
                     lines.append(f"\t\t\t{line.strip()}")
@@ -616,6 +617,7 @@ def _serialize_category_definition(category: DecisionCategory) -> str:
     for key in ("allowed", "visible"):
         body = getattr(category, key)
         if body:
+            require_well_formed(body, f"'{key}' of decision category '{category.id}'")
             parts.append(f"\t{key} = {{")
             parts.extend(f"\t\t{line.strip()}" for line in body.strip().splitlines())
             parts.append("\t}")

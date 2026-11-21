@@ -465,8 +465,11 @@ changed weight is rewritten in place, and a new entry goes into the block of
 the entry before it (a new first entry into the block of the first entry that
 stays). Only a reordered list or a changed `effect` is written
 into the first block with the other blocks removed. Weighted `random_events`
-entries keep their `weight = event_id` pairs. Every `on_actions = { }` block of
-a file is loaded.
+entries keep their `weight = event_id` pairs: `10 = example.1` is the two list
+values `"10", "example.1"`. Any other statement in such a block
+(`chance_to_fire = 25`) is one list value holding the whole statement, so it
+is never taken for a weight. Every `on_actions = { }` block of a file is
+loaded.
 
 ### Idea
 ```python

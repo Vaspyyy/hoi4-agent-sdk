@@ -64,3 +64,10 @@ def test_a_changed_comment_is_written():
     assert set_block(source, "trigger", "# new comment\nalways = yes") == (
         "trigger = {\r\n  # new comment\r\n  always = yes }\r\n"
     )
+
+
+def test_a_comment_moved_to_another_statement_is_a_change():
+    text = "x = {\n\ta = 1 # note\n\tb = 2\n}\n"
+
+    assert set_block(text, "x", "a = 1 # note\nb = 2") == text
+    assert set_block(text, "x", "a = 1\nb = 2 # note") == "x = {\n\ta = 1\n\tb = 2 # note\n}\n"

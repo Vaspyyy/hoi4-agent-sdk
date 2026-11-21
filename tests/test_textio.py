@@ -172,6 +172,33 @@ def test_forced_bom_for_localisation() -> None:
     assert encode_text(decode_text(BOM + data), like=BOM + data, bom=False) == data
 
 
+def test_adding_the_bom_keeps_the_text_of_a_mixed_line() -> None:
+    # Two high bytes in a valid UTF-8 pair and three stray ones: without a
+    # byte-order mark the line reads as Windows-1252, with one as UTF-8 plus
+    # stray bytes. Adding the mark must not change what the line says.
+    data = b'l_english:\n k1:0 "\xc3\xa9\xe9\xe9\xe9"\n k2:0 "hello"\n'
+    text = decode_text(data)
+    assert ' k1:0 "Ã©ééé"\n' in text
+    edited_text = text.replace("hello", "world")
+
+    edited = encode_text(edited_text, like=data, bom=True)
+
+    assert edited.startswith(BOM)
+    assert decode_text(edited) == edited_text
+    assert edited.endswith(b' k2:0 "world"\n')
+
+
+def test_removing_the_bom_keeps_the_text_of_a_mixed_line() -> None:
+    data = BOM + b'a = "\xc3\xa9\xe9\xe9\xe9"\nb = 1\n'
+    text = decode_text(data)
+    assert text.startswith('a = "éééé"\n')
+
+    for wanted in (text, text.replace("b = 1", "b = 2")):
+        edited = encode_text(wanted, like=data, bom=False)
+        assert not edited.startswith(BOM)
+        assert decode_text(edited) == wanted
+
+
 def test_read_and_write(tmp_path: Path) -> None:
     path = tmp_path / "f.txt"
     original = b"a = 1\r\n"
@@ -255,3 +282,24 @@ def test_random_bytes_round_trip_and_survive_line_edits() -> None:
         assert after[index + 1 :] == before[index + 1 :]
         # Reading is per line, so the saved file reads back as the edited text.
         assert decode_text(edited) == edited_text
+
+
+def test_random_bytes_read_back_when_the_bom_is_added_or_removed() -> None:
+    rng = random.Random(20261122)
+    for _ in range(3000):
+        data = b"".join(_random_chunk(rng) for _ in range(rng.randrange(0, 25)))
+        text = decode_text(data)
+        flipped = not data.startswith(BOM)
+        if not flipped and text.startswith("﻿"):
+            # Text that starts with U+FEFF cannot be stored without a mark:
+            # the reader would take the character for one.
+            continue
+        result = encode_text(text, like=data, bom=flipped)
+        assert result.startswith(BOM) == flipped
+        assert decode_text(result) == text
+        # A line that reads the same either way keeps its bytes.
+        before, after = _raw_lines(data), _raw_lines(result)
+        assert len(after) == len(before)
+        for old_line, new_line in zip(before, after):
+            if new_line != old_line:
+                assert decode_text(old_line) != decode_text(BOM + old_line)

@@ -32,7 +32,7 @@ from .patching import (
     sync_body,
 )
 from .script import normalize_block_body
-from .syntax import Assignment, Block, Scalar, parse
+from .syntax import Assignment, Block, Scalar, parse, require_well_formed
 from .textio import read_text, write_text
 from .types import OnAction
 
@@ -62,10 +62,20 @@ def load_on_actions_file(path: Path) -> list[OnAction]:
     return actions
 
 
+def _require_entries(key: str, values: list[str]) -> None:
+    """Refuse a list entry with a stray brace: it would change the script around it."""
+
+    for value in values:
+        require_well_formed(str(value), f"an entry of '{key}'")
+
+
 def serialize_on_action(action: OnAction) -> str:
     if action.raw_block:
         body = _patch_on_action_body(action, action.raw_block)
         return f"\t{action.id} = {{\n{_indent(body, 2)}\n\t}}"
+    _require_entries("events", action.events)
+    _require_entries("random_events", action.random_events)
+    require_well_formed(action.effect, f"the effect of on_action '{action.id}'")
     parts = [f"\t{action.id} = {{"]
     if action.events:
         parts.append("\t\tevents = {")
@@ -163,20 +173,33 @@ def _read_fields(block: Block) -> tuple[str, list[str], list[str]]:
 
 
 def _read_list(block: Block, key: str) -> list[str]:
-    """Every entry of every top-level ``key = { ... }``.
-
-    A weighted entry ``10 = example.1`` reads as ``"10", "example.1"``.
-    """
+    """Every entry of every top-level ``key = { ... }``. See ``_entry_values``."""
 
     values: list[str] = []
     for item in _field_blocks(block, key):
         assert type(item.value) is Block
         for entry in item.value.items:
-            if type(entry) is Scalar:
-                values.append(entry.value)
-            elif type(entry) is Assignment and type(entry.value) is Scalar:
-                values.extend((entry.name, entry.value.value))
+            values.extend(_entry_values(entry, key == "random_events") or ())
     return values
+
+
+def _entry_values(entry: object, weighted: bool) -> tuple[str, ...] | None:
+    """How one entry of an ``events`` or ``random_events`` block reads.
+
+    A bare id is one value. In ``random_events`` a weighted entry
+    ``10 = example.1`` is two values, ``"10", "example.1"``. Any other
+    assignment (``chance_to_fire = 25``) is one value that holds the whole
+    statement, so it is never taken for a weight and never split. ``None``
+    for a block, which the list cannot hold.
+    """
+
+    if type(entry) is Scalar:
+        return (entry.value,)
+    if type(entry) is Assignment and type(entry.value) is Scalar:
+        if weighted and entry.op == "=" and _is_number(entry.name):
+            return (entry.name, entry.value.value)
+        return (f"{entry.name} {entry.op} {entry.value.raw}",)
+    return None
 
 
 def _span(item: Assignment) -> AssignmentSpan:
@@ -206,7 +229,12 @@ def _weighted_entries(values: list[str]) -> list[tuple[str, ...]]:
     index = 0
     while index < len(values):
         value = values[index]
-        if _is_number(value) and index + 1 < len(values):
+        if (
+            _is_number(value)
+            and index + 1 < len(values)
+            # A whole statement (``chance_to_fire = 25``) is not an event id.
+            and not any(char.isspace() for char in values[index + 1])
+        ):
             entries.append((value, values[index + 1]))
             index += 2
         else:
@@ -248,12 +276,12 @@ def _set_entries(body: str, key: str, wanted: list[tuple[str, ...]]) -> str:
     for block_index, item in enumerate(_field_blocks(parse(body).root, key)):
         assert type(item.value) is Block
         for entry in item.value.items:
-            if type(entry) is Scalar:
-                held.append(((entry.value,), block_index, None))
-            elif type(entry) is Assignment and type(entry.value) is Scalar:
-                held.append(((entry.name, entry.value.value), block_index, entry))
-            else:
+            values = _entry_values(entry, key == "random_events")
+            if values is None:
                 return _set_field(body, key, rendered or None)
+            held.append(
+                (values, block_index, entry if len(values) == 2 and type(entry) is Assignment else None)
+            )
 
     # Which entries stay as they are, and which wanted entries are still open.
     open_entries = Counter(wanted)
@@ -314,9 +342,13 @@ def _set_entries(body: str, key: str, wanted: list[tuple[str, ...]]) -> str:
 
 def _patch_on_action_body(action: OnAction, body: str) -> str:
     effect, events, random_events = _read_fields(parse(body).root)
+    # Only a changed field is checked and written: an untouched one keeps its
+    # bytes, whatever they are.
     if action.events != events:
+        _require_entries("events", action.events)
         body = _set_entries(body, "events", [(event_id,) for event_id in action.events])
     if action.random_events != random_events:
+        _require_entries("random_events", action.random_events)
         body = _set_entries(body, "random_events", _weighted_entries(action.random_events))
     if not same_block_body(effect, action.effect):
         body = _set_field(body, "effect", normalize_block_body(action.effect) or None)
