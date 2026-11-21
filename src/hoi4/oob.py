@@ -1328,30 +1328,41 @@ def _patch_air_wing_body(
     return _patch_equipment_fields(body, wing, all_fields=all_fields)
 
 
-def _source_owners(items: Sequence[_T]) -> tuple[dict[int, _T], list[_T]]:
+def _source_owners(
+    items: Sequence[_T], patch: Callable[[str, _T], str]
+) -> tuple[dict[int, _T], list[_T]]:
     """Which item owns each source block, and which items are new.
 
-    A source block belongs to the first item that names it. A later item that
-    names the same block (a copy of a loaded item) is a new item: it is written
-    after the others and never replaces the one it was copied from.
+    When several items name the same block (a loaded item and copies of it),
+    the block belongs to the one that still says what the block says, or else
+    to the first. The others are new items: they are written after the rest
+    and never replace the one they were copied from.
     """
 
-    owners: dict[int, _T] = {}
-    new: list[_T] = []
+    named: dict[int, list[_T]] = {}
     for item in items:
         index: int = getattr(item, "source_index")
-        if index >= 0 and index not in owners:
-            owners[index] = item
-        else:
-            new.append(item)
-    return owners, new
+        if index >= 0:
+            named.setdefault(index, []).append(item)
+    owners: dict[int, _T] = {}
+    for index, group in named.items():
+        owner = group[0]
+        if len(group) > 1:
+            for item in group:
+                raw: str = getattr(item, "raw_block")
+                if patch(raw, item) == raw:
+                    owner = item
+                    break
+        owners[index] = owner
+    owned = {id(owner) for owner in owners.values()}
+    return owners, [item for item in items if id(item) not in owned]
 
 
 def _patch_templates(
     text: str,
     templates: list[DivisionTemplate],
 ) -> str:
-    source, new_templates = _source_owners(templates)
+    source, new_templates = _source_owners(templates, _patch_template_body)
     spans = [
         span
         for span in top_level_assignments(text)
@@ -1390,7 +1401,7 @@ def _patch_divisions(
         )
         return set_block(text, "units", units_body or None)
     units_body = text[units.body_start : units.body_end]
-    source, new_divisions = _source_owners(divisions)
+    source, new_divisions = _source_owners(divisions, _patch_division_body)
     spans = [
         span
         for span in top_level_assignments(units_body)
@@ -1466,7 +1477,7 @@ def _patch_air_wings(text: str, air_wings: list[AirWing]) -> str:
         if child.key.isdigit() and child.is_block
         and child.body_start is not None and child.body_end is not None
     ]
-    source, _ = _source_owners(air_wings)
+    source, _ = _source_owners(air_wings, _patch_air_wing_body)
     # Indices are global across location occurrences, including repeated locations.
     children_by_location = []
     source_index = 0
@@ -1549,7 +1560,7 @@ def _patch_repeated_blocks(
     existing_keys: set[str] | None = None,
 ) -> str:
     item_keys = {key(item) for item in items}
-    source, new_items = _source_owners(items)
+    source, new_items = _source_owners(items, patch)
     spans = [
         span
         for span in top_level_assignments(body)

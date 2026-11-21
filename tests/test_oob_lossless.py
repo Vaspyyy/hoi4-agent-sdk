@@ -448,3 +448,21 @@ def test_copies_of_templates_ships_and_air_wings_are_added_too(tmp_path: Path) -
     assert [wing.amount for wing in reloaded.get_oob("ABC_air").air_wings] == [10, 20]
     assert LAND.split("\nunits = {")[0].rstrip("\n") in path.read_text(encoding="utf-8")
     assert "fighter_equipment_0 = { owner = \"ABC\" amount = 10 }" in air.read_text(encoding="utf-8")
+
+
+def test_a_copy_placed_before_its_original_leaves_the_original_block_alone(tmp_path: Path) -> None:
+    path = _write(tmp_path / "history/units/ABC_1936.txt", LAND)
+    mod = Mod(tmp_path)
+    divisions = copy.deepcopy(mod.get_oob("ABC_1936").divisions)
+    twin = copy.deepcopy(divisions[0])
+    twin.name = "Copy"
+    assert mod.update_oob("ABC_1936", divisions=[twin, *divisions, copy.deepcopy(twin)])
+    mod.save(require_changes=True)
+
+    block = (
+        "\tdivision = {\n\t\tname = \"Copy\"\n\t\tlocation = 100\n"
+        "\t\tdivision_template = \"Infantry\"\n"
+        "\t\tstart_experience_factor = 0.30 # veterans\n\t\tfuture_field = keep\n\t}\n"
+    )
+    # "First" keeps its block and its bytes; both copies are added after the others.
+    assert path.read_text(encoding="utf-8") == LAND[: -len("}\n")] + block + block + "}\n"

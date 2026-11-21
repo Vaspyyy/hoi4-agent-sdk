@@ -143,13 +143,28 @@ def set_block(text: str, key: str, body: str | None, *, comments: bool = False) 
     current = text[first.body_start : first.body_end]
     if same_block_body(current, cleaned, comments=comments):
         return text
-    synced = sync_body(current, cleaned, comments=comments)
+    indent = _line_indent(text, first.start)
+    synced = _sync_or_spread(current, cleaned, indent, comments, _line_ending(text))
     if synced is None:
-        line_start = text.rfind("\n", 0, first.start) + 1
-        indent_match = re.match(r"[ \t]*", text[line_start:first.start])
-        indent = indent_match.group(0) if indent_match else ""
         synced = _render_block_body_like(current, cleaned, _line_ending(text), indent)
     return replace_assignment_body(text, first, synced)
+
+
+def _sync_or_spread(
+    current: str, new: str, indent: str, comments: bool, newline: str
+) -> str | None:
+    """Change ``current`` in place, or after giving every statement its own line.
+
+    The second layout loses nothing either: it only moves statements, with
+    their comments, onto lines of their own.
+    """
+
+    synced = sync_body(current, new, comments=comments, newline=newline)
+    if synced is None:
+        spread = one_statement_per_line(current, indent, newline)
+        if spread is not None and spread != current:
+            synced = sync_body(spread, new, comments=comments, newline=newline)
+    return synced
 
 
 def same_block_body(current: str, new: str, *, comments: bool = False) -> bool:
@@ -293,6 +308,7 @@ def sync_body(
     *,
     comments: bool = False,
     keep: Collection[str] = (),
+    newline: str | None = None,
 ) -> str | None:
     """Rewrite ``current`` so that it means ``new``, statement by statement.
 
@@ -305,7 +321,8 @@ def sync_body(
     Comments are compared as soon as ``new`` has any, or when ``comments`` is
     true; otherwise the comments of ``current`` are left where they are.
     Statements of ``current`` whose key is in ``keep`` are not touched and are
-    not expected in ``new``.
+    not expected in ``new``. ``newline`` is the line ending for new lines; by
+    default the one ``current`` uses.
 
     Returns ``None`` when the edit cannot be done this way (malformed text, or
     a layout that would not survive, such as a comment put into a one-line
@@ -318,6 +335,7 @@ def sync_body(
     if old is None or wanted is None:
         return None
     inline = "\n" not in current
+    newline = newline or _line_ending(current)
     text = current
     matcher = SequenceMatcher(
         None, [segment.meaning for segment in old], [segment.meaning for segment in wanted],
@@ -360,12 +378,12 @@ def sync_body(
     edits: list[tuple[int, ...]] = [*swaps, *pairs]
     for edit in sorted(edits, key=lambda entry: entry[0], reverse=True):
         if len(edit) == 2:
-            text = _replace_segment(text, old[edit[0]], new, wanted[edit[1]], count)
+            text = _replace_segment(text, old[edit[0]], new, wanted[edit[1]], count, newline)
             continue
         i1, i2, j1, j2 = edit
         if j1 < j2:
             placed = _insert_segments(
-                text, [pieces[index] for index in range(j1, j2)], old, i2, inline
+                text, [pieces[index] for index in range(j1, j2)], old, i2, inline, newline
             )
             if placed is None:
                 return None
@@ -442,7 +460,7 @@ def _segments(text: str, count_comments: bool, keep: Collection[str]) -> list[_S
 
 
 def _replace_segment(
-    text: str, old: _Segment, new_text: str, new: _Segment, count_comments: bool
+    text: str, old: _Segment, new_text: str, new: _Segment, count_comments: bool, newline: str
 ) -> str:
     """Put ``new`` where ``old`` is; a block with the same key is edited inside."""
 
@@ -456,10 +474,12 @@ def _replace_segment(
         and type(after.value) is Block
         and (not count_comments or old.trailing == new.trailing)
     ):
-        inner = sync_body(
+        inner = _sync_or_spread(
             text[before.value.body_start : before.value.body_end],
             new_text[after.value.body_start : after.value.body_end],
-            comments=count_comments,
+            _line_indent(text, old.start),
+            count_comments,
+            newline,
         )
         if inner is not None:
             return text[: before.value.body_start] + inner + text[before.value.body_end :]
@@ -467,7 +487,11 @@ def _replace_segment(
     # Without comment comparison the comment on the statement's line stays.
     old_end = old.full_end if count_comments else old.end
     new_end = new.full_end if count_comments else new.end
-    return text[: old.start] + _reindented(new_text, new.start, new_end, indent) + text[old_end:]
+    return (
+        text[: old.start]
+        + _reindented(new_text, new.start, new_end, indent, newline)
+        + text[old_end:]
+    )
 
 
 def _insert_segments(
@@ -476,6 +500,7 @@ def _insert_segments(
     old: list[_Segment],
     position: int,
     inline: bool,
+    newline: str,
 ) -> str | None:
     """Put ``added`` before ``old[position]``, or after everything else.
 
@@ -490,11 +515,10 @@ def _insert_segments(
         for source, segment in added
     )
     joined = " ".join(source[segment.start : segment.end] for source, segment in added)
-    newline = _line_ending(text)
 
     def lines(indent: str) -> list[str]:
         return [
-            _reindented(source, segment.start, segment.full_end, indent)
+            _reindented(source, segment.start, segment.full_end, indent, newline)
             for source, segment in added
         ]
 
@@ -542,21 +566,23 @@ def _insert_segments(
     return text[:end] + "".join(newline + indent + line for line in lines(indent)) + text[end:]
 
 
-def one_statement_per_line(body: str, indent: str) -> str | None:
-    """Lay a one-line block body out with one statement per line.
+def one_statement_per_line(body: str, indent: str, newline: str | None = None) -> str | None:
+    """Lay a block body out with one statement per line.
 
     ``indent`` is the indentation of the line that holds the block's opening
-    brace. Each statement keeps its bytes. Returns ``None`` for a body that
-    already has line breaks or is malformed.
+    brace. Every statement keeps its bytes and the comment on its line, and a
+    comment between statements gets a line of its own. This layout can hold
+    any edit, so it is what a caller falls back to when :func:`sync_body`
+    cannot change a body in place. ``newline`` is the line ending to use; by
+    default the one ``body`` uses. Returns ``None`` for malformed text.
     """
 
-    if "\n" in body or "\r" in body:
-        return None
     spans = statement_spans(body)
     if spans is None:
         return None
+    newline = newline or _line_ending(body)
     inner = indent + "\t"
-    return "\n" + "".join(inner + body[start:end] + "\n" for start, end in spans) + indent
+    return newline + "".join(inner + body[start:end] + newline for start, end in spans) + indent
 
 
 def statement_spans(text: str, *, keep: Collection[str] = ()) -> list[tuple[int, int]] | None:
@@ -573,7 +599,7 @@ def statement_spans(text: str, *, keep: Collection[str] = ()) -> list[tuple[int,
     return [(segment.start, segment.full_end) for segment in segments]
 
 
-def _reindented(text: str, start: int, end: int, indent: str) -> str:
+def _reindented(text: str, start: int, end: int, indent: str, newline: str = "\n") -> str:
     """``text[start:end]`` with its later lines moved to ``indent``."""
 
     raw = text[start:end]
@@ -583,13 +609,13 @@ def _reindented(text: str, start: int, end: int, indent: str) -> str:
     base = text[line_start:start]
     if base.strip():
         base = ""
-    lines = raw.split("\n")
+    lines = [line.removesuffix("\r") for line in raw.split("\n")]
     result = [lines[0]]
     for line in lines[1:]:
         if base and line.startswith(base):
             line = line[len(base) :]
         result.append(indent + line if line.strip() else "")
-    return "\n".join(result)
+    return newline.join(result)
 
 
 def _line_indent(text: str, offset: int) -> str:

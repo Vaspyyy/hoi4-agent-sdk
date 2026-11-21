@@ -337,7 +337,23 @@ def test_one_statement_per_line() -> None:
     assert one_statement_per_line(" name = a add_pp = 10 ", "\t") == (
         "\n\t\tname = a\n\t\tadd_pp = 10\n\t"
     )
-    assert one_statement_per_line("\n\ta = 1\n", "") is None
+    # A body that already has lines keeps every statement and comment.
+    assert one_statement_per_line("a = 1 # A\n# free\nb = { x = 1 } c = 3\n", "") == (
+        "\n\ta = 1 # A\n\t# free\n\tb = { x = 1 }\n\tc = 3\n"
+    )
+    assert one_statement_per_line(" a = { ", "") is None
     # A statement that ends in a comment is followed by a line break, so the
     # closing brace after the body stays out of the comment.
     assert append_assignment(" a = 1 ", "b = 2 # note") == " a = 1\n b = 2 # note\n "
+
+
+def test_a_reorder_next_to_the_opening_brace_keeps_the_comments() -> None:
+    """The layout cannot hold the move in place: every statement gets its own line."""
+
+    assert set_block("outer = {a = 1 # A\nb = 2 # B\n}\n", "outer", "b = 2\na = 1") == (
+        "outer = {\n\tb = 2 # B\n\ta = 1 # A\n}\n"
+    )
+    nested = "x = {\n\tif = { a = 1 # A\n\t\tb = 2 # B\n\t}\n\tc = 3 # C\n}\n"
+    assert set_block(nested, "x", "if = {\n\tb = 2\n\ta = 1\n}\nc = 3") == (
+        "x = {\n\tif = {\n\t\tb = 2 # B\n\t\ta = 1 # A\n\t}\n\tc = 3 # C\n}\n"
+    )

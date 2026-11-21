@@ -224,8 +224,11 @@ and changes only the ones that differ:
 So a list gets one more entry, or a reward gets one changed line, and every
 comment and every other statement stays where it was. `sync_body` checks its
 own result: if the layout cannot hold the edit (a comment put into a one-line
-block would comment out the closing brace), it returns `None` and `set_block`
-writes the body as a whole.
+block would comment out the closing brace), it returns `None`. `set_block`
+then lays the body out with one statement per line
+(`one_statement_per_line`, every statement and comment keeps its bytes) and
+edits that. Only if that fails too (malformed text) is the body written as a
+whole.
 
 Comments: they are compared as soon as the new body has any. A changed, added
 or dropped comment is then written. A new body without comments says nothing
@@ -234,9 +237,10 @@ to remove them too. `same_block_body(current, new)` answers "would this edit
 change anything?" by the same rule, and is what the content modules use to
 decide whether a text field changed.
 
-`one_statement_per_line(body, indent)` lays a one-line body out with one
-statement per line, each with its bytes, for the callers that have to make
-room for a comment or a statement of several lines.
+`one_statement_per_line(body, indent)` lays a body out with one statement per
+line, each with its bytes and the comment on its line. It is the layout that
+can hold any edit, for the callers that have to make room for a comment, a
+statement of several lines or a move.
 
 `sync_body(current, new, keep=("name", "ai_chance"))` leaves the statements
 with those keys alone and does not expect them in `new`. Event options use it:

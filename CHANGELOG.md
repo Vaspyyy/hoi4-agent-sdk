@@ -188,11 +188,17 @@ All notable changes to this project are documented here. The format follows
 - A statement added before one that shares the line of the opening brace
   moved that statement to a new line. Reordering statements lost the
   comments on their lines.
+- A block whose layout could not hold an edit in place (a reorder next to
+  the opening brace, a comment for a one-line block) was written again as
+  a whole, which dropped its comments. It is now laid out with one
+  statement per line first, each with its bytes and its comment, and then
+  edited.
 - Editing one decision category wrote a definition for every other category
   of the same decisions file into `common/decisions/categories/`.
 - A copy of a loaded division, template, ship or air wing that was passed
   to `update_oob` next to its original replaced the original. It is now
-  added as a new item.
+  added as a new item, wherever it sits in the list: the source block stays
+  with the item that still says what the block says.
 - A focus statement added after one that sits in the middle of a line with
   a trailing comment was put between that statement and its comment. It
   now gets its own line below.

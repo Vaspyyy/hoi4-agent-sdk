@@ -456,10 +456,11 @@ def _set_option_effect(body: str, effect: str, indent: str) -> str:
     synced = sync_body(body, effect, keep=_OPTION_KNOWN_KEYS)
     if synced is not None:
         return synced
-    # A one-line option cannot hold a comment or a statement of several
-    # lines: give every statement its own line, then try again.
+    # The layout cannot hold the edit (a one-line option cannot hold a comment
+    # or a statement of several lines): give every statement its own line,
+    # then try again.
     spread = one_statement_per_line(body, indent)
-    if spread is not None:
+    if spread is not None and spread != body:
         body = spread
         synced = sync_body(body, effect, keep=_OPTION_KNOWN_KEYS)
         if synced is not None:
