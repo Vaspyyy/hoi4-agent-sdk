@@ -24,9 +24,6 @@ from ..localisation import (
     LOCALISATION_LANGUAGES,
     localisation_header_language,
 )
-from ..oob import (
-    validate_oob,
-)
 from ..parser import (
     iter_assignment_blocks,
 )
@@ -52,7 +49,6 @@ from ..types import (
     ValidationError,
 )
 from ..validation import (
-    validate_country,
     validate_country_history_references,
     validate_decision,
     validate_event,
@@ -542,56 +538,9 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         begin_phase("countries", "Validating countries")
         errors.extend(self._validate_country_colors_shadow())
         known_parties = set(self._vanilla_ideologies) | set(self._ideologies)
-        for country in list(self._countries.values()):
-            errors.extend(validate_country(country, known_parties=known_parties))
-            errors.extend(self._validate_equipment_variant_unlocks(country))
-        begin_phase("oobs", "Validating land orders of battle")
-        validated_oobs: set[str] = set()
-        for country in list(self._countries.values()):
-            for reference in self._country_oob_references(country):
-                try:
-                    oob = self.get_oob(reference.name)
-                except KeyError:
-                    errors.append(
-                        ValidationError(
-                            message=(
-                                f"Country '{country.tag}' references missing "
-                                f"{reference.kind} OOB '{reference.name}'"
-                            ),
-                            severity="error",
-                            code="missing_oob_reference",
-                            country_tag=country.tag,
-                        )
-                    )
-                    continue
-                except (OSError, ValueError) as error:
-                    errors.append(
-                        ValidationError(
-                            message=(
-                                f"Could not read {reference.kind} OOB "
-                                f"'{reference.name}' of country '{country.tag}': {error}"
-                            ),
-                            severity="error",
-                            code="oob_load_error",
-                            country_tag=country.tag,
-                        )
-                    )
-                    continue
-                oob.country_tag = country.tag
-                oob.kind = reference.kind
-                oob.required_dlc = reference.required_dlc
-                oob.excluded_dlc = reference.excluded_dlc
-                if oob.name not in validated_oobs:
-                    errors.extend(validate_oob(oob))
-                    validated_oobs.add(oob.name)
-                errors.extend(self._validate_oob_context(oob, country.tag))
-        for name, oob in self._oobs.items():
-            if name not in validated_oobs:
-                errors.extend(validate_oob(oob))
-                if oob.country_tag:
-                    errors.extend(
-                        self._validate_oob_context(oob, oob.country_tag)
-                    )
+        errors.extend(self._validate_countries(known_parties))
+        begin_phase("oobs", "Validating orders of battle")
+        errors.extend(self._validate_country_oobs())
         begin_phase("states", "Validating states")
         for state_id in sorted(set(self._state_ids) | set(self._states)):
             check_cancelled(cancelled, operation="validation")
@@ -715,6 +664,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 )
             return law_category_cache[key]
 
+        hidden_categories = self._hidden_idea_categories()
         for country in self._countries.values():
             for idea_id in country.ideas:
                 assigned_idea = self._ideas.get(idea_id)
@@ -729,17 +679,24 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                         )
                     )
                 elif (assigned_idea is not None and assigned_idea.category != "country"
+                      and assigned_idea.category not in hidden_categories
                       and not is_declared_law(assigned_idea)):
                     errors.append(
                         ValidationError(
                             message=(
                                 f"Country '{country.tag}' assigns idea '{idea_id}', but that idea is in category "
-                                f"'{assigned_idea.category or '<none>'}', not 'country' or a declared law category."
+                                f"'{assigned_idea.category or '<none>'}', not 'country', a hidden "
+                                "category or a declared law category."
                             ),
                             severity="warning",
                             code="assigned_idea_not_country_category",
                             country_tag=country.tag,
                             idea_id=idea_id,
+                            file_path=(
+                                str(country.history_path)
+                                if country.history_path is not None
+                                else None
+                            ),
                         )
                     )
 

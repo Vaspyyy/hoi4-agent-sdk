@@ -26,7 +26,8 @@ only the ones it does not already reach through another base.
   ``_localisation``.
 * ``_catalogs``: Catalogs of known identifiers (ideas, events, technologies, equipment,
   sprites). Uses ``_sources``.
-* ``_equipment``: Equipment-variant and technology history analysis. Uses ``_catalogs``.
+* ``_equipment``: Equipment-variant and technology history analysis. Uses ``_sources``,
+  ``_catalogs``.
 * ``_countries``: Country lookup, tags, politics helpers and country overrides. Uses
   only ``_core``.
 * ``_characters``: Character, role and instance authoring. Uses ``_localisation``,
@@ -58,14 +59,13 @@ only the ones it does not already reach through another base.
 * ``_script_validation``: Script vocabulary, reference and localisation validation. Uses
   ``_localisation``, ``_sources``, ``_catalogs``, ``_states``.
 * ``_oob_validation``: Order-of-battle validation against the effective game data. Uses
-  ``_catalogs``, ``_countries``, ``_states``.
-* ``_country_package``: Country package completeness validation. Uses ``_catalogs``,
-  ``_countries``, ``_characters``, ``_oobs``, ``_states``, ``_context``,
-  ``_oob_validation``.
+  ``_sources``, ``_catalogs``, ``_equipment``, ``_countries``, ``_states``.
+* ``_country_package``: Country package completeness validation. Uses
+  ``_localisation``, ``_sources``, ``_catalogs``, ``_equipment``, ``_countries``,
+  ``_characters``, ``_oobs``, ``_states``, ``_context``, ``_oob_validation``.
 * ``_validation``: The staged ``validate()`` entry point and related reports. Uses
-  ``_sources``, ``_catalogs``, ``_equipment``, ``_countries``, ``_oobs``, ``_states``,
-  ``_map``, ``_context``, ``_definitions``, ``_script_validation``, ``_oob_validation``,
-  ``_country_package``.
+  ``_sources``, ``_catalogs``, ``_states``, ``_map``, ``_context``, ``_definitions``,
+  ``_script_validation``, ``_oob_validation``, ``_country_package``.
 * ``_preview``: Plain-language summaries of what pending edits change. Uses only
   ``_core``.
 * ``_persistence``: Rendering pending edits to files, diffs, atomic save, discard and

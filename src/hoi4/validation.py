@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Callable, Sequence
 
 from .decisions import decision_has_cost, decision_has_mission_timeout
 from .effects_catalog import TECHNOLOGY_CATEGORIES
@@ -54,7 +55,12 @@ VALIDATION_CODES: dict[str, str] = {
     "unseen_effect_token": "A documented effect has zero installed-game uses.",
     "unseen_trigger_token": "A documented trigger has zero installed-game uses.",
     "unseen_modifier_token": "A documented modifier has zero installed-game uses.",
-    "leader_party_mismatch": "Country ruling party group does not match leader sub-ideology.",
+    "leader_party_mismatch": "No recruited leader of the country leads its ruling party; the game shows a generated one.",
+    "invalid_country_tag": "A country tag is not three letters or digits.",
+    "missing_country_name": "No name localisation exists for a country, in any ideology variant.",
+    "country_popularity_sum": "A country's party popularities do not add up to 100.",
+    "invalid_ruling_party": "A country's ruling party is not a known ideology.",
+    "invalid_country_color": "A country colour is outside 0-255 or malformed.",
     "unknown_assigned_idea": "Country history assigns an idea ID not loaded by the SDK.",
     "assigned_idea_not_country_category": "Country history assigns an idea outside ideas = { country = { ... } }.",
     "unknown_idea_reference": "Effect script references an idea ID not loaded from the mod or configured HOI4 install.",
@@ -135,6 +141,7 @@ VALIDATION_CODES: dict[str, str] = {
     "missing_land_oob": "A complete country has no unambiguous land order of battle.",
     "empty_land_oob": "An assigned land OOB has no template or no starting division.",
     "missing_oob_reference": "Country history refers to an OOB file that does not exist.",
+    "unloaded_missing_oob_reference": "A country that owns no state at the start refers to an OOB file that does not exist.",
     "mixed_oob_kinds": (
         "One OOB file mixes land, naval, or air content instead of using the "
         "engine's separate assignment effects."
@@ -159,7 +166,7 @@ VALIDATION_CODES: dict[str, str] = {
     "oob_task_force_name": "A task force has no name.",
     "duplicate_oob_task_force": "A fleet repeats a task-force name.",
     "invalid_oob_naval_location": "A naval OOB entry has an invalid location.",
-    "oob_ship_name": "A ship has no name.",
+    "oob_ship_name": "A ship has neither a name nor an ordered_name.",
     "duplicate_oob_ship": "An OOB repeats a ship name.",
     "invalid_oob_ship_definition": "A ship has no unit definition.",
     "unknown_oob_ship_definition": "A ship uses an unknown unit definition.",
@@ -168,7 +175,6 @@ VALIDATION_CODES: dict[str, str] = {
     "duplicate_oob_ship_equipment": "A ship repeats an equipment type.",
     "invalid_oob_air_location": "An air wing has an invalid location.",
     "invalid_oob_air_equipment": "An air wing has invalid equipment.",
-    "duplicate_oob_air_wing": "An OOB repeats an air wing at one location.",
     "unknown_oob_naval_location": "A naval OOB entry references an unknown province.",
     "oob_naval_location_not_owned": "A naval OOB entry is outside its country's territory.",
     "unknown_oob_air_location": "An air OOB entry references an unknown state or province.",
@@ -309,7 +315,6 @@ _ERROR_CODES = {
     "oob_template_name",
     "duplicate_oob_template",
     "invalid_oob_battalion",
-    "duplicate_oob_grid_position",
     "invalid_oob_grid_position",
     "unknown_oob_template",
     "invalid_oob_location",
@@ -318,15 +323,12 @@ _ERROR_CODES = {
     "unknown_oob_province",
     "oob_water_location",
     "oob_load_error",
-    "oob_location_not_owned",
     "oob_fleet_name",
     "duplicate_oob_fleet",
     "invalid_oob_naval_base",
     "oob_task_force_name",
     "duplicate_oob_task_force",
     "invalid_oob_naval_location",
-    "oob_ship_name",
-    "duplicate_oob_ship",
     "invalid_oob_ship_definition",
     "unknown_oob_ship_definition",
     "missing_oob_ship_equipment",
@@ -334,11 +336,8 @@ _ERROR_CODES = {
     "duplicate_oob_ship_equipment",
     "invalid_oob_air_location",
     "invalid_oob_air_equipment",
-    "duplicate_oob_air_wing",
     "unknown_oob_naval_location",
-    "oob_naval_location_not_owned",
     "unknown_oob_air_location",
-    "oob_air_location_not_owned",
     "unknown_oob_equipment",
     "unknown_oob_equipment_owner",
     "legacy_naval_oob_without_dlc_fallback",
@@ -355,6 +354,9 @@ _ERROR_CODES = {
     "no_owned_territory",
     "capital_not_owned",
     "capital_not_cored",
+    "invalid_country_tag",
+    "invalid_ruling_party",
+    "invalid_country_color",
 }
 
 VALIDATION_WARNING_CODES: dict[str, str] = {
@@ -679,25 +681,58 @@ def _script_warnings(
 
 
 def validate_country(
-    country: Country, *, known_parties: set[str] | None = None
+    country: Country,
+    *,
+    known_parties: set[str] | None = None,
+    has_localisation: Callable[[str], bool] | None = None,
+    leader_ideologies: Sequence[str] | None = None,
+    dynamic_tag: bool = False,
 ) -> list[ValidationError]:
+    """Check one country's history values.
+
+    ``has_localisation`` tells whether a localisation key exists. The game
+    names a country by ``TAG``, ``TAG_DEF`` or, per ruling ideology,
+    ``TAG_<ideology>`` and ``TAG_<ideology>_DEF``; many countries only have
+    the ideology names. ``leader_ideologies`` are the ideologies of every
+    recruited character with a country-leader role. A ``dynamic_tag``
+    (declared after ``dynamic_tags = yes``) takes its name at runtime from
+    the country that spawns it.
+    """
+
     errors: list[ValidationError] = []
+    file_path = str(country.history_path) if country.history_path is not None else None
 
     if not TAG_RE.match(country.tag):
         errors.append(
             ValidationError(
                 message=f"Invalid country tag '{country.tag}' (must be 3 alphanumeric characters)",
                 severity="error",
+                code="invalid_country_tag",
                 country_tag=country.tag,
+                file_path=file_path,
             )
         )
 
-    if not country.name:
+    valid_parties = set(RULING_PARTIES) | set(known_parties or ())
+    name_keys = [country.tag, f"{country.tag}_DEF"]
+    for name_party in sorted(valid_parties):
+        name_keys.extend(
+            (f"{country.tag}_{name_party}", f"{country.tag}_{name_party}_DEF")
+        )
+    if not country.name and not dynamic_tag and not (
+        has_localisation is not None and any(has_localisation(key) for key in name_keys)
+    ):
         errors.append(
             ValidationError(
-                message=f"Country '{country.tag}' has no name",
+                message=(
+                    f"Country '{country.tag}' has no name: none of "
+                    f"{country.tag}, {country.tag}_DEF or "
+                    f"{country.tag}_<ideology> is localised, so the game shows the tag."
+                ),
                 severity="warning",
+                code="missing_country_name",
                 country_tag=country.tag,
+                file_path=file_path,
             )
         )
 
@@ -707,40 +742,58 @@ def validate_country(
             ValidationError(
                 message=f"Country '{country.tag}' popularities sum to {total_pop}, expected 100",
                 severity="warning",
+                code="country_popularity_sum",
                 country_tag=country.tag,
+                file_path=file_path,
             )
         )
 
-    valid_parties = set(RULING_PARTIES) | set(known_parties or ())
     if country.ruling_party not in valid_parties:
         errors.append(
             ValidationError(
                 message=f"Country '{country.tag}' has invalid ruling party '{country.ruling_party}'",
                 severity="error",
+                code="invalid_ruling_party",
                 country_tag=country.tag,
+                file_path=file_path,
             )
         )
 
-    if country.leader and country.leader.ideology:
-        expected_party = IDEOLOGY_PARTY_MAP.get(country.leader.ideology)
-        if (
-            expected_party
-            and country.ruling_party in valid_parties
-            and expected_party != country.ruling_party
-        ):
-            errors.append(
-                ValidationError(
-                    message=(
-                        f"Country '{country.tag}' ruling party '{country.ruling_party}' does not match "
-                        f"leader ideology '{country.leader.ideology}'. ruling_party uses party groups "
-                        "(democratic, fascism, communism, neutrality); leader_ideology uses sub-ideologies "
-                        "such as liberalism, stalinism, nazism, or despotism."
-                    ),
-                    severity="warning",
-                    code="leader_party_mismatch",
-                    country_tag=country.tag,
-                )
+    # Every ideology has its own leader; the game shows the leader of the
+    # ruling party and makes one up when no recruited character leads it.
+    # A leader of another party is normal, so this is advice only.
+    ideologies = (
+        list(leader_ideologies)
+        if leader_ideologies is not None
+        else [country.leader.ideology]
+        if country.leader and country.leader.ideology
+        else []
+    )
+    parties = {
+        party
+        for ideology in ideologies
+        if (party := IDEOLOGY_PARTY_MAP.get(ideology)) is not None
+    }
+    if (
+        parties
+        and country.ruling_party in valid_parties
+        and country.ruling_party not in parties
+    ):
+        errors.append(
+            ValidationError(
+                message=(
+                    f"Country '{country.tag}' ruling party '{country.ruling_party}' has no "
+                    f"recruited leader (leader ideologies: {', '.join(sorted(set(ideologies)))}), "
+                    "so the game shows a generated leader. ruling_party uses party groups "
+                    "(democratic, fascism, communism, neutrality); leader_ideology uses "
+                    "sub-ideologies such as liberalism, stalinism, nazism, or despotism."
+                ),
+                severity="info",
+                code="leader_party_mismatch",
+                country_tag=country.tag,
+                file_path=file_path,
             )
+        )
 
     try:
         r, g, b = country.color
@@ -749,6 +802,7 @@ def validate_country(
                 ValidationError(
                     message=f"Country '{country.tag}' has invalid color {country.color}",
                     severity="error",
+                    code="invalid_country_color",
                     country_tag=country.tag,
                 )
             )
@@ -757,6 +811,7 @@ def validate_country(
             ValidationError(
                 message=f"Country '{country.tag}' has malformed color {country.color!r}",
                 severity="error",
+                code="invalid_country_color",
                 country_tag=country.tag,
             )
         )

@@ -13,7 +13,6 @@ from ..characters import (
 from ..country_package import CountryPackageReport
 from ..oob import (
     OrderOfBattle,
-    validate_oob,
 )
 from ..parser import (
     ParseError,
@@ -24,8 +23,12 @@ from ..paths import (
     require_country_tag,
 )
 from ..types import (
+    Country,
     ValidationError,
 )
+from ..localisation import DEFAULT_LOCALISATION_LANGUAGE, parse_localization_dir
+from ..syntax import parse
+from ..validation import validate_country
 from ._characters import CharactersLayer
 from ._context import ContextLayer
 from ._oob_validation import OobValidationLayer
@@ -34,6 +37,95 @@ from ._oobs import OobsLayer
 
 class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, CharactersLayer):
     """Country package completeness validation."""
+
+    def _validate_countries(self, known_parties: set[str]) -> list[ValidationError]:
+        """Check every country's history values and its variant unlocks."""
+
+        errors: list[ValidationError] = []
+        # Without base mods the mod's tables hold only its own files, so
+        # also read the names the game itself ships.
+        inherited: set[str] = set()
+        if self._content_layers is None and self._base_content_root is not None:
+            entries, _ = parse_localization_dir(
+                self._base_content_root / "localisation" / DEFAULT_LOCALISATION_LANGUAGE
+            )
+            inherited = set(entries)
+
+        def has_localisation(key: str) -> bool:
+            return (
+                self.get_loc(key) is not None
+                or self._normalize_loc_key(key) in inherited
+            )
+
+        dynamic_tags = self._dynamic_country_tags()
+        for country in list(self._countries.values()):
+            errors.extend(
+                validate_country(
+                    country,
+                    known_parties=known_parties,
+                    has_localisation=has_localisation,
+                    leader_ideologies=self._recruited_leader_ideologies(country),
+                    dynamic_tag=country.tag in dynamic_tags,
+                )
+            )
+            errors.extend(self._validate_equipment_variant_unlocks(country))
+        return errors
+
+    def _dynamic_country_tags(self) -> set[str]:
+        """Tags declared after ``dynamic_tags = yes`` in a tag file."""
+
+        tags: set[str] = set()
+        for _, text in self._effective_script_texts("common/country_tags"):
+            dynamic = False
+            for item in parse(text).root.assignments():
+                if item.name.lower() == "dynamic_tags":
+                    dynamic = (item.scalar or "").lower() == "yes"
+                elif dynamic:
+                    tags.add(item.name)
+        return tags
+
+    def _hidden_idea_categories(self) -> set[str]:
+        """Idea categories declared ``hidden = yes`` in ``common/idea_tags``.
+
+        Hidden ideas exist to be added by script and history, like the
+        game's own ``hidden_ideas``.
+        """
+
+        categories = {"hidden_ideas"}
+        for _, text in self._effective_script_texts("common/idea_tags"):
+            for container in parse(text).root.assignments("idea_categories"):
+                if container.block is None:
+                    continue
+                for category in container.block.assignments():
+                    if (
+                        category.block is not None
+                        and category.block.scalar("hidden") == "yes"
+                    ):
+                        categories.add(category.name)
+        return categories
+
+    def _recruited_leader_ideologies(self, country: Country) -> list[str] | None:
+        """Ideologies of the recruited characters that can lead the country.
+
+        ``None`` when a recruited character cannot be found, so the caller
+        falls back to the one leader the country model knows.
+        """
+
+        recruited = country.recruited_characters
+        if not recruited:
+            return None
+        ideologies: list[str] = []
+        for character_id in recruited:
+            try:
+                character = self.get_character(character_id)
+            except (KeyError, ValueError):
+                return None
+            ideologies.extend(
+                role.ideology
+                for role in self._all_character_roles(character)
+                if isinstance(role, CountryLeaderRole) and role.ideology
+            )
+        return ideologies
 
     def _country_runtime_activation_evidence(
         self,
@@ -535,8 +627,14 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                         else None
                     ),
                 )
-            findings.extend(validate_oob(package_oob))
-            findings.extend(self._validate_oob_context(package_oob, tag))
+            findings.extend(
+                self._validate_oob_context(
+                    package_oob,
+                    tag,
+                    land_references[0] if land_references else None,
+                    structure=True,
+                )
+            )
 
         capital = owned_by_id.get(country.capital)
         if resolved_lifecycle == "starting":

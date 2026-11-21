@@ -2255,7 +2255,15 @@ class TestCountryValidation:
             leader=Leader(name="Boss", ideology="nazism"),
         )
         errors = validate_country(country)
-        assert any("does not match" in e.message for e in errors)
+        mismatches = [e for e in errors if e.code == "leader_party_mismatch"]
+        # Advice only: the game shows a generated leader of the ruling party.
+        assert [e.severity for e in mismatches] == ["info"]
+        # Quiet when another recruited character leads the ruling party.
+        assert not [
+            e
+            for e in validate_country(country, leader_ideologies=["nazism", "liberalism"])
+            if e.code == "leader_party_mismatch"
+        ]
 
 
 class ModHelper:
