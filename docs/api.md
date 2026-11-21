@@ -1200,10 +1200,10 @@ Useful script warning codes include `country_scope_core_effect`, `history_set_ow
 Vocabulary and liveness warning codes are `unknown_effect_token`,
 `unknown_trigger_token`, `unknown_modifier_token`,
 `unsupported_effect_scope`, `unsupported_trigger_scope`,
-`unsupported_modifier_scope`, `unreachable_focus`, `unfired_event`,
-`ungranted_idea`, `flag_set_never_read`, `flag_read_never_set`, and
-`unused_localization`. The `unseen_*_token` codes for documented tokens the
-game never uses are advice.
+`unreachable_focus`, `unfired_event`, `ungranted_idea`,
+`flag_set_never_read`, `flag_read_never_set`, and `unused_localization`.
+The `unseen_*_token` codes for documented tokens the game never uses are
+advice.
 
 Reference checks read the syntax tree too and name the scope each statement
 runs in, so `country_scope_core_effect` only fires when `add_core_of` or

@@ -928,6 +928,15 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 icon_suggestions[icon] = self.suggest_focus_icon(icon)
 
         search_filters = self._known_focus_search_filters()
+        # One mistake, one finding: a focus id that is defined twice was
+        # reported when the file was loaded, and the second definition gets
+        # no findings of its own.
+        reported_duplicates = {
+            diagnostic.identifier
+            for diagnostic in self._load_diagnostics
+            if diagnostic.error_type == "DuplicateIdentifierError"
+            and diagnostic.section == "focus"
+        }
         for tree in self._focus_trees.values():
             tree_errors = validate_focus_tree(
                 tree,
@@ -935,10 +944,21 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 known_state_ids=known_state_ids if known_state_ids else None,
                 known_search_filters=search_filters,
             )
-            errors.extend(tree_errors)
+            errors.extend(
+                error
+                for error in tree_errors
+                if not (
+                    error.code == "duplicate_focus_id"
+                    and error.focus_id in reported_duplicates
+                )
+            )
 
         for tree in self._focus_trees.values():
+            checked_focus_ids: set[str] = set()
             for focus in tree.focuses:
+                if focus.id in checked_focus_ids:
+                    continue
+                checked_focus_ids.add(focus.id)
                 errors.extend(self._focus_localization_findings(tree, focus))
                 if validate_icons and known_focus_icons and focus.icon not in known_focus_icons:
                     suggestion = icon_suggestions[focus.icon]

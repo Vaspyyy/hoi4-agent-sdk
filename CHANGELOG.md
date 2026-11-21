@@ -356,6 +356,9 @@ All notable changes to this project are documented here. The format follows
 - `validate(suppress="code")` with one string instead of a list raises
   "takes a list of codes, not one string" instead of complaining about the
   code `'v'`.
+- A focus id that is defined twice in one tree is one `duplicate_focus_id`
+  finding. Before, it was reported twice, the focus "overlapped" itself
+  (`visual_overlap`), and its missing texts were listed twice.
 - Validation reads each script file through one splitter
   (`hoi4._script_corpus`) and one scope walker. The token check reads the
   mod's own files as `save()` will write them, with exact file lines; the
@@ -572,8 +575,9 @@ All notable changes to this project are documented here. The format follows
   script as text with blanked comments any more; use the syntax tree.
 - Validation codes `assigned_idea_not_country_category` (country history may
   assign ideas of any category; `unknown_idea_category` checks the category
-  of an idea instead) and `duplicate_oob_air_wing` (two equal air wings are
-  two wings for the game).
+  of an idea instead), `duplicate_oob_air_wing` (two equal air wings are
+  two wings for the game) and `unsupported_modifier_scope` (it was
+  registered, and nothing ever reported it).
 
 ## [0.6.5] - 2026-08-01
 

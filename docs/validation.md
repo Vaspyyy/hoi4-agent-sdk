@@ -69,7 +69,9 @@ open (`report.unmet_requirements` lists them), and the release gate fails.
 which hides every finding with that code, or `code:ID`, which hides only the
 findings about one object. `ID` is compared with the finding's focus, event,
 idea, decision, country tag, state id, focus tree, ideology, dynamic modifier
-or bookmark field.
+or bookmark field. A finding about a flag or a script token has none of
+these fields, so `code:ID` cannot pick out one flag: hide the code as a
+whole, or fix the script.
 
 ```python
 mod.validate(suppress=["visual_overlap"])
@@ -330,7 +332,6 @@ the content checks read them the way the game does:
 | `unreachable_focus` | warning | A focus cannot be reached from any root focus. Release stage only. |
 | `unresolved_focus_position` | warning | A focus position has a missing or cyclic local anchor. |
 | `unsupported_effect_scope` | warning | Effect token is used outside its documented scope. |
-| `unsupported_modifier_scope` | warning | Modifier token is used outside its documented scope. |
 | `unsupported_trigger_scope` | warning | Trigger token is used outside its documented scope. |
 | `unused_localization` | warning | A localization key is not referenced by modeled content. Release stage only. |
 | `visual_overlap` | warning | Two focuses share a position and the game can show both (mutually exclusive focuses are both drawn; only allow_branch or an offset block keeps one away). |

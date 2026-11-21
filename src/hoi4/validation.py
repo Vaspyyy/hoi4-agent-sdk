@@ -60,7 +60,6 @@ VALIDATION_CODES: dict[str, str] = {
     "unknown_modifier_token": "Modifier token is absent from installed-game documentation.",
     "unsupported_effect_scope": "Effect token is used outside its documented scope.",
     "unsupported_trigger_scope": "Trigger token is used outside its documented scope.",
-    "unsupported_modifier_scope": "Modifier token is used outside its documented scope.",
     "unseen_effect_token": "A documented effect has zero installed-game uses.",
     "unseen_trigger_token": "A documented trigger has zero installed-game uses.",
     "unseen_modifier_token": "A documented modifier has zero installed-game uses.",
@@ -1180,8 +1179,14 @@ def validate_focus_tree(
         pos = layout.positions.get(focus.id) if tree.kind != "file" else None
         if pos is not None:
             sharing = seen_positions.setdefault(pos, [])
+            # A focus id that is defined twice is its own finding
+            # (duplicate_focus_id), not an overlap of the focus with itself.
             clash = next(
-                (other for other in sharing if not branches.never_shown_together(focus.id, other)),
+                (
+                    other
+                    for other in sharing
+                    if other != focus.id and not branches.never_shown_together(focus.id, other)
+                ),
                 None,
             )
             if clash is not None:

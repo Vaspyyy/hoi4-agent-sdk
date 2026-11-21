@@ -367,3 +367,29 @@ def test_country_history_references_read_the_unsaved_history(tmp_path):
     assert mod.delete_character("CCH_new", remove_recruitment=False)
     findings = codes(mod.validate(stage="build"), "character_ref")
     assert [f.message for f in findings] == ["Character CCH_new is not defined"]
+
+
+def test_a_focus_id_defined_twice_is_one_finding(tmp_path):
+    focus = (
+        "focus = {{ id = {id} icon = GFX_goal_generic_production x = {x} y = 0 cost = 1 "
+        "completion_reward = {{ add_political_power = 1 }} }}"
+    )
+    write(
+        tmp_path,
+        "common/national_focus/twice.txt",
+        "focus_tree = {\n\tid = twice_tree\n\t"
+        + "\n\t".join(
+            [focus.format(id="twice_a", x=1), focus.format(id="twice_a", x=1), focus.format(id="twice_b", x=3)]
+        )
+        + "\n}\n",
+    )
+    findings = Mod(tmp_path).validate()
+
+    duplicates = codes(findings, "duplicate_focus_id")
+    assert len(duplicates) == 1
+    assert "twice_a" in duplicates[0].message
+    # The second definition is not an overlap of the focus with itself, and
+    # its missing texts are not reported a second time.
+    assert not codes(findings, "visual_overlap")
+    messages = [finding.message for finding in codes(findings, "missing_localization")]
+    assert len(messages) == len(set(messages))

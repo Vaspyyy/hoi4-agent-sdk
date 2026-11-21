@@ -214,7 +214,11 @@ def visual_overlap_issues(
             continue
         sharing = occupied.setdefault(pos, [])
         clash = next(
-            (other for other in sharing if not branches.never_shown_together(focus.id, other)),
+            (
+                other
+                for other in sharing
+                if other != focus.id and not branches.never_shown_together(focus.id, other)
+            ),
             None,
         )
         if clash is not None:
