@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import cast
 
+from .._disk_cache import DiskAnalysis
 from ..bookmarks import (
     load_bookmarks_file,
 )
@@ -53,6 +54,11 @@ from ..types import (
 from ._countries import CountriesLayer
 from ._shared import (
     _decision_category_definition_path,
+)
+
+#: ``tag -> {key: text}`` of one localisation file (see ``country_loc_entries``).
+_COUNTRY_LOC_ON_DISK: DiskAnalysis[dict[str, dict[str, str]]] = DiskAnalysis(
+    "country_loc_entries", dict, dict
 )
 
 
@@ -163,7 +169,7 @@ class LoadingLayer(CountriesLayer):
         return mapping
 
     def _load_countries(self) -> None:
-        from ..countries import _build_loc_cache
+        from ..countries import _build_loc_cache, country_loc_entries
 
         mod_view = FolderView(self.mod_root)
         for view in (mod_view, self._base_content):
@@ -186,11 +192,17 @@ class LoadingLayer(CountriesLayer):
             else:
                 self._country_color_sources[colors_path] = source
 
+        def read_entries(path: Path) -> dict[str, dict[str, str]]:
+            # The game's and base mods' answers are kept on disk as well.
+            return self._cached_result(
+                "country_loc_entries", path, country_loc_entries, _COUNTRY_LOC_ON_DISK
+            )
+
         loc_cache: dict[str, dict[str, str]] = {}
         for view in (self._base_content, mod_view):
             if view is None:
                 continue
-            for tag, entries in _build_loc_cache(view).items():
+            for tag, entries in _build_loc_cache(view, file_entries=read_entries).items():
                 loc_cache.setdefault(tag, {}).update(entries)
         mod_mapping = self._load_mod_country_tag_mapping()
         self._country_tag_mappings[mod_view] = mod_mapping

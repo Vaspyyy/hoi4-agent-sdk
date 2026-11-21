@@ -27,8 +27,6 @@ from ..types import (
     Country,
     ValidationError,
 )
-from ..script_references import dynamic_tags_of
-from ..syntax import parse
 from ..validation import validate_country
 from ._characters import CharactersLayer
 from ._context import ContextLayer
@@ -60,14 +58,6 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
             )
             errors.extend(self._validate_equipment_variant_unlocks(country))
         return errors
-
-    def _dynamic_country_tags(self) -> set[str]:
-        """Tags declared after ``dynamic_tags = yes`` in a tag file."""
-
-        tags: set[str] = set()
-        for _, text in self._effective_script_texts("common/country_tags"):
-            tags |= dynamic_tags_of(parse(text).root)
-        return tags
 
     def _recruited_leader_ideologies(self, country: Country) -> list[str] | None:
         """Ideologies of the recruited characters that can lead the country.

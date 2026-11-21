@@ -192,6 +192,21 @@ LOCALISATION_ON_DISK: DiskAnalysis[dict[str, str]] = DiskAnalysis(
 )
 
 
+def localisation_keys_in(text: str) -> frozenset[str]:
+    """The keys of a localisation file, read the way the game finds them.
+
+    Only ``KEY:0 "`` at the start of a line counts, so a line whose text the
+    strict reader rejects (such as inner quotes) still names its key.
+    """
+
+    found: set[str] = set()
+    for line in text.splitlines():
+        match = YML_ENTRY_RE.match(line)
+        if match is not None:
+            found.add(normalize_localization_key(match.group(1)))
+    return frozenset(found)
+
+
 def parse_localization_file(path: Path) -> dict[str, str]:
     return _localization_entries(_read_localization(path))
 

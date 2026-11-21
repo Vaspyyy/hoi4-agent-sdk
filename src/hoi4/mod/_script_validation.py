@@ -15,7 +15,6 @@ from ..script_references import (
     UNKNOWN,
     ScriptOwner,
     ScriptRef,
-    dynamic_tags_of,
     event_key,
     fragment_owner,
     is_country_tag,
@@ -830,12 +829,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         ideologies = set(RULING_PARTIES) | set(self._vanilla_ideologies) | set(self._ideologies)
         # Tags declared after ``dynamic_tags = yes`` in a country_tags file
         # are civil-war tags the game names at runtime.
-        dynamic_tags: set[str] = set()
-        for _, text in self._effective_script_texts("common/country_tags"):
-            try:
-                dynamic_tags |= dynamic_tags_of(parse(text).root)
-            except ValueError:
-                continue
+        dynamic_tags = self._dynamic_country_tags()
         for country in self._countries.values():
             if country.tag in dynamic_tags:
                 continue

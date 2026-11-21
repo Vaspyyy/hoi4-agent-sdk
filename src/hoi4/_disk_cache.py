@@ -114,6 +114,20 @@ def _sorted_strings(values: frozenset[str]) -> list[str]:
 #: A set of names read from one file (scripted effects, division templates).
 NAMES_ON_DISK: DiskAnalysis[frozenset[str]] = DiskAnalysis("names", _sorted_strings, frozenset)
 
+
+def _pairs_to_lists(pairs: tuple[tuple[str, str], ...]) -> list[list[str]]:
+    return [list(pair) for pair in pairs]
+
+
+def _lists_to_pairs(data: list[list[str]]) -> tuple[tuple[str, str], ...]:
+    return tuple((str(first), str(second)) for first, second in data)
+
+
+#: Ordered pairs of names read from one file (equipment and what unlocks it).
+PAIRS_ON_DISK: DiskAnalysis[tuple[tuple[str, str], ...]] = DiskAnalysis(
+    "pairs", _pairs_to_lists, _lists_to_pairs
+)
+
 _MISSING = object()
 
 

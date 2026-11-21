@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .. import _disk_cache
+from .._disk_cache import NAMES_ON_DISK
 from .._file_cache import cached_file_result
 from ..content_graph import ContentLivenessReport, analyze_content_liveness
 from ..content_validation import (
@@ -334,6 +335,22 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
     return errors
 
 
+def _idea_categories(text: str) -> frozenset[str]:
+    """Idea categories and slots one ``common/idea_tags`` file declares."""
+
+    return frozenset(idea_categories_from_script(text))
+
+
+def _event_namespaces(text: str) -> frozenset[str]:
+    """Every namespace the ``add_namespace`` lines of one event file declare."""
+
+    return frozenset(
+        item.scalar
+        for item in parse(text).root.assignments("add_namespace", fold=True)
+        if item.scalar
+    )
+
+
 class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLayer, MapLayer):
     """The staged ``validate()`` entry point and related reports."""
 
@@ -414,9 +431,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             if path.suffix.lower() != ".txt":
                 continue
             try:
-                categories |= idea_categories_from_script(read_text(path))
+                found = self._cached_result("idea_categories", path, _idea_categories, NAMES_ON_DISK)
             except (OSError, ValueError):
                 continue
+            categories |= found
         return categories
 
     def _declared_event_namespaces(self) -> set[str]:
@@ -437,12 +455,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             if path.suffix.lower() != ".txt":
                 continue
             try:
-                document = parse(read_text(path))
+                found = self._cached_result("event_namespaces", path, _event_namespaces, NAMES_ON_DISK)
             except (OSError, ValueError):
                 continue
-            for item in document.root.assignments("add_namespace", fold=True):
-                if item.scalar:
-                    names.add(item.scalar)
+            names |= found
         return names
 
     def _known_focus_search_filters(self) -> set[str] | None:

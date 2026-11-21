@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import colorsys
 import re
+from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
@@ -387,27 +388,48 @@ def _read_localisation(
             return
 
 
-def _build_loc_cache(root: Path | ContentView) -> dict[str, dict[str, str]]:
+def _build_loc_cache(
+    root: Path | ContentView,
+    *,
+    file_entries: Callable[[Path], dict[str, dict[str, str]]] | None = None,
+) -> dict[str, dict[str, str]]:
+    """Country name entries of every English localisation file, by tag.
+
+    ``file_entries`` reads one file (as :func:`country_loc_entries` does on
+    its text); pass one that keeps the answers on disk for inherited files.
+    """
+
     cache: dict[str, dict[str, str]] = {}
     view = as_view(root)
     assert view is not None
     for f in view.rglob("localisation/english", "*.yml").values():
-        raw = f.read_bytes()
-        txt = decode_text(raw)
-        for line in txt.splitlines():
-            s = line.strip()
-            if not s or s.startswith("#") or s.startswith("l_"):
-                continue
-            m = re.match(r"^\s*([A-Z0-9]{3}[A-Z0-9_]*):", s)
-            if m:
-                tag_key = m.group(1)
-                tag = tag_key[:3] if len(tag_key) >= 3 and tag_key[:3].isupper() else None
-                if tag and tag not in cache:
-                    cache[tag] = {}
-                if tag:
-                    val = s.split(" ", 1)[-1].strip().strip('"')
-                    cache[tag][tag_key] = val
+        found = (
+            file_entries(f) if file_entries is not None
+            else country_loc_entries(decode_text(f.read_bytes()))
+        )
+        for tag, entries in found.items():
+            cache.setdefault(tag, {}).update(entries)
     return cache
+
+
+def country_loc_entries(text: str) -> dict[str, dict[str, str]]:
+    """``tag -> {key: text}`` of the lines of one localisation file that start with a tag."""
+
+    cache: dict[str, dict[str, str]] = {}
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith("l_"):
+            continue
+        m = _COUNTRY_LOC_KEY_RE.match(s)
+        if m:
+            tag_key = m.group(1)
+            tag = tag_key[:3] if len(tag_key) >= 3 and tag_key[:3].isupper() else None
+            if tag:
+                cache.setdefault(tag, {})[tag_key] = s.split(" ", 1)[-1].strip().strip('"')
+    return cache
+
+
+_COUNTRY_LOC_KEY_RE = re.compile(r"^\s*([A-Z0-9]{3}[A-Z0-9_]*):")
 
 
 def _read_loc_from_cache(country: Country, cache: dict[str, dict[str, str]]) -> None:

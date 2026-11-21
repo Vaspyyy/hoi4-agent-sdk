@@ -61,7 +61,7 @@ only the ones it does not already reach through another base.
 * ``_oob_validation``: Order-of-battle validation against the effective game data. Uses
   ``_sources``, ``_catalogs``, ``_equipment``, ``_countries``, ``_states``.
 * ``_country_package``: Country package completeness validation. Uses
-  ``_localisation``, ``_sources``, ``_catalogs``, ``_equipment``, ``_countries``,
+  ``_localisation``, ``_catalogs``, ``_equipment``, ``_countries``,
   ``_characters``, ``_oobs``, ``_states``, ``_context``, ``_oob_validation``.
 * ``_validation``: The staged ``validate()`` entry point and related reports. Uses
   ``_localisation``, ``_sources``, ``_catalogs``, ``_states``, ``_map``, ``_context``, ``_definitions``,

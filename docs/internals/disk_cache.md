@@ -20,10 +20,14 @@ life of the process. A mod placed inside the game folder counts as the mod.
 | Store | What one entry holds |
 | --- | --- |
 | `file_references` | The owners, references and definitions of one script file of `common`, `events` or `history` |
-| `names` | Scripted effect and trigger names, division template names, character ids and idea ids of one file |
+| `names` | A set of names from one file: scripted effect and trigger names, division template names, character, idea, event and focus ids, name pool tags, sub-unit types, sprite names, dynamic tags, idea categories, tag aliases, event namespaces, localisation keys and `[?name]` values |
+| `definitions` | What one script file defines (events, ideas, focus trees, technologies, equipment, tags, organizations) |
+| `pairs` | `(equipment, technology or special project)` pairs of one file, in order |
 | `sprite_textures` | `name -> texturefile` of every sprite of one `.gfx` file |
 | `state_index_header` | The id, name and owner of one state file |
 | `localisation_entries` | Every entry of one `.yml` file |
+| `country_loc_entries` | The entries of one `.yml` file whose key starts with a country tag |
+| `province_types` | `province id -> type` of `map/definition.csv` |
 | `strategic_regions` | The strategic regions of one file |
 | `map_buildings` | The parsed rows of `map/buildings.txt` |
 | `province_topology` | Land provinces, land adjacency and coastal land of the map (read from `provinces.bmp`, `definition.csv` and `adjacencies.csv`) |

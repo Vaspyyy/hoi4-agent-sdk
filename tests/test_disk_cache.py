@@ -7,8 +7,10 @@ must come from the store files.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
+import pathlib
 import re
 import threading
 from collections.abc import Collection
@@ -22,9 +24,10 @@ import hoi4._disk_cache as disk_cache
 import hoi4._file_cache as file_cache
 import hoi4.mod._catalogs as catalogs
 from hoi4 import Mod
-from hoi4._disk_cache import NAMES_ON_DISK, DiskAnalysis
+from hoi4._disk_cache import NAMES_ON_DISK, PAIRS_ON_DISK, DiskAnalysis
 from hoi4._file_cache import cached_file_result, cached_files_result, clear_file_cache
-from hoi4.localisation import LOCALISATION_ON_DISK, localization_file_entries
+from hoi4.countries import country_loc_entries
+from hoi4.localisation import LOCALISATION_ON_DISK, localisation_keys_in, localization_file_entries
 from hoi4.map_editing import (
     decode_map_buildings,
     decode_strategic_regions,
@@ -34,13 +37,27 @@ from hoi4.map_editing import (
     parse_strategic_regions,
 )
 from hoi4.map_topology import _decode_topology, _encode_topology
-from hoi4.mod._catalogs import _REFERENCES_ON_DISK, _TEXTURES_ON_DISK, _sprite_textures
+from hoi4.mod._catalogs import (
+    _PROVINCE_TYPES_ON_DISK,
+    _REFERENCES_ON_DISK,
+    _TEXTURES_ON_DISK,
+    _province_types,
+    _sprite_textures,
+    _technology_unlocks,
+)
 from hoi4.mod._core import _STATE_HEADERS_ON_DISK
+from hoi4.mod._equipment import _special_project_unlocks
+from hoi4.mod._loading import _COUNTRY_LOC_ON_DISK
 from hoi4.script_references import (
+    DEFINITIONS_ON_DISK,
+    Definitions,
+    ScriptRef,
     decode_file_references,
+    definitions_of,
     encode_file_references,
     file_references,
 )
+from hoi4.syntax import parse
 from hoi4.states import _state_name_from_filename, state_index_header
 
 
@@ -380,6 +397,23 @@ GAME_FILES = {
     "map/strategicregions/1-Region.txt": (
         "strategic_region = { id = 1 name = REGION_1 provinces = { 1 } }\n"
     ),
+    # One file for each catalog scan, so a warm run shows they are all stored.
+    "common/national_focus/game_focus.txt": (
+        "focus_tree = { id = game_tree focus = { id = GAM_focus x = 0 y = 0 cost = 1 } }\n"
+        "shared_focus = { id = GAM_shared x = 0 y = 0 cost = 1 }\n"
+    ),
+    "common/names/00_names.txt": "GAM = { male = { names = { A } } }\n",
+    "common/units/infantry.txt": "sub_units = { infantry = { } }\n",
+    "common/technologies/game_tech.txt": (
+        "technologies = { game_tech = { enable_equipments = { game_rifle } } }\n"
+    ),
+    "common/special_projects/projects/game_project.txt": (
+        "sp_game = { project_output = { enable_equipments = { game_gun } } }\n"
+    ),
+    "common/idea_tags/00_idea.txt": "idea_categories = { game_slot = { slot = game_slot } }\n",
+    "common/country_tag_aliases/game_aliases.txt": "GAA = { }\n",
+    "common/military_industrial_organization/organizations/game_mio.txt": "game_mio = { }\n",
+    "interface/game_focus.gfx": "spriteTypes = { spriteType = { name = GFX_game_focus } }\n",
 }
 
 
@@ -391,7 +425,8 @@ def game(tmp_path: Path) -> Path:
     write(
         root,
         "localisation/english/game_l_english.yml",
-        'l_english:\n game_ns.1.a: "Fine"\n STATE_1: "Home"\n GAM: "Gameland"\n',
+        'l_english:\n game_ns.1.a: "Fine"\n STATE_1: "Home"\n GAM: "Gameland"\n'
+        ' GAM_ADJ: "Gamish"\n game_value: "[?game_variable] left"\n',
     )
     write(root, "localisation/german/game_l_german.yml", 'l_german:\n GAM: "Spielland"\n')
     return root
@@ -503,6 +538,72 @@ def test_a_base_mod_is_stored_under_its_own_files(
     assert not [path for path in read if path.startswith((str(base), str(game)))]
 
 
+# Game files a warm run still reads: the tag list (read at construction) and
+# the state files the OOB check builds full models of.
+_READ_WHEN_WARM = ("common/country_tags/", "history/states/")
+
+
+def every_catalog(mod: Mod) -> list[object]:
+    """Findings and every catalog that scans the inherited files, as plain data."""
+
+    return [
+        findings(mod),
+        sorted(mod._known_focus_ids()),
+        sorted(mod._known_focus_tree_ids()),
+        sorted(mod._known_event_ids()),
+        sorted(mod._known_idea_ids()),
+        sorted(mod._known_character_ids()),
+        sorted(mod._known_advisor_idea_ids()),
+        sorted(mod._known_organization_ids()),
+        sorted(mod._known_country_tags()),
+        sorted(mod._known_technology_ids()),
+        sorted(mod._known_equipment_ids()),
+        sorted(mod._known_country_name_pool_tags()),
+        sorted(mod._known_sub_unit_types()),
+        sorted(mod._known_focus_icons()),
+        sorted(mod._known_sprite_textures().items()),
+        sorted(mod._localisation_value_names()),
+        sorted(mod._equipment_unlock_technologies().items()),
+        sorted(mod._special_project_unlocks().items()),
+        sorted(mod._effective_province_types().items()),
+        sorted(mod._dynamic_country_tags()),
+        sorted(mod._known_idea_categories()),
+        sorted(mod._definitions_in("common/country_tag_aliases").tags),
+        sorted(mod._declared_event_namespaces()),
+        mod._has_loc("game_value"),
+        mod.get_loc("STATE_1"),
+    ]
+
+
+def test_a_warm_run_reads_no_other_game_file(
+    store: Path, tmp_path: Path, game: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(game, "events/more_events.txt", "add_namespace = more_ns\n")
+    make_mod(tmp_path, game)
+    # An event in a namespace only the game declares makes the namespace scan run.
+    write(tmp_path / "mod", "events/borrowed.txt", "country_event = { id = more_ns.1 }\n")
+    cold = every_catalog(make_mod(tmp_path, game))
+    assert "more_ns" in cold[-3]  # type: ignore[operator]
+    disk_cache.flush()
+    new_process()
+    read: list[Path] = []
+    original = pathlib.Path.read_bytes
+
+    def counted(self: pathlib.Path) -> bytes:
+        read.append(self)
+        return original(self)
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", counted)
+    assert every_catalog(make_mod(tmp_path, game)) == cold
+    again = sorted(
+        path.relative_to(game).as_posix()
+        for path in read
+        if path.is_relative_to(game) and path.suffix in {".txt", ".yml", ".gfx", ".csv"}
+    )
+    assert again
+    assert [path for path in again if not path.startswith(_READ_WHEN_WARM)] == []
+
+
 # ── round trips of every stored shape ──────────────────────────────
 
 REFERENCE_SCRIPT = """
@@ -594,10 +695,24 @@ def round_trip(analysis: DiskAnalysis, value: object) -> object:
             DiskAnalysis("topology", _encode_topology, _decode_topology),
             (frozenset({1, 2, 3}), {1: {2}, 2: {1, 3}, 3: {2}, 4: set()}, frozenset({3})),
         ),
+        (
+            PAIRS_ON_DISK,
+            _technology_unlocks(GAME_FILES["common/technologies/game_tech.txt"])
+            + _special_project_unlocks(
+                GAME_FILES["common/special_projects/projects/game_project.txt"]
+            ),
+        ),
+        (PAIRS_ON_DISK, ()),
+        (_PROVINCE_TYPES_ON_DISK, _province_types(GAME_FILES["map/definition.csv"])),
+        (_PROVINCE_TYPES_ON_DISK, {}),
+        (_COUNTRY_LOC_ON_DISK, country_loc_entries('l_english:\n GAM: "A"\n GAM_ADJ: "B"\n')),
+        (NAMES_ON_DISK, localisation_keys_in('l_english:\n A:0 "x"\n b: "y"\n')),
     ],
     ids=[
         "names", "no names", "textures", "no textures", "state header", "state without owner",
-        "no state", "localisation", "regions", "buildings", "topology",
+        "no state", "localisation", "regions", "buildings", "topology", "unlock pairs",
+        "no pairs", "province types", "no province types", "country names",
+        "localisation keys",
     ],
 )
 def test_every_stored_shape_round_trips(analysis: DiskAnalysis, value: object) -> None:
@@ -628,3 +743,40 @@ def test_state_name_from_filename_matches_the_pattern(stem: str, state_id: int) 
     path = Path(f"/s/{stem}.txt")
     expected = re.sub(rf"^\s*{state_id}\s*[-_\s]*", "", path.stem).strip()
     assert _state_name_from_filename(path, state_id) == expected
+
+
+DEFINITION_FILES = {
+    "events/trip.txt": REFERENCE_SCRIPT,
+    "common/ideas/trip.txt": (
+        "ideas = { country = { trip_idea = { } } political_advisor = { adv = { } } }"
+    ),
+    "common/units/equipment/trip.txt": (
+        "equipments = { tank_1 = { archetype = tank } tank_2 = { archetype = tank } }\n"
+        "duplicate_archetypes = { heavy = { archetype = tank variant_name = { a = x b = y } } }"
+    ),
+    "common/national_focus/trip.txt": "focus_tree = { id = trip_tree focus = { id = f1 } }",
+    "common/technologies/trip.txt": "technologies = { t1 = { } @x = 1 }",
+    "common/country_tag_aliases/trip.txt": "TRA = { }",
+    "common/characters/trip.txt": "characters = { c = { advisor = { idea_token = trip_adv } } }",
+    "common/military_industrial_organization/organizations/trip.txt": "trip_mio = { }",
+}
+
+
+@pytest.mark.parametrize("relative", sorted(DEFINITION_FILES))
+def test_definitions_round_trip(relative: str) -> None:
+    found = definitions_of(parse(DEFINITION_FILES[relative]), relative)
+    assert found != Definitions()
+    assert round_trip(DEFINITIONS_ON_DISK, found) == found
+
+
+def test_the_stored_shapes_cover_every_field() -> None:
+    """A new field of a stored dataclass must get an encoder too."""
+
+    assert [field.name for field in dataclasses.fields(ScriptRef)] == [
+        "kind", "action", "value", "offset", "line", "column", "scope", "key",
+        "certain", "statement", "scope_key", "hidden", "guarded", "iterator", "root",
+    ]
+    assert [field.name for field in dataclasses.fields(Definitions)] == [
+        "events", "ideas", "advisor_ideas", "focus_trees", "technologies", "equipment",
+        "equipment_copies", "tags", "organizations",
+    ]

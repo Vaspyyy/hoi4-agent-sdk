@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional
 
+from .._disk_cache import NAMES_ON_DISK
 from ..characters import (
     Character,
 )
@@ -14,8 +15,8 @@ from ..countries import (
 from ..localisation import (
     DEFAULT_LOCALISATION_LANGUAGE,
     LOCALISATION_LANGUAGES,
-    YML_ENTRY_RE,
     localisation_file_name,
+    localisation_keys_in,
     normalize_localisation_language,
     normalize_localization_key,
     parse_localization_dir,
@@ -166,14 +167,12 @@ class LocalisationLayer(CoreLayer):
                 if path.suffix.lower() != ".yml":
                     continue
                 try:
-                    text = read_text(path)
+                    keys = self._cached_result(
+                        "localisation_keys", path, localisation_keys_in, NAMES_ON_DISK
+                    )
                 except (OSError, ValueError):
                     continue
-                index = own if path.is_relative_to(self.mod_root) else inherited
-                for line in text.splitlines():
-                    match = YML_ENTRY_RE.match(line)
-                    if match is not None:
-                        index.add(normalize_localization_key(match.group(1)))
+                (own if self._in_mod_root(path) else inherited).update(keys)
             self._scan_cache["validation_loc_keys"] = inherited
             self._scan_cache["validation_mod_loc_keys"] = own
         if key in inherited:

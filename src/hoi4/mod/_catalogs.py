@@ -9,8 +9,7 @@ import re
 from collections.abc import Collection
 from pathlib import Path
 
-from .._disk_cache import NAMES_ON_DISK, DiskAnalysis
-from .._file_cache import cached_file_result
+from .._disk_cache import NAMES_ON_DISK, PAIRS_ON_DISK, DiskAnalysis
 from ..characters import AdvisorRole
 from ..events import VALID_EVENT_TYPES
 from ..focus_layout import allow_branch_condition, block_allow_branch_condition
@@ -23,12 +22,14 @@ from ..patching import (
     top_level_assignments,
 )
 from ..script_references import (
+    DEFINITIONS_ON_DISK,
     Definitions,
     FileReferences,
     decode_file_references,
     definitions_of,
     encode_file_references,
     file_references,
+    dynamic_tags_of,
     resolve_equipment,
 )
 from ..syntax import parse
@@ -191,6 +192,59 @@ def _sprite_textures(text: str) -> dict[str, str]:
 _TEXTURES_ON_DISK: DiskAnalysis[dict[str, str]] = DiskAnalysis("sprite_textures", dict, dict)
 
 
+def _loc_value_names(text: str) -> frozenset[str]:
+    """Names a localisation text reads with ``[?name]``; every dotted part counts."""
+
+    found: set[str] = set()
+    for match in _LOC_VALUE_RE.finditer(text):
+        found.update(part for part in match.group(1).split(".") if part)
+    return frozenset(found)
+
+
+def _technology_unlocks(text: str) -> tuple[tuple[str, str], ...]:
+    """``(equipment, technology)`` for each ``enable_equipments`` entry, in order."""
+
+    pairs: list[tuple[str, str]] = []
+    for wrapper in parse(text).root.assignments("technologies"):
+        if wrapper.block is None:
+            continue
+        for technology in wrapper.block.assignments():
+            if technology.block is None:
+                continue
+            for enabled in technology.block.blocks("enable_equipments"):
+                for equipment in enabled.values():
+                    pairs.append((equipment.value, technology.key.value))
+    return tuple(pairs)
+
+
+def _dynamic_tags(text: str) -> frozenset[str]:
+    """Tags declared after ``dynamic_tags = yes`` in a country tags file."""
+
+    return frozenset(dynamic_tags_of(parse(text).root))
+
+
+def _province_types(text: str) -> dict[int, str]:
+    """``province id -> type`` (``land``, ``sea``, ``lake``) of ``map/definition.csv``."""
+
+    province_types: dict[int, str] = {}
+    for row in csv.reader(io.StringIO(text), delimiter=";"):
+        if len(row) < 5:
+            continue
+        try:
+            numeric_id = int(row[0].strip())
+        except ValueError:
+            continue
+        province_types[numeric_id] = row[4].strip().lower()
+    return province_types
+
+
+_PROVINCE_TYPES_ON_DISK: DiskAnalysis[dict[int, str]] = DiskAnalysis(
+    "province_types",
+    lambda types: [[province, kind] for province, kind in types.items()],
+    lambda data: {int(province): str(kind) for province, kind in data},
+)
+
+
 class CatalogsLayer(SourcesLayer):
     """Catalogs of known identifiers (ideas, events, technologies, equipment, sprites)."""
 
@@ -219,7 +273,8 @@ class CatalogsLayer(SourcesLayer):
     def _definitions_in(self, relative: str, *, skip: Collection[Path] = ()) -> Definitions:
         """What the effective files of one folder define, read from the tree.
 
-        Each file is read once while it is unchanged (``hoi4._file_cache``);
+        Each file is read once while it is unchanged (``hoi4._file_cache``),
+        and an inherited file's result is kept on disk for later processes;
         a file with a pending import is read from its pending text. ``skip``
         leaves out mod files whose content the loaded models hold.
         """
@@ -231,6 +286,7 @@ class CatalogsLayer(SourcesLayer):
             relative,
             f"definitions:{relative}",
             lambda text: definitions_of(parse(text), label),
+            DEFINITIONS_ON_DISK,
             skip=skip,
         ):
             merged.events.update(found.events)
@@ -293,8 +349,12 @@ class CatalogsLayer(SourcesLayer):
                 if pending is not None:
                     found = definitions_of(parse(pending()), label).tags
                 else:
-                    found = cached_file_result(
-                        purpose, source, lambda text: definitions_of(parse(text), label)
+                    # The same entry as ``_definitions_in("common/country_tags")``.
+                    found = self._cached_result(
+                        purpose,
+                        source,
+                        lambda text: definitions_of(parse(text), label),
+                        DEFINITIONS_ON_DISK,
                     ).tags
             except (OSError, ValueError):
                 continue
@@ -381,7 +441,7 @@ class CatalogsLayer(SourcesLayer):
         ids = {focus.id for tree in self._focus_trees.values() for focus in tree.focuses}
         replaced = set(self._group_focus_trees_by_file(dirty_only=True))
         for _, found in self._effective_script_results(
-            "common/national_focus", "focus_ids", _focus_ids, skip=replaced
+            "common/national_focus", "focus_ids", _focus_ids, NAMES_ON_DISK, skip=replaced
         ):
             ids |= found
         return ids
@@ -393,26 +453,23 @@ class CatalogsLayer(SourcesLayer):
         localisation it inherits.
         """
 
-        def names_in(text: str) -> set[str]:
-            found: set[str] = set()
-            for match in _LOC_VALUE_RE.finditer(text):
-                found.update(part for part in match.group(1).split(".") if part)
-            return found
-
         inherited = self._scan_cache.get("localisation_value_names")
         if inherited is None:
             inherited = set()
             if self._base_content is not None:
                 for path in self._base_content.rglob("localisation", "*english*.yml").values():
                     try:
-                        inherited |= names_in(read_text(path))
+                        found = self._cached_result(
+                            "localisation_value_names", path, _loc_value_names, NAMES_ON_DISK
+                        )
                     except (OSError, ValueError):
                         continue
+                    inherited |= found
             self._scan_cache["localisation_value_names"] = inherited
         names = set(inherited)
         for value in self._loc_entries.values():
             if "[?" in value:
-                names |= names_in(value)
+                names |= _loc_value_names(value)
         return names
 
     def _pending_script_texts(self) -> dict[Path, str | None]:
@@ -537,7 +594,7 @@ class CatalogsLayer(SourcesLayer):
         ids = set(self._events)
         replaced = set(self._group_events_by_file(dirty_only=True)[0])
         for _, found in self._effective_script_results(
-            "events", "event_ids", _event_ids, skip=replaced
+            "events", "event_ids", _event_ids, NAMES_ON_DISK, skip=replaced
         ):
             ids |= found
         return ids
@@ -564,9 +621,10 @@ class CatalogsLayer(SourcesLayer):
             if self.mod_root / name in self._pending_asset_writes:
                 continue
             try:
-                icons |= cached_file_result("sprite_names", source, _sprite_names)
+                found = self._cached_result("sprite_names", source, _sprite_names, NAMES_ON_DISK)
             except (OSError, ValueError):
                 continue
+            icons |= found
         for path, content in self._pending_asset_writes.items():
             if path.suffix.lower() == ".gfx":
                 icons |= _sprite_names(decode_text(content))
@@ -629,18 +687,11 @@ class CatalogsLayer(SourcesLayer):
         if self._equipment_unlock_cache is not None:
             return dict(self._equipment_unlock_cache)
         unlocks: dict[str, list[str]] = {}
-        for _, text in self._effective_script_texts("common/technologies"):
-            for wrapper in parse(text).root.assignments("technologies"):
-                if wrapper.block is None:
-                    continue
-                for technology in wrapper.block.assignments():
-                    if technology.block is None:
-                        continue
-                    for enabled in technology.block.blocks("enable_equipments"):
-                        for equipment in enabled.values():
-                            unlocks.setdefault(equipment.value, []).append(
-                                technology.key.value
-                            )
+        for _, pairs in self._effective_script_results(
+            "common/technologies", "equipment_unlocks", _technology_unlocks, PAIRS_ON_DISK
+        ):
+            for equipment, technology in pairs:
+                unlocks.setdefault(equipment, []).append(technology)
         self._equipment_unlock_cache = {
             equipment: tuple(dict.fromkeys(technologies))
             for equipment, technologies in unlocks.items()
@@ -651,12 +702,22 @@ class CatalogsLayer(SourcesLayer):
         found = self._definitions_in("common/units/equipment")
         return set(resolve_equipment(found.equipment, found.equipment_copies))
 
+    def _dynamic_country_tags(self) -> set[str]:
+        """Tags declared after ``dynamic_tags = yes`` in a tag file: civil-war tags."""
+
+        tags: set[str] = set()
+        for _, found in self._effective_script_results(
+            "common/country_tags", "dynamic_tags", _dynamic_tags, NAMES_ON_DISK
+        ):
+            tags |= found
+        return tags
+
     def _known_country_name_pool_tags(self) -> set[str]:
         """Tags with a name pool; the pending ``set_country_name_pool`` edits count."""
 
         tags: set[str] = set()
         for _, found in self._effective_script_results(
-            "common/names", "name_pool_tags", _name_pool_tags
+            "common/names", "name_pool_tags", _name_pool_tags, NAMES_ON_DISK
         ):
             tags |= found
         return tags
@@ -672,7 +733,7 @@ class CatalogsLayer(SourcesLayer):
         }
         result: set[str] = set()
         for _, found in self._effective_script_results(
-            "common/units", "sub_unit_types", _sub_unit_types, skip=nested
+            "common/units", "sub_unit_types", _sub_unit_types, NAMES_ON_DISK, skip=nested
         ):
             result |= found
         return result
@@ -696,14 +757,10 @@ class CatalogsLayer(SourcesLayer):
         )
         province_types: dict[int, str] = {}
         if path is not None:
-            for row in csv.reader(io.StringIO(read_text(path)), delimiter=";"):
-                if len(row) < 5:
-                    continue
-                try:
-                    numeric_id = int(row[0].strip())
-                except ValueError:
-                    continue
-                province_types[numeric_id] = row[4].strip().lower()
+            rows: dict[int, str] = self._cached_result(
+                "province_types", path, _province_types, _PROVINCE_TYPES_ON_DISK
+            )
+            province_types = dict(rows)
         self._scan_cache["province_type_rows"] = {
             f"{province_id}:{province_type}"
             for province_id, province_type in province_types.items()

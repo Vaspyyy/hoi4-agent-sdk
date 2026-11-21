@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, Collection, Iterable, Iterator
 
+from ._disk_cache import DiskAnalysis
 from ._script_corpus import split_file
 from .script_scopes import CONTROL, BlockKind, Role, WalkState, walk_data, walk_script
 from .syntax import Assignment, Block, Document, Scalar, Tagged, parse
@@ -688,6 +689,12 @@ def _decode_definitions(data: dict[str, Any]) -> Definitions:
     for name in ("advisor_ideas", "focus_trees", "technologies", "tags", "organizations"):
         getattr(found, name).update(data.get(name, ()))
     return found
+
+
+#: How :class:`Definitions` of one file go to disk and back.
+DEFINITIONS_ON_DISK: DiskAnalysis[Definitions] = DiskAnalysis(
+    "definitions", _encode_definitions, _decode_definitions
+)
 
 
 def encode_file_references(found: FileReferences) -> dict[str, object]:
