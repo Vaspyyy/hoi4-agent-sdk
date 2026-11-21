@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
-from typing import Iterator, Optional, cast
+from typing import Iterator, Optional, TypeVar, cast
 
 from ..characters import (
     Character,
@@ -27,11 +29,21 @@ from ..types import (
     Idea,
     OnAction,
 )
+from .._file_cache import cached_file_result
 from ._localisation import LocalisationLayer
 from ..textio import read_text
 from ._shared import (
     _decision_category_definition_path,
 )
+
+
+T = TypeVar("T")
+
+
+def _top_level_block_keys(text: str) -> frozenset[str]:
+    """Keys of the top-level ``key = { ... }`` blocks: scripted effect or trigger names."""
+
+    return frozenset(span.key for span in top_level_assignments(text) if span.is_block)
 
 
 def _definition_only(category: DecisionCategory) -> bool:
@@ -71,6 +83,41 @@ class SourcesLayer(LocalisationLayer):
 
     def _effective_script_texts(self, relative: str) -> Iterator[tuple[Path, str]]:
         """Read effective support scripts with pending imports and name-pool edits."""
+        for target, source, pending in self._effective_script_files(relative):
+            try:
+                yield target, pending() if pending is not None else read_text(source)
+            except (OSError, ValueError):
+                continue
+
+    def _effective_script_results(
+        self, relative: str, purpose: str, compute: Callable[[str], T]
+    ) -> Iterator[tuple[Path, T]]:
+        """``compute(text)`` of every effective script file of one folder.
+
+        The answer for a file on disk is remembered until the file changes
+        (``hoi4._file_cache``), so a second validation does not read the
+        game's folders again. Files with pending edits are always computed
+        from their pending text. The result may be shared: never change it.
+        """
+
+        for target, source, pending in self._effective_script_files(relative):
+            try:
+                if pending is not None:
+                    yield target, compute(pending())
+                else:
+                    yield target, cached_file_result(purpose, source, compute)
+            except (OSError, ValueError):
+                continue
+
+    def _effective_script_files(
+        self, relative: str
+    ) -> list[tuple[Path, Path, Callable[[], str] | None]]:
+        """``(target, source, pending)`` of every effective script file of a folder.
+
+        ``pending`` returns the text a pending edit gives the file, and is
+        ``None`` when the file on disk at ``source`` is current.
+        """
+
         files: dict[Path, Path] = {}
         for root in reversed(self._data_roots()):
             for source in sorted((root / relative).rglob("*.txt")):
@@ -84,30 +131,27 @@ class SourcesLayer(LocalisationLayer):
         )
         if pending_names:
             files.setdefault(names_path, names_path)
+        result: list[tuple[Path, Path, Callable[[], str] | None]] = []
         for target, source in files.items():
-            try:
-                text = (
-                    self._render_country_name_pools()
-                    if pending_names and target == names_path
-                    else self._script_file_updates.get(target)
-                )
-                if text is None:
-                    text = read_text(source)
-                yield target, text
-            except (OSError, ValueError):
-                continue
+            pending: Callable[[], str] | None = None
+            if pending_names and target == names_path:
+                pending = self._render_country_name_pools
+            else:
+                update = self._script_file_updates.get(target)
+                if update is not None:
+                    pending = partial(str, update)
+            result.append((target, source, pending))
+        return result
 
     def _effective_custom_script_tokens(self) -> dict[ScriptTokenKind, set[str]]:
         result: dict[ScriptTokenKind, set[str]] = {"effect": set(), "trigger": set()}
         for kind, relative in (("effect", "common/scripted_effects"),
                                ("trigger", "common/scripted_triggers")):
             typed_kind = cast(ScriptTokenKind, kind)
-            for _, text in self._effective_script_texts(relative):
-                try:
-                    result[typed_kind].update(span.key for span in top_level_assignments(text)
-                                              if span.is_block)
-                except ValueError:
-                    continue
+            for _, names in self._effective_script_results(
+                relative, "top_level_block_keys", _top_level_block_keys
+            ):
+                result[typed_kind].update(names)
         return result
 
     def _group_characters_by_file(

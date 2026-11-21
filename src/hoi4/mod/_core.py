@@ -150,6 +150,9 @@ class CoreLayer:
             load_vanilla_tags(self._base_content_root) if self._base_content_root else set()
         )
         self._scan_cache: dict[str, set[str]] = {}
+        # Data built once per validate() call and shared by its checks; None
+        # outside a run, because edits between runs change it.
+        self._validation_run: dict[str, object] | None = None
         self._script_vocabulary_cache: GameScriptVocabulary | None = None
         self._equipment_unlock_cache: dict[str, tuple[str, ...]] | None = None
         self._sprite_texture_cache: dict[str, str] | None = None

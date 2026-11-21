@@ -100,6 +100,21 @@ def _date_key(date: str) -> tuple[int, ...]:
     return tuple(int(part) for part in parts if part.isdigit())
 
 
+def _division_template_names(text: str) -> frozenset[str]:
+    """The ``name`` of every ``division_template`` block anywhere in a script."""
+
+    # A cheap filter before parsing; the tree decides what counts.
+    if "division_template" not in text:
+        return frozenset()
+    names: set[str] = set()
+    for item, _ in parse(text).root.walk():
+        if item.name == "division_template" and item.block is not None:
+            name = item.block.scalar("name")
+            if name:
+                names.add(name)
+    return frozenset(names)
+
+
 def _oob_lines(oob: OrderOfBattle) -> _OobLines:
     """Find the line of each template, division, fleet, ship and wing."""
 
@@ -158,6 +173,17 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
     # ── Shared game data ───────────────────────────────────────
 
     def _oob_check_data(self) -> _OobCheckData:
+        run = self._validation_run
+        if run is not None:
+            cached = run.get("oob_check_data")
+            if isinstance(cached, _OobCheckData):
+                return cached
+        data = self._build_oob_check_data()
+        if run is not None:
+            run["oob_check_data"] = data
+        return data
+
+    def _build_oob_check_data(self) -> _OobCheckData:
         states: dict[int, State] = {}
         state_ids = (
             {entry["id"] for entry in self.state_index()}
@@ -235,21 +261,14 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
     def _script_division_templates(self) -> set[str]:
         """Template names that history or effect script creates at runtime."""
 
-        texts: list[str] = [
-            country.raw_history for country in self._countries.values()
-        ]
-        for relative in _TEMPLATE_SCRIPT_DIRS:
-            texts.extend(text for _, text in self._effective_script_texts(relative))
         names: set[str] = set()
-        for text in texts:
-            # A cheap filter before parsing; the tree decides what counts.
-            if "division_template" not in text:
-                continue
-            for item, _ in parse(text).root.walk():
-                if item.name == "division_template" and item.block is not None:
-                    name = item.block.scalar("name")
-                    if name:
-                        names.add(name)
+        for country in self._countries.values():
+            names |= _division_template_names(country.raw_history)
+        for relative in _TEMPLATE_SCRIPT_DIRS:
+            for _, found in self._effective_script_results(
+                relative, "division_template_names", _division_template_names
+            ):
+                names |= found
         return names
 
     def _country_variant_occurrences(

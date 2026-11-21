@@ -522,6 +522,46 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         ``suppress_warnings`` is the older name of the same list.
         """
 
+        # Checks share data built once per run (``_validation_run``); a
+        # nested call reuses the outer run's data.
+        outer = self._validation_run is None
+        if outer:
+            self._validation_run = {}
+        try:
+            return self._validate_once(
+                suppress_warnings=suppress_warnings,
+                validate_icons=validate_icons,
+                strict_localization=strict_localization,
+                stage=stage,
+                script_token_allowlist=script_token_allowlist,
+                liveness_flag_allowlist=liveness_flag_allowlist,
+                liveness_localization_allowlist=liveness_localization_allowlist,
+                progress=progress,
+                cancelled=cancelled,
+                advice=advice,
+                suppress=suppress,
+            )
+        finally:
+            if outer:
+                self._validation_run = None
+
+    def _validate_once(
+        self,
+        suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
+        validate_icons: bool = False,
+        strict_localization: bool = False,
+        stage: ValidationStage = "package",
+        script_token_allowlist: Sequence[str] = (),
+        liveness_flag_allowlist: Sequence[str] = (),
+        liveness_localization_allowlist: Sequence[str] = (),
+        progress: ProgressCallback | None = None,
+        cancelled: CancelCallback | None = None,
+        *,
+        advice: bool = False,
+        suppress: Sequence[str] = (),
+    ) -> list[ValidationError]:
+        """One validation run; see :meth:`validate`."""
+
         stage = require_validation_stage(stage)
         # Fail on a bad suppression before the long run, not after it.
         validation_suppressions([*(suppress_warnings or ()), *suppress])
