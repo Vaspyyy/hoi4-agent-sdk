@@ -15,6 +15,7 @@ from ..script_references import (
     UNKNOWN,
     ScriptOwner,
     ScriptRef,
+    event_key,
     fragment_owner,
     is_country_tag,
 )
@@ -101,6 +102,8 @@ class _LazyCatalogs:
         self.tags: set[str] | None = None
         self.states: set[int] | None = None
         self.folded: dict[str, dict[str, str]] = {}
+        # Event ids with folded namespaces, before and after the full catalog.
+        self.event_keys: dict[bool, set[str]] = {}
 
     def _load(self, name: str) -> set[str]:
         values = self.known[name]
@@ -123,10 +126,23 @@ class _LazyCatalogs:
     def has(self, name: str, value: str) -> bool:
         if value in self.known[name]:
             return True
+        if name == "events" and self._has_event(value, complete=False):
+            return True
         values = self._load(name)
+        if name == "events" and self._has_event(value, complete=True):
+            return True
         # Without a catalog (no game install and nothing defined) nothing can
         # be said about an event, a technology or a piece of equipment.
         return value in values or (not values and name != "ideas")
+
+    def _has_event(self, value: str, *, complete: bool) -> bool:
+        """The game matches an event's namespace without regard to case."""
+
+        keys = self.event_keys.get(complete)
+        if keys is None:
+            keys = {event_key(known) for known in self.known["events"]}
+            self.event_keys[complete] = keys
+        return event_key(value) in keys
 
     def has_idea(self, value: str, *, show: bool = False) -> bool:
         if self.has("ideas", value):

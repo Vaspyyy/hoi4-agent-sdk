@@ -57,17 +57,13 @@ MIRRORED = (
 )
 
 # Real mistakes in the game's files (checked 2026-11, game 1.17): names that
-# exist nowhere, or only with different upper and lower case.
+# exist nowhere, or only with different upper and lower case. An event's
+# namespace is matched without regard to case, as the game does, so
+# ``PER_SSB_events.8`` finds ``PER_ssb_events.8``.
 KNOWN_GAME_MISTAKES = frozenset(
     {
         ("unknown_event_reference", "EST_events.3"),
-        ("unknown_event_reference", "PER_SSB_events.8"),
-        ("unknown_event_reference", "PER_SSB_events.10"),
-        ("unknown_event_reference", "PER_SSB_events.11"),
-        ("unknown_event_reference", "nsb_news.200"),
         ("unknown_event_reference", "mtg_usa_civil_war_fascists.1000"),
-        ("unknown_event_reference", "NSB_news.1"),
-        ("unknown_event_reference", "NSB_news.2"),
         ("unknown_event_reference", "NSB_news.201"),
         ("unknown_idea_reference", "CHI_claire_lee_chennault_air_chief"),
         ("unknown_idea_reference", "por_portuguese_legion"),

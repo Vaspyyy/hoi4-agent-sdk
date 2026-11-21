@@ -86,6 +86,18 @@ def name_pattern(value: str) -> str:
     return _DYNAMIC_PART_RE.sub("*", value)
 
 
+def event_key(event_id: str) -> str:
+    """An event id as the game compares it: the namespace without regard to case.
+
+    ``NSB_news.200`` and ``nsb_news.200`` name the same event; the number
+    behind the last dot is compared as it is. Use this wherever an event id
+    is looked up or a fired id is matched to a defined one.
+    """
+
+    namespace, dot, number = event_id.rpartition(".")
+    return f"{namespace.lower()}.{number}" if dot else event_id
+
+
 def is_country_tag(key: str) -> bool:
     return bool(TAG_RE.match(key) or DYNAMIC_TAG_RE.match(key))
 

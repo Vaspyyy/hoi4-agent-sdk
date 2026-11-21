@@ -13,6 +13,7 @@ from .script_references import (
     COUNTRY,
     Definitions,
     FileReferences,
+    event_key,
     fragment_owner,
     name_pattern,
 )
@@ -197,14 +198,17 @@ def analyze_content_liveness(
     defined_at = _definition_sites(corpus)
 
     # Events: fired by an effect, an on-action or a border war anywhere in the
-    # mod or the game. A name the game builds while running is a pattern.
+    # mod or the game. A name the game builds while running is a pattern. The
+    # game matches an event's namespace without regard to case.
     event_calls, event_patterns = _referenced(corpus, "event", {"fire"})
-    autonomous_events = {
-        event.id for event in mod._events.values() if not event.is_triggered_only
-    }
-    fired_events = (event_calls | autonomous_events) & set(mod._events)
-    fired_events |= {
-        event_id for event_id in mod._events if _matches(event_id, event_patterns)
+    called = {event_key(event_id) for event_id in event_calls}
+    folded_patterns = tuple(event_key(pattern) for pattern in event_patterns)
+    fired_events = {
+        event.id
+        for event in mod._events.values()
+        if not event.is_triggered_only
+        or event_key(event.id) in called
+        or _matches(event_key(event.id), folded_patterns)
     }
     unfired_events = {
         event.id

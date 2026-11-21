@@ -242,6 +242,23 @@ def test_events_in_sub_folders_are_known(tmp_path):
     assert codes(references(Mod(tmp_path)), "unknown_event_reference") == []
 
 
+def test_an_event_namespace_matches_without_case(tmp_path):
+    # The game's own news events: add_namespace = nsb_news, id = NSB_news.200.
+    write(
+        tmp_path, "events/t.txt",
+        "add_namespace = nsb_news\ncountry_event = { id = NSB_news.200 is_triggered_only = yes }\n",
+    )
+    write(tmp_path, "common/national_focus/t.txt", focus_file("\t\t\tcountry_event = nsb_news.200"))
+    mod = Mod(tmp_path)
+    assert codes(references(mod), "unknown_event_reference") == []
+    assert liveness(mod, "unfired_event") == []
+    # The number behind the dot is still compared as it is.
+    write(tmp_path, "common/national_focus/t.txt", focus_file("\t\t\tcountry_event = nsb_news.201"))
+    assert [f.event_id for f in codes(references(Mod(tmp_path)), "unknown_event_reference")] == [
+        "nsb_news.201"
+    ]
+
+
 # --- add_core_of at country scope -----------------------------------------------
 
 
