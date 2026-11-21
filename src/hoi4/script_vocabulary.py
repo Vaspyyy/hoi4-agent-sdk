@@ -1152,7 +1152,9 @@ class SourceLocator:
         # where it ends one: ``name = x #note`` leaves ``#note`` as the first
         # line of an option's effect, and ``ai_will_do = { factor = 1 }`` puts
         # the whole body on its key's line.
-        for inline in (False, True):
+        # A copy that runs line for line beats one that needs skipped lines:
+        # two fields of one decision may start with the same line.
+        for skip, inline in ((False, False), (False, True), (True, False), (True, True)):
             first = content.find(wanted[0], position, high)
             while first >= 0:
                 line_start = content.rfind("\n", 0, first) + 1
@@ -1162,7 +1164,7 @@ class SourceLocator:
                 before = content[line_start:first].strip()
                 after = content[first + len(wanted[0]) : line_end]
                 if (bool(before) == inline) and _only_closing(after):
-                    offsets = self._follow(content, line_end + 1, high, wanted[1:])
+                    offsets = self._follow(content, line_end + 1, high, wanted[1:], skip)
                     if offsets is not None:
                         return tuple(
                             self.line_of(path, offset) for offset in (line_start, *offsets)
@@ -1171,8 +1173,14 @@ class SourceLocator:
         return (self.line_of(path, position),) * len(wanted)
 
     @staticmethod
-    def _follow(content: str, offset: int, high: int, wanted: list[str]) -> list[int] | None:
-        """Match ``wanted`` line by line from ``offset``, skipping lines it does not hold."""
+    def _follow(
+        content: str, offset: int, high: int, wanted: list[str], skip: bool
+    ) -> list[int] | None:
+        """Match ``wanted`` line by line from ``offset``; ``skip`` allows lines it does not hold.
+
+        Blank lines and comment-only lines of the file are always skipped,
+        since a field's text may have lost them.
+        """
 
         found: list[int] = []
         for expected in wanted:
@@ -1187,6 +1195,8 @@ class SourceLocator:
                 ):
                     found.append(start)
                     break
+                if not skip and line and not line.startswith("#"):
+                    return None
             else:
                 return None
         return found

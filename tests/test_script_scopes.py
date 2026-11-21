@@ -440,3 +440,24 @@ def test_a_template_learns_only_from_its_own_folders(game: Path) -> None:
     vocabulary = load_game_script_vocabulary(game, cache=False)
     assert "screens_track_mastery_gain_factor" in vocabulary.modifiers
     assert "mass_assault_track_mastery_gain_factor" not in vocabulary.modifiers
+
+
+def test_locator_prefers_a_copy_that_runs_line_for_line(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.txt"
+    path.write_text(
+        "d = {\n"
+        "\tcancel_effect = {\n"
+        "\t\tclr_country_flag = a\n"
+        "\t\tadd_stability = 1\n"
+        "\t}\n"
+        "\tremove_effect = {\n"
+        "\t\tclr_country_flag = a\n"
+        "\n"
+        "\t\tadd_political_power = 1\n"
+        "\t}\n"
+        "}\n"
+    )
+    raw = path.read_text()[4:-2].strip()
+    locator = SourceLocator(lambda item: item.read_text())
+    assert locator.line_map(path, "clr_country_flag = a\nadd_political_power = 1", raw) == (7, 9)
+    assert locator.line_map(path, "clr_country_flag = a\nadd_stability = 1", raw) == (3, 4)
