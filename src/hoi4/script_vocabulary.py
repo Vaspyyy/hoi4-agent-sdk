@@ -921,7 +921,6 @@ def validate_script_sources(
         kind: {name.lower() for name in names} for kind, names in custom.items()
     }
     characters = vocabulary.characters
-    known_scripted = custom_folded.get("effect", set()) | custom_folded.get("trigger", set())
     findings: list[ValidationError] = []
     seen: set[tuple[str, str, str, int | None]] = set()
     for source in sources:
@@ -932,9 +931,10 @@ def validate_script_sources(
             source.kind,
             scope=source.scope.upper() if source.scope else None,
             from_scope=source.from_scope.upper() if source.from_scope else None,
+            # A scripted effect is an effect and a scripted trigger a trigger:
+            # the game reads each only among statements of its own kind.
             is_command=lambda kind, folded: (
                 folded in vocabulary.folded_names(kind) or folded in custom_folded.get(kind, ())
-                or (kind != "modifier" and folded in known_scripted)
             ),
             characters=characters,
             arguments=source.arguments,
@@ -984,15 +984,15 @@ def check_statement(
         else ""
     )
     if info is None:
-        if folded in custom.get(kind, ()) or (
-            kind != "modifier"
-            and folded in (custom.get("effect", set()) | custom.get("trigger", set()))
-        ):
+        if folded in custom.get(kind, ()):
             return None
         suggestion = _nearest(name, vocabulary.tokens(kind))
         hint = ""
         other = {"effect": "trigger", "trigger": "effect"}.get(kind)
-        if other is not None and vocabulary.lookup(cast(ScriptTokenKind, other), name) is not None:
+        if other is not None and (
+            vocabulary.lookup(cast(ScriptTokenKind, other), name) is not None
+            or folded in custom.get(cast(ScriptTokenKind, other), ())
+        ):
             # The most common mix-up: a condition where an action belongs, or
             # the other way round. A look-alike name would only mislead.
             hint = (

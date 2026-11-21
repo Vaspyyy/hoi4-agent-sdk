@@ -205,6 +205,19 @@ class _Control:
     #: The block is hidden from the player (``hidden_effect``).
     hidden: bool = False
 
+    def works_in(self, kind: str) -> bool:
+        """Whether the game knows this control among statements of ``kind``.
+
+        A control whose block holds triggers is a trigger, one whose block
+        holds effects (or weighted effects) is an effect; ``if`` and
+        ``custom_override_tooltip`` work in both. This is what the game's
+        effect and trigger documentation lists.
+        """
+
+        if self.body == "same":
+            return True
+        return kind == ("effect" if self.body == "weighted" else self.body)
+
 
 _LIMIT = frozenset({"limit"})
 
@@ -510,6 +523,13 @@ class _Walker:
         body = item.block
         control = CONTROL.get(folded)
         if control is not None and body is not None:
+            if not control.works_in(kind):
+                # ``OR = { }`` among effects, ``hidden_effect`` among triggers:
+                # the game does not know the name there, so its block is data.
+                self.emit(item, kind, stack)
+                self.note(item, "command", kind, stack[-1])
+                self.data(body)
+                return
             if folded in CHECKED_CONTROLS:
                 self.emit(item, kind, stack)
             self.note(item, "control", kind, stack[-1])
@@ -540,8 +560,9 @@ class _Walker:
                 self.block(body, kind, [*stack, resolved])  # type: ignore[list-item]
                 self.leave(saved)
                 return
-            if not self.is_command(kind, folded):
-                # ``ROOT = PREV`` and the like compare scopes; nothing to check.
+            if kind == "trigger" and not self.is_command(kind, folded):
+                # ``ROOT = PREV`` and the like compare scopes in a trigger;
+                # among effects ``GER = 5`` does nothing and is reported.
                 self.note(item, "scope", kind, stack[-1])
                 return
         self.emit(item, kind, stack)

@@ -297,6 +297,56 @@ def test_scripted_effects_and_triggers_work_anywhere(game: Path) -> None:
     assert check(game, "every_owned_state = { vanilla_effect = yes }") == []
 
 
+def test_a_block_holds_only_statements_of_its_kind(game: Path) -> None:
+    effects = {
+        "OR = { has_country_flag = x }": "OR",
+        "NOT = { has_country_flag = x }": "NOT",
+        "AND = { has_country_flag = x }": "AND",
+        "hidden_trigger = { has_country_flag = x }": "hidden_trigger",
+        "any_of = { array = foo has_country_flag = x }": "any_of",
+        "GER = 5": "GER",
+        "capital_scope = yes": "capital_scope",
+    }
+    for text, name in effects.items():
+        findings = check(game, text)
+        assert [(item.code, name in item.message) for item in findings] == [
+            ("unknown_effect_token", True)
+        ], text
+    triggers = {
+        "hidden_effect = { add_political_power = 50 }": "hidden_effect",
+        "for_each_loop = { array = foo add_political_power = 50 }": "for_each_loop",
+    }
+    for text, name in triggers.items():
+        findings = check(game, text, "trigger")
+        assert [(item.code, name in item.message) for item in findings] == [
+            ("unknown_trigger_token", True)
+        ], text
+    # What works in both, and scope comparisons among triggers, stay quiet.
+    assert check(game, "if = { limit = { has_country_flag = x } add_political_power = 1 }") == []
+    assert check(game, "if = { limit = { always = yes } has_country_flag = x }", "trigger") == []
+    assert check(game, "ROOT = PREV", "trigger") == []
+
+
+def test_a_scripted_trigger_is_not_an_effect(game: Path) -> None:
+    custom = {"effect": {"my_eff"}, "trigger": {"my_trig"}}
+    vocabulary = load_game_script_vocabulary(game)
+
+    def findings(text: str, kind: str) -> list[str]:
+        source = ScriptSource(text, kind, "focus", "probe", scope="COUNTRY")  # type: ignore[arg-type]
+        return [
+            item.message
+            for item in validate_script_sources([source], vocabulary, custom_tokens=custom)
+            if item.severity != "info"
+        ]
+
+    assert findings("my_eff = yes", "effect") == []
+    assert findings("my_trig = yes", "trigger") == []
+    [message] = findings("my_trig = yes", "effect")
+    assert "'my_trig' is a trigger" in message
+    [message] = findings("my_eff = yes", "trigger")
+    assert "'my_eff' is an effect" in message
+
+
 def test_weight_blocks_are_not_modifiers(game: Path) -> None:
     text = """
     factor = 2
