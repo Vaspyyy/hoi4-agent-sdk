@@ -272,12 +272,9 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         cached = self._oobs.get(name)
         if cached is not None:
             return cached
-        roots = [self.mod_root]
-        if self._base_content_root is not None:
-            roots.append(self._base_content_root)
-        for root in roots:
-            path = root / "history" / "units" / f"{name}.txt"
-            if path.is_file():
+        for view in self._data_views():
+            path = view.file(f"history/units/{name}.txt")
+            if path is not None:
                 return load_oob_file(path, name=name)
         return None
 

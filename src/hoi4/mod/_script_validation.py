@@ -722,10 +722,8 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
     def _read_state_readonly(self, state_id: int) -> State | None:
         if state_id in self._states:
             return self._states[state_id]
-        for base in (self.mod_root, self._base_content_root):
-            if base is None:
-                continue
-            path = find_state_file(base / "history" / "states", state_id)
+        for view in self._data_views():
+            path = find_state_file(view.glob("history/states", "*.txt").values(), state_id)
             if path:
                 try:
                     return read_state(path)

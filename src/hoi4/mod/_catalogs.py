@@ -13,6 +13,7 @@ from ..characters import AdvisorRole
 from ..events import VALID_EVENT_TYPES
 from ..focus_layout import allow_branch_condition, block_allow_branch_condition
 from ..ideas import idea_ids_in_text
+from ..layers import ContentView, FolderView
 from ..parser import (
     iter_assignment_blocks,
 )
@@ -361,10 +362,8 @@ class CatalogsLayer(SourcesLayer):
         inherited = self._scan_cache.get("localisation_value_names")
         if inherited is None:
             inherited = set()
-            base = self._base_content_root
-            folder = base / "localisation" if base is not None else None
-            if folder is not None and folder.is_dir():
-                for path in folder.rglob("*english*.yml"):
+            if self._base_content is not None:
+                for path in self._base_content.rglob("localisation", "*english*.yml").values():
                     try:
                         inherited |= names_in(read_text(path))
                     except (OSError, ValueError):
@@ -562,11 +561,8 @@ class CatalogsLayer(SourcesLayer):
             self._sprite_text_parse_cache[text] = parsed
             textures.update(parsed)
 
-        def scan(base: Path, textures: dict[str, str]) -> None:
-            interface_dir = base / "interface"
-            if not interface_dir.is_dir():
-                return
-            for path in interface_dir.rglob("*.gfx"):
+        def scan(base: ContentView, textures: dict[str, str]) -> None:
+            for path in base.rglob("interface", "*.gfx").values():
                 try:
                     text = read_text(path)
                     scan_text(text, textures)
@@ -575,11 +571,11 @@ class CatalogsLayer(SourcesLayer):
 
         if self._sprite_texture_cache is None:
             vanilla: dict[str, str] = {}
-            if self._base_content_root is not None:
-                scan(self._base_content_root, vanilla)
+            if self._base_content is not None:
+                scan(self._base_content, vanilla)
             self._sprite_texture_cache = vanilla
         textures = dict(self._sprite_texture_cache)
-        scan(self.mod_root, textures)
+        scan(FolderView(self.mod_root), textures)
         for path, content in self._pending_asset_writes.items():
             if path.suffix.lower() == ".gfx":
                 scan_text(decode_text(content), textures)
@@ -587,11 +583,11 @@ class CatalogsLayer(SourcesLayer):
 
     def _texture_exists(self, relative_path: str) -> bool:
         normalized = relative_path.replace("\\", "/").lstrip("/")
-        return any(
-            (root / normalized).is_file()
-            for root in (self.mod_root, self._base_content_root)
-            if root is not None
-        ) or (self.mod_root / normalized) in self._pending_asset_writes
+        return (
+            (self.mod_root / normalized).is_file()
+            or (self._base_content is not None and self._base_content.file(normalized) is not None)
+            or (self.mod_root / normalized) in self._pending_asset_writes
+        )
 
     def _known_technology_ids(self) -> set[str]:
         return set(self._definitions_in("common/technologies").technologies)
@@ -658,14 +654,13 @@ class CatalogsLayer(SourcesLayer):
                 if separator and id_text.isdigit():
                     cached_result[int(id_text)] = province_type
             return cached_result
-        path: Path | None = None
-        for root in (self.mod_root, self._base_content_root):
-            if root is None:
-                continue
-            candidate = root / "map" / "definition.csv"
-            if candidate.is_file():
-                path = candidate
-                break
+        path: Path | None = next(
+            (
+                found for view in self._data_views()
+                if (found := view.file("map/definition.csv")) is not None
+            ),
+            None,
+        )
         province_types: dict[int, str] = {}
         if path is not None:
             for row in csv.reader(io.StringIO(read_text(path)), delimiter=";"):

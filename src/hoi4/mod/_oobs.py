@@ -145,13 +145,10 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
     # ── Land orders of battle ───────────────────────────────────
 
     def list_oobs(self, *, include_vanilla: bool = False) -> list[str]:
-        if include_vanilla and self._base_content_root is not None:
-            directory = self._base_content_root / "history" / "units"
-            if directory.is_dir():
-                return sorted(
-                    set(self._oobs)
-                    | {path.stem for path in directory.glob("*.txt")}
-                )
+        if include_vanilla and self._base_content is not None:
+            inherited = self._base_content.glob("history/units", "*.txt")
+            if inherited:
+                return sorted(set(self._oobs) | {path.stem for path in inherited.values()})
         return sorted(self._oobs)
 
     def get_oob(
@@ -165,10 +162,10 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         if cached is not None:
             return cached
         candidates = [self.mod_root / "history" / "units" / f"{name}.txt"]
-        if include_vanilla and self._base_content_root is not None:
-            candidates.append(
-                self._base_content_root / "history" / "units" / f"{name}.txt"
-            )
+        if include_vanilla and self._base_content is not None:
+            inherited = self._base_content.file(f"history/units/{name}.txt")
+            if inherited is not None:
+                candidates.append(inherited)
         country_tag = next(
             (
                 country.tag
@@ -670,12 +667,13 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             return
         if source.resolve(strict=False).is_relative_to(self.mod_root):
             return
-        if self._base_content_root is None:
-            raise ValueError(f"Cannot retarget OOB '{oob.name}' without a HOI4 install")
-        target = resolve_mod_output_path(
-            self.mod_root,
-            source.resolve(strict=False).relative_to(self._base_content_root),
+        relative = (
+            self._base_content.relative(source.resolve(strict=False))
+            if self._base_content is not None else None
         )
+        if relative is None:
+            raise ValueError(f"Cannot retarget OOB '{oob.name}' without a HOI4 install")
+        target = resolve_mod_output_path(self.mod_root, relative)
         self._original_files.setdefault(
             target,
             self._read_current_text(target)

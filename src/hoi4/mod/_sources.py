@@ -64,9 +64,9 @@ class SourcesLayer(LocalisationLayer):
         # The effective fallback already applies layer precedence and replace_path.
         # Test existence, not truthiness: an empty writable override is authoritative.
         text = ""
-        for root in self._data_roots():
-            source = root / relative
-            if source.is_file():
+        for view in self._data_views():
+            source = view.file(relative)
+            if source is not None:
                 text = self._read_current_text(source)
                 break
         # Compare original bodies in one scan. Rebuilding a large roster

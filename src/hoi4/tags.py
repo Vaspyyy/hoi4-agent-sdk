@@ -5,8 +5,9 @@ Country Tag Management
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
+from .layers import ContentView, as_view
 from .patching import replace_assignment, top_level_assignments
 from .paths import COUNTRY_TAG_RE, require_country_tag
 from .syntax import Assignment, Scalar, parse
@@ -53,38 +54,44 @@ def _parse_country_tag_line(line: str) -> tuple[str, str] | None:
     return entries[0] if entries else None
 
 
-def _parse_tag_file_mapping(country_tags_dir: Path) -> dict[str, str]:
+def _tag_files_mapping(files: Iterable[Path]) -> dict[str, str]:
     mapping: dict[str, str] = {}
-    if not country_tags_dir.is_dir():
-        return mapping
-    for f in sorted(country_tags_dir.glob("*.txt")):
+    for f in files:
         for tag, target in country_tag_entries(read_text(f)):
             mapping[tag] = target
     return mapping
 
 
+def _parse_tag_file_mapping(country_tags_dir: Path) -> dict[str, str]:
+    if not country_tags_dir.is_dir():
+        return {}
+    return _tag_files_mapping(sorted(country_tags_dir.glob("*.txt")))
+
+
+def tag_file_mapping(root: Path | ContentView) -> dict[str, str]:
+    """``TAG -> "countries/File.txt"`` from the ``common/country_tags`` of ``root``."""
+
+    view = as_view(root)
+    assert view is not None
+    return _tag_files_mapping(view.glob("common/country_tags", "*.txt").values())
+
+
 def resolve_country_filename(
-    base: Path, tag: str, mapping: dict[str, str] | None = None
+    base: Path | ContentView, tag: str, mapping: dict[str, str] | None = None
 ) -> Optional[Path]:
-    mapping = (
-        mapping
-        if mapping is not None
-        else _parse_tag_file_mapping(base / "common" / "country_tags")
-    )
+    view = as_view(base)
+    assert view is not None
+    mapping = mapping if mapping is not None else tag_file_mapping(view)
     rel = mapping.get(tag)
     if rel:
-        filename = Path(rel).name
-        p = base / "common" / "countries" / filename
-        if p.exists():
-            return p
-    p = base / "common" / "countries" / f"{tag}.txt"
-    if p.exists():
-        return p
-    return None
+        found = view.file(Path("common") / "countries" / Path(rel).name)
+        if found is not None:
+            return found
+    return view.file(Path("common") / "countries" / f"{tag}.txt")
 
 
-def load_vanilla_tags(hoi4_install: Path) -> set[str]:
-    return set(_parse_tag_file_mapping(hoi4_install / "common" / "country_tags"))
+def load_vanilla_tags(hoi4_install: Path | ContentView) -> set[str]:
+    return set(tag_file_mapping(hoi4_install))
 
 
 def load_mod_tags(mod_root: Path) -> list[str]:
@@ -97,7 +104,9 @@ def load_mod_tags(mod_root: Path) -> list[str]:
     return sorted(tags)
 
 
-def load_all_tags(hoi4_install: Optional[Path], mod_root: Optional[Path]) -> list[str]:
+def load_all_tags(
+    hoi4_install: Path | ContentView | None, mod_root: Optional[Path]
+) -> list[str]:
     tags: set[str] = set()
     if hoi4_install:
         tags.update(load_vanilla_tags(hoi4_install))

@@ -24,7 +24,7 @@ from ..events import load_events_file
 from ..focus import load_focus_trees
 from ..ideas import read_ideas_file
 from ..ideologies import Ideology
-from ..layers import ContentLayers, relative_content_path, replace_paths
+from ..layers import ContentLayers, ContentView, FolderView, relative_content_path, replace_paths
 from ..on_actions import load_on_actions_file
 from ..oob import (
     OrderOfBattle,
@@ -353,6 +353,36 @@ def _text_digest(text: str) -> bytes:
     return hashlib.blake2b(text.encode("utf-8", "surrogatepass"), digest_size=16).digest()
 
 
+def _changed_files(
+    recorded: dict[Path, _Fingerprint],
+    known_digests: dict[Path, bytes],
+    fingerprints: dict[Path, _Fingerprint],
+    digests: dict[Path, bytes],
+) -> list[Path]:
+    """Files created, deleted or changed between a recorded scan and one taken now.
+
+    A file whose fingerprint changed but whose text did not (a ``touch``)
+    does not count.
+    """
+
+    changed = []
+    for path in recorded.keys() | fingerprints.keys():
+        before = recorded.get(path)
+        current = fingerprints.get(path)
+        if before is not None and _same_file_state(before, current):
+            continue
+        known = known_digests.get(path)
+        if before is not None and current is not None and known is not None:
+            try:
+                now = digests.get(path) or _text_digest(read_text(path))
+            except OSError:
+                now = None
+            if now == known:
+                continue
+        changed.append(path)
+    return sorted(changed)
+
+
 class CoreLayer:
     """Shared state, content-layer lookup, raw readers and transaction snapshots."""
 
@@ -362,7 +392,7 @@ class CoreLayer:
     # are declared here instead of assigned in ``__init__``.
     _countries: dict[str, Country]
     _country_color_sources: dict[Path, str | None]
-    _country_tag_mappings: dict[Path, dict[str, str]]
+    _country_tag_mappings: dict[ContentView, dict[str, str]]
     _created_country_tags: set[str]
     _characters: dict[str, Character]
     _oobs: dict[str, OrderOfBattle]
@@ -463,7 +493,7 @@ class CoreLayer:
         self._fingerprints: dict[Path, _Fingerprint] = {}
         self._read_digests: dict[Path, bytes] = {}
         self._vanilla_tags: set[str] = (
-            load_vanilla_tags(self._base_content_root) if self._base_content_root else set()
+            load_vanilla_tags(self._base_content) if self._base_content is not None else set()
         )
         self._scan_cache: dict[str, set[str]] = {}
         # The references of each of the mod's own script files, with the text
@@ -576,8 +606,6 @@ class CoreLayer:
         """``path`` relative to the mod or to the game or base mod it is in."""
 
         roots = [self.mod_root]
-        if self._base_content_root is not None:
-            roots.append(self._base_content_root)
         if self.hoi4_install is not None:
             roots.append(self.hoi4_install)
         roots.extend(self.base_mod_paths)
@@ -769,16 +797,19 @@ class CoreLayer:
         return digest is None or digest != _text_digest(read_text(key))
 
     def _refresh_content_layers(self) -> None:
-        previous = self._content_layers
+        """Build the view of what the mod inherits (rereads the descriptors)."""
+
         self._content_layers = (
             ContentLayers(self.hoi4_install, self.base_mod_paths, self.mod_root)
             if self.base_mod_paths else None
         )
-        self._base_content_root = (
-            self._content_layers.root if self._content_layers else self.hoi4_install
+        # The game and base mods as the mod inherits them. Without base mods
+        # this is the game folder as it is, files the mod overrides included.
+        self._base_content: ContentView | None = (
+            self._content_layers if self._content_layers is not None
+            else FolderView(self.hoi4_install) if self.hoi4_install is not None
+            else None
         )
-        if previous is not None:
-            previous.close()
 
     def content_source(self, relative_path: str | Path) -> Path | None:
         """Original winning file in game/base/output layers; never a snapshot path."""
@@ -801,8 +832,9 @@ class CoreLayer:
         """Map effective relative filenames to original winning source paths."""
         relative = relative_content_path(directory)
         if self._content_layers is not None:
-            files = {str(path): source for path, source in self._content_layers.sources.items()
-                     if path.is_relative_to(relative)}
+            files = {
+                str(path): source for path, source in self._content_layers.rglob(relative).items()
+            }
         else:
             files = {}
             if self.hoi4_install is not None:
@@ -885,12 +917,9 @@ class CoreLayer:
         if section is not None:
             self._reload_on_discard.add(section)
 
-    def _is_shadowed_by_mod(self, base: Path, path: Path) -> bool:
-        try:
-            relative = path.relative_to(base)
-        except ValueError:
-            return False
-        return self._mod_hides_inherited(relative)
+    def _is_shadowed_by_mod(self, base: ContentView, path: Path) -> bool:
+        relative = base.relative(path)
+        return relative is not None and self._mod_hides_inherited(relative)
 
     def _run_cached(self, key: str, build: Callable[[], _Built]) -> _Built:
         """``build()``, once per validate() run; every call outside a run builds.
@@ -996,10 +1025,6 @@ class CoreLayer:
         self._equipment_unlock_cache = None
 
     def _display_path(self, path: Path) -> str:
-        if self._content_layers is not None and path.is_relative_to(self._content_layers.root):
-            source = self.content_source(path.relative_to(self._content_layers.root))
-            if source is not None:
-                return str(source)
         return (
             str(path.relative_to(self.mod_root))
             if path.is_relative_to(self.mod_root)
@@ -1013,8 +1038,10 @@ class CoreLayer:
         previous_newline = text.rfind("\n", 0, offset)
         return line, offset - previous_newline
 
-    def _data_roots(self) -> list[Path]:
-        roots = [self.mod_root]
-        if self._base_content_root is not None:
-            roots.append(self._base_content_root)
-        return roots
+    def _data_views(self) -> list[ContentView]:
+        """The mod folder, then what it inherits (if anything)."""
+
+        views: list[ContentView] = [FolderView(self.mod_root)]
+        if self._base_content is not None:
+            views.append(self._base_content)
+        return views

@@ -19,6 +19,7 @@ from ..localisation import (
     normalize_localisation_language,
     normalize_localization_key,
     parse_localization_dir,
+    parse_localization_files,
 )
 from ..paths import (
     resolve_mod_output_path,
@@ -45,12 +46,12 @@ class LocalisationLayer(CoreLayer):
         loc_sources: dict[str, Path],
     ) -> None:
         if self._content_layers is not None:
-            assert self._base_content_root is not None
-            inherited = self._base_content_root / "localisation" / language
-            entries, sources = parse_localization_dir(inherited)
+            inherited = self._content_layers.rglob(Path("localisation") / language, "*.yml")
+            relatives = {source: relative for relative, source in inherited.items()}
+            entries, sources = parse_localization_files(inherited.values())
             loc_entries.update(entries)
             for key, source in sources.items():
-                target = self.mod_root / source.relative_to(self._base_content_root)
+                target = self.mod_root / relatives[source]
                 loc_sources[key] = target
                 if target not in self._original_files:
                     self._original_files[target] = read_text(source)

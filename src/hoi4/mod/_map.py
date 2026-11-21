@@ -55,9 +55,6 @@ from ..paths import (
     resolve_mod_output_path,
     safe_file_stem,
 )
-from ..states import (
-    build_state_index,
-)
 from ..types import (
     State,
     ValidationError,
@@ -593,7 +590,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
     def _optional_land_adjacency(self) -> dict[int, set[int]] | None:
         try:
-            return load_land_adjacency(self.mod_root, self._base_content_root)
+            return load_land_adjacency(self.mod_root, self._base_content)
         except (FileNotFoundError, RuntimeError, OSError, ValueError):
             return None
 
@@ -785,7 +782,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         partial = sorted({entry.state_id for entry in candidates} - fully_moved)
         if partial:
             try:
-                grid = load_province_grid(self.mod_root, self._base_content_root)
+                grid = load_province_grid(self.mod_root, self._base_content)
             except (FileNotFoundError, RuntimeError, OSError, ValueError) as error:
                 problems.append(
                     "map/buildings.txt positions of state(s) "
@@ -818,28 +815,23 @@ class MapLayer(StatesLayer, CatalogsLayer):
             resolved = candidate.resolve(strict=False)
             if resolved.is_relative_to(self.mod_root):
                 relatives.append(resolved.relative_to(self.mod_root))
-            elif self._base_content_root is not None and resolved.is_relative_to(
-                self._base_content_root.resolve()
-            ):
-                relatives.append(resolved.relative_to(self._base_content_root.resolve()))
-        if self._base_content_root is not None:
-            if self._inherited_state_source_paths is None:
-                inherited_paths: dict[int, Path] = {}
-                for entry in build_state_index(self._base_content_root / "history" / "states"):
-                    if self._is_shadowed_by_mod(self._base_content_root, Path(entry["path"])):
-                        continue
-                    inherited_paths.setdefault(entry["id"], Path(entry["path"]))
-                self._inherited_state_source_paths = inherited_paths
-            inherited = self._inherited_state_source_paths.get(state_id)
+            elif self._base_content is not None:
+                relative = self._base_content.relative(resolved)
+                if relative is not None:
+                    relatives.append(relative)
+        if self._base_content is not None:
+            inherited = self._inherited_state_paths().get(state_id)
             if inherited is not None:
-                relatives.append(inherited.relative_to(self._base_content_root))
+                relative = self._base_content.relative(inherited)
+                assert relative is not None
+                relatives.append(relative)
         shadow = (
             f"# State {state_id} was removed by hoi4-agent-sdk map editing.\n"
             "# This empty file shadows the inherited definition.\n"
         )
         for relative in dict.fromkeys(relatives):
             if self._content_layers is not None:
-                inherited_file = relative in self._content_layers.lower_sources
+                inherited_file = self._content_layers.inherited(relative) is not None
             else:
                 inherited_file = (
                     self.hoi4_install is not None and (self.hoi4_install / relative).is_file()

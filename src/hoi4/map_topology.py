@@ -17,6 +17,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Iterable
 
+from .layers import ContentView, as_view
 from .map_render import parse_definition_csv
 from .textio import read_text
 from .types import State
@@ -34,7 +35,7 @@ class TerritoryComponent:
 
 def find_country_territory_components(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
     states: Iterable[State],
     *,
     country_tag: str,
@@ -142,7 +143,7 @@ def find_country_territory_components(
 
 def find_enclosed_foreign_components(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
     states: Iterable[State],
     *,
     country_tag: str,
@@ -347,7 +348,7 @@ class ProvinceGrid:
         return province_id or None
 
 
-def load_province_grid(mod_root: Path, hoi4_install: Path | None) -> ProvinceGrid:
+def load_province_grid(mod_root: Path, hoi4_install: Path | ContentView | None) -> ProvinceGrid:
     """Load the effective ``provinces.bmp`` as a province-ID lookup grid.
 
     Raises ``FileNotFoundError`` when a map file is missing and
@@ -385,7 +386,7 @@ def _load_province_grid(
 
 def load_land_adjacency(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
 ) -> dict[int, set[int]]:
     """Return the effective land-province adjacency graph.
 
@@ -412,7 +413,7 @@ def load_land_adjacency(
 
 def _effective_map_file(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
     filename: str,
 ) -> Path:
     path = _optional_effective_map_file(mod_root, hoi4_install, filename)
@@ -425,16 +426,14 @@ def _effective_map_file(
 
 def _optional_effective_map_file(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
     filename: str,
 ) -> Path | None:
-    for root in (mod_root, hoi4_install):
-        if root is None:
-            continue
-        candidate = root / "map" / filename
-        if candidate.is_file():
-            return candidate
-    return None
+    candidate = mod_root / "map" / filename
+    if candidate.is_file():
+        return candidate
+    inherited = as_view(hoi4_install)
+    return inherited.file(Path("map") / filename) if inherited is not None else None
 
 
 def _province_types(path: Path) -> dict[int, str]:

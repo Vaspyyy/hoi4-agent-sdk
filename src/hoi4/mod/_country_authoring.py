@@ -90,12 +90,10 @@ class CountryAuthoringLayer(CharactersLayer):
             resolved = path.resolve(strict=False)
             if resolved.is_relative_to(self.mod_root):
                 return resolved
-            if self._base_content_root is not None and resolved.is_relative_to(self._base_content_root):
-                return resolve_mod_output_path(
-                    self.mod_root,
-                    resolved.relative_to(self._base_content_root),
-                )
-            return None
+            relative = (
+                self._base_content.relative(resolved) if self._base_content is not None else None
+            )
+            return resolve_mod_output_path(self.mod_root, relative) if relative is not None else None
 
         leader = Leader(
             name=leader_name,

@@ -36,6 +36,7 @@ from ..events import serialize_events_file
 from ..focus import serialize_focus_file
 from ..ideas import serialize_ideas_file
 from ..ideologies import load_ideologies_file, serialize_ideologies_file
+from ..layers import FolderView
 from ..localisation import (
     DEFAULT_LOCALISATION_LANGUAGE,
     localisation_language_for_path,
@@ -65,9 +66,7 @@ from ..types import (
 from ._core import (
     STAGED_FILE_DIRTY_NAMES,
     CoreLayer,
-    _Fingerprint,
-    _same_file_state,
-    _text_digest,
+    _changed_files,
 )
 from ._loading import LoadingLayer
 from ._preview import PreviewLayer
@@ -168,7 +167,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 if tag not in self._countries:
                     continue
                 line = f'{tag} = "countries/{tag}.txt"'
-                declared_in_mod = tag in self._country_tag_mappings.get(self.mod_root, {})
+                declared_in_mod = tag in self._country_tag_mappings.get(FolderView(self.mod_root), {})
                 declared_by_vanilla = tag in self._vanilla_tags
                 if not declared_in_mod and not declared_by_vanilla and tag not in {
                     registered for registered, _ in country_tag_entries(tag_text)
@@ -228,11 +227,9 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             }
             deleted_color_tags = set(self._deleted_countries) & existing_color_tags
             colors_base = self._script_file_updates.get(colors_path, colors_original)
-            if (color_updates or deleted_color_tags) and self._base_content_root is not None and colors_path not in self._script_file_updates:
-                vanilla_colors_path = (
-                    self._base_content_root / "common" / "countries" / "colors.txt"
-                )
-                if vanilla_colors_path.is_file():
+            if (color_updates or deleted_color_tags) and self._base_content is not None and colors_path not in self._script_file_updates:
+                vanilla_colors_path = self._base_content.file("common/countries/colors.txt")
+                if vanilla_colors_path is not None:
                     colors_base = seed_country_colors_file(
                         colors_base,
                         read_text(vanilla_colors_path),
@@ -371,14 +368,14 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 if (
                     path not in self._original_files
                     and not path.is_file()
-                    and self._base_content_root is not None
+                    and self._base_content is not None
                 ):
                     # A same-path override shadows the entire inherited file.
                     # Seed both text and models: the serializer removes definitions
                     # missing from its list. The fallback applies layer precedence
                     # and replace_path; even an empty writable file wins over it.
-                    source = self._base_content_root / path.relative_to(self.mod_root)
-                    if source.is_file():
+                    source = self._base_content.file(path.relative_to(self.mod_root))
+                    if source is not None:
                         original = self._read_current_text(source)
                         updated_ids = {ideology.id for ideology in ideologies}
                         ideologies.extend(
@@ -448,8 +445,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     )
                     if entries or (
                         self._content_layers is not None
-                        and path.relative_to(self.mod_root)
-                        in self._content_layers.lower_sources
+                        and self._content_layers.inherited(path.relative_to(self.mod_root))
+                        is not None
                     )
                     else None
                 )
@@ -490,13 +487,13 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
     def _overrides_inherited(self, path: Path | None) -> bool:
         """Return whether a mod path shadows a file from the game or a base mod."""
 
-        if path is None or self._base_content_root is None:
+        if path is None or self._base_content is None:
             return False
         try:
             relative = path.resolve(strict=False).relative_to(self.mod_root.resolve(strict=False))
         except ValueError:
             return False
-        return (self._base_content_root / relative).is_file()
+        return self._base_content.file(relative) is not None
 
     def _same_as_inherited(self, path: Path, content: str) -> bool:
         """Return whether ``content`` only repeats the file ``path`` would shadow."""
@@ -703,8 +700,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
 
         Only sections that had edits or whose files changed on disk (and the
         sections built from them) are unloaded; they load again on next use.
-        Everything else stays in memory. With base mods, the inherited layers
-        are rebuilt and everything is unloaded, like ``reload()``.
+        Everything else stays in memory. With base mods, everything is
+        unloaded, like ``reload()``: the base mods can change on disk too.
         """
 
         if self._content_layers is not None:
@@ -716,7 +713,9 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         """Discard queued changes and reload current files from disk."""
 
         self._refresh_content_layers()
-        self._vanilla_tags = load_vanilla_tags(self._base_content_root) if self._base_content_root else set()
+        self._vanilla_tags = (
+            load_vanilla_tags(self._base_content) if self._base_content is not None else set()
+        )
         self._vanilla_state_loc_entries = None
         self._reset_pending_edits()
         self._unload_sections([section.name for section in self._sections.sections])
@@ -737,7 +736,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
 
         staged = [*self._script_file_updates, *self._pending_asset_writes]
         fingerprints, digests = self._scan_fingerprints()
-        changed = self._changed_on_disk(fingerprints, digests)
+        changed = _changed_files(self._fingerprints, self._read_digests, fingerprints, digests)
         names, mapped = self._sections_to_unload([*written, *staged, *changed])
         if not mapped:
             # A descriptor or a path outside the mod changes what every
@@ -745,8 +744,6 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             self.reload()
             return
         self._reset_pending_edits()
-        if self._content_layers is not None:
-            self._content_layers.refresh_top([*written, *changed])
         self._unload_sections(names, dropped_files={*written, *staged, *changed})
         self._clear_derived_caches()
         self._fingerprints = fingerprints
@@ -754,32 +751,6 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             self._read_digests.pop(path, None)
         self._read_digests.update(digests)
         self._after_reload()
-
-    def _changed_on_disk(
-        self, fingerprints: dict[Path, _Fingerprint], digests: dict[Path, bytes]
-    ) -> list[Path]:
-        """Mod text files created, deleted or changed since their baseline.
-
-        ``fingerprints`` and ``digests`` are a scan taken now. A file whose
-        fingerprint changed but whose text did not (a ``touch``) does not count.
-        """
-
-        changed = []
-        for path in self._fingerprints.keys() | fingerprints.keys():
-            recorded = self._fingerprints.get(path)
-            current = fingerprints.get(path)
-            if recorded is not None and _same_file_state(recorded, current):
-                continue
-            known = self._read_digests.get(path)
-            if recorded is not None and current is not None and known is not None:
-                try:
-                    now = digests.get(path) or _text_digest(read_text(path))
-                except OSError:
-                    now = None
-                if now == known:
-                    continue
-            changed.append(path)
-        return sorted(changed)
 
     def _sections_to_unload(self, paths: Sequence[Path]) -> tuple[set[str], bool]:
         """The sections to unload, and False when a path cannot be mapped."""
@@ -835,13 +806,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         # Share the inherited layers: a partial reload keeps them by design.
         fresh.base_mod_paths = self.base_mod_paths
         fresh._content_layers = self._content_layers
-        fresh._base_content_root = self._base_content_root
+        fresh._base_content = self._base_content
         fresh._vanilla_tags = set(self._vanilla_tags)
-        if self._content_layers is not None:
-            if not self._content_layers.is_current():
-                raise AssertionError(
-                    "Partial reload left the content layers' list of mod files out of date"
-                )
         before = set(self._section_loaded)
         try:
             self._load_all_sections()
@@ -893,7 +859,6 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     f"first difference at {difference}"
                 )
         finally:
-            fresh._content_layers = None
             self._unload_sections(self._section_loaded - before)
 
     def _fill_cache_for_check(

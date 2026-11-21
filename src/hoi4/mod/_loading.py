@@ -29,6 +29,7 @@ from ..events import load_events_file
 from ..focus import load_focus_trees
 from ..ideas import read_ideas_text
 from ..ideologies import load_ideologies_text
+from ..layers import FolderView
 from ..on_actions import load_on_actions_file
 from ..oob import (
     OOBReference,
@@ -39,8 +40,8 @@ from ..states import (
 )
 from ..syntax import require_well_formed
 from ..tags import (
-    _parse_tag_file_mapping,
     country_tag_entries,
+    tag_file_mapping,
 )
 from ..textio import read_text
 from ..types import (
@@ -164,20 +165,19 @@ class LoadingLayer(CountriesLayer):
     def _load_countries(self) -> None:
         from ..countries import _build_loc_cache
 
-        for tags_base in (self.mod_root, self._base_content_root):
-            if tags_base is not None:
-                self._country_tag_mappings[tags_base] = _parse_tag_file_mapping(
-                    tags_base / "common" / "country_tags"
-                )
-        for base in (self._base_content_root, self.mod_root):
-            if base is None:
+        mod_view = FolderView(self.mod_root)
+        for view in (mod_view, self._base_content):
+            if view is not None:
+                self._country_tag_mappings[view] = tag_file_mapping(view)
+        for view in (self._base_content, mod_view):
+            if view is None:
                 continue
-            colors_path = base / "common" / "countries" / "colors.txt"
-            if not colors_path.is_file():
+            colors_path = view.file("common/countries/colors.txt")
+            if colors_path is None:
                 continue
             try:
                 source = read_text(colors_path)
-                if base == self.mod_root:
+                if view is mod_view:
                     require_well_formed(source)
                 country_color_tags(source)
             except Exception as error:
@@ -187,13 +187,13 @@ class LoadingLayer(CountriesLayer):
                 self._country_color_sources[colors_path] = source
 
         loc_cache: dict[str, dict[str, str]] = {}
-        for base in (self._base_content_root, self.mod_root):
-            if base is None:
+        for view in (self._base_content, mod_view):
+            if view is None:
                 continue
-            for tag, entries in _build_loc_cache(base).items():
+            for tag, entries in _build_loc_cache(view).items():
                 loc_cache.setdefault(tag, {}).update(entries)
         mod_mapping = self._load_mod_country_tag_mapping()
-        self._country_tag_mappings[self.mod_root] = mod_mapping
+        self._country_tag_mappings[mod_view] = mod_mapping
         generated_tags = (
             self.mod_root
             / "common"
@@ -214,8 +214,8 @@ class LoadingLayer(CountriesLayer):
                 and match.group(1) in self._vanilla_tags
             )
         vanilla_mapping = (
-            self._country_tag_mappings.get(self._base_content_root, {})
-            if self._base_content_root is not None
+            self._country_tag_mappings.get(self._base_content, {})
+            if self._base_content is not None
             else {}
         )
         for tag, relative in vanilla_mapping.items():
@@ -226,7 +226,7 @@ class LoadingLayer(CountriesLayer):
                 self._countries[tag] = read_country(
                     self.mod_root,
                     tag,
-                    self._base_content_root,
+                    self._base_content,
                     _loc_cache=loc_cache,
                     _tag_mappings=self._country_tag_mappings,
                     _color_sources=self._country_color_sources,
@@ -541,19 +541,17 @@ class LoadingLayer(CountriesLayer):
         self._match_idea_files_to_countries()
 
     def _load_ideologies(self) -> None:
-        if self._base_content_root is not None:
-            directory = self._base_content_root / "common" / "ideologies"
-            if directory.is_dir():
-                for path in sorted(directory.glob("*.txt")):
-                    try:
-                        # Inherited files are read the way the game reads them.
-                        text = read_text(path)
-                        for ideology in load_ideologies_text(text, path, is_vanilla=True):
-                            self._vanilla_ideologies[ideology.id] = ideology
-                    except Exception:
-                        # Vanilla is reference data; unreadable or version-specific files
-                        # must not make an otherwise valid mod impossible to open.
-                        continue
+        if self._base_content is not None:
+            for path in self._base_content.glob("common/ideologies", "*.txt").values():
+                try:
+                    # Inherited files are read the way the game reads them.
+                    text = read_text(path)
+                    for ideology in load_ideologies_text(text, path, is_vanilla=True):
+                        self._vanilla_ideologies[ideology.id] = ideology
+                except Exception:
+                    # Vanilla is reference data; unreadable or version-specific files
+                    # must not make an otherwise valid mod impossible to open.
+                    continue
 
         directory = self.mod_root / "common" / "ideologies"
         if not directory.is_dir():

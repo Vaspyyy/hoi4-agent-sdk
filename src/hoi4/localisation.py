@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Iterable
 
 from ._file_cache import cached_file_result
 from .textio import decode_text, read_text, write_text
@@ -138,13 +139,19 @@ def _parse_quoted_value(line: str, start: int) -> str | None:
 
 
 def parse_localization_dir(loc_dir: Path) -> tuple[dict[str, str], dict[str, Path]]:
+    if not loc_dir.exists():
+        return {}, {}
+    return parse_localization_files(loc_dir.rglob("*.yml"))
+
+
+def parse_localization_files(
+    files: Iterable[Path],
+) -> tuple[dict[str, str], dict[str, Path]]:
+    """Entries of localisation files in order (a later file wins), and their files."""
+
     entries: dict[str, str] = {}
     sources: dict[str, Path] = {}
-
-    if not loc_dir.exists():
-        return entries, sources
-
-    for f in loc_dir.rglob("*.yml"):
+    for f in files:
         # The game's folder is read on every load and validation: keep each
         # file's entries until the file changes. They are only read here.
         file_entries = cached_file_result(

@@ -64,7 +64,7 @@ class CountriesLayer(CoreLayer):
             country = read_country(
                 self.mod_root,
                 tag,
-                self._base_content_root,
+                self._base_content,
                 _tag_mappings=self._country_tag_mappings,
                 _color_sources=self._country_color_sources,
             )
@@ -122,7 +122,7 @@ class CountriesLayer(CoreLayer):
         country = read_country(
             self.mod_root,
             tag,
-            self._base_content_root,
+            self._base_content,
             _tag_mappings=self._country_tag_mappings,
             _color_sources=self._country_color_sources,
         )
@@ -283,11 +283,8 @@ class CountriesLayer(CoreLayer):
             # (Norway's history); the mod's copy is edited and written well formed.
             setattr(country, raw_field, repair(getattr(country, raw_field)))
             relative = fallback
-            if self._base_content_root is not None:
-                try:
-                    relative = source.resolve(strict=False).relative_to(self._base_content_root)
-                except ValueError:
-                    pass
+            if self._base_content is not None:
+                relative = self._base_content.relative(source.resolve(strict=False)) or fallback
             target = resolve_mod_output_path(self.mod_root, relative)
             setattr(country, field_name, target)
             self._original_files.setdefault(target, self._read_current_text(target))

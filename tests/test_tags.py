@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from hoi4 import Mod
+from hoi4.layers import FolderView
 from hoi4.tags import (
     _parse_tag_file_mapping,
     load_mod_tags,
@@ -57,7 +58,7 @@ def test_readers_preserve_duplicate_precedence_and_sources(tmp_path):
     assert _parse_tag_file_mapping(tags) == {'SIC': 'countries/Last.txt'}
     assert load_mod_tags(tmp_path) == ['SIC']
     mod = Mod(tmp_path)
-    assert mod._country_tag_mappings[mod.mod_root] == {'SIC': 'countries/First.txt'}
+    assert mod._country_tag_mappings[FolderView(mod.mod_root)] == {'SIC': 'countries/First.txt'}
     assert any(issue.code == 'duplicate_country_tag' for issue in mod.validate())
     assert (tags / '00_first.txt').read_text(encoding='utf-8') == first + second
     assert (tags / '99_last.txt').read_text(encoding='utf-8') == last

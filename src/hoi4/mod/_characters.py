@@ -48,7 +48,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         include_vanilla: bool = True,
     ) -> list[str]:
         normalized = require_country_tag(tag) if tag is not None else None
-        if include_vanilla and self._base_content_root is not None:
+        if include_vanilla and self._base_content is not None:
             self._load_vanilla_characters(normalized)
         return sorted(
             character_id
@@ -68,7 +68,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         if character is not None:
             return character
         character_id = _require_character_lookup_id(character_id)
-        if include_vanilla and self._base_content_root is not None:
+        if include_vanilla and self._base_content is not None:
             prefix = character_id.split("_", 1)[0]
             tag = (
                 prefix
@@ -435,11 +435,14 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             return
         if source.resolve(strict=False).is_relative_to(self.mod_root):
             return
-        if self._base_content_root is None:
+        relative = (
+            self._base_content.relative(source.resolve(strict=False))
+            if self._base_content is not None else None
+        )
+        if relative is None:
             raise ValueError(
                 f"Cannot retarget character '{character.id}' without a HOI4 install"
             )
-        relative = source.resolve(strict=False).relative_to(self._base_content_root)
         target = resolve_mod_output_path(self.mod_root, relative)
         source_text = read_text(source)
         for item in load_characters_file(source, country_tag=character.country_tag):
@@ -454,21 +457,19 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         self._dirty_character_files.add(target)
 
     def _load_vanilla_characters(self, tag: str | None) -> None:
-        if self._base_content_root is None:
+        if self._base_content is None:
             return
-        directory = self._base_content_root / "common" / "characters"
-        if not directory.is_dir():
-            return
+        folder = "common/characters"
         if tag is None:
-            paths = sorted(directory.glob("*.txt"))
+            paths = list(self._base_content.glob(folder, "*.txt").values())
         else:
             preferred = [
-                directory / f"{tag}.txt",
-                directory / f"{tag}_characters.txt",
+                self._base_content.file(f"{folder}/{tag}.txt"),
+                self._base_content.file(f"{folder}/{tag}_characters.txt"),
             ]
-            paths = [path for path in preferred if path.is_file()]
+            paths = [path for path in preferred if path is not None]
             if not paths:
-                paths = sorted(directory.glob(f"{tag}*.txt"))
+                paths = list(self._base_content.glob(folder, f"{tag}*.txt").values())
         for path in paths:
             cache_key = f"character_file:{path}"
             if cache_key in self._scan_cache:

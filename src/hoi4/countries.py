@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from .characters import _string_like
+from .layers import ContentView, as_view
 from .patching import (
     AssignmentSpan,
     append_assignment,
@@ -180,43 +181,51 @@ def _int_or_none(value: str | None) -> int | None:
 def read_country(
     mod_root: Path,
     tag: str,
-    hoi4_install: Optional[Path] = None,
+    hoi4_install: Path | ContentView | None = None,
     _loc_cache: Optional[dict[str, dict[str, str]]] = None,
-    _tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+    _tag_mappings: Optional[dict[ContentView, dict[str, str]]] = None,
     _color_sources: Optional[dict[Path, str | None]] = None,
 ) -> Country:
-    country = Country(tag=tag)
+    """Read a country from the mod, falling back to ``hoi4_install``.
 
-    _read_definition(country, mod_root, hoi4_install, _tag_mappings)
+    ``hoi4_install`` is the game folder or a view of what the mod inherits.
+    """
+
+    country = Country(tag=tag)
+    mod = as_view(mod_root)
+    inherited = as_view(hoi4_install)
+    assert mod is not None
+
+    _read_definition(country, mod, inherited, _tag_mappings)
     _read_color(
         country,
-        mod_root,
-        hoi4_install,
+        mod,
+        inherited,
         _tag_mappings,
         _color_sources,
     )
-    _read_history(country, mod_root, hoi4_install)
-    _read_character(country, mod_root, hoi4_install)
+    _read_history(country, mod, inherited)
+    _read_character(country, mod, inherited)
 
     if _loc_cache is not None:
         _read_loc_from_cache(country, _loc_cache)
     else:
-        _read_localisation(country, mod_root, hoi4_install)
+        _read_localisation(country, mod, inherited)
 
     return country
 
 
 def _read_definition(
     country: Country,
-    mod_root: Path,
-    hoi4_install: Optional[Path],
-    tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+    mod_root: ContentView,
+    hoi4_install: ContentView | None,
+    tag_mappings: Optional[dict[ContentView, dict[str, str]]] = None,
 ) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
         p = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
-        if p and p.exists():
+        if p is not None:
             txt = read_text(p)
             country.definition_path = p.resolve()
             country.raw_definition = txt
@@ -233,9 +242,9 @@ def _read_definition(
 
 def _read_color(
     country: Country,
-    mod_root: Path,
-    hoi4_install: Optional[Path],
-    tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+    mod_root: ContentView,
+    hoi4_install: ContentView | None,
+    tag_mappings: Optional[dict[ContentView, dict[str, str]]] = None,
     color_sources: Optional[dict[Path, str | None]] = None,
 ) -> None:
     """Resolve country colour using the same vanilla-then-mod precedence as HOI4."""
@@ -246,12 +255,12 @@ def _read_color(
         if base is None:
             continue
         definition = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
-        if definition is not None and definition.is_file():
+        if definition is not None:
             color = read_color(_root(read_text(definition)))
             if color is not None:
                 resolved = color
-        colors_path = base / "common" / "countries" / "colors.txt"
-        if not colors_path.is_file():
+        colors_path = base.file("common/countries/colors.txt")
+        if colors_path is None:
             continue
         if color_sources is not None and colors_path in color_sources:
             text = color_sources[colors_path]
@@ -271,14 +280,13 @@ def _read_color(
     country.color_ui = resolved_ui
 
 
-def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+def _read_history(
+    country: Country, mod_root: ContentView, hoi4_install: ContentView | None
+) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
-        d = base / "history" / "countries"
-        if not d.exists():
-            continue
-        f = _find_history_file(d, country.tag)
+        f = _find_history_file(base, country.tag)
         if not f:
             continue
         txt = read_text(f)
@@ -350,21 +358,22 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
         return
 
 
-def _read_localisation(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+def _read_localisation(
+    country: Country, mod_root: ContentView, hoi4_install: ContentView | None
+) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
-        loc_dir = base / "localisation" / "english"
-        if not loc_dir.exists():
-            continue
+        folder = Path("localisation") / "english"
         candidates = [
-            loc_dir / "countries_l_english.yml",
-            loc_dir / "countries_cosmetic_l_english.yml",
+            found
+            for name in ("countries_l_english.yml", "countries_cosmetic_l_english.yml")
+            if (found := base.file(folder / name)) is not None
         ]
-        candidates.extend(f for f in loc_dir.rglob("*.yml") if f not in candidates)
+        candidates.extend(
+            f for f in base.rglob(folder, "*.yml").values() if f not in candidates
+        )
         for f in candidates:
-            if not f.exists():
-                continue
             raw = f.read_bytes()
             txt = decode_text(raw)
             if f"{country.tag}:" not in txt:
@@ -378,12 +387,11 @@ def _read_localisation(country: Country, mod_root: Path, hoi4_install: Optional[
             return
 
 
-def _build_loc_cache(mod_root: Path) -> dict[str, dict[str, str]]:
+def _build_loc_cache(root: Path | ContentView) -> dict[str, dict[str, str]]:
     cache: dict[str, dict[str, str]] = {}
-    loc_dir = mod_root / "localisation" / "english"
-    if not loc_dir.exists():
-        return cache
-    for f in loc_dir.rglob("*.yml"):
+    view = as_view(root)
+    assert view is not None
+    for f in view.rglob("localisation/english", "*.yml").values():
         raw = f.read_bytes()
         txt = decode_text(raw)
         for line in txt.splitlines():
@@ -413,14 +421,16 @@ def _read_loc_from_cache(country: Country, cache: dict[str, dict[str, str]]) -> 
             country.adjective = val
 
 
-def _read_character(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+def _read_character(
+    country: Country, mod_root: ContentView, hoi4_install: ContentView | None
+) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
-        p = base / f"common/characters/{country.tag}_characters.txt"
-        if not p.exists():
-            p = base / f"common/characters/{country.tag}.txt"
-        if not p.exists():
+        p = base.file(f"common/characters/{country.tag}_characters.txt")
+        if p is None:
+            p = base.file(f"common/characters/{country.tag}.txt")
+        if p is None:
             continue
         txt = read_text(p)
         country.character_path = p.resolve()
@@ -678,11 +688,10 @@ def seed_country_colors_file(original: str, vanilla: str) -> str:
     return text
 
 
-def _find_history_file(history_dir: Path, tag: str) -> Optional[Path]:
-    for f in history_dir.glob(f"{tag} - *.txt"):
-        return f
-    for f in history_dir.glob(f"{tag}*.txt"):
-        return f
+def _find_history_file(base: ContentView, tag: str) -> Optional[Path]:
+    for pattern in (f"{tag} - *.txt", f"{tag}*.txt"):
+        for f in base.glob("history/countries", pattern).values():
+            return f
     return None
 
 

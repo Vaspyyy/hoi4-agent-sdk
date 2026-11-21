@@ -17,6 +17,7 @@ from .focus_layout import (
     continuous_focus_position_issue,
     resolve_focus_positions,
 )
+from .layers import ContentView, as_view
 from .parser import iter_assignment_blocks
 from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
@@ -663,17 +664,15 @@ def validate_tag_definition_targets(
     return issues
 
 
-def collect_character_ids(*roots: Path | None) -> set[str]:
+def collect_character_ids(*roots: Path | ContentView | None) -> set[str]:
     """Collect direct character IDs from ``characters = { ... }`` containers."""
 
     character_ids: set[str] = set()
     for root in roots:
-        if root is None:
+        view = as_view(root)
+        if view is None:
             continue
-        directory = root / "common" / "characters"
-        if not directory.is_dir():
-            continue
-        for path in sorted(directory.glob("*.txt")):
+        for path in view.glob("common/characters", "*.txt").values():
             try:
                 text = read_text(path)
                 for body, _, _ in iter_assignment_blocks(text, "characters"):

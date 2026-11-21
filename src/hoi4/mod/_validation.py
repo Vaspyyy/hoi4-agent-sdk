@@ -337,11 +337,11 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
     """The staged ``validate()`` entry point and related reports."""
 
     def _validate_country_colors_shadow(self) -> list[ValidationError]:
-        if self._base_content_root is None:
+        if self._base_content is None:
             return []
         mod_colors = self.mod_root / "common" / "countries" / "colors.txt"
-        vanilla_colors = self._base_content_root / "common" / "countries" / "colors.txt"
-        if not mod_colors.is_file() or not vanilla_colors.is_file():
+        vanilla_colors = self._base_content.file("common/countries/colors.txt")
+        if not mod_colors.is_file() or vanilla_colors is None:
             return []
         failed_color_paths = {
             diagnostic.path.resolve(strict=False)

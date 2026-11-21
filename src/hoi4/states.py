@@ -13,7 +13,7 @@ import textwrap
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from .map_editing import list_ints, patch_int_list_body
 from .parser import PdxNode, parse_pdx, serialize_pdx
@@ -78,16 +78,21 @@ def _filename_state_id(path: Path) -> int | None:
     return int(digits) if digits else None
 
 
-def find_state_file(states_dir: Path, state_id: int) -> Optional[Path]:
+def _state_files(states: Path | Iterable[Path]) -> list[Path]:
+    if not isinstance(states, Path):
+        return list(states)
+    return sorted(states.glob("*.txt")) if states.is_dir() else []
+
+
+def find_state_file(states_dir: Path | Iterable[Path], state_id: int) -> Optional[Path]:
     """Return the file in ``states_dir`` whose state block has ``id = state_id``.
 
-    Files whose name starts with the ID are checked first, but the file's own
-    ``id`` always decides, because file names are not authoritative.
+    ``states_dir`` is a folder, or its state files sorted by name. Files whose
+    name starts with the ID are checked first, but the file's own ``id``
+    always decides, because file names are not authoritative.
     """
 
-    if not states_dir.is_dir():
-        return None
-    paths = sorted(states_dir.glob("*.txt"))
+    paths = _state_files(states_dir)
     likely = [path for path in paths if _filename_state_id(path) == state_id]
     others = [path for path in paths if _filename_state_id(path) != state_id]
     for path in likely + others:
@@ -922,13 +927,14 @@ def patch_state_history_owner_cores_text(
     return serialize_state(state)
 
 
-def build_state_index(states_dir: Path) -> list[dict]:
-    """Return one entry per state file, identified by the file's own ``id``."""
+def build_state_index(states_dir: Path | Iterable[Path]) -> list[dict]:
+    """Return one entry per state file, identified by the file's own ``id``.
+
+    ``states_dir`` is a folder, or its state files sorted by name.
+    """
 
     out: list[dict] = []
-    if not states_dir.is_dir():
-        return out
-    for f in sorted(states_dir.glob("*.txt")):
+    for f in _state_files(states_dir):
         state_assignment = _state_assignment(parse(read_text(f)).root)
         block = state_assignment.block if state_assignment is not None else None
         if block is None:

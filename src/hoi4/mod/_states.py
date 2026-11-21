@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 from ..localisation import (
-    parse_localization_dir,
+    parse_localization_files,
 )
 from ..paths import (
     require_country_tag,
@@ -59,19 +59,17 @@ class StatesLayer(CoreLayer):
             ]
         state_localization = self._state_localization_entries()
         entries: list[dict] = []
-        for source, base in [("mod", self.mod_root), ("vanilla", self._base_content_root)]:
-            if base is None:
-                continue
+        for source, base in zip(("mod", "vanilla"), self._data_views()):
             if source == "vanilla" and not include_vanilla:
                 continue
-            states_dir = base / "history" / "states"
-            for entry in build_state_index(states_dir):
+            for entry in build_state_index(base.glob("history/states", "*.txt").values()):
                 if source == "vanilla" and self._is_shadowed_by_mod(base, Path(entry["path"])):
                     continue
                 item = dict(entry)
                 item["source"] = source
                 if self._content_layers is not None:
-                    relative = Path(item["path"]).relative_to(base)
+                    relative = base.relative(Path(item["path"]))
+                    assert relative is not None
                     original = self.content_source(relative)
                     item["source_path"] = str(original) if original else item["path"]
                     item["source_layer"] = (
@@ -152,9 +150,9 @@ class StatesLayer(CoreLayer):
     def _state_localization_entries(self) -> dict[str, str]:
         if self._vanilla_state_loc_entries is None:
             vanilla_entries: dict[str, str] = {}
-            if self._base_content_root is not None:
-                loaded, _ = parse_localization_dir(
-                    self._base_content_root / "localisation" / "english"
+            if self._base_content is not None:
+                loaded, _ = parse_localization_files(
+                    self._base_content.rglob("localisation/english", "*.yml").values()
                 )
                 vanilla_entries = {
                     key: value for key, value in loaded.items() if key.startswith("STATE_")
@@ -196,15 +194,8 @@ class StatesLayer(CoreLayer):
         f = self._state_source_paths.get(state_id)
         if f is not None and not f.exists():
             f = None
-        if f is None and self._base_content_root:
-            if self._inherited_state_source_paths is None:
-                inherited_paths: dict[int, Path] = {}
-                for entry in build_state_index(self._base_content_root / "history" / "states"):
-                    if self._is_shadowed_by_mod(self._base_content_root, Path(entry["path"])):
-                        continue
-                    inherited_paths.setdefault(entry["id"], Path(entry["path"]))
-                self._inherited_state_source_paths = inherited_paths
-            f = self._inherited_state_source_paths.get(state_id)
+        if f is None and self._base_content is not None:
+            f = self._inherited_state_paths().get(state_id)
         if f:
             state = read_state(f)
             self._states[state_id] = state
@@ -214,6 +205,20 @@ class StatesLayer(CoreLayer):
             self._note_read(f, text, adopt=True)
             return state
         raise KeyError(f"State {state_id} not found")
+
+    def _inherited_state_paths(self) -> dict[int, Path]:
+        """State id to inherited state file, scanned once until the next reload."""
+
+        if self._inherited_state_source_paths is None:
+            assert self._base_content is not None
+            paths: dict[int, Path] = {}
+            files = list(self._base_content.glob("history/states", "*.txt").values())
+            for entry in build_state_index(files):
+                if self._is_shadowed_by_mod(self._base_content, Path(entry["path"])):
+                    continue
+                paths.setdefault(entry["id"], Path(entry["path"]))
+            self._inherited_state_source_paths = paths
+        return self._inherited_state_source_paths
 
     def _materialize_state_override(self, state: State) -> bool:
         """Retarget a vanilla-backed state to its equivalent in-mod path.
@@ -230,11 +235,8 @@ class StatesLayer(CoreLayer):
             return False
         else:
             relative = Path("history") / "states" / source.name
-            if self._base_content_root is not None:
-                try:
-                    relative = source.resolve(strict=False).relative_to(self._base_content_root)
-                except ValueError:
-                    pass
+            if self._base_content is not None:
+                relative = self._base_content.relative(source.resolve(strict=False)) or relative
         target = resolve_mod_output_path(self.mod_root, relative)
         if state.raw_text and parse(state.raw_text).problems:
             # Like the game, read the inherited file forgivingly, but write the
