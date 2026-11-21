@@ -368,21 +368,15 @@ def analyze_content_liveness(
 
 
 def _script_fragments(mod: LivenessSource) -> list[str]:
-    """The modeled script of the mod, for the localization use check."""
+    """The script of the mod, for the localization use check."""
 
     fragments = [
         source.text
         for source in mod._semantic_script_sources()
         if source.kind != "modifier"
     ]
-    for idea in mod._ideas.values():
-        fragments.extend((idea.allowed, idea.ai_will_do))
     for country in mod._countries.values():
         fragments.append(country.raw_history)
-    for modifier in mod._dynamic_modifiers.values():
-        fragments.extend((modifier.enable, modifier.remove_trigger))
-    for bookmark in mod._bookmarks:
-        fragments.append(bookmark.effect)
     return fragments
 
 

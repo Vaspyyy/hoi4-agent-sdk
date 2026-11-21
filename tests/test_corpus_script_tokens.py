@@ -26,15 +26,15 @@ from pathlib import Path
 
 import pytest
 
-from hoi4._script_corpus import iter_script_blocks
-from hoi4.script_scopes import walk_script
 from hoi4.script_vocabulary import (
     GameScriptVocabulary,
     ScriptSource,
-    check_statement,
     load_game_script_vocabulary,
+    script_sources,
     validate_script_sources,
 )
+from hoi4.syntax import parse
+from hoi4.textio import read_text
 
 pytestmark = pytest.mark.corpus
 
@@ -89,32 +89,23 @@ def vocabulary(install: Path) -> GameScriptVocabulary:
 
 
 def test_every_block_of_the_game_walks_cleanly(install: Path, vocabulary: GameScriptVocabulary) -> None:
+    # The same split and the same check validate() runs on a mod's own files.
     findings = set()
     blocks = 0
-    for path, block in iter_script_blocks(install):
-        blocks += 1
-        source = ScriptSource(
-            "",
-            block.kind,
-            block.owner_kind,
-            block.owner_id,
-            path.relative_to(install).as_posix(),
-            block.scope,
-            block.from_scope,
-        )
-        statements = walk_script(
-            block.block,
-            block.kind,
-            scope=block.scope,
-            from_scope=block.from_scope,
-            is_command=lambda kind, name: name in vocabulary.folded_names(kind),
-            characters=vocabulary.characters,
-            arguments=block.arguments,
-        )
-        for statement in statements:
-            finding = check_statement(statement, source, statement.line, vocabulary, {}, ())
-            if finding is not None and finding.severity != "info":
-                findings.add((source.file_path, statement.line, finding.code, statement.name))
+    for top in ("events", "common"):
+        for path in sorted((install / top).rglob("*.txt")):
+            relative = path.relative_to(install).as_posix()
+            try:
+                root = parse(read_text(path)).root
+            except (OSError, ValueError):
+                continue
+            sources = script_sources(root, relative, relative)
+            blocks += len(sources)
+            for finding in validate_script_sources(sources, vocabulary, custom_tokens={}):
+                if finding.severity != "info":
+                    # Every token message names the token as "... token 'name' ...".
+                    name = finding.message.split("token '", 1)[1].split("'", 1)[0]
+                    findings.add((finding.file_path, finding.line, finding.code, name))
     assert blocks > 50_000
     unexpected = sorted(findings - KNOWN_GAME_MISTAKES)
     assert unexpected == [], "\n".join(map(str, unexpected[:50]))

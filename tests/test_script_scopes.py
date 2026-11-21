@@ -11,7 +11,6 @@ from hoi4 import Mod
 from hoi4.script_scopes import walk_script
 from hoi4.script_vocabulary import (
     ScriptSource,
-    SourceLocator,
     load_game_script_vocabulary,
     validate_script_sources,
 )
@@ -389,23 +388,28 @@ def test_walker_lines_come_from_the_tree() -> None:
     ]
 
 
-def test_locator_maps_an_option_effect_with_gaps(tmp_path: Path) -> None:
-    path = tmp_path / "events.txt"
-    path.write_text(
+def test_option_findings_carry_file_lines(game: Path, tmp_path: Path) -> None:
+    mod_root = tmp_path / "mod"
+    events = mod_root / "events/test.txt"
+    events.parent.mkdir(parents=True)
+    events.write_text(
+        "add_namespace = my\n"
         "country_event = {\n"
+        "\tid = my.1\n"
         "\toption = {\n"
         "\t\tname = my.1.a #note\n"
         "\t\tadd_stability = 1\n"
-        "\t\tai_chance = { factor = 2 }\n"
-        "\t\tadd_political_power = 5\n"
+        "\t\tai_chance = { factor = 2 modifier = { factor = 0 has_contry_flag = x } }\n"
+        "\t\tadd_politcal_power = 5\n"
         "\t}\n"
         "}\n"
     )
-    raw = path.read_text().split("option = {", 1)[1].rsplit("}", 2)[0].strip()
-    locator = SourceLocator(lambda item: item.read_text())
-    lines = locator.line_map(path, "#note\nadd_stability = 1\nadd_political_power = 5", raw)
-    assert lines == (3, 4, 6)
-    assert locator.line_map(path, "edited = 1", raw) == (3,)
+    mod = Mod(mod_root, hoi4_install=game)
+    findings = [item for item in mod.validate_script_vocabulary() if item.severity != "info"]
+    assert sorted((item.code, item.line) for item in findings) == [
+        ("unknown_effect_token", 8),
+        ("unknown_trigger_token", 7),
+    ]
 
 
 def test_mod_findings_carry_file_lines(game: Path, tmp_path: Path) -> None:
@@ -451,24 +455,3 @@ def test_a_template_learns_only_from_its_own_folders(game: Path) -> None:
     vocabulary = load_game_script_vocabulary(game, cache=False)
     assert "screens_track_mastery_gain_factor" in vocabulary.modifiers
     assert "mass_assault_track_mastery_gain_factor" not in vocabulary.modifiers
-
-
-def test_locator_prefers_a_copy_that_runs_line_for_line(tmp_path: Path) -> None:
-    path = tmp_path / "decisions.txt"
-    path.write_text(
-        "d = {\n"
-        "\tcancel_effect = {\n"
-        "\t\tclr_country_flag = a\n"
-        "\t\tadd_stability = 1\n"
-        "\t}\n"
-        "\tremove_effect = {\n"
-        "\t\tclr_country_flag = a\n"
-        "\n"
-        "\t\tadd_political_power = 1\n"
-        "\t}\n"
-        "}\n"
-    )
-    raw = path.read_text()[4:-2].strip()
-    locator = SourceLocator(lambda item: item.read_text())
-    assert locator.line_map(path, "clr_country_flag = a\nadd_political_power = 1", raw) == (7, 9)
-    assert locator.line_map(path, "clr_country_flag = a\nadd_stability = 1", raw) == (3, 4)

@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable, Literal, Sequence, cast
+from typing import Callable, Literal, Sequence
 
-from ..characters import (
-    CharacterRole,
-)
 from ..localisation import (
     DEFAULT_LOCALISATION_LANGUAGE,
 )
@@ -21,13 +18,11 @@ from ..script_references import (
     fragment_owner,
     is_country_tag,
 )
-from ..script_scopes import entry_scope
 from ..script_vocabulary import (
     GameScriptVocabulary,
     ScriptSource,
     load_game_script_vocabulary,
-    SourceLocator,
-    modifier_block_text,
+    script_sources,
     validate_script_sources,
 )
 from ..states import (
@@ -61,6 +56,8 @@ _SCRIPT_OWNERS = frozenset(
     {"focus", "focus_tree", "event", "decision", "decision_category", "on_action",
      "scripted_effect", "scripted_trigger", "idea", "effect"}
 )
+# Owners whose idea changes are compared: focuses against runtime script.
+_MUTATING_OWNERS = frozenset({"focus", "event", "on_action", "decision"})
 # References to something by its name.
 _NAMED_KINDS = frozenset({"idea", "event", "focus_tree", "technology", "equipment"})
 # Country and state history: checked by the history validators.
@@ -158,11 +155,11 @@ class _LazyCatalogs:
 
 
 def _idea_mutation_ids(
-    script: str,
+    script: Block,
     *,
     ignore_guarded_additions: bool = False,
 ) -> set[str]:
-    """Ideas a piece of script adds or removes, read from the syntax tree.
+    """Ideas a block of script adds or removes, read from the syntax tree.
 
     With ``ignore_guarded_additions``, an idea added inside
     ``if = { limit = { NOT = { has_idea = X } } add_ideas = X }`` is left out:
@@ -237,7 +234,7 @@ def _idea_mutation_ids(
         else:
             walk(inner, guarded_absent)
 
-    walk(parse(script).root, set())
+    walk(script, set())
     return {idea_id for idea_id in mutations if idea_id}
 
 
@@ -360,13 +357,15 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         )
 
     def _semantic_script_sources(self) -> list[ScriptSource]:
-        """Every effect, trigger, modifier and weight block of the loaded mod.
+        """Every effect, trigger, modifier and weight block of the mod's own script files.
 
-        Each source carries the scope its block runs in when that is certain
-        (``hoi4.script_scopes.ENTRY_SCOPES``), what ``FROM`` is when known, and
-        the file line its text starts on, so findings point into the file.
-        The token check and the liveness check of one validate() run share
-        the list.
+        The files are read as ``save()`` will write them, so pending edits
+        count. They are split by :mod:`hoi4._script_corpus`, the same split the
+        reference check and the corpus test use. Each source carries the
+        parsed block (so findings have file lines), the scope it runs in when
+        that is certain (``hoi4.script_scopes.ENTRY_SCOPES``) and what
+        ``FROM`` is when known. The token check, the idea collision check and
+        the liveness check of one validate() run share the list.
         """
 
         return list(
@@ -375,345 +374,46 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
 
     def _build_semantic_script_sources(self) -> list[ScriptSource]:
         sources: list[ScriptSource] = []
-
-        def current_text(path: Path) -> str:
-            pending = self._script_file_updates.get(path)
-            return pending if pending is not None else read_text(path)
-
-        locator = SourceLocator(current_text)
-
-        def add(
-            text: str,
-            kind: Literal["effect", "trigger", "modifier", "weight"],
-            owner_kind: str,
-            owner_id: str,
-            path: Path | None,
-            scope: str | None = None,
-            *,
-            from_scope: str | None = None,
-            anchor: str = "",
-            line: int | None = None,
-        ) -> None:
-            if not text.strip():
-                return
-            line_map: tuple[int, ...] = ()
-            if line is None and path is not None and anchor:
-                line_map = locator.line_map(path, text, anchor) or ()
-                line = line_map[0] if line_map else None
-            sources.append(
-                ScriptSource(
-                    text=text,
-                    kind=kind,
-                    owner_kind=owner_kind,
-                    owner_id=owner_id,
-                    file_path=str(path) if path is not None else None,
-                    scope=scope,
-                    from_scope=from_scope,
-                    line=line,
-                    line_map=line_map,
-                )
-            )
-
-        for tree in self._focus_trees.values():
-            for focus in tree.focuses:
-                for name, kind in (
-                    ("completion_reward", "effect"),
-                    ("select_effect", "effect"),
-                    ("complete_tooltip", "effect"),
-                    ("available", "trigger"),
-                    ("bypass", "trigger"),
-                    ("allow_branch", "trigger"),
-                    ("ai_will_do", "weight"),
-                ):
-                    add(
-                        getattr(focus, name),
-                        cast(Literal["effect", "trigger", "weight"], kind),
-                        "focus",
-                        focus.id,
-                        tree.path,
-                        entry_scope("focus", name),
-                        anchor=focus.raw_block,
-                    )
-        for event in self._events.values():
-            event_scope = entry_scope(event.event_type, "*")
-            for text, kind in (
-                (event.trigger, "trigger"),
-                (event.immediate, "effect"),
-                (event.mean_time_to_happen, "weight"),
-                *(
-                    (entry.trigger, "trigger")
-                    for entry in (*event.conditional_titles, *event.conditional_descriptions)
-                ),
-            ):
-                add(
-                    text,
-                    cast(Literal["effect", "trigger", "weight"], kind),
-                    "event",
-                    event.id,
-                    event.path,
-                    event_scope,
-                    anchor=event.raw_block,
-                )
-            for option in event.options:
-                for text, kind in (
-                    (option.trigger, "trigger"),
-                    (option.effect, "effect"),
-                    (option.ai_chance, "weight"),
-                    *((entry.trigger, "trigger") for entry in option.conditional_names),
-                ):
-                    add(
-                        text,
-                        cast(Literal["effect", "trigger", "weight"], kind),
-                        "event",
-                        event.id,
-                        event.path,
-                        event_scope,
-                        anchor=option.raw_block or event.raw_block,
-                    )
-        for occurrences in self._on_action_occurrences.values():
-            for action in occurrences:
-                add(
-                    action.effect,
-                    "effect",
-                    "on_action",
-                    action.id,
-                    action.path,
-                    anchor=action.raw_block,
-                )
-                if action.events or action.random_events:
-                    # Event references for the content graph; not in any file.
-                    add(
-                        "\n".join(
-                            f"country_event = {{ id = {event_id} }}"
-                            for event_id in (*action.events, *action.random_events)
-                        ),
-                        "effect",
-                        "on_action",
-                        action.id,
-                        action.path,
-                    )
-        for decision in self._decisions.values():
-            from_scope = "STATE" if decision.state_target else None
-            for name, kind in (
-                ("available", "trigger"),
-                ("visible", "trigger"),
-                ("complete_effect", "effect"),
-                ("remove_effect", "effect"),
-                ("allowed", "trigger"),
-                ("activation", "trigger"),
-                ("cancel_trigger", "trigger"),
-                ("remove_trigger", "trigger"),
-                ("target_trigger", "trigger"),
-                ("target_root_trigger", "trigger"),
-                ("custom_cost_trigger", "trigger"),
-                ("timeout_effect", "effect"),
-                ("cancel_effect", "effect"),
-                ("ai_will_do", "weight"),
-                ("modifier", "modifier"),
-            ):
-                add(
-                    getattr(decision, name),
-                    cast(Literal["effect", "trigger", "modifier", "weight"], kind),
-                    "decision",
-                    decision.id,
-                    decision.path,
-                    entry_scope("decision", name) if kind != "modifier" else None,
-                    from_scope=from_scope,
-                    anchor=decision.raw_block,
-                )
-        for idea in self._ideas.values():
-            add(
-                idea.allowed,
-                "trigger",
-                "idea",
-                idea.id,
-                idea.path,
-                entry_scope("idea", "allowed"),
-                anchor=idea.raw_block,
-            )
-            add(
-                idea.ai_will_do,
-                "weight",
-                "idea",
-                idea.id,
-                idea.path,
-                entry_scope("idea", "ai_will_do"),
-                anchor=idea.raw_block,
-            )
-            if idea.modifier:
-                add(
-                    modifier_block_text(idea.raw_block, "modifier", idea.modifier),
-                    "modifier",
-                    "idea",
-                    idea.id,
-                    idea.path,
-                    anchor=idea.raw_block,
-                )
-        for modifier in self._dynamic_modifiers.values():
-            for text in (modifier.enable, modifier.remove_trigger):
-                add(
-                    text,
-                    "trigger",
-                    "dynamic_modifier",
-                    modifier.id,
-                    modifier.path,
-                    anchor=modifier.raw_block,
-                )
-            if modifier.modifier:
-                add(
-                    modifier_block_text(modifier.raw_block, None, modifier.modifier),
-                    "modifier",
-                    "dynamic_modifier",
-                    modifier.id,
-                    modifier.path,
-                    anchor=modifier.raw_block,
-                )
-        for bookmark in self._bookmarks:
-            add(
-                bookmark.effect,
-                "effect",
-                "bookmark",
-                bookmark.name,
-                bookmark.path,
-                entry_scope("bookmark", "effect"),
-                anchor=bookmark.raw_block,
-            )
-            for country in bookmark.countries:
-                add(
-                    country.available,
-                    "trigger",
-                    "bookmark",
-                    bookmark.name,
-                    bookmark.path,
-                    entry_scope("bookmark", "available"),
-                    anchor=country.raw_block or bookmark.raw_block,
-                )
-        for character in self._characters.values():
-            # Which scope a role's blocks run in differs by role and field, so
-            # it is left unknown: names are checked, scopes are not.
-            groups: list[tuple[list[CharacterRole], str | None, str]] = [
-                (character.roles, None, character.raw_block)
-            ]
-            groups.extend(
-                (instance.roles, instance.allowed, instance.raw_block or character.raw_block)
-                for instance in character.instances
-            )
-            for roles, allowed, anchor in groups:
-                add(
-                    allowed or "",
-                    "trigger",
-                    "character",
-                    character.id,
-                    character.path,
-                    anchor=anchor,
-                )
-                for role in roles:
-                    for attribute, kind in (
-                        ("allowed", "trigger"),
-                        ("visible", "trigger"),
-                        ("available", "trigger"),
-                        ("ai_will_do", "weight"),
-                    ):
-                        add(
-                            str(getattr(role, attribute, "")),
-                            cast(Literal["trigger", "weight"], kind),
-                            "character",
-                            character.id,
-                            character.path,
-                            anchor=role.raw_block or anchor,
-                        )
-        for kind, relative in (
-            ("effect", Path("common/scripted_effects")),
-            ("trigger", Path("common/scripted_triggers")),
-        ):
-            directory = self.mod_root / relative
-            paths = set(directory.rglob("*.txt"))
-            paths.update(path for path in self._script_file_updates if path.is_relative_to(directory))
-            for path in sorted(paths):
-                text = locator.text(path)
-                for item in parse(text).root.assignments():
-                    body = item.block
-                    if body is None:
-                        continue
-                    add(
-                        body.body,
-                        cast(Literal["effect", "trigger"], kind),
-                        f"scripted_{kind}",
-                        item.name,
-                        path,
-                        line=text.count("\n", 0, body.body_start) + 1,
-                    )
+        for path, relative, text in self._own_script_texts():
+            try:
+                root = parse(text).root
+            except ValueError:
+                continue
+            sources.extend(script_sources(root, relative, str(path)))
         return sources
 
-    def _script_entries(self) -> list[tuple[str, str, str | None, str | None]]:
-        entries: list[tuple[str, str, str | None, str | None]] = []
-        for tree in self._focus_trees.values():
-            for focus in tree.focuses:
-                script = "\n".join(
-                    [
-                        focus.completion_reward,
-                        focus.available,
-                        focus.bypass,
-                        focus.select_effect,
-                        focus.complete_tooltip,
-                        focus.allow_branch,
-                    ]
-                )
-                entries.append((script, "focus", focus.id, str(tree.path) if tree.path else None))
-        for event in self._events.values():
-            scripts = [event.trigger, event.immediate, event.mean_time_to_happen]
-            scripts.extend(option.trigger + "\n" + option.effect for option in event.options)
-            entries.append(
-                ("\n".join(scripts), "event", event.id, str(event.path) if event.path else None)
-            )
-        for occurrences in self._on_action_occurrences.values():
-            for action in occurrences:
-                entries.append(
-                    (
-                        action.effect,
-                        "on_action",
-                        action.id,
-                        str(action.path) if action.path else None,
-                    )
-                )
-                if action.events:
-                    entries.append(
-                        (
-                            "\n".join(
-                                f"country_event = {{ id = {event_id} }}"
-                                for event_id in action.events
-                            ),
-                            "on_action",
-                            action.id,
-                            str(action.path) if action.path else None,
-                        )
-                    )
-        for decision in self._decisions.values():
-            entries.append(
-                (
-                    "\n".join(
-                        [
-                            decision.available,
-                            decision.visible,
-                            decision.complete_effect,
-                            decision.remove_effect,
-                            decision.allowed,
-                            decision.activation,
-                            decision.cancel_trigger,
-                            decision.remove_trigger,
-                            decision.target_trigger,
-                            decision.target_root_trigger,
-                            decision.custom_cost_trigger,
-                            decision.timeout_effect,
-                            decision.cancel_effect,
-                        ]
-                    ),
-                    "decision",
-                    decision.id,
-                    str(decision.path) if decision.path else None,
-                )
-            )
-        return entries
+    def _own_script_texts(self) -> list[tuple[Path, str, str]]:
+        """``(path, relative, text)`` of every script file of the mod itself.
+
+        The text is what the file will hold after ``save()``: pending edits
+        count, and a file that ``save()`` deletes is left out.
+        """
+
+        pending = self._pending_script_texts()
+        paths: dict[str, Path] = {}
+        for top in ("common", "events"):
+            folder = self.mod_root / top
+            if folder.is_dir():
+                for path in folder.rglob("*.txt"):
+                    paths[path.relative_to(self.mod_root).as_posix()] = path
+        for path in pending:
+            if path.is_relative_to(self.mod_root):
+                relative = path.relative_to(self.mod_root).as_posix()
+                if relative.split("/", 1)[0] in ("common", "events") and relative.endswith(".txt"):
+                    paths[relative] = path
+        found: list[tuple[Path, str, str]] = []
+        for relative, path in sorted(paths.items()):
+            if path in pending:
+                text = pending[path]
+                if text is None:
+                    continue
+            else:
+                try:
+                    text = read_text(path)
+                except (OSError, ValueError):
+                    continue
+            found.append((path, relative, text))
+        return found
 
     def _reference_owners(
         self,
@@ -1191,15 +891,18 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
     def _validate_idea_mutation_collisions(self) -> list[ValidationError]:
         focus_mutations: dict[str, set[str]] = {}
         runtime_mutations: dict[str, set[str]] = {}
-        for script, kind, obj_id, _ in self._script_entries():
+        for source in self._semantic_script_sources():
+            kind = source.owner_kind
+            if source.block is None or kind not in _MUTATING_OWNERS:
+                continue
             ideas = _idea_mutation_ids(
-                script,
+                source.block,
                 ignore_guarded_additions=kind != "focus",
             )
             if not ideas:
                 continue
             target = focus_mutations if kind == "focus" else runtime_mutations
-            target.setdefault(obj_id or "<unknown>", set()).update(ideas)
+            target.setdefault(source.owner_id or "<unknown>", set()).update(ideas)
         focus_ideas = set().union(*focus_mutations.values()) if focus_mutations else set()
         runtime_ideas = set().union(*runtime_mutations.values()) if runtime_mutations else set()
         collisions = sorted(focus_ideas & runtime_ideas)

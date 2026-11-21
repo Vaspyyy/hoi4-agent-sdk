@@ -30,15 +30,14 @@ import json
 import os
 import re
 import tempfile
-from bisect import bisect_right
-import textwrap
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Callable, Iterable, Iterator, Literal, Mapping, Sequence, cast
+from typing import Iterable, Iterator, Literal, Mapping, Sequence, cast
 
-from .script_scopes import MODIFIER_ARGUMENTS, ScriptStatement, walk_script
+from ._script_corpus import script_blocks
+from .script_scopes import ScriptStatement, walk_script
 from .syntax import Assignment, Block, Tagged, parse
 from .textio import read_text
 from .types import ValidationError
@@ -304,6 +303,11 @@ class ScriptSource:
     to, when known. ``line`` is the line of the file on which the text's first
     line stands, when known; findings then carry file lines. Without a line
     and a file, findings carry lines of the text itself.
+
+    ``block`` is the block of a parsed file the text was read from; when it is
+    given it is walked instead of ``text``, and findings carry its file lines.
+    ``arguments`` are keys of the block to leave alone (an event option's
+    ``name``, ``trigger`` and ``ai_chance``).
     """
 
     text: str
@@ -314,9 +318,32 @@ class ScriptSource:
     scope: str | None = None
     from_scope: str | None = None
     line: int | None = None
-    #: The file line of every line of ``text``, when known (see
-    #: :class:`SourceLocator`); it wins over ``line``.
-    line_map: tuple[int, ...] = ()
+    block: Block | None = None
+    arguments: frozenset[str] = frozenset()
+
+
+def script_sources(root: Block, relative: str, file_path: str | None = None) -> list[ScriptSource]:
+    """Every checkable block of a parsed script file, ready for :func:`validate_script_sources`.
+
+    ``relative`` is the file's path inside the game or mod folder (it decides
+    how the file is split, see :mod:`hoi4._script_corpus`). History files give
+    nothing: they are read for references only.
+    """
+
+    return [
+        ScriptSource(
+            text=block.block.body,
+            kind=block.kind,
+            owner_kind=block.owner_kind,
+            owner_id=block.owner_id,
+            file_path=file_path,
+            scope=block.scope,
+            from_scope=block.from_scope,
+            block=block.block,
+            arguments=block.arguments,
+        )
+        for block in script_blocks(root, relative)
+    ]
 
 
 # ── loading ───────────────────────────────────────────────────────
@@ -898,10 +925,10 @@ def validate_script_sources(
     findings: list[ValidationError] = []
     seen: set[tuple[str, str, str, int | None]] = set()
     for source in sources:
-        if not source.text.strip():
+        if source.block is None and not source.text.strip():
             continue
         statements = walk_script(
-            source.text,
+            source.block if source.block is not None else source.text,
             source.kind,
             scope=source.scope.upper() if source.scope else None,
             from_scope=source.from_scope.upper() if source.from_scope else None,
@@ -910,12 +937,12 @@ def validate_script_sources(
                 or (kind != "modifier" and folded in known_scripted)
             ),
             characters=characters,
+            arguments=source.arguments,
         )
         for statement in statements:
-            if 0 < statement.line <= len(source.line_map):
-                line = source.line_map[statement.line - 1]
-            else:
-                line = statement.line + (source.line - 1 if source.line is not None else 0)
+            line = statement.line
+            if source.block is None and source.line is not None:
+                line += source.line - 1
             finding = check_statement(
                 statement, source, line, vocabulary, custom_folded, allowed
             )
@@ -1073,150 +1100,6 @@ def _nearest(name: str, known: Mapping[str, ScriptTokenInfo]) -> str | None:
     )
 
 
-def modifier_block_text(
-    raw_block: str,
-    key: str | None,
-    modifiers: Mapping[str, object],
-) -> str:
-    """The text of a definition's modifier block, as it stands in its file when unchanged.
-
-    ``raw_block`` is the definition's own body as read from its file and
-    ``key`` the key of its modifier block (``None`` when the definition's
-    body is the modifier block, as for dynamic modifiers). ``modifiers`` is
-    the model's view. When the file's block has the same modifier names, its
-    text is used (so findings get file lines and nested ``hidden_modifier``
-    blocks are checked); otherwise the text is made from the model.
-    """
-
-    if raw_block:
-        root = parse(raw_block).root
-        block = root.block(key) if key is not None else root
-        if block is not None:
-            names = {
-                item.name
-                for item in block.assignments()
-                if item.block is None and (key is not None or item.name not in MODIFIER_ARGUMENTS)
-            }
-            if names == set(modifiers):
-                return textwrap.dedent(block.body).strip()
-    return "\n".join(f"{name} = {value}" for name, value in modifiers.items())
-
-
-class SourceLocator:
-    """Find where copied block bodies stand in their files.
-
-    Model fields hold block bodies with their indentation removed, and an
-    event option's effect leaves out its ``name``, ``trigger`` and
-    ``ai_chance``. :meth:`line_map` finds such a text inside the text of its
-    owning definition (a model's ``raw_block``) line by line, ignoring leading
-    and trailing spaces and allowing lines of the file to be skipped, and
-    returns the file line of every line of the text.
-    """
-
-    def __init__(self, read: Callable[[Path], str]) -> None:
-        self._read = read
-        self._texts: dict[Path, str] = {}
-        self._line_starts: dict[Path, list[int]] = {}
-        self._last_anchor: dict[Path, int] = {}
-
-    def text(self, path: Path) -> str:
-        if path not in self._texts:
-            try:
-                self._texts[path] = self._read(path)
-            except (OSError, ValueError):
-                self._texts[path] = ""
-        return self._texts[path]
-
-    def line_of(self, path: Path, offset: int) -> int:
-        starts = self._line_starts.get(path)
-        if starts is None:
-            content = self.text(path)
-            starts = [0]
-            position = content.find("\n")
-            while position >= 0:
-                starts.append(position + 1)
-                position = content.find("\n", position + 1)
-            self._line_starts[path] = starts
-        return bisect_right(starts, offset)
-
-    def line_map(self, path: Path, text: str, anchor: str) -> tuple[int, ...] | None:
-        """File lines of every line of ``text``, or ``None`` when it cannot be found.
-
-        When only ``anchor`` is found (the text was edited after loading), every
-        line maps to the anchor's first line.
-        """
-
-        content = self.text(path)
-        wanted = [line.strip() for line in text.strip().split("\n")]
-        if not content or not anchor or not wanted[0]:
-            return None
-        position = content.find(anchor, self._last_anchor.get(path, 0))
-        if position < 0:
-            position = content.find(anchor)
-        if position < 0:
-            return None
-        self._last_anchor[path] = position
-        high = position + len(anchor)
-        # First where the text's first line starts a line of the file; then
-        # where it ends one: ``name = x #note`` leaves ``#note`` as the first
-        # line of an option's effect, and ``ai_will_do = { factor = 1 }`` puts
-        # the whole body on its key's line.
-        # A copy that runs line for line beats one that needs skipped lines:
-        # two fields of one decision may start with the same line.
-        for skip, inline in ((False, False), (False, True), (True, False), (True, True)):
-            first = content.find(wanted[0], position, high)
-            while first >= 0:
-                line_start = content.rfind("\n", 0, first) + 1
-                line_end = content.find("\n", first)
-                if line_end < 0:
-                    line_end = len(content)
-                before = content[line_start:first].strip()
-                after = content[first + len(wanted[0]) : line_end]
-                if (bool(before) == inline) and _only_closing(after):
-                    offsets = self._follow(content, line_end + 1, high, wanted[1:], skip)
-                    if offsets is not None:
-                        return tuple(
-                            self.line_of(path, offset) for offset in (line_start, *offsets)
-                        )
-                first = content.find(wanted[0], first + 1, high)
-        return (self.line_of(path, position),) * len(wanted)
-
-    @staticmethod
-    def _follow(
-        content: str, offset: int, high: int, wanted: list[str], skip: bool
-    ) -> list[int] | None:
-        """Match ``wanted`` line by line from ``offset``; ``skip`` allows lines it does not hold.
-
-        Blank lines and comment-only lines of the file are always skipped,
-        since a field's text may have lost them.
-        """
-
-        found: list[int] = []
-        for expected in wanted:
-            while offset < high:
-                end = content.find("\n", offset)
-                if end < 0:
-                    end = len(content)
-                line = content[offset:end].strip()
-                start, offset = offset, end + 1
-                if line == expected or (
-                    expected and line.startswith(expected) and _only_closing(line[len(expected):])
-                ):
-                    found.append(start)
-                    break
-                if not skip and line and not line.startswith("#"):
-                    return None
-            else:
-                return None
-        return found
-
-
-def _only_closing(text: str) -> bool:
-    """Whether ``text`` holds nothing but spaces and closing braces."""
-
-    return not text.replace("}", "").strip()
-
-
 __all__ = [
     "FAMILY_SOURCES",
     "GameScriptVocabulary",
@@ -1225,8 +1108,7 @@ __all__ = [
     "ScriptTokenInfo",
     "ScriptTokenKind",
     "load_game_script_vocabulary",
-    "SourceLocator",
+    "script_sources",
     "check_statement",
-    "modifier_block_text",
     "validate_script_sources",
 ]
