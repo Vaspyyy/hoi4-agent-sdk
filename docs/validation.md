@@ -16,8 +16,9 @@ Each code has exactly one severity. The registry is
 `hoi4.validation.VALIDATION_SEVERITIES` (`code -> severity`); the tables
 `VALIDATION_ERROR_CODES`, `VALIDATION_WARNING_CODES` and
 `VALIDATION_INFO_CODES` map the codes of one severity to a one-line
-description, and `VALIDATION_CODES` holds all of them. `Mod.validate()`
-gives every finding the severity of its code.
+description, and `VALIDATION_CODES` holds all of them; all five are
+exported from `hoi4`. Every finding has the severity of its code, also when
+a check such as `validate_event()` or `validate_oob()` is called on its own.
 
 ```python
 issues = mod.validate()                 # errors and warnings
@@ -27,7 +28,8 @@ blocking = [i for i in issues if i.severity == "error"]
 
 The release gate (`run_release_gate`) and `mod.validate_country_package(tag)`
 work as before: advice never fails them. `mod.validate_effect(script)` checks
-one snippet and returns its advice together with errors and warnings.
+one snippet and returns its advice together with errors and warnings; pass
+`advice=False` to leave the advice out.
 
 ## Hiding findings
 

@@ -123,7 +123,9 @@ with mod.transaction():
 
    This means `(FOCUS_A OR FOCUS_B) AND FOCUS_C`.
 
-10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Use `validate(stage="build")` between multi-script pipeline steps, the default `stage="package"` for complete-country enforcement, and `validate(stage="release", validate_icons=True, strict_localization=True)` before final saves. Release-stage validation also audits focus/event/idea/flag/localization liveness. Known false-positive warnings can be hidden with stable codes from `VALIDATION_WARNING_CODES`, for example `mod.validate(suppress_warnings=["country_scope_core_effect"])`.
+10. `validate()` is advisory and does not block `save()`. Explicitly stop when errors are present. Use `validate(stage="build")` between multi-script pipeline steps, the default `stage="package"` for complete-country enforcement, and `validate(stage="release", validate_icons=True, strict_localization=True)` before final saves. Release-stage validation also audits focus/event/idea/flag/localization liveness. Known false-positive warnings can be hidden with stable codes from `VALIDATION_WARNING_CODES`, for example `mod.validate(suppress=["country_scope_core_effect"])` or `"code:ID"` for one object; errors cannot be suppressed.
+    Every finding has a severity: `error`, `warning` or `info` (advice). `validate()` hides advice unless you pass `advice=True`; `validate_effect()` shows it unless `advice=False`.
+    Every code and its severity is listed in [`docs/validation.md`](docs/validation.md).
 
 11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `upsert_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
 
@@ -209,7 +211,7 @@ with mod.transaction():
 33. Do not suppress `idea_mutation_collision` merely because a focus and event
     mention the same spirit. Guard a runtime fallback with
     `if = { limit = { NOT = { has_idea = X } } add_ideas = X }`; validation
-    recognizes that exact safety invariant while preserving warnings for
+    recognizes that exact safety invariant while still reporting (as advice)
     unguarded, mismatched, removal, and swap mutations.
 
 34. Keep land, naval, and air OOBs in separate files. Pass `kind="land"`,

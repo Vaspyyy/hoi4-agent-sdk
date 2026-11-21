@@ -1030,12 +1030,21 @@ mod.assert_no_visual_overlap("west_focus")
 ```
 ## Validation
 
-`mod.validate(validate_icons=False, strict_localization=False, stage="package")`
-runs all validators and returns `list[ValidationError]`. It does **not** raise
-for content issues. Every finding has a registered `code` and that code's
-severity: `error` (the game rejects it or behaves wrongly), `warning`
-(probably a mistake) or `info` (advice, returned only with `advice=True`).
-[validation.md](validation.md) lists every code. Stages are:
+```python
+mod.validate(
+    suppress_warnings=None, validate_icons=False, strict_localization=False,
+    stage="package", script_token_allowlist=(), liveness_flag_allowlist=(),
+    liveness_localization_allowlist=(), progress=None, cancelled=None,
+    *, advice=False, suppress=(),
+) -> list[ValidationError]
+```
+
+`mod.validate()` runs all validators and returns their findings. It does
+**not** raise for content issues. Every finding has a registered `code` and
+that code's severity: `error` (the game rejects it or behaves wrongly),
+`warning` (probably a mistake) or `info` (advice). Advice is hidden unless
+you pass `advice=True`. [validation.md](validation.md) lists every code with
+its severity. Stages are:
 
 - `build`: syntax, references, OOBs, and installed-game vocabulary, while
   deferring complete-country checks during a multi-step build;
@@ -1052,7 +1061,9 @@ With `hoi4_install` configured, `game_script_vocabulary()` exposes documented
 effect, trigger, and modifier tokens, installed-game usage counts by domain,
 supported scopes, and modifier categories. `validate_script_vocabulary()` and
 `validate_effect()` warn on undocumented tokens and suggest a close,
-high-frequency installed token. Intentional extensions can be allowlisted as
+high-frequency installed token. The check walks every block with the
+scope-tracking walker described in
+[internals/script_scopes.md](internals/script_scopes.md). Intentional extensions can be allowlisted as
 `effect:my_token`, `trigger:my_token`, or `modifier:my_token` through
 `script_token_allowlist=`. Validation also tracks explicit country, state,
 character, and iterator scopes and reports `unsupported_effect_scope` or
@@ -1061,6 +1072,19 @@ scope. `validate_effect()` assumes a country-scope fragment; pass
 `scope="STATE"` for a state-root fragment or `scope=None` when the root is
 deliberately unknown. Explicit nested scopes are still checked with
 `scope=None`.
+
+```python
+mod.validate_effect(
+    script, suppress_warnings=None,
+    *, script_token_allowlist=(), scope="COUNTRY", advice=True,
+) -> list[ValidationError]
+```
+
+`validate_effect()` looks at one script, so it returns advice together with
+errors and warnings. Pass `advice=False` to get only errors and warnings,
+like `validate()`. It loads a catalog of the game (ideas, events,
+technologies, equipment) only when the script names something the mod does
+not define.
 
 `analyze_content_liveness()` returns `ContentLivenessReport`, covering focus
 reachability, incoming event references, idea grants, flag reads/writes, and
@@ -1102,9 +1126,9 @@ except OperationCancelled:
 
 | Entity | Checks |
 |--------|--------|
-| **Country** | Tag format `^[A-Z0-9]{3}$`, tag definition target exists, has name, popularities sum to 100, valid ruling party, valid RGB color, capital state exists in mod/vanilla data, recruited characters exist in mod/vanilla data, leader ideology/ruling party mismatch; SDK-created tags additionally require a complete `CountryPackageReport` |
+| **Country** | Tag format `^[A-Z0-9]{3}$`, tag definition target exists, has a name (`TAG` or an ideology variant such as `TAG_fascism`, in the mod, base mods or game), popularities sum to 100, valid ruling party, valid RGB color, capital state exists in mod/vanilla data, recruited characters exist in mod/vanilla data. Advice: no recruited leader leads the ruling party. SDK-created tags additionally require a complete `CountryPackageReport` |
 | **Character** | Defined/recruited identity, localization, visible portraits, GFX declarations and textures, plus two recruited political advisors and two army commanders per complete country |
-| **OOB** | Unique land templates/grid positions, separate correctly assigned land/naval/air files, known unit and equipment IDs, valid owned locations, valid factors, fleet/task-force/ship structure, DLC-aware hull variant resolution, and valid country-history references |
+| **OOB** | Unique template names, separate correctly assigned land/naval/air files, known unit and equipment IDs (also equipment derived by `duplicate_archetypes`), known land, sea and air locations, valid factors, fleet/task-force/ship structure (a ship needs `name` or `ordered_name`), DLC-aware hull and airframe variant resolution, and valid country-history references. A division may use a template from the country's other OOB files or from script. A country that owns no state at the start never loads its OOB files, so only a missing file is reported (a warning). Warnings: a repeated grid position or ship name. Advice: units that start outside the country's territory |
 | **Geography** | Significant capital-disconnected owned components and fully enclosed foreign land components warn unless explicitly allowlisted |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
 | **Map** | Land provinces belong to exactly one state (missing: warning `province_missing_state`; duplicate: error `province_in_multiple_states`); state provinces exist and are not sea provinces (vanilla states include lakes); land and sea provinces belong to exactly one strategic region (an empty region is a warning, as vanilla ships three); supply nodes, railways (levels, land provinces, adjacency when the mod overrides `railways.txt` and the province map is readable), and `buildings.txt` references resolve: the last field is a sea province, except for `floating_harbor`, which names its coastal land province. The whole check was run against the HOI4 1.19.3 map with no findings |
@@ -1119,45 +1143,65 @@ except OperationCancelled:
 ```python
 @dataclass
 class ValidationError:
-    message: str            # Human-readable description
-    severity: str = "error" # "error", "warning" or "info" (advice)
-    code: str = ""          # Stable registered code, see validation.md
-    file_path: str | None   # Source file if known
-    focus_id: str | None    # Focus ID if relevant
-    country_tag: str | None # Country tag if relevant
-    state_id: int | None    # State ID if relevant
-    event_id: str | None    # Event ID if relevant
-    idea_id: str | None     # Idea ID if relevant
+    message: str                      # Human-readable description
+    severity: str = "error"           # "error", "warning" or "info" (advice)
+    code: str = ""                    # Stable registered code, see validation.md
+    file_path: str | None = None      # Source file if known
+    focus_id: str | None = None       # The object the finding is about, if any
+    country_tag: str | None = None
+    state_id: int | None = None
+    event_id: str | None = None
+    idea_id: str | None = None
+    decision_id: str | None = None
+    focus_tree_id: str | None = None
+    ideology_id: str | None = None
+    dynamic_modifier_id: str | None = None
+    bookmark_name: str | None = None
+    related_file_path: str | None = None  # A second file, such as the other duplicate
+    line: int | None = None           # 1-based line in file_path, if known
+    column: int | None = None
 ```
 
 **Errors** mean the game rejects the content or behaves wrongly. **Warnings**
 mean a probable mistake (missing localization, etc.). **Advice** (`info`) is a
-style hint about valid content and is returned only with
-`mod.validate(advice=True)`.
+hint about valid content. `mod.validate()` returns it only with
+`advice=True`; `mod.validate_effect()` returns it unless `advice=False`. A
+finding has the severity of its code also when a check such as
+`validate_event()` or `validate_oob()` is called on its own.
+
+The severity tables are exported from `hoi4`:
+
+| Name | Holds |
+| --- | --- |
+| `VALIDATION_SEVERITIES` | every code mapped to `"error"`, `"warning"` or `"info"` |
+| `VALIDATION_ERROR_CODES` | the error codes, each with a one-line description |
+| `VALIDATION_WARNING_CODES` | the warning codes, each with a one-line description |
+| `VALIDATION_INFO_CODES` | the advice codes, each with a one-line description |
+| `VALIDATION_CODES` | all codes, each with a one-line description |
 
 Hide known false-positive warnings or advice by stable code, for every
 object or for one (`code:ID`). Errors cannot be suppressed, and an unknown
 code raises `ValueError`:
 
 ```python
-from hoi4 import VALIDATION_WARNING_CODES
-from hoi4.validation import VALIDATION_SEVERITIES
+from hoi4 import VALIDATION_SEVERITIES, VALIDATION_WARNING_CODES
 
 print(VALIDATION_WARNING_CODES)
+print(VALIDATION_SEVERITIES["visual_overlap"])  # "warning"
 errors = mod.validate(suppress=["country_scope_core_effect"])
 errors = mod.validate(suppress=["missing_localization:TAG_secret_focus"])
 errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
 ```
 
-Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `unknown_tech_bonus_category`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_focus_tree_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `idea_mutation_collision`, `resistance_on_core_state`, `revolt_state_already_owned`, `missing_localization` and `visual_overlap`; `missing_effect_target` and `script_syntax` are errors. Advice codes include `faction_scope_footgun`, `civil_war_scope_footgun`, `civil_war_focus_tree_missing`, `bad_idea_tooltip_pattern`, `idea_not_addable` and `event_option_no_effect`.
+Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `unknown_tech_bonus_category`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_focus_tree_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `missing_localization` and `visual_overlap`; `missing_effect_target` and `script_syntax` are errors. Advice codes include `faction_scope_footgun`, `civil_war_scope_footgun`, `civil_war_focus_tree_missing`, `bad_idea_tooltip_pattern`, `idea_not_addable`, `idea_mutation_collision`, `resistance_on_core_state`, `revolt_state_already_owned` and `event_option_no_effect`.
 
 Vocabulary and liveness warning codes are `unknown_effect_token`,
-`unknown_trigger_token`, `unknown_modifier_token`, the corresponding
-`unseen_*_token` codes for documented zero-use tokens,
+`unknown_trigger_token`, `unknown_modifier_token`,
 `unsupported_effect_scope`, `unsupported_trigger_scope`,
 `unsupported_modifier_scope`, `unreachable_focus`, `unfired_event`,
 `ungranted_idea`, `flag_set_never_read`, `flag_read_never_set`, and
-`unused_localization`.
+`unused_localization`. The `unseen_*_token` codes for documented tokens the
+game never uses are advice.
 
 Reference checks read the syntax tree too and name the scope each statement
 runs in, so `country_scope_core_effect` only fires when `add_core_of` or
@@ -1173,8 +1217,9 @@ bare in a focus reward), never inside a state id, a state iterator, `var:`,
 `revolt_state_already_owned`.
 
 Structural reference checks use `tag_definition`, `capital_ref`, `character_ref`,
-and `focus_cycle`. Undefined recruited characters are warnings; missing tag
-targets, missing capital states, and focus prerequisite cycles are errors.
+and `focus_cycle`. A recruited character that exists nowhere is a warning
+(`character_ref`); missing tag targets, missing capital states, and focus
+prerequisite cycles are errors.
 
 `event_conditional_text_missing` (warning) marks a conditional event title,
 description or option name without `text`. `oob_load_error` (error) marks an
