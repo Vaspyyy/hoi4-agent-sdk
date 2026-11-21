@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal, Sequence
 
@@ -26,13 +27,16 @@ from ..types import (
     Country,
     ValidationError,
 )
-from ..localisation import DEFAULT_LOCALISATION_LANGUAGE, parse_localization_dir
 from ..syntax import parse
 from ..validation import validate_country
 from ._characters import CharactersLayer
 from ._context import ContextLayer
 from ._oob_validation import OobValidationLayer
 from ._oobs import OobsLayer
+
+# A localisation key: no spaces, with an underscore (``GER_erwin_rommel``).
+# A name without one is the text the SDK wrote, not a key.
+_KEY_LIKE_RE = re.compile(r"[\w.\-]*_[\w.\-]*")
 
 
 class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, CharactersLayer):
@@ -42,28 +46,13 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
         """Check every country's history values and its variant unlocks."""
 
         errors: list[ValidationError] = []
-        # Without base mods the mod's tables hold only its own files, so
-        # also read the names the game itself ships.
-        inherited: set[str] = set()
-        if self._content_layers is None and self._base_content_root is not None:
-            entries, _ = parse_localization_dir(
-                self._base_content_root / "localisation" / DEFAULT_LOCALISATION_LANGUAGE
-            )
-            inherited = set(entries)
-
-        def has_localisation(key: str) -> bool:
-            return (
-                self.get_loc(key) is not None
-                or self._normalize_loc_key(key) in inherited
-            )
-
         dynamic_tags = self._dynamic_country_tags()
         for country in list(self._countries.values()):
             errors.extend(
                 validate_country(
                     country,
                     known_parties=known_parties,
-                    has_localisation=has_localisation,
+                    has_localisation=self._has_loc,
                     leader_ideologies=self._recruited_leader_ideologies(country),
                     dynamic_tag=country.tag in dynamic_tags,
                 )
@@ -489,12 +478,17 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                         ),
                         file_path=str(character.path) if character.path else None,
                     )
-            if character.id not in self._loc_entries:
+            # A character loaded from a file may be named by ``name = KEY``,
+            # a key of the game or a base mod. The SDK writes the name as text
+            # and the key under the character's id, so the id always counts.
+            name_key = character.name if _KEY_LIKE_RE.fullmatch(character.name) else ""
+            name_keys = list(dict.fromkeys(key for key in (name_key, character.id) if key))
+            if not any(self._has_loc(key) for key in name_keys):
                 issue(
                     "missing_character_localization",
                     (
-                        f"Character '{character.id}' is missing name "
-                        f"localization key '{character.id}'."
+                        f"Character '{character.id}' is missing name localization "
+                        f"(looked for {' or '.join(repr(key) for key in name_keys)})."
                     ),
                     file_path=str(character.path) if character.path else None,
                 )

@@ -64,7 +64,7 @@ only the ones it does not already reach through another base.
   ``_localisation``, ``_sources``, ``_catalogs``, ``_equipment``, ``_countries``,
   ``_characters``, ``_oobs``, ``_states``, ``_context``, ``_oob_validation``.
 * ``_validation``: The staged ``validate()`` entry point and related reports. Uses
-  ``_sources``, ``_catalogs``, ``_states``, ``_map``, ``_context``, ``_definitions``,
+  ``_localisation``, ``_sources``, ``_catalogs``, ``_states``, ``_map``, ``_context``, ``_definitions``,
   ``_script_validation``, ``_oob_validation``, ``_country_package``.
 * ``_preview``: Plain-language summaries of what pending edits change. Uses only
   ``_core``.

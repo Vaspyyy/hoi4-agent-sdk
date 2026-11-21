@@ -687,3 +687,32 @@ def test_base_mod_default_name_pool_is_respected_unless_replaced(tmp_path):
     assert "missing_country_name_pool" in {
         finding.code for finding in mod.validate_country_package("ABC", check_geography=False).findings
     }
+
+
+def test_character_named_by_a_game_key_has_localisation(tmp_path: Path) -> None:
+    root = tmp_path / "mod"
+    _build_complete_country(root).save()
+    game = tmp_path / "game"
+    loc = game / "localisation" / "english" / "game_characters_l_english.yml"
+    loc.parent.mkdir(parents=True)
+    loc.write_text('﻿l_english:\n ABC_game_leader_name:0 "Game Name"\n', encoding="utf-8")
+    mod = Mod(root, hoi4_install=game)
+    leader = mod.get_character("ABC_leader_1")
+    # The id's own key is gone; the character is named by a key of the game.
+    mod.delete_loc("ABC_leader_1")
+    leader.name = "ABC_game_leader_name"
+
+    def missing() -> list[str]:
+        report = mod.validate_country_package("ABC", check_geography=False)
+        return [
+            finding.message
+            for finding in report.findings
+            if finding.code == "missing_character_localization"
+        ]
+
+    assert missing() == []
+    leader.name = "ABC_nowhere_name"
+    assert missing() == [
+        "Character 'ABC_leader_1' is missing name localization "
+        "(looked for 'ABC_nowhere_name' or 'ABC_leader_1')."
+    ]
