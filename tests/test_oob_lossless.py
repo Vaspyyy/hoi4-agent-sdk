@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
+import pytest
+
 from hoi4 import Mod
 from hoi4.oob import DivisionUnit, Ship, ShipEquipment, serialize_oob
 from hoi4.syntax import parse
@@ -488,3 +490,36 @@ def test_a_changed_original_still_keeps_its_block_when_a_copy_comes_first(tmp_pa
         "\t\tdivision_template = \"Infantry\"\n"
         "\t\tstart_experience_factor = 0.30 # veterans\n\t\tfuture_field = keep\n\t}\n}\n"
     )
+
+
+@pytest.mark.parametrize("from_mod", [True, False])
+def test_a_renamed_original_keeps_its_block_when_a_renamed_copy_comes_first(
+    tmp_path: Path, from_mod: bool
+) -> None:
+    """Both differ from the file by one line: the one that was copied less is the original."""
+
+    path = _write(tmp_path / "history/units/ABC_1936.txt", LAND)
+    mod = Mod(tmp_path)
+    loaded = mod.get_oob("ABC_1936").divisions
+    divisions = list(loaded) if from_mod else copy.deepcopy(loaded)
+    twin = copy.deepcopy(divisions[0])
+    twin.name = "Copy"
+    divisions[0].name = "Changed"
+    assert mod.update_oob("ABC_1936", divisions=[twin, *divisions])
+    mod.save(require_changes=True)
+
+    assert path.read_text(encoding="utf-8") == LAND.replace(
+        'name = "First"', 'name = "Changed"'
+    )[: -len("}\n")] + (
+        "\tdivision = {\n\t\tname = \"Copy\"\n\t\tlocation = 100\n"
+        "\t\tdivision_template = \"Infantry\"\n"
+        "\t\tstart_experience_factor = 0.30 # veterans\n\t\tfuture_field = keep\n\t}\n}\n"
+    )
+
+
+def test_copying_an_oob_item_keeps_it_equal_to_its_original() -> None:
+    division = DivisionUnit(name="First", location=1, division_template="Infantry")
+    assert copy.deepcopy(division) == division and copy.copy(division) == division
+    # One object listed twice is still one object after a deep copy.
+    twins = copy.deepcopy([division, division])
+    assert twins[0] is twins[1]

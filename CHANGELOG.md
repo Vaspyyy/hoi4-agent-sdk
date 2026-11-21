@@ -200,8 +200,9 @@ All notable changes to this project are documented here. The format follows
   of the same decisions file into `common/decisions/categories/`.
 - A copy of a loaded division, template, ship or air wing that was passed
   to `update_oob` next to its original replaced the original. It is now
-  added as a new item, wherever it sits in the list: the source block stays
-  with the item that still says what the block says.
+  added as a new item, wherever it sits in the list and whether or not the
+  original was changed in the same call: the source block stays with the
+  original.
 - A focus statement added after one that sits in the middle of a line with
   a trailing comment was put between that statement and its comment. It
   now gets its own line below.

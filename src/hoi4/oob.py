@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import re
 import textwrap
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Callable, Literal, Sequence, TypeVar
+from typing import Any, Callable, Literal, Sequence, TypeVar
 
 from .patching import (
     AssignmentSpan,
@@ -74,8 +75,33 @@ class Battalion:
     y: int
 
 
+class _SourceItem:
+    """Lets an OOB item remember how many times it was copied.
+
+    A copy of a loaded item still names the item's source block. When both
+    are passed to ``update_oob``, the one that was copied fewer times is the
+    original, and the original keeps the block.
+    """
+
+    def _as_copy(self, clone: Any) -> Any:
+        clone.__dict__["_copy_depth"] = getattr(self, "_copy_depth", 0) + 1
+        return clone
+
+    def __copy__(self) -> Any:
+        clone = type(self).__new__(type(self))
+        clone.__dict__.update(self.__dict__)
+        return self._as_copy(clone)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Any:
+        clone = type(self).__new__(type(self))
+        memo[id(self)] = clone
+        for key, value in self.__dict__.items():
+            clone.__dict__[key] = copy.deepcopy(value, memo)
+        return self._as_copy(clone)
+
+
 @dataclass
-class DivisionTemplate:
+class DivisionTemplate(_SourceItem):
     name: str
     battalions: list[Battalion] = field(default_factory=list)
     support: list[Battalion] = field(default_factory=list)
@@ -89,7 +115,7 @@ class DivisionTemplate:
 
 
 @dataclass
-class DivisionUnit:
+class DivisionUnit(_SourceItem):
     division_template: str
     location: int
     name: str = ""
@@ -104,7 +130,7 @@ class DivisionUnit:
 
 
 @dataclass
-class ShipEquipment:
+class ShipEquipment(_SourceItem):
     equipment_type: str
     amount: int = 1
     owner: str = ""
@@ -118,7 +144,7 @@ class ShipEquipment:
 
 
 @dataclass
-class Ship:
+class Ship(_SourceItem):
     name: str
     definition: str
     equipment: list[ShipEquipment] = field(default_factory=list)
@@ -131,7 +157,7 @@ class Ship:
 
 
 @dataclass
-class TaskForce:
+class TaskForce(_SourceItem):
     name: str
     location: int
     ships: list[Ship] = field(default_factory=list)
@@ -143,7 +169,7 @@ class TaskForce:
 
 
 @dataclass
-class Fleet:
+class Fleet(_SourceItem):
     name: str
     naval_base: int
     task_forces: list[TaskForce] = field(default_factory=list)
@@ -155,7 +181,7 @@ class Fleet:
 
 
 @dataclass
-class AirWing:
+class AirWing(_SourceItem):
     location: int
     equipment_type: str
     amount: int
@@ -1335,10 +1361,10 @@ def _source_owners(
     """Which item owns each source block, and which items are new.
 
     When several items name the same block (a loaded item and copies of it),
-    the block belongs to the one that changes it least: the item that still
-    says what the block says, or the one with the fewest changed lines. The
-    others are new items: they are written after the rest and never replace
-    the one they were copied from.
+    the block belongs to the original: the item that was copied the fewest
+    times, and among equals the one that changes the fewest lines of the
+    block. The others are new items: they are written after the rest and
+    never replace the one they were copied from.
     """
 
     named: dict[int, list[_T]] = {}
@@ -1350,7 +1376,13 @@ def _source_owners(
     for index, group in named.items():
         owner = group[0]
         if len(group) > 1:
-            owner = min(group, key=lambda item: _changed_lines(getattr(item, "raw_block"), patch, item))
+            owner = min(
+                group,
+                key=lambda item: (
+                    getattr(item, "_copy_depth", 0),
+                    _changed_lines(getattr(item, "raw_block"), patch, item),
+                ),
+            )
         owners[index] = owner
     owned = {id(owner) for owner in owners.values()}
     return owners, [item for item in items if id(item) not in owned]
