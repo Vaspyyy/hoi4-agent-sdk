@@ -93,6 +93,18 @@ def _escape_localization_value(value: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
+def _closes_value(line: str, index: int) -> bool:
+    """Whether the quote at ``index`` ends the value.
+
+    The game takes everything up to the last quote of the line, so a value may
+    hold quotes of its own: ``KEY:0 "The "Plan""``. A quote ends the value
+    when only blanks or a comment follow it.
+    """
+
+    trailing = line[index + 1 :].strip()
+    return not trailing or trailing.startswith("#")
+
+
 def _parse_quoted_value(line: str, start: int) -> str | None:
     value: list[str] = []
     i = start
@@ -105,10 +117,7 @@ def _parse_quoted_value(line: str, start: int) -> str | None:
                 value.append(nxt if nxt in {'"', "\\"} else "\\" + nxt)
             i += 2
             continue
-        if line[i] == '"':
-            trailing = line[i + 1 :].strip()
-            if trailing and not trailing.startswith("#"):
-                return None
+        if line[i] == '"' and _closes_value(line, i):
             return "".join(value)
         value.append(line[i])
         i += 1
@@ -261,7 +270,7 @@ def _quoted_value_end(line: str, start: int) -> int | None:
         if line[i] == "\\" and i + 1 < len(line):
             i += 2
             continue
-        if line[i] == '"':
+        if line[i] == '"' and _closes_value(line, i):
             return i
         i += 1
     return None

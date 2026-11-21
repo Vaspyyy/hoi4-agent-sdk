@@ -89,3 +89,39 @@ class TestSerializeLocalizationFile:
 
         assert r"Literal \\n text" in result
         assert parse_localization_file(path)["LITERAL"] == source_value
+
+
+INNER_QUOTES = (
+    b"\xef\xbb\xbfl_english:\n"
+    b' PLAN:0 "The "Plan""\n'
+    b' OTHER:0 "hello" # note "x"\n'
+    b' BROKEN:0 "no end\n'
+    b' LAST:0 "x"\n'
+)
+
+
+def test_a_value_may_hold_quotes_of_its_own(tmp_path: Path) -> None:
+    """The game reads a value up to the last quote of the line."""
+
+    path = tmp_path / "t_l_english.yml"
+    path.write_bytes(INNER_QUOTES)
+    assert parse_localization_file(path) == {
+        "PLAN": 'The "Plan"',
+        "OTHER": "hello",
+        "LAST": "x",
+    }
+
+
+def test_an_edit_keeps_lines_with_inner_quotes_and_unreadable_lines(tmp_path: Path) -> None:
+    from hoi4 import Mod
+
+    path = tmp_path / "localisation/english/t_l_english.yml"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(INNER_QUOTES)
+    mod = Mod(tmp_path)
+    assert mod.get_loc("PLAN") == 'The "Plan"'
+
+    mod.set_loc("LAST", "y")
+    mod.save()
+
+    assert path.read_bytes() == INNER_QUOTES.replace(b' LAST:0 "x"', b' LAST:0 "y"')
