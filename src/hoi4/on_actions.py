@@ -238,7 +238,8 @@ def _set_entries(body: str, key: str, wanted: list[tuple[str, ...]]) -> str:
     An entry that stays keeps its block, spelling and comment. A weighted
     entry whose weight changed (``10 = a.1`` to ``20 = a.1``) is the same
     entry: only its weight is rewritten. A new entry goes into the block of
-    the entry before it. Only a changed order cannot be expressed that way and
+    the entry before it (a new first entry into the block of the first one
+    that stays). Only a changed order cannot be expressed that way and
     rewrites the list into the first block.
     """
 

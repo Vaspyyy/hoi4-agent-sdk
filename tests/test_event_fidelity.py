@@ -402,3 +402,15 @@ def test_a_comment_in_a_one_line_option_never_reaches_the_closing_brace(
     assert path.read_text(encoding="utf-8") == ONE_LINE_OPTIONS.replace(old, new)
     mod.reload()
     assert mod.get_event("t.1").options[index].effect == effect
+
+
+def test_an_option_effect_that_would_end_the_option_early_is_refused(tmp_path):
+    """Balanced braces are not enough: the effect has to be well formed on its own."""
+
+    mod, path = make_mod(tmp_path, ONE_LINE_OPTIONS)
+    options = list(mod.get_event("t.1").options)
+    options[0].effect = "add_political_power = 10 }\noption = {"
+    mod.update_event("t.1", options=options)
+    with pytest.raises(ValueError, match="effect of an event option"):
+        mod.save()
+    assert path.read_text(encoding="utf-8") == ONE_LINE_OPTIONS

@@ -132,6 +132,9 @@ All notable changes to this project are documented here. The format follows
 - `preview()` and `save()` refuse to write a script file that would get a
   syntax problem it does not have now (an unclosed brace in script text
   passed to an update, for example). Nothing is written in that case.
+- Script text for a block (an effect, a trigger, a reward) that is not well
+  formed on its own, for example one with a stray closing brace that would
+  end the block early, is refused with a `ParseError` when it is written.
 - A decision edit writes only the file that holds the decision. Category
   presentation that an old layout kept in the decisions file moves to
   `common/decisions/categories/` only when the category itself is edited. A

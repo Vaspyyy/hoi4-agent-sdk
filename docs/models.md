@@ -462,7 +462,8 @@ all of them). The model joins them in source order. On save, a field whose
 content did not change keeps all its blocks. `events` and `random_events` are
 edited entry by entry: an entry that stays keeps its block and its comment, a
 changed weight is rewritten in place, and a new entry goes into the block of
-the entry before it. Only a reordered list or a changed `effect` is written
+the entry before it (a new first entry into the block of the first entry that
+stays). Only a reordered list or a changed `effect` is written
 into the first block with the other blocks removed. Weighted `random_events`
 entries keep their `weight = event_id` pairs. Every `on_actions = { }` block of
 a file is loaded.

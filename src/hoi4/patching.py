@@ -20,7 +20,7 @@ from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 
 from .parser import ParseError, TokenType, tokenize
-from .syntax import Assignment, Block, Tagged, parse
+from .syntax import Assignment, Block, Tagged, parse, require_well_formed
 
 
 @dataclass(frozen=True)
@@ -115,12 +115,17 @@ def set_block(text: str, key: str, body: str | None, *, comments: bool = False) 
     Comments count as soon as ``body`` has any: a changed, added or dropped
     comment is written. A ``body`` without comments says nothing about the ones
     in the file and leaves them alone, unless ``comments`` is true.
+
+    Raises :class:`~hoi4.syntax.ParseError` for a ``body`` that is not well
+    formed on its own (a stray or missing brace, an unterminated string).
     """
 
     spans = assignment_spans(text, key)
     if body is None:
         return _remove_assignments(text, spans)
     cleaned = body.strip()
+    # A body with a stray or missing brace would change the script around it.
+    require_well_formed(cleaned, f"the new body of '{key}'")
     if not spans:
         replacement = f"{key} = {{"
         if cleaned:
@@ -375,8 +380,10 @@ def sync_body(
             pieces[index] = (current, moved.pop(0)) if moved else (new, wanted[index])
 
     # Offsets come from ``current``, so the edits run from its end to its start.
+    # At the same statement, the in-place edit comes before the insert in
+    # front of it, which would move the statement's offsets.
     edits: list[tuple[int, ...]] = [*swaps, *pairs]
-    for edit in sorted(edits, key=lambda entry: entry[0], reverse=True):
+    for edit in sorted(edits, key=lambda entry: (entry[0], len(entry) == 2), reverse=True):
         if len(edit) == 2:
             text = _replace_segment(text, old[edit[0]], new, wanted[edit[1]], count, newline)
             continue
@@ -632,6 +639,13 @@ def append_assignment(text: str, replacement: str) -> str:
         return text
     newline = _line_ending(text)
     content_end = len(text.rstrip(" \t\r\n"))
+    if content_end:
+        # Spaces that end the last line stay on that line: it keeps its bytes.
+        line_end = content_end
+        while line_end < len(text) and text[line_end] in " \t":
+            line_end += 1
+        if line_end < len(text) and text[line_end] in "\r\n":
+            content_end = line_end
     content = text[:content_end]
     trailing = text[content_end:]
     if not content and text:

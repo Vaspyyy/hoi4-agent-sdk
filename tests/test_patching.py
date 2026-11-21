@@ -21,7 +21,7 @@ from hoi4.patching import (
     sync_body,
     top_level_assignments,
 )
-from hoi4.syntax import parse
+from hoi4.syntax import ParseError, parse
 
 
 # ── the cases from the review ───────────────────────────────────
@@ -357,3 +357,36 @@ def test_a_reorder_next_to_the_opening_brace_keeps_the_comments() -> None:
     assert set_block(nested, "x", "if = {\n\tb = 2\n\ta = 1\n}\nc = 3") == (
         "x = {\n\tif = {\n\t\tb = 2 # B\n\t\ta = 1 # A\n\t}\n\tc = 3 # C\n}\n"
     )
+
+
+def test_a_statement_put_in_front_of_a_changed_one_keeps_every_comment() -> None:
+    source = (
+        "reward = {\n\tadd_political_power = 100 # the big one\n"
+        "\tarmy_experience = 5 # drill\n\tadd_ideas = idea_a # see ideas.txt\n}\n"
+    )
+    new = "add_stability = 0.1\nadd_political_power = 150\narmy_experience = 5\nadd_ideas = idea_a"
+    assert set_block(source, "reward", new) == source.replace(
+        "\tadd_political_power = 100", "\tadd_stability = 0.1\n\tadd_political_power = 150"
+    )
+    assert sync_body("\n\ta = 1 # note a\n\tc = 3 # note c\n", "b = 2\na = 2\nc = 3") == (
+        "\n\tb = 2\n\ta = 2 # note a\n\tc = 3 # note c\n"
+    )
+
+
+def test_a_block_put_in_front_of_the_statement_on_the_brace_line_keeps_the_comments() -> None:
+    source = "k = { a = 1 # ca\n\tb = 2 # cb\n}\n"
+    new = "if = {\n\tlimit = { y = 1 }\n}\na = 1\nb = 2"
+    assert set_block(source, "k", new) == (
+        "k = {\n\tif = {\n\t\tlimit = { y = 1 }\n\t}\n\ta = 1 # ca\n\tb = 2 # cb\n}\n"
+    )
+
+
+def test_a_body_with_a_stray_brace_is_refused() -> None:
+    with pytest.raises(ParseError, match="new body of 'effect'"):
+        set_block("effect = { a = 1 }\n", "effect", "a = 1 }\nother = {")
+    with pytest.raises(ParseError):
+        set_block("effect = { a = 1 }\n", "effect", "a = {")
+
+
+def test_an_appended_statement_leaves_the_spaces_of_the_last_line_alone() -> None:
+    assert append_assignment("\n\ta = 1 \n", "b = 2") == "\n\ta = 1 \n\tb = 2\n"

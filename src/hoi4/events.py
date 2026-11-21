@@ -40,7 +40,7 @@ from .patching import (
     sync_body,
 )
 from .script import normalize_block_body
-from .syntax import Assignment, Block, Scalar, Tagged, parse, quote
+from .syntax import Assignment, Block, Scalar, Tagged, parse, quote, require_well_formed
 from .textio import read_text, write_text
 from .types import Event, EventOption, EventText
 
@@ -267,6 +267,7 @@ def serialize_event(event: Event) -> str:
     ):
         body = normalize_block_body(value)
         if body:
+            require_well_formed(body, f"the {key} of event '{event.id}'")
             parts.append("")
             parts.append(f"\t{key} = {{")
             for line in body.split("\n"):
@@ -340,12 +341,14 @@ def _serialize_option(option: EventOption, indent: int) -> str:
         lines.append(f"{prefix}\t{line}")
     for key, value in [("ai_chance", option.ai_chance), ("trigger", option.trigger)]:
         if value:
+            require_well_formed(value, f"the {key} of an event option")
             lines.append(f"{prefix}\t{key} = {{")
             lines.extend(
                 f"{prefix}\t\t{line.strip()}" for line in normalize_block_body(value).splitlines()
             )
             lines.append(f"{prefix}\t}}")
     if option.effect:
+        require_well_formed(option.effect, "the effect of an event option")
         lines.extend(f"{prefix}\t{line.strip()}" for line in option.effect.strip().splitlines())
     lines.append(f"{prefix}}}")
     return "\n".join(lines)
@@ -453,6 +456,8 @@ def _set_option_effect(body: str, effect: str, indent: str) -> str:
     of the known keys.
     """
 
+    # An effect with a stray brace would end the option and start other script.
+    require_well_formed(effect, "the effect of an event option")
     synced = sync_body(body, effect, keep=_OPTION_KNOWN_KEYS)
     if synced is not None:
         return synced
