@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HOI4 Agent SDK — Source-Preserving Python Toolkit for Hearts of Iron IV</title>
+    <meta
+      name="description"
+      content="A source-preserving Python SDK for creating, inspecting, validating, and editing Hearts of Iron IV mods. Lossless syntax tree, byte-exact I/O, 30 layered modules, 163 validation rules."
+    />
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("hoi4-sdk-theme");
+          var prefersDark =
+            window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var theme = saved || (prefersDark ? "dark" : "light");
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+        // Handle GitHub Pages SPA redirect from 404.html
+        var redirect = sessionStorage.getItem("hoi4-sdk-redirect");
+        if (redirect) {
+          sessionStorage.removeItem("hoi4-sdk-redirect");
+          if (redirect !== location.pathname + location.search + location.hash) {
+            history.replaceState(null, "", redirect);
+          }
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
