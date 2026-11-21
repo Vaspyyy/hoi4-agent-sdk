@@ -459,6 +459,18 @@ def test_flags_used_by_the_game_count_but_its_own_flags_are_never_reported(tmp_p
     assert liveness(mod, "flag_read_never_set") == []
 
 
+def test_project_flags_are_tracked(tmp_path):
+    path = write(
+        tmp_path, "common/national_focus/t.txt",
+        focus_file("\t\t\tset_project_flag = TST_alone\n\t\t\tset_project_flag = TST_read"),
+    )
+    write(tmp_path, "events/t.txt", "country_event = { id = t.1 trigger = { has_project_flag = TST_read } }\n")
+    mod = Mod(tmp_path)
+    assert [(f.message, f.file_path, f.line) for f in liveness(mod, "flag_set_never_read")] == [
+        ("Flag 'TST_alone' is written but never read.", str(path), 6)
+    ]
+
+
 def test_unfired_event_fires_for_the_mods_event_only(tmp_path):
     game = tmp_path / "game"
     write(game, "events/v.txt", "country_event = { id = v.1 is_triggered_only = yes }\n")

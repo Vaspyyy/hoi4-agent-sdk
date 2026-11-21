@@ -1,16 +1,21 @@
 """Find what a piece of script refers to, read from the syntax tree.
 
 Every check that asks "which ideas, events, flags, technologies, equipment,
-focus trees, country tags or states does this script name?" reads the answer
-here. The walk follows the lossless tree of ``hoi4.syntax``, so a comment or a
-quoted string can never look like a reference. It also keeps track of the
-scope each statement runs in: ``123 = { add_core_of = TAG }`` and
-``every_owned_state = { add_core_of = TAG }`` run in a state, a bare
-``add_core_of`` in a focus reward runs in the country.
+focus trees or country tags does this script name?" reads the answer here.
+Files are split into owners by :mod:`hoi4._script_corpus` and every script
+block is walked by the scope walker of :mod:`hoi4.script_scopes`, the same
+walker the token check uses: it decides what a statement is (a command, a
+control structure, an iterator, a scope change or an argument) and the scope
+it runs in. ``123 = { add_core_of = TAG }`` and ``every_owned_state = {
+add_core_of = TAG }`` run in a state, a bare ``add_core_of`` in a focus reward
+runs in the country. A comment or a quoted string can never look like a
+reference.
 
-A scope is only named when it is certain. Inside a key the walk does not know
-(a scripted effect with arguments, ``var:x``, ``FROM``) the scope is
-``UNKNOWN`` and ``certain`` is false, so checks stay quiet there.
+A scope is only named when it is certain. Inside the arguments of a command
+(a scripted effect with arguments, ``start_civil_war = { ... }``) or behind
+``var:x`` the scope is ``UNKNOWN`` and ``certain`` is false, so checks stay
+quiet there. The parts of a file that hold no script (a focus's
+``prerequisite``, a scripted GUI) are still read for names, as data.
 
 A file is read once into a :class:`FileReferences`: its owners (a focus, an
 event, a decision, a scripted effect, ...) with their references, and what the
@@ -36,7 +41,6 @@ UNKNOWN = "UNKNOWN"
 
 TAG_RE = re.compile(r"^[A-Z][A-Z0-9]{2}$")
 DYNAMIC_TAG_RE = re.compile(r"^D[0-9]{2}$")
-_NUMBER_RE = re.compile(r"^[0-9]+$")
 # Parts of a name the game fills in while running.
 _DYNAMIC_PART_RE = re.compile(
     r"@\[[^\]]*\]|@[A-Za-z0-9_.:]+|\[[^\]]*\]|\$[^$]*\$|\?[A-Za-z0-9_.:]*"
@@ -53,7 +57,7 @@ EVENT_EFFECTS = frozenset(
 )
 # ``start_border_war`` names the events it fires with these keys.
 _BORDER_WAR_EVENT_KEYS = frozenset({"on_win", "on_lose", "on_cancel"})
-_FLAG_KINDS = ("country", "global", "state", "character", "unit_leader", "mio")
+_FLAG_KINDS = ("country", "global", "state", "character", "unit_leader", "mio", "project")
 FLAG_WRITERS = frozenset(
     f"{verb}_{kind}_flag" for verb in ("set", "clr", "modify") for kind in _FLAG_KINDS
 )
@@ -107,8 +111,8 @@ class ScriptRef:
     """One thing a statement names, where it is and the scope it runs in.
 
     ``kind`` is what is named: ``idea``, ``event``, ``flag``, ``technology``,
-    ``equipment``, ``focus_tree``, ``country`` (a tag used as a scope),
-    ``state`` (a state id used as a scope) or a statement such as
+    ``equipment``, ``focus_tree``, ``country`` (a tag used as a scope) or a
+    statement such as
     ``core_effect``. ``action`` is what the statement does with it: ``add``,
     ``remove``, ``has``, ``show``, ``fire``, ``set``, ``clear``, ``read``,
     ``load``, ``scope`` or ``use``.
@@ -331,8 +335,6 @@ class _Collector:
             return
         if type(value) in (Block, Tagged) and is_country_tag(key):
             add("country", "scope", key, offset)
-        elif block is not None and _NUMBER_RE.match(key):
-            add("state", "scope", key, offset)
 
 
 def _on_action_events(doc: Document, owner: ScriptOwner, block: Block) -> None:
