@@ -21,10 +21,13 @@ from ..patching import (
     AssignmentSpan,
     top_level_assignments,
 )
+from ..script_scopes import entry_scope
 from ..script_vocabulary import (
     GameScriptVocabulary,
     ScriptSource,
     load_game_script_vocabulary,
+    SourceLocator,
+    modifier_block_text,
     validate_script_sources,
 )
 from ..states import (
@@ -34,6 +37,7 @@ from ..states import (
 from ..tags import (
     load_all_tags,
 )
+from ..syntax import parse
 from ..textio import read_text
 from ..types import (
     Event,
@@ -268,25 +272,36 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         )
 
     def game_script_vocabulary(self) -> GameScriptVocabulary:
-        """Return documented script tokens and installed-game usage counts."""
+        """Every effect, trigger and modifier name the game and this mod know.
+
+        The install's names (with usage counts) are read once and cached on
+        disk; the mod's scripted effects and triggers, ideologies, characters
+        and modifier family members are added on every call, so pending edits
+        count.
+        """
 
         if self.hoi4_install is None:
             raise ValueError(
                 "game_script_vocabulary() requires a configured HOI4 installation"
             )
         if self._script_vocabulary_cache is None:
-            self._script_vocabulary_cache = load_game_script_vocabulary(
-                self.hoi4_install,
-                ideology_ids=self._ideologies,
-            )
-        return self._script_vocabulary_cache
+            # What comes from the install is cached on disk as well.
+            self._script_vocabulary_cache = load_game_script_vocabulary(self.hoi4_install)
+        custom = self._effective_custom_script_tokens()
+        return self._script_vocabulary_cache.extended(
+            [*self.base_mod_paths, self.mod_root],
+            scripted_effects=custom.get("effect", ()),
+            scripted_triggers=custom.get("trigger", ()),
+            ideology_ids=self._ideologies,
+            characters=self._characters,
+        )
 
     def validate_script_vocabulary(
         self,
         *,
         allowlist: Sequence[str] = (),
     ) -> list[ValidationError]:
-        """Warn about undocumented effect, trigger, and modifier tokens."""
+        """Report unknown effect, trigger and modifier names and names in a scope they do not support."""
 
         return validate_script_sources(
             self._semantic_script_sources(),
@@ -297,95 +312,121 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         )
 
     def _semantic_script_sources(self) -> list[ScriptSource]:
+        """Every effect, trigger, modifier and weight block of the loaded mod.
+
+        Each source carries the scope its block runs in when that is certain
+        (``hoi4.script_scopes.ENTRY_SCOPES``), what ``FROM`` is when known, and
+        the file line its text starts on, so findings point into the file.
+        """
+
         sources: list[ScriptSource] = []
+
+        def current_text(path: Path) -> str:
+            pending = self._script_file_updates.get(path)
+            return pending if pending is not None else read_text(path)
+
+        locator = SourceLocator(current_text)
 
         def add(
             text: str,
-            kind: Literal["effect", "trigger", "modifier"],
+            kind: Literal["effect", "trigger", "modifier", "weight"],
             owner_kind: str,
             owner_id: str,
             path: Path | None,
             scope: str | None = None,
+            *,
+            from_scope: str | None = None,
+            anchor: str = "",
+            line: int | None = None,
         ) -> None:
-            if text.strip():
-                sources.append(
-                    ScriptSource(
-                        text=text,
-                        kind=kind,
-                        owner_kind=owner_kind,
-                        owner_id=owner_id,
-                        file_path=str(path) if path is not None else None,
-                        scope=scope,
-                    )
+            if not text.strip():
+                return
+            line_map: tuple[int, ...] = ()
+            if line is None and path is not None and anchor:
+                line_map = locator.line_map(path, text, anchor) or ()
+                line = line_map[0] if line_map else None
+            sources.append(
+                ScriptSource(
+                    text=text,
+                    kind=kind,
+                    owner_kind=owner_kind,
+                    owner_id=owner_id,
+                    file_path=str(path) if path is not None else None,
+                    scope=scope,
+                    from_scope=from_scope,
+                    line=line,
+                    line_map=line_map,
                 )
+            )
 
         for tree in self._focus_trees.values():
             for focus in tree.focuses:
-                for text in (
-                    focus.completion_reward,
-                    focus.select_effect,
-                    focus.complete_tooltip,
+                for name, kind in (
+                    ("completion_reward", "effect"),
+                    ("select_effect", "effect"),
+                    ("complete_tooltip", "effect"),
+                    ("available", "trigger"),
+                    ("bypass", "trigger"),
+                    ("allow_branch", "trigger"),
+                    ("ai_will_do", "weight"),
+                ):
+                    add(
+                        getattr(focus, name),
+                        cast(Literal["effect", "trigger", "weight"], kind),
+                        "focus",
+                        focus.id,
+                        tree.path,
+                        entry_scope("focus", name),
+                        anchor=focus.raw_block,
+                    )
+        for event in self._events.values():
+            event_scope = entry_scope(event.event_type, "*")
+            for text, kind in (
+                (event.trigger, "trigger"),
+                (event.immediate, "effect"),
+                (event.mean_time_to_happen, "weight"),
+                *(
+                    (entry.trigger, "trigger")
+                    for entry in (*event.conditional_titles, *event.conditional_descriptions)
+                ),
+            ):
+                add(
+                    text,
+                    cast(Literal["effect", "trigger", "weight"], kind),
+                    "event",
+                    event.id,
+                    event.path,
+                    event_scope,
+                    anchor=event.raw_block,
+                )
+            for option in event.options:
+                for text, kind in (
+                    (option.trigger, "trigger"),
+                    (option.effect, "effect"),
+                    (option.ai_chance, "weight"),
+                    *((entry.trigger, "trigger") for entry in option.conditional_names),
                 ):
                     add(
                         text,
-                        "effect",
-                        "focus",
-                        focus.id,
-                        tree.path,
-                        scope="COUNTRY",
+                        cast(Literal["effect", "trigger", "weight"], kind),
+                        "event",
+                        event.id,
+                        event.path,
+                        event_scope,
+                        anchor=option.raw_block or event.raw_block,
                     )
-                for text in (focus.available, focus.bypass, focus.allow_branch):
-                    add(
-                        text,
-                        "trigger",
-                        "focus",
-                        focus.id,
-                        tree.path,
-                        scope="COUNTRY",
-                    )
-        for event in self._events.values():
-            event_scope = {
-                "state_event": "STATE",
-                "unit_leader_event": "CHARACTER",
-                "operative_leader_event": "CHARACTER",
-            }.get(event.event_type, "COUNTRY")
-            add(
-                event.trigger,
-                "trigger",
-                "event",
-                event.id,
-                event.path,
-                scope=event_scope,
-            )
-            add(
-                event.immediate,
-                "effect",
-                "event",
-                event.id,
-                event.path,
-                scope=event_scope,
-            )
-            for option in event.options:
-                add(
-                    option.trigger,
-                    "trigger",
-                    "event",
-                    event.id,
-                    event.path,
-                    scope=event_scope,
-                )
-                add(
-                    option.effect,
-                    "effect",
-                    "event",
-                    event.id,
-                    event.path,
-                    scope=event_scope,
-                )
         for occurrences in self._on_action_occurrences.values():
             for action in occurrences:
-                add(action.effect, "effect", "on_action", action.id, action.path)
+                add(
+                    action.effect,
+                    "effect",
+                    "on_action",
+                    action.id,
+                    action.path,
+                    anchor=action.raw_block,
+                )
                 if action.events or action.random_events:
+                    # Event references for the content graph; not in any file.
                     add(
                         "\n".join(
                             f"country_event = {{ id = {event_id} }}"
@@ -397,73 +438,34 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                         action.path,
                     )
         for decision in self._decisions.values():
-            add(
-                decision.available,
-                "trigger",
-                "decision",
-                decision.id,
-                decision.path,
-                scope="COUNTRY",
-            )
-            add(
-                decision.visible,
-                "trigger",
-                "decision",
-                decision.id,
-                decision.path,
-                scope="COUNTRY",
-            )
-            add(
-                decision.complete_effect,
-                "effect",
-                "decision",
-                decision.id,
-                decision.path,
-                scope="COUNTRY",
-            )
-            add(
-                decision.remove_effect,
-                "effect",
-                "decision",
-                decision.id,
-                decision.path,
-                scope="COUNTRY",
-            )
-            # Mission and targeted-decision fields run in the decision
-            # owner's (country) scope; targets are reached through FROM.
-            for trigger_field in (
-                "allowed",
-                "activation",
-                "cancel_trigger",
-                "remove_trigger",
-                "target_trigger",
-                "target_root_trigger",
-                "custom_cost_trigger",
+            from_scope = "STATE" if decision.state_target else None
+            for name, kind in (
+                ("available", "trigger"),
+                ("visible", "trigger"),
+                ("complete_effect", "effect"),
+                ("remove_effect", "effect"),
+                ("allowed", "trigger"),
+                ("activation", "trigger"),
+                ("cancel_trigger", "trigger"),
+                ("remove_trigger", "trigger"),
+                ("target_trigger", "trigger"),
+                ("target_root_trigger", "trigger"),
+                ("custom_cost_trigger", "trigger"),
+                ("timeout_effect", "effect"),
+                ("cancel_effect", "effect"),
+                ("ai_will_do", "weight"),
+                ("modifier", "modifier"),
             ):
                 add(
-                    getattr(decision, trigger_field),
-                    "trigger",
+                    getattr(decision, name),
+                    cast(Literal["effect", "trigger", "modifier", "weight"], kind),
                     "decision",
                     decision.id,
                     decision.path,
-                    scope="COUNTRY",
+                    entry_scope("decision", name) if kind != "modifier" else None,
+                    from_scope=from_scope,
+                    anchor=decision.raw_block,
                 )
-            for effect_field in ("timeout_effect", "cancel_effect"):
-                add(
-                    getattr(decision, effect_field),
-                    "effect",
-                    "decision",
-                    decision.id,
-                    decision.path,
-                    scope="COUNTRY",
-                )
-            add(
-                decision.modifier,
-                "modifier",
-                "decision",
-                decision.id,
-                decision.path,
-            )
         for idea in self._ideas.values():
             add(
                 idea.allowed,
@@ -471,38 +473,45 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 "idea",
                 idea.id,
                 idea.path,
-                scope="COUNTRY",
+                entry_scope("idea", "allowed"),
+                anchor=idea.raw_block,
+            )
+            add(
+                idea.ai_will_do,
+                "weight",
+                "idea",
+                idea.id,
+                idea.path,
+                entry_scope("idea", "ai_will_do"),
+                anchor=idea.raw_block,
             )
             if idea.modifier:
                 add(
-                    "\n".join(f"{key} = 0" for key in idea.modifier),
+                    modifier_block_text(idea.raw_block, "modifier", idea.modifier),
                     "modifier",
                     "idea",
                     idea.id,
                     idea.path,
+                    anchor=idea.raw_block,
                 )
         for modifier in self._dynamic_modifiers.values():
-            add(
-                modifier.enable,
-                "trigger",
-                "dynamic_modifier",
-                modifier.id,
-                modifier.path,
-            )
-            add(
-                modifier.remove_trigger,
-                "trigger",
-                "dynamic_modifier",
-                modifier.id,
-                modifier.path,
-            )
+            for text in (modifier.enable, modifier.remove_trigger):
+                add(
+                    text,
+                    "trigger",
+                    "dynamic_modifier",
+                    modifier.id,
+                    modifier.path,
+                    anchor=modifier.raw_block,
+                )
             if modifier.modifier:
                 add(
-                    "\n".join(f"{key} = 0" for key in modifier.modifier),
+                    modifier_block_text(modifier.raw_block, None, modifier.modifier),
                     "modifier",
                     "dynamic_modifier",
                     modifier.id,
                     modifier.path,
+                    anchor=modifier.raw_block,
                 )
         for bookmark in self._bookmarks:
             add(
@@ -511,7 +520,8 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 "bookmark",
                 bookmark.name,
                 bookmark.path,
-                scope="COUNTRY",
+                entry_scope("bookmark", "effect"),
+                anchor=bookmark.raw_block,
             )
             for country in bookmark.countries:
                 add(
@@ -520,31 +530,42 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                     "bookmark",
                     bookmark.name,
                     bookmark.path,
-                    scope="COUNTRY",
+                    entry_scope("bookmark", "available"),
+                    anchor=country.raw_block or bookmark.raw_block,
                 )
         for character in self._characters.values():
-            scopes: list[tuple[list[CharacterRole], str | None]] = [
-                (character.roles, None)
+            # Which scope a role's blocks run in differs by role and field, so
+            # it is left unknown: names are checked, scopes are not.
+            groups: list[tuple[list[CharacterRole], str | None, str]] = [
+                (character.roles, None, character.raw_block)
             ]
-            scopes.extend((instance.roles, instance.allowed) for instance in character.instances)
-            for roles, allowed in scopes:
+            groups.extend(
+                (instance.roles, instance.allowed, instance.raw_block or character.raw_block)
+                for instance in character.instances
+            )
+            for roles, allowed, anchor in groups:
                 add(
                     allowed or "",
                     "trigger",
                     "character",
                     character.id,
                     character.path,
-                    scope="COUNTRY",
+                    anchor=anchor,
                 )
                 for role in roles:
-                    for attribute in ("allowed", "visible", "available"):
+                    for attribute, kind in (
+                        ("allowed", "trigger"),
+                        ("visible", "trigger"),
+                        ("available", "trigger"),
+                        ("ai_will_do", "weight"),
+                    ):
                         add(
                             str(getattr(role, attribute, "")),
-                            "trigger",
+                            cast(Literal["trigger", "weight"], kind),
                             "character",
                             character.id,
                             character.path,
-                            scope="COUNTRY",
+                            anchor=role.raw_block or anchor,
                         )
         for kind, relative in (
             ("effect", Path("common/scripted_effects")),
@@ -554,28 +575,19 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             paths = set(directory.rglob("*.txt"))
             paths.update(path for path in self._script_file_updates if path.is_relative_to(directory))
             for path in sorted(paths):
-                try:
-                    pending_text = self._script_file_updates.get(path)
-                    text = (pending_text if pending_text is not None else
-                            read_text(path))
-                    for span in top_level_assignments(text):
-                        if (
-                            span.is_block
-                            and span.body_start is not None
-                            and span.body_end is not None
-                        ):
-                            add(
-                                text[span.body_start : span.body_end],
-                                cast(
-                                    Literal["effect", "trigger", "modifier"],
-                                    kind,
-                                ),
-                                f"scripted_{kind}",
-                                span.key,
-                                path,
-                            )
-                except (OSError, ValueError):
-                    continue
+                text = locator.text(path)
+                for item in parse(text).root.assignments():
+                    body = item.block
+                    if body is None:
+                        continue
+                    add(
+                        body.body,
+                        cast(Literal["effect", "trigger"], kind),
+                        f"scripted_{kind}",
+                        item.name,
+                        path,
+                        line=text.count("\n", 0, body.body_start) + 1,
+                    )
         return sources
 
     def _script_entries(self) -> list[tuple[str, str, str | None, str | None]]:
