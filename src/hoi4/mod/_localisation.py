@@ -22,6 +22,7 @@ from ..localisation import (
     parse_localization_dir,
     parse_localization_files,
 )
+from ..paths import resolve_mod_output_path
 from ..textio import read_text
 from ..types import (
     Country,
@@ -252,7 +253,7 @@ class LocalisationLayer(CoreLayer):
         language_dir = self.mod_root / "localisation" / language
         target = None
         if file_path is not None:
-            target = self._output_path(file_path)
+            target = resolve_mod_output_path(self.mod_root, file_path)
             if not target.is_relative_to(language_dir) or target.suffix != ".yml":
                 raise ValueError(
                     f"set_loc() supports only .yml files under localisation/{language}; "
@@ -263,6 +264,7 @@ class LocalisationLayer(CoreLayer):
                     f"set_loc(overwrite_vanilla=True) needs a file under "
                     f"localisation/{language}/replace"
                 )
+            self._note_target(target)
         elif replace:
             target = self._default_loc_file_for(language, replace=True)
         key = self._normalize_loc_key(key)
@@ -274,6 +276,9 @@ class LocalisationLayer(CoreLayer):
             sources[key] = target
         elif key not in sources:
             sources[key] = self._default_loc_file_for(language)
+        # The file the key goes to may be one the loader did not read (the
+        # default file behind a linked folder, which the loader skips).
+        self._note_target(sources[key])
         self._dirty.add("localization")
         dirty_keys.add(key)
         if old_source is not None:

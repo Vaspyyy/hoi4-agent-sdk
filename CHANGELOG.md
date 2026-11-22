@@ -339,6 +339,10 @@ say what you got, no duplicate entry points, and the script builders moved to
   system. On Python 3.11 and 3.12 this can change which of two definitions
   wins when an inherited layer defines the same key twice in nested
   folders (on 3.13 and later the order is the same as before).
+- When a mod has two history files for one tag (`TAG - A.txt` and
+  `TAG - B.txt`), the first by name is read, on every file system. Before,
+  the order of the directory listing decided, which differs between file
+  systems.
 - A symlink in a base mod that leaves the base mod's folder is refused when
   it is read, not when the `Mod` is built.
 - `copy.copy(mod)` gives a copy that keeps its own account of which

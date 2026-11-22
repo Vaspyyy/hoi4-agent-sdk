@@ -300,20 +300,23 @@ class DecisionsLayer(LocalisationLayer):
             if "path" in kwargs
             else None
         )
+        # Work out the new definition file and check everything before the
+        # category changes: a rejected call leaves it as it was.
+        definition_path = category.definition_path
         if category_path is not None:
-            category.definition_path = self._output_path(category_path)
-        elif target is not None and category.definition_path is None:
-            category.definition_path = _decision_category_definition_path(
+            definition_path = self._output_path(category_path)
+        elif target is not None and definition_path is None:
+            definition_path = _decision_category_definition_path(
                 self.mod_root, target, self._shadows_inherited
             )
         if (
-            category.definition_path is not None
-            and category.definition_path.parent
-            != self.mod_root / "common" / "decisions" / "categories"
+            definition_path is not None
+            and definition_path.parent != self.mod_root / "common" / "decisions" / "categories"
         ):
             raise ValueError(
                 "Decision category_path must point inside common/decisions/categories"
             )
+        category.definition_path = definition_path
         _set_fields(category, kwargs)
         if target is not None:
             self._point_decision_category_at(category, target)

@@ -175,7 +175,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 f"Character '{character_id}' already exists. "
                 "Use overwrite=True only for deliberate replacement."
             )
-        target = self._output_path(            path
+        target = self._output_path(
+            path
             or (
                 existing.path
                 if existing is not None

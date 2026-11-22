@@ -279,8 +279,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 f"OOB '{name}' already exists. Use overwrite=True only for "
                 "deliberate replacement."
             )
-        target = self._output_path(            path or Path("history") / "units" / f"{name}.txt",
-        )
+        target = self._output_path(path or Path("history") / "units" / f"{name}.txt")
         inferred_kind = _oob_content_kind(
             templates,
             divisions,

@@ -466,6 +466,15 @@ UNREAD: dict[str, tuple[str, Step]] = {
         "history/countries/XYZ - Xyzland.txt",
         lambda mod: mod.create_country("XYZ", "Xyzland", capital=2, overwrite=True),
     ),
+    # A new name moves the history file to "TAG - Name.txt".
+    "update_country, renamed": (
+        "history/countries/MOD - Newname.txt",
+        lambda mod: mod.update_country("MOD", name="Newname"),
+    ),
+    "create_country over itself, renamed": (
+        "history/countries/MOD - Newname.txt",
+        lambda mod: mod.create_country("MOD", "Newname", capital=2, overwrite=True),
+    ),
 }
 
 EVERY_UNREAD = pytest.mark.parametrize("name", sorted(UNREAD))
@@ -510,6 +519,6 @@ def test_an_edit_pointed_at_an_unread_file_refuses_a_change_since_the_edit(
     if same_time:
         os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
 
-    with pytest.raises(ExternalModificationError, match="extra.txt|XYZ"):
+    with pytest.raises(ExternalModificationError, match="extra.txt|XYZ|Newname"):
         mod.save()
     assert path.read_text(encoding="utf-8") == changed

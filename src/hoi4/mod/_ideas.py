@@ -225,3 +225,6 @@ class IdeasLayer(CountriesLayer):
         """
         tag = self._require_country_reference(tag)
         self._cached_idea_file[tag] = self._output_path(path)
+        # Not an edit that a save writes: discard() and a save of other
+        # things forget it with the section, as a full reload used to.
+        self._reload_on_discard.add("ideas")
