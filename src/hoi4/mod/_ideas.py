@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import EnsureIdeaFields, IdeaFields
 from ..idea_icons import (
     DEFAULT_IDEA_ICON,
     normalize_idea_icon,
@@ -31,6 +34,11 @@ class IdeasLayer(CountriesLayer):
     # ── Ideas ───────────────────────────────────────────────────
 
     def list_ideas(self) -> list[str]:
+        """Return the sorted ids of the mod's ideas.
+
+        Game ideas are not listed until ``load_inherited_content()`` loads
+        their file.
+        """
         return sorted(self._ideas.keys())
 
     def get_idea(self, idea_id: str, *, default: _D | _Missing = MISSING) -> Idea | _D:
@@ -60,6 +68,29 @@ class IdeasLayer(CountriesLayer):
         overwrite: bool = False,
         removal_cost: str | int | float | None = None,
     ) -> Idea:
+        """Create an idea (a national spirit, law or advisor slot entry); staged until ``save()``.
+
+        Args:
+            icon: The picture name, with or without the ``GFX_idea_`` prefix.
+            modifier: The modifier values by name, such as
+                ``{"stability_factor": 0.1}``.
+            category: The idea category, such as ``"country"`` (national
+                spirits) or a law category.
+            path: The output file. Without it, the existing idea's file, the
+                file of the tag the id starts with (``ABC_x`` goes to
+                ``common/ideas/ABC_ideas.txt``) or ``common/ideas/mod_ideas.txt``.
+            overwrite: Replace an existing idea of this id.
+            removal_cost: The political power it costs to remove; ``None``
+                leaves it out.
+
+        Returns:
+            The new idea.
+
+        Raises:
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            ValueError: The id is not a valid script id, or ``path`` is
+                outside the mod.
+        """
         idea_id = require_script_id(idea_id, label="idea ID")
         existing = self._ideas.get(idea_id)
         if existing is not None and not overwrite:
@@ -95,7 +126,7 @@ class IdeasLayer(CountriesLayer):
         self._dirty_ideas.add(idea_id)
         return idea
 
-    def ensure_idea(self, idea_id: str, *, merge_modifier: bool = False, **kwargs) -> Idea:
+    def ensure_idea(self, idea_id: str, *, merge_modifier: bool = False, **fields: Unpack[EnsureIdeaFields]) -> Idea:
         """Create an idea if missing, otherwise update the existing idea.
 
         Existing modifiers are replaced by default. Pass
@@ -107,6 +138,7 @@ class IdeasLayer(CountriesLayer):
         Raises:
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         existing = self.get_idea(idea_id, default=None)
         if existing is not None:
             _check_fields("ensure_idea", existing, kwargs, allow_path=True)
@@ -116,7 +148,7 @@ class IdeasLayer(CountriesLayer):
         )
         return self.create_idea(idea_id, **kwargs)
 
-    def update_idea(self, idea_id: str, *, merge_modifier: bool = False, **kwargs) -> Idea:
+    def update_idea(self, idea_id: str, *, merge_modifier: bool = False, **fields: Unpack[IdeaFields]) -> Idea:
         """Update an idea, replacing its modifier mapping by default.
 
         ``modifier={}`` therefore clears the block. Pass
@@ -129,6 +161,7 @@ class IdeasLayer(CountriesLayer):
             NotFoundError: No idea has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         idea = self.get_idea(idea_id)
         if "id" in kwargs:
             raise ValueError("Idea IDs are immutable; create a new idea instead")

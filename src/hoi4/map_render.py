@@ -174,7 +174,21 @@ def render_political_map(
 ) -> PoliticalMapResult:
     """Render provinces by state owner and optionally save the result.
 
-    Install the SDK's ``map`` extra before calling this function.
+    Install the SDK's ``map`` extra before calling this function. Each
+    province gets its owner's map colour; sea is ``ocean_color`` and land
+    without an owner ``unowned_color``. Mod files override the game's.
+
+    Args:
+        output_path: Save the picture here as well (the format follows the
+            ending).
+        progress: Called as ``progress(done, total)`` while rendering;
+            ``event_progress`` gets ``ProgressEvent`` objects instead.
+        cancelled: Polled while rendering; returning true stops it.
+
+    Raises:
+        RuntimeError: NumPy or Pillow (the ``map`` extra) is missing.
+        MapRenderCancelled: ``cancelled()`` returned true.
+        FileNotFoundError: A map file does not exist.
     """
 
     try:

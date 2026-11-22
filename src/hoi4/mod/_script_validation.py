@@ -281,6 +281,9 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         Errors cannot be hidden.
         Every finding has the severity its code is registered with (see
         ``docs/validation.md``).
+
+        Raises:
+            ValueError: A ``suppress`` entry names an unknown code.
         """
 
         probe = Event(
@@ -341,6 +344,9 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         and modifier family members are added on every call, so pending edits
         count (a building made with ``create_definition()`` is known before
         ``save()``, a deleted one is gone).
+
+        Raises:
+            ValueError: No game install is configured.
         """
 
         if self.hoi4_install is None:

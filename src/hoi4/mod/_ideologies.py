@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 import copy
 from pathlib import Path
 
+from ..fields import IdeologyFields
 from ..ideologies import Ideology, SubIdeology
 from ..paths import (
     require_script_id,
@@ -24,6 +27,7 @@ class IdeologiesLayer(CoreLayer):
     # ── Ideologies ───────────────────────────────────────────────
 
     def list_ideologies(self, *, include_vanilla: bool = True) -> list[str]:
+        """Return the sorted ids of the mod's ideologies, and the game's unless ``include_vanilla`` is false."""
         ids = set(self._ideologies)
         if include_vanilla:
             ids.update(self._vanilla_ideologies)
@@ -76,6 +80,30 @@ class IdeologiesLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> Ideology:
+        """Create an ideology group (``common/ideologies``); staged until ``save()``.
+
+        Args:
+            color: The map colour as ``(red, green, blue)``, each 0 to 255.
+            types: The sub-ideologies (leader ideologies) of the group.
+            rules: Rules such as ``{"can_puppet": "yes"}``.
+            modifiers: Modifiers for countries ruled by the group;
+                ``hidden_modifiers`` and ``faction_modifiers`` likewise.
+            dynamic_faction_names: Localisation keys for faction names.
+            ai_behavior: Which game AI flag to set: ``"fascist"`` writes
+                ``ai_fascist = yes``; empty sets none.
+            effects: Values written into the ideology's ``effects`` block.
+            path: The output file. Without it,
+                ``common/ideologies/00_mod_ideologies.txt``.
+            overwrite: Replace an ideology of this id that the mod defines.
+
+        Returns:
+            The new ideology.
+
+        Raises:
+            AlreadyExistsError: The mod defines the id and ``overwrite`` is false.
+            ValueError: The id is not a valid script id, or ``path`` is
+                outside the mod.
+        """
         ideology_id = require_script_id(ideology_id, label="ideology ID")
         existing = self._ideologies.get(ideology_id)
         if existing is not None and not overwrite:
@@ -111,7 +139,7 @@ class IdeologiesLayer(CoreLayer):
         self._dirty.add("ideologies")
         return ideology
 
-    def update_ideology(self, ideology_id: str, **kwargs) -> Ideology:
+    def update_ideology(self, ideology_id: str, **fields: Unpack[IdeologyFields]) -> Ideology:
         """Patch fields of an ideology; a game ideology is copied into the mod first.
 
         Returns:
@@ -121,6 +149,7 @@ class IdeologiesLayer(CoreLayer):
             NotFoundError: No one defines ``ideology_id``.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         existing = self._ideologies.get(ideology_id)
         source = existing if existing is not None else self.get_ideology(ideology_id)
         forbidden = {"id", "raw_block", "touched_fields", "is_vanilla"} & set(kwargs)

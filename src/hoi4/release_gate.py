@@ -267,7 +267,7 @@ def _largest(items: list[tuple[int, str, _T]]) -> tuple[str, _T] | None:
     return identifier, value
 
 
-def _increment_number(value: object) -> object:
+def _increment_number(value: object) -> str | int | float:
     if isinstance(value, bool):
         return not value
     if isinstance(value, int):

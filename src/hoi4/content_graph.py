@@ -194,9 +194,11 @@ class ContentLivenessReport:
 
     @property
     def clean(self) -> bool:
+        """Whether the analysis found nothing to report."""
         return not self.findings
 
     def to_dict(self) -> dict[str, object]:
+        """Return the report as plain JSON-ready values (lists, strings, numbers)."""
         return {
             "clean": self.clean,
             "analysis_scope": self.analysis_scope,

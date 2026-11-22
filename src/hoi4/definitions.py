@@ -54,6 +54,11 @@ class DefinitionKind:
 
     @property
     def default_path(self) -> str:
+        """The mod-relative file new definitions of this kind go to without ``path=``.
+
+        Raises:
+            ValueError: The kind has no default file; pass ``path=``.
+        """
         if not self.default_file:
             raise ValueError(f"{self.name} definitions need an explicit path= under {self.directory}/")
         return f"{self.directory}/{self.default_file}"

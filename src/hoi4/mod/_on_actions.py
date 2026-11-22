@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import EnsureOnActionFields, OnActionFields
 from ..paths import (
     require_script_id,
     resolve_mod_output_path,
@@ -31,6 +34,7 @@ class OnActionsLayer(CoreLayer):
     # ── On Actions ───────────────────────────────────────────────
 
     def list_on_actions(self) -> list[str]:
+        """Return the sorted ids of the on-action hooks the mod uses."""
         return sorted(self._on_actions.keys())
 
     def get_on_action_occurrences(
@@ -144,6 +148,29 @@ class OnActionsLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> OnAction:
+        """Add an occurrence of the on-action hook ``action_id`` in one file; staged until ``save()``.
+
+        The game runs every occurrence of a hook, so the mod may add one per
+        file. An occurrence in the same file counts as existing.
+
+        Args:
+            effect: Body of the ``effect`` block.
+            events: Event ids fired by the hook.
+            random_events: The entries of ``random_events``, flattened: a
+                weight followed by an event id, such as ``["100", "my.1"]``.
+            path: The file. Without it, the existing occurrence's file when
+                overwriting, else ``common/on_actions/mod_on_actions.txt``.
+            overwrite: Replace the occurrence in that file.
+
+        Returns:
+            The new occurrence.
+
+        Raises:
+            AlreadyExistsError: The file already has an occurrence of the hook
+                and ``overwrite`` is false.
+            ValueError: The id is not valid, ``path`` is outside the mod, or
+                ``overwrite`` cannot tell which occurrence to replace.
+        """
         action_id = require_script_id(action_id, label="on-action ID")
         existing = self._on_action_occurrences.get(action_id, [])
         default_path = self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
@@ -207,7 +234,7 @@ class OnActionsLayer(CoreLayer):
         self._dirty_on_action_files.add(target)
         return action
 
-    def ensure_on_action(self, action_id: str, **kwargs) -> OnAction:
+    def ensure_on_action(self, action_id: str, **fields: Unpack[EnsureOnActionFields]) -> OnAction:
         """Ensure one occurrence, using the requested/default file as its identity.
 
         Returns:
@@ -217,6 +244,7 @@ class OnActionsLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
             ValueError: The hook occurs several times in the chosen file.
         """
+        kwargs: dict[str, Any] = dict(fields)
 
         occurrences = self._on_action_occurrences.get(action_id, [])
         if occurrences:
@@ -260,7 +288,7 @@ class OnActionsLayer(CoreLayer):
         *,
         occurrence: int | None = None,
         source_path: str | Path | None = None,
-        **kwargs,
+        **fields: Unpack[OnActionFields],
     ) -> OnAction:
         """Patch one occurrence of an on-action hook.
 
@@ -275,6 +303,7 @@ class OnActionsLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
             ValueError: The hook has several occurrences and none was chosen.
         """
+        kwargs: dict[str, Any] = dict(fields)
         _, action = self._select_on_action_occurrence(
             action_id,
             occurrence=occurrence,

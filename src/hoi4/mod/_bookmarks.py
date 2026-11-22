@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import BookmarkCountryFields, BookmarkFields
 from ..bookmarks import (
     DEFAULT_BOOKMARK_EFFECT,
     Bookmark,
@@ -45,6 +48,7 @@ class BookmarksLayer(CoreLayer):
     # ── Bookmarks ────────────────────────────────────────────────
 
     def list_bookmarks(self) -> list[str]:
+        """Return the names of the mod's bookmarks, in file order."""
         return [bookmark.name for bookmark in self._bookmarks]
 
     def get_bookmark(self, name: str, *, default: _D | _Missing = MISSING) -> Bookmark | _D:
@@ -79,6 +83,27 @@ class BookmarksLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> Bookmark:
+        """Create a bookmark (a start date on the game's start screen); staged until ``save()``.
+
+        Args:
+            date: The start date in HOI4's ``year.month.day.hour`` format.
+            picture: The sprite name of the bookmark picture.
+            filters: Body of the bookmark's ``filters`` block.
+            effect: Body of the ``effect`` block run when the bookmark starts.
+            countries: The selectable countries. Their tags and DLC lists are
+                checked and normalized.
+            path: The output file. Without it, ``common/bookmarks/<name>.txt``.
+            overwrite: Replace an existing bookmark of this name.
+
+        Returns:
+            The new bookmark.
+
+        Raises:
+            AlreadyExistsError: A bookmark of this name exists and
+                ``overwrite`` is false.
+            ValueError: A country tag or a DLC name is not valid, or ``path``
+                is outside the mod.
+        """
         existing = next((item for item in self._bookmarks if item.name == name), None)
         if existing is not None and not overwrite:
             raise AlreadyExistsError(f"Bookmark '{name}' already exists")
@@ -114,7 +139,7 @@ class BookmarksLayer(CoreLayer):
         self._dirty.add("bookmarks")
         return bookmark
 
-    def update_bookmark(self, name: str, **kwargs) -> Bookmark:
+    def update_bookmark(self, name: str, **fields: Unpack[BookmarkFields]) -> Bookmark:
         """Patch fields of a bookmark; ``path=`` moves it to another file.
 
         Returns:
@@ -124,6 +149,7 @@ class BookmarksLayer(CoreLayer):
             NotFoundError: No bookmark is called ``name``.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         bookmark = self.get_bookmark(name)
         forbidden = {"raw_block", "source_index", "touched_fields"} & set(kwargs)
         if forbidden:
@@ -185,7 +211,7 @@ class BookmarksLayer(CoreLayer):
         tag: str,
         *,
         occurrence: int = 0,
-        **kwargs,
+        **fields: Unpack[BookmarkCountryFields],
     ) -> BookmarkCountry:
         """Patch one country entry of a bookmark (zero-based ``occurrence`` of ``tag``).
 
@@ -196,6 +222,7 @@ class BookmarksLayer(CoreLayer):
             NotFoundError: The bookmark, or that entry, does not exist.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         bookmark = self.get_bookmark(bookmark_name)
         tag = require_bookmark_country_key(tag)
         matches = [country for country in bookmark.countries if country.tag == tag]

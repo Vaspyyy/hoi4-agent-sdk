@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import dataclasses
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence, Unpack
 
+from ..fields import FocusFields, FocusTreeFields
 from ..focus import FOCUS_KINDS
 from ..focus_layout import resolve_focus_positions, visual_overlap_issues
 from ..paths import (
@@ -61,6 +62,11 @@ class FocusLayer(ContextLayer):
     # ── Focus Trees ──────────────────────────────────────────────
 
     def list_focus_trees(self) -> list[str]:
+        """Return the sorted ids of the mod's focus trees.
+
+        Game trees are not listed until ``load_inherited_content()`` loads
+        their file.
+        """
         return sorted(self._focus_trees.keys())
 
     def get_focus_tree(
@@ -115,7 +121,7 @@ class FocusLayer(ContextLayer):
         self._dirty_focus_trees.add(tree_id)
         return tree
 
-    def ensure_focus_tree(self, tree_id: str, tag: str, **kwargs) -> FocusTree:
+    def ensure_focus_tree(self, tree_id: str, tag: str, **fields: Unpack[FocusTreeFields]) -> FocusTree:
         """Create a focus tree if missing, otherwise patch tree-level fields.
 
         Returns:
@@ -125,6 +131,7 @@ class FocusLayer(ContextLayer):
             TypeError: A field name is unknown; nothing changed.
             ValueError: The tree exists for another country.
         """
+        kwargs: dict[str, Any] = dict(fields)
         existing = self.get_focus_tree(tree_id, default=None)
         tag = require_country_tag(tag)
         _check_fields(
@@ -157,7 +164,7 @@ class FocusLayer(ContextLayer):
         self._dirty.add("focus")
         self._dirty_focus_trees.discard(tree_id)
 
-    def update_focus_tree(self, tree_id: str, **kwargs) -> FocusTree:
+    def update_focus_tree(self, tree_id: str, **fields: Unpack[FocusTreeFields]) -> FocusTree:
         """Patch tree-level fields; country selector reassignment is unsupported.
 
         Returns:
@@ -167,6 +174,7 @@ class FocusLayer(ContextLayer):
             NotFoundError: No focus tree has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         tree = self.get_focus_tree(tree_id)
         if "country_tag" in kwargs:
             raise TypeError(
@@ -251,7 +259,7 @@ class FocusLayer(ContextLayer):
                 return default
             raise
 
-    def update_focus(self, tree_id: str, focus_id: str, **kwargs) -> Focus:
+    def update_focus(self, tree_id: str, focus_id: str, **fields: Unpack[FocusFields]) -> Focus:
         """Patch fields of one focus.
 
         Returns:
@@ -261,6 +269,7 @@ class FocusLayer(ContextLayer):
             NotFoundError: The tree or the focus does not exist.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         tree = self.get_focus_tree(tree_id)
         focus = self._require_focus(tree, focus_id)
         if "id" in kwargs:
@@ -314,6 +323,17 @@ class FocusLayer(ContextLayer):
         return self.update_focus(tree_id, focus.id, **updates)
 
     def focus_tree_bounds(self, tree_id: str) -> dict[str, int]:
+        """Return the grid area the tree's focuses take, after resolving relative positions.
+
+        Returns:
+            ``min_x``, ``max_x``, ``min_y``, ``max_y``, ``width`` and
+            ``height`` in focus grid cells; all ``0`` for an empty tree.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+            ValueError: A focus position cannot be resolved (for example a
+                ``relative_position_id`` that points nowhere or in a circle).
+        """
         tree = self.get_focus_tree(tree_id)
         if not tree.focuses:
             return {"min_x": 0, "max_x": 0, "min_y": 0, "max_y": 0, "width": 0, "height": 0}
@@ -535,7 +555,11 @@ class FocusLayer(ContextLayer):
         *,
         path: str | Path | None = None,
     ) -> None:
-        """Set a focus's name and ``<id>_desc`` text (English), optionally in ``path``."""
+        """Set a focus's name and ``<id>_desc`` text (English), optionally in ``path``.
+
+        Raises:
+            ValueError: ``path`` is outside ``localisation/english``.
+        """
         self.set_loc(focus_id, name, path=path)
         self.set_loc(f"{focus_id}_desc", description, path=path)
 
@@ -548,6 +572,28 @@ class FocusLayer(ContextLayer):
         state_id: int | None = None,
         grounded: bool = True,
     ) -> list[Focus]:
+        """Add a ready-made chain of four industry focuses for ``tag``; staged until ``save()``.
+
+        The focuses are ``<TAG>_map_domestic_industry``,
+        ``<TAG>_modernize_transport_links``, ``<TAG>_support_domestic_steel``
+        and ``<TAG>_precision_workshops``, with English names and
+        descriptions. The tree is created when it does not exist.
+
+        Args:
+            anchor_focus_id: Insert the chain after this focus. Without it,
+                the chain goes to the right of the existing focuses.
+            state_id: The state that gets the infrastructure and factories.
+                Defaults to the country's capital, else state 1.
+            grounded: Make the first focus cost 5 days instead of 10.
+
+        Returns:
+            The four added focuses.
+
+        Raises:
+            NotFoundError: ``anchor_focus_id`` is not in the tree.
+            AlreadyExistsError: One of the focus ids is already in the tree.
+            ValueError: ``tag`` is not a valid tag (when the tree is created).
+        """
         tag = tag.upper()
         tree = (
             self.get_focus_tree(tree_id)

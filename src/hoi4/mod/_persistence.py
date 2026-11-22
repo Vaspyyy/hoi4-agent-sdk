@@ -6,8 +6,9 @@ import dataclasses
 import os
 import tempfile
 import warnings
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from contextlib import contextmanager
+from typing import Self
 from pathlib import Path
 
 from ..bookmarks import (
@@ -86,6 +87,10 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
     # ── Preview & Save ───────────────────────────────────────────
 
     def preview_summary(self) -> str:
+        """Describe the unsaved edits in a few lines, one per changed object or file.
+
+        Returns ``"No semantic changes detected"`` when there are none.
+        """
         lines = self._semantic_preview_lines()
         lines.extend(f"support script: {p.relative_to(self.mod_root)}" for p in self._script_file_updates)
         if not lines:
@@ -93,6 +98,15 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         return "Changed:\n" + "\n".join(f"- {line}" for line in lines)
 
     def preview(self) -> str:
+        """Return a unified diff of every file ``save()`` would write; writes nothing.
+
+        Binary assets get one line each instead of a diff. An empty string
+        means ``save()`` would change no file.
+
+        Raises:
+            ExternalModificationError: A file it would rewrite changed on disk
+                after the mod read it; call ``discard()`` and redo the edit.
+        """
         diffs: list[str] = []
         rendered = self._render_dirty_files()
         self._assert_no_external_modifications(rendered)
@@ -114,6 +128,25 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         return "\n".join(diffs)
 
     def save(self, *, require_changes: bool = False) -> SaveResult:
+        """Write every staged edit to disk at once.
+
+        Either every file is written or, on an error, none is (files already
+        replaced are put back). The written sections load again from disk on
+        next use. With nothing staged, a ``RuntimeWarning`` is issued.
+
+        Args:
+            require_changes: Raise instead of returning when no file changes.
+
+        Returns:
+            The written files and the sections that had edits.
+
+        Raises:
+            ExternalModificationError: A file it would rewrite changed on disk
+                after the mod read it; call ``discard()`` and redo the edit.
+            RuntimeError: ``require_changes`` is true and no file changes, or
+                a file it would rewrite failed to load.
+            OSError: Writing a file failed.
+        """
         if not self._dirty:
             message = "No changes written: save() was called with no dirty changes"
             warnings.warn(message, RuntimeWarning, stacklevel=2)
@@ -681,12 +714,19 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             raise
 
     @contextmanager
-    def transaction(self, *, save: bool = False):
+    def transaction(self, *, save: bool = False) -> Iterator[Self]:
         """Temporarily mutate the mod, then save or restore in-memory state.
 
         Use ``with mod.transaction():`` for dry runs that call ``preview()`` inside
         the block. On normal exit the transaction is discarded unless
         ``save=True`` is passed. On exceptions, in-memory state is restored.
+
+        Yields:
+            The mod itself.
+
+        Raises:
+            Exception: Whatever the block raises, after the state is restored;
+                with ``save=True``, also what ``save()`` raises.
         """
         snapshot = self._snapshot()
         try:
@@ -702,13 +742,32 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
     def discard(self) -> None:
         """Drop every unsaved edit and pick up files changed on disk.
 
-        Only sections that had edits or whose files changed on disk (and the
-        sections built from them) are unloaded; they load again on next use.
-        Everything else stays in memory. When a base mod's text file changed,
-        everything is unloaded and the content layers are rebuilt.
+        This is the cheap way back to the files: only sections that had
+        edits or whose files changed on disk (and the sections built from
+        them) are unloaded; they load again on next use. Everything else
+        stays in memory. When a base mod's text file changed, everything is
+        unloaded and the content layers are rebuilt.
+
+        It looks only at the files of the mod and its base mods. A file
+        counts as changed when its size or modification time and its text
+        differ, or when a refused ``save()`` saw its text change. Use
+        ``reload()`` instead when a game file changed, or when a file may
+        have changed without its size or time showing it.
         """
 
         self._discard_changes(())
+
+    def reload(self) -> None:
+        """Drop every unsaved edit and read the whole mod again from disk.
+
+        Unlike ``discard()``, this does not trust file sizes and times: every
+        section of the mod, the base mods and the game is read again on next
+        use. It is slower than ``discard()``. Use it when files changed in a
+        way ``discard()`` cannot see (a game file, a file written back with
+        its old size and time), or to start from a clean state.
+        """
+
+        self._reload_all()
 
     def _reload_all(self) -> None:
         """Discard queued changes and reload every section from disk."""

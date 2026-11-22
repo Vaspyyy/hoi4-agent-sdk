@@ -50,7 +50,7 @@ def test_writable_state_wins_and_reload_refreshes_inherited_cache(tmp_path, monk
     write_state(game, "3-New.txt", 3, "CCC")
     with pytest.raises(KeyError):
         mod.get_state(3)
-    mod._reload_all()  # a new game file is seen only by a full reload
+    mod.reload()  # a new game file is seen only by a full reload
     assert mod.get_state(3).owner == "CCC"
     assert mod.get_state(1).owner == "BBB"
     write_state(game, "2-Lower.txt", 2, "DDD")

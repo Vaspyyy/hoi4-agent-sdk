@@ -146,6 +146,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
     # ── Land orders of battle ───────────────────────────────────
 
     def list_oobs(self, *, include_vanilla: bool = False) -> list[str]:
+        """Return the sorted names of the mod's orders of battle, and the game's with ``include_vanilla``."""
         if include_vanilla and self._base_content is not None:
             inherited = self._base_content.glob("history/units", "*.txt")
             if inherited:
@@ -242,6 +243,34 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         overwrite: bool = False,
         path: str | Path | None = None,
     ) -> OrderOfBattle:
+        """Create an order of battle file (``history/units/<name>.txt``); staged until ``save()``.
+
+        One file holds land, naval or air content, not a mix. The mod keeps
+        copies of the given objects.
+
+        Args:
+            name: The file name without ``.txt``.
+            tag: The country it belongs to.
+            kind: ``"auto"`` takes the kind from the content (land when empty).
+            required_dlc: Assign it only when these DLCs are active.
+            excluded_dlc: Assign it only when these DLCs are not active.
+            assign: Also add it to the country's history (``oob``,
+                ``set_naval_oob`` or ``set_air_oob``).
+            overwrite: Replace an OOB of this name.
+            path: The output file. Without it, ``history/units/<name>.txt``.
+
+        Returns:
+            The new order of battle.
+
+        Raises:
+            AlreadyExistsError: The name exists and ``overwrite`` is false.
+            NotFoundError: With a game install configured, no one defines
+                ``tag``; or ``assign`` is true and the country is unknown.
+            ValueError: The name or tag is not valid, the content mixes
+                kinds or does not match ``kind``, a DLC is both required and
+                excluded, or the assignment conflicts with the country's
+                other OOBs.
+        """
         name = require_script_id(name, label="OOB name")
         country_tag = self._require_country_reference(tag)
         existing = self._oobs.get(name)

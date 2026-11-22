@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import DynamicModifierFields
 from ..dynamic_modifiers import (
     DynamicModifier,
 )
@@ -29,6 +32,7 @@ class DynamicModifiersLayer(CoreLayer):
     # ── Dynamic Modifiers ────────────────────────────────────────
 
     def list_dynamic_modifiers(self) -> list[str]:
+        """Return the sorted ids of the mod's dynamic modifiers."""
         return sorted(self._dynamic_modifiers)
 
     def get_dynamic_modifier(
@@ -61,6 +65,28 @@ class DynamicModifiersLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> DynamicModifier:
+        """Create a dynamic modifier (``common/dynamic_modifiers``); staged until ``save()``.
+
+        Args:
+            icon: The icon sprite name shown on the country or state.
+            enable: Body of the trigger that keeps the modifier active.
+            remove_trigger: Body of the trigger that removes it.
+            attacker_modifier: Write ``attacker_modifier = yes/no``; ``None``
+                leaves it out.
+            modifier: The modifier values by name; a value may be a variable
+                name as a string.
+            path: The output file. Without it,
+                ``common/dynamic_modifiers/<modifier_id>.txt``.
+            overwrite: Replace an existing modifier of this id.
+
+        Returns:
+            The new dynamic modifier.
+
+        Raises:
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            ValueError: The id is not a valid script id, or ``path`` is
+                outside the mod.
+        """
         modifier_id = require_script_id(
             modifier_id,
             label="dynamic modifier ID",
@@ -100,7 +126,7 @@ class DynamicModifiersLayer(CoreLayer):
         self._dirty.add("dynamic_modifiers")
         return dynamic_modifier
 
-    def update_dynamic_modifier(self, modifier_id: str, **kwargs: object) -> DynamicModifier:
+    def update_dynamic_modifier(self, modifier_id: str, **fields: Unpack[DynamicModifierFields]) -> DynamicModifier:
         """Patch fields of a dynamic modifier in place.
 
         Returns:
@@ -110,6 +136,7 @@ class DynamicModifiersLayer(CoreLayer):
             NotFoundError: No dynamic modifier has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         dynamic_modifier = self.get_dynamic_modifier(modifier_id)
         forbidden = {"id", "path", "raw_block", "touched_fields"} & set(kwargs)
         if forbidden:

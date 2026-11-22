@@ -23,6 +23,12 @@ _RESERVED_SCALARS = {"icon", "attacker_modifier"}
 
 @dataclass
 class DynamicModifier:
+    """A dynamic modifier: a modifier block whose values may be variables, switched on by script.
+
+    ``enable`` and ``remove_trigger`` are trigger bodies; ``path``,
+    ``raw_block`` and ``touched_fields`` are bookkeeping.
+    """
+
     id: str
     icon: str = ""
     enable: str = ""

@@ -26,12 +26,14 @@ class CountryPackageReport:
 
     @property
     def errors(self) -> tuple[ValidationIssue, ...]:
+        """The findings of severity ``"error"``."""
         return tuple(
             finding for finding in self.findings if finding.severity == "error"
         )
 
     @property
     def warnings(self) -> tuple[ValidationIssue, ...]:
+        """The findings of severity ``"warning"``."""
         return tuple(
             finding for finding in self.findings if finding.severity == "warning"
         )
@@ -58,9 +60,11 @@ class CountryPackageReport:
 
     @property
     def structurally_complete(self) -> bool:
+        """The same as ``complete``."""
         return self.complete
 
     def to_dict(self) -> dict[str, object]:
+        """Return the report as plain JSON-ready values, findings included."""
         return {
             "tag": self.tag,
             "complete": self.complete,

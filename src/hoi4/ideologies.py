@@ -65,6 +65,7 @@ class Ideology:
 
     @property
     def touched(self) -> bool:
+        """Whether a field was changed since the ideology was loaded."""
         return bool(self.touched_fields)
 
 

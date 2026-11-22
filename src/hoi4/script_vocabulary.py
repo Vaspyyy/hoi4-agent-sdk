@@ -136,6 +136,7 @@ class ScriptTokenInfo:
     source: str = ""
 
     def to_dict(self) -> dict[str, object]:
+        """Return the entry as plain JSON-ready values."""
         return {
             "name": self.name,
             "kind": self.kind,
@@ -197,6 +198,7 @@ class GameScriptVocabulary:
             self._folded[kind] = folded
 
     def tokens(self, kind: ScriptTokenKind) -> Mapping[str, ScriptTokenInfo]:
+        """Return the effects, triggers or modifiers by name, as ``kind`` says."""
         if kind == "effect":
             return self.effects
         if kind == "trigger":
@@ -306,6 +308,7 @@ class GameScriptVocabulary:
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Return the install path and every effect, trigger and modifier as JSON-ready values."""
         return {
             "hoi4_install": str(self.hoi4_install),
             "effects": {key: value.to_dict() for key, value in self.effects.items()},

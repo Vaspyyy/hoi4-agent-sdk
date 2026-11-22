@@ -32,6 +32,13 @@ DEFAULT_BOOKMARK_EFFECT = "randomize_weather = 22345"
 
 @dataclass
 class BookmarkCountry:
+    """One selectable country of a bookmark, with the text and lists shown for it.
+
+    ``history`` and ``ideology`` are localisation keys; ``available`` is a
+    trigger body; ``ideas`` and ``focuses`` are the ids shown on the
+    selection screen. The last three fields are bookkeeping.
+    """
+
     tag: str
     history: str = ""
     ideology: str = ""
@@ -46,6 +53,13 @@ class BookmarkCountry:
 
 @dataclass
 class Bookmark:
+    """A start date of the game's start screen and the countries it offers.
+
+    ``name`` and ``description`` are localisation keys; ``date`` uses
+    HOI4's ``year.month.day.hour`` format; ``filters`` and ``effect`` are
+    block bodies. The last three fields are bookkeeping.
+    """
+
     name: str
     description: str = ""
     date: str = "1936.1.1.12"

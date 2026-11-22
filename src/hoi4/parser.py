@@ -148,30 +148,37 @@ class PdxNode:
     tag: Optional[str] = None
 
     def is_block(self) -> bool:
+        """Whether the node is a ``key = { ... }`` block (also an empty one)."""
         return self.block or bool(self.children) or (self.key is not None and self.value is None)
 
     def is_assignment(self) -> bool:
+        """Whether the node is a ``key = value`` (or bare value) with no block."""
         return self.value is not None and not self.is_block()
 
     def is_bare(self) -> bool:
+        """Whether the node is a value without a key, as in a list ``{ A B C }``."""
         return self.key is None and self.value is not None
 
     def find(self, key: str) -> Optional["PdxNode"]:
+        """Return the first child with ``key``, or ``None``."""
         for child in self.children:
             if child.key == key:
                 return child
         return None
 
     def find_all(self, key: str) -> list["PdxNode"]:
+        """Return every child with ``key``, in order."""
         return [c for c in self.children if c.key == key]
 
     def get_value(self, key: str, default: str = "") -> str:
+        """Return the value of the first child with ``key``, or ``default`` when it has none."""
         node = self.find(key)
         if node and node.value is not None:
             return node.value
         return default
 
     def get_int(self, key: str, default: int = 0) -> int:
+        """Return the value of ``key`` as a whole number, or ``default`` when it is missing or is not one."""
         v = self.get_value(key)
         try:
             return int(v)
@@ -179,6 +186,7 @@ class PdxNode:
             return default
 
     def get_float(self, key: str, default: float = 0.0) -> float:
+        """Return the value of ``key`` as a number, or ``default`` when it is missing or is not one."""
         v = self.get_value(key)
         try:
             return float(v)
@@ -186,6 +194,7 @@ class PdxNode:
             return default
 
     def get_block(self, key: str) -> Optional["PdxNode"]:
+        """Return the first child with ``key`` if it is a block, else ``None``."""
         node = self.find(key)
         if node and node.is_block():
             return node
@@ -206,9 +215,11 @@ class PdxNode:
         self.children.append(PdxNode(key=key, value=value))
 
     def remove(self, key: str) -> None:
+        """Remove every child with ``key``."""
         self.children = [c for c in self.children if c.key != key]
 
     def add_child(self, node: "PdxNode") -> None:
+        """Append ``node`` as the last child."""
         self.children.append(node)
 
 

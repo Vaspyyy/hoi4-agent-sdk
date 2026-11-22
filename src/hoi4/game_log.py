@@ -57,14 +57,17 @@ class GameLogReport:
 
     @property
     def is_fresh(self) -> bool:
+        """Whether the log was written after ``fresh_after`` (always true without it)."""
         return self.fresh_after is None or self.log_mtime >= self.fresh_after
 
     @property
     def groups(self) -> dict[str, int]:
+        """How many entries each error class has, sorted by class."""
         return dict(sorted(Counter(entry.error_class for entry in self.entries).items()))
 
     @property
     def validation_errors(self) -> tuple[ValidationIssue, ...]:
+        """The entries as ``ValidationIssue`` errors, plus ``stale_game_log`` when the log is old."""
         issues: list[ValidationIssue] = []
         if not self.is_fresh:
             assert self.fresh_after is not None
@@ -94,6 +97,7 @@ class GameLogReport:
         return tuple(issues)
 
     def to_dict(self) -> dict[str, object]:
+        """Return the report as plain JSON-ready values."""
         return {
             "log_path": str(self.log_path),
             "mod_root": str(self.mod_root),
@@ -244,6 +248,10 @@ def parse_hoi4_error_log(
     Once writing stops, use the default mode at that offset to flush the tail,
     even without a final newline. Offsets beyond EOF (e.g. after truncation)
     raise ``ValueError`` in either mode.
+
+    Raises:
+        FileNotFoundError: ``mod_root`` or ``log_path`` does not exist.
+        ValueError: ``start_offset`` is outside the file.
     """
 
     path = Path(log_path).resolve()

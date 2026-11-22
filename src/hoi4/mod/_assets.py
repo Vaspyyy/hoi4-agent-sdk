@@ -60,7 +60,16 @@ class AssetsLayer(CoreLayer):
         resize_mode: Literal["stretch", "cover", "contain"] = "stretch",
         overwrite: bool = True,
     ) -> tuple[FlagAssetSet, ...]:
-        """Stage all three HOI4 flag sizes for transactional save."""
+        """Stage all three HOI4 flag sizes for transactional save.
+
+        Raises:
+            FileNotFoundError: ``src_image`` does not exist.
+            FileExistsError: A target is staged or on disk and ``overwrite`` is false.
+            UnsupportedImageFormatError: The image cannot be read.
+            ImageBackendUnavailableError: Pillow is not installed.
+            ValueError: The tag or an ideology is not valid, or both
+                ``overwrite_vanilla`` and ``ideologies`` are given.
+        """
 
         from ..assets import import_flag_to_mod
 
@@ -111,7 +120,15 @@ class AssetsLayer(CoreLayer):
         dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
         overwrite: bool = True,
     ) -> Path:
-        """Stage one converted portrait for transactional save."""
+        """Stage one converted portrait for transactional save.
+
+        Raises:
+            FileNotFoundError: ``src_image`` does not exist.
+            FileExistsError: A target is staged or on disk and ``overwrite`` is false.
+            UnsupportedImageFormatError: The image cannot be read.
+            ImageBackendUnavailableError: Pillow is not installed.
+            ValueError: The tag, slug, format or size is not valid.
+        """
 
         from ..assets import import_portrait_to_mod
 
@@ -145,7 +162,27 @@ class AssetsLayer(CoreLayer):
         sprite_name: str | None = None,
         overwrite: bool = True,
     ) -> Path:
-        """Stage a portrait sprite declaration for transactional save."""
+        """Stage a portrait sprite declaration for transactional save.
+
+        Writes ``interface/<TAG>_<slug>_portrait.gfx`` with one sprite
+        pointing at the portrait texture. Staged until ``save()``.
+
+        Args:
+            portrait_path: The texture, inside the mod. Without it,
+                ``gfx/leaders/<TAG>/<slug>`` with a ``.dds``, ``.tga`` or
+                ``.png`` ending, on disk or staged.
+            sprite_name: Defaults to ``GFX_portrait_<TAG>_<slug>``.
+            overwrite: Replace an existing sprite file.
+
+        Returns:
+            The path of the staged ``.gfx`` file.
+
+        Raises:
+            FileNotFoundError: No portrait texture is found.
+            FileExistsError: The sprite file exists and ``overwrite`` is false.
+            ValueError: The tag, slug or sprite name is not valid, or
+                ``portrait_path`` is outside the mod.
+        """
 
         from ..assets import _require_asset_stem
 
@@ -222,6 +259,13 @@ class AssetsLayer(CoreLayer):
         ``interface/<mod>_goals.gfx`` (or ``gfx_file``), and with ``shine=True``
         adds the standard ``GFX_<name>_shine`` animation to the sibling
         ``*_shine.gfx`` file. A leading ``GFX_`` in ``name`` is ignored.
+
+        Raises:
+            FileNotFoundError: ``src_image`` does not exist.
+            FileExistsError: A target is staged or on disk and ``overwrite`` is false.
+            UnsupportedImageFormatError: The image cannot be read.
+            ImageBackendUnavailableError: Pillow is not installed.
+            ValueError: The name, size or sprite file is not valid.
         """
 
         return self._stage_icon_asset(
@@ -251,6 +295,13 @@ class AssetsLayer(CoreLayer):
 
         ``Idea.icon`` accepts either the returned sprite or the bare ``name``;
         both serialize as ``picture = <name>``.
+
+        Raises:
+            FileNotFoundError: ``src_image`` does not exist.
+            FileExistsError: A target is staged or on disk and ``overwrite`` is false.
+            UnsupportedImageFormatError: The image cannot be read.
+            ImageBackendUnavailableError: Pillow is not installed.
+            ValueError: The name, size or sprite file is not valid.
         """
 
         return self._stage_icon_asset(
@@ -278,6 +329,13 @@ class AssetsLayer(CoreLayer):
         """Stage a decision icon and return its ``GFX_decision_<name>`` sprite.
 
         ``Decision.icon`` may use either the returned sprite or the bare name.
+
+        Raises:
+            FileNotFoundError: ``src_image`` does not exist.
+            FileExistsError: A target is staged or on disk and ``overwrite`` is false.
+            UnsupportedImageFormatError: The image cannot be read.
+            ImageBackendUnavailableError: Pillow is not installed.
+            ValueError: The name, size or sprite file is not valid.
         """
 
         return self._stage_icon_asset(
@@ -302,7 +360,15 @@ class AssetsLayer(CoreLayer):
         dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
         overwrite: bool = False,
     ) -> str:
-        """Stage a ``GFX_decision_category_<name>`` icon for ``DecisionCategory.icon``."""
+        """Stage a ``GFX_decision_category_<name>`` icon for ``DecisionCategory.icon``.
+
+        Raises:
+            FileNotFoundError: ``src_image`` does not exist.
+            FileExistsError: A target is staged or on disk and ``overwrite`` is false.
+            UnsupportedImageFormatError: The image cannot be read.
+            ImageBackendUnavailableError: Pillow is not installed.
+            ValueError: The name, size or sprite file is not valid.
+        """
 
         return self._stage_icon_asset(
             "decision_category",
@@ -329,6 +395,13 @@ class AssetsLayer(CoreLayer):
         """Stage a category banner and return its ``GFX_decision_cat_picture_<name>``.
 
         The sprite is referenced by a category definition's ``picture`` field.
+
+        Raises:
+            FileNotFoundError: ``src_image`` does not exist.
+            FileExistsError: A target is staged or on disk and ``overwrite`` is false.
+            UnsupportedImageFormatError: The image cannot be read.
+            ImageBackendUnavailableError: Pillow is not installed.
+            ValueError: The name, size or sprite file is not valid.
         """
 
         return self._stage_icon_asset(
@@ -358,6 +431,13 @@ class AssetsLayer(CoreLayer):
 
         Report events use a 210x176 ``GFX_report_event_<name>`` picture; news
         events (``news=True``) use 397x153 ``GFX_news_event_<name>``.
+
+        Raises:
+            FileNotFoundError: ``src_image`` does not exist.
+            FileExistsError: A target is staged or on disk and ``overwrite`` is false.
+            UnsupportedImageFormatError: The image cannot be read.
+            ImageBackendUnavailableError: Pillow is not installed.
+            ValueError: The name, size or sprite file is not valid.
         """
 
         return self._stage_icon_asset(
