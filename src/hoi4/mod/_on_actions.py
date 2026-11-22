@@ -153,7 +153,7 @@ class OnActionsLayer(CoreLayer):
                 "specify path= to choose which file to overwrite"
             )
         target = (
-            resolve_mod_output_path(self.mod_root, path)
+            self._output_path(path)
             if path is not None
             else (
                 existing[0].path
@@ -232,7 +232,7 @@ class OnActionsLayer(CoreLayer):
         if occurrences:
             path_arg = kwargs.get("path")
             target = (
-                resolve_mod_output_path(self.mod_root, path_arg)
+                self._output_path(path_arg)
                 if path_arg is not None
                 else self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
             )
@@ -290,7 +290,7 @@ class OnActionsLayer(CoreLayer):
         if "id" in kwargs:
             raise ValueError("On-action IDs are immutable; create a new on-action instead")
         if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+            kwargs["path"] = self._output_path(kwargs["path"])
         _set_fields(action, kwargs, allow_path=True)
         action.touched = True
         self._dirty.add("on_actions")

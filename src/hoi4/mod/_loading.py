@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import cast
 
-from .._disk_cache import DiskAnalysis
+from .._disk_cache import DiskAnalysis, string_map
 from ..bookmarks import (
     load_bookmarks_file,
 )
@@ -58,8 +58,14 @@ from ._shared import (
 )
 
 #: ``tag -> {key: text}`` of one localisation file (see ``country_loc_entries``).
+def _country_loc_from_disk(data: object) -> dict[str, dict[str, str]]:
+    if not isinstance(data, dict):
+        raise TypeError("stored country texts must be a map")
+    return {str(tag): string_map(entries) for tag, entries in data.items()}
+
+
 _COUNTRY_LOC_ON_DISK: DiskAnalysis[dict[str, dict[str, str]]] = DiskAnalysis(
-    "country_loc_entries", dict, dict
+    "country_loc_entries", dict, _country_loc_from_disk
 )
 
 
@@ -157,7 +163,7 @@ class LoadingLayer(CountriesLayer):
         for path in sorted(tags_dir.glob("*.txt")):
             text: str | None = None
             try:
-                text = read_text(path)
+                text = self._read_source(path)
                 require_well_formed(text)
             except Exception as error:
                 self._record_load_error("country_tags", path, error)
@@ -185,7 +191,8 @@ class LoadingLayer(CountriesLayer):
             if colors_path is None:
                 continue
             try:
-                source = read_text(colors_path)
+                # Noted for the mod's own table, which save() rewrites.
+                source = self._read_source(colors_path)
                 if view is mod_view:
                     require_well_formed(source)
                 country_color_tags(source)
@@ -217,7 +224,7 @@ class LoadingLayer(CountriesLayer):
         )
         if generated_tags.is_file():
             self._created_country_tags.update(
-                tag for tag, _ in country_tag_entries(read_text(generated_tags))
+                tag for tag, _ in country_tag_entries(self._read_source(generated_tags))
             )
         override_tags = set(mod_mapping)
         history_dir = self.mod_root / "history" / "countries"
@@ -270,7 +277,10 @@ class LoadingLayer(CountriesLayer):
 
     def _load_states(self) -> None:
         states_dir = self.mod_root / "history" / "states"
-        self._writable_state_directory_stamp = states_dir.stat().st_mtime_ns if states_dir.is_dir() else None
+        self._stage(
+            "_writable_state_directory_stamp",
+            states_dir.stat().st_mtime_ns if states_dir.is_dir() else None,
+        )
         if not states_dir.exists():
             return
         # Each file is read and parsed once, for its header and to find out
@@ -278,7 +288,7 @@ class LoadingLayer(CountriesLayer):
         broken: dict[Path, str] = {}
 
         def header(path: Path) -> tuple[int, str, str | None] | None:
-            text = read_text(path)
+            text = self._read_source(path)
             document = parse(text)
             if document.problems:
                 broken[path] = text

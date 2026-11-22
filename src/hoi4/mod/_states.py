@@ -13,7 +13,6 @@ from ..localisation import (
 )
 from ..paths import (
     require_country_tag,
-    resolve_mod_output_path,
 )
 from ..states import (
     build_state_index,
@@ -204,6 +203,10 @@ class StatesLayer(CountriesLayer):
             }
             self._state_source_paths.update(paths)
             self._writable_state_directory_stamp = stamp
+            # The folder changed after the section loaded. What this lookup
+            # finds there is not what the loader knows (its ids, its
+            # diagnostics): discard() and save() load the section again.
+            self._reload_on_discard.add("states")
         f = self._state_source_paths.get(state_id)
         if f is not None and not f.exists():
             f = None
@@ -213,9 +216,14 @@ class StatesLayer(CountriesLayer):
             state = read_state(f)
             self._states[state_id] = state
             self._state_source_paths.setdefault(state_id, f)
+            if not f.is_relative_to(self.mod_root):
+                # A state of the game or a base mod, cached by this lookup:
+                # save() and discard() drop it with the section, as a full
+                # reload used to, so list_states() names the mod's again.
+                self._reload_on_discard.add("states")
             text = read_text(f)
             self._original_files.setdefault(f, text)
-            self._note_read(f, text, adopt=True)
+            self._note_read(f, text)
             return state
         if default is not MISSING:
             return default
@@ -259,14 +267,14 @@ class StatesLayer(CountriesLayer):
             relative = Path("history") / "states" / source.name
             if self._base_content is not None:
                 relative = self._base_content.relative(source.resolve(strict=False)) or relative
-        target = resolve_mod_output_path(self.mod_root, relative)
+        target = self._output_path(relative)
         if state.raw_text and parse(state.raw_text).problems:
             # Like the game, read the inherited file forgivingly, but write the
             # mod's own copy well formed.
             state.raw_text = repair(state.raw_text)
         state.path = target
         self._state_source_paths[state.id] = target
-        self._original_files.setdefault(target, self._read_current_text(target))
+        self._original_files.setdefault(target, self._read_noted_text(target))
         return True
 
     def set_state_owner(

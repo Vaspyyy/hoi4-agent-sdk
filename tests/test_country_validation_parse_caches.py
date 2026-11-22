@@ -52,6 +52,21 @@ def test_runtime_exact_body_cache_keeps_evidence_and_reacts_to_edits(tmp_path, m
     assert parses.count(original) == 2
 
 
+def test_the_exact_text_caches_stay_small_over_many_edits() -> None:
+    """Every edit brings a new text; the texts of old edits must not pile up for ever."""
+
+    from hoi4.mod._shared import _keep_recent
+
+    cache: dict[str, int] = {}
+    for generation in range(500):
+        current = {f"text {generation}": generation, "always there": 0}
+        cache = _keep_recent(cache, current, floor=8)
+        assert set(current) <= set(cache)
+        assert len(cache) <= 8
+    # The newest older texts are still there: an edit that is undone finds its text.
+    assert "text 498" in cache and "text 0" not in cache
+
+
 def test_sprite_exact_text_cache_refreshes_pending_and_disk_definitions(tmp_path, patch_mod_helper):
     interface = tmp_path / "interface"
     interface.mkdir()

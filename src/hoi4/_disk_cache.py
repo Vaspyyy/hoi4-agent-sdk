@@ -111,16 +111,53 @@ def _sorted_strings(values: frozenset[str]) -> list[str]:
     return sorted(values)
 
 
+def string_list(data: object) -> list[str]:
+    """A stored list of texts. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        raise TypeError("a stored list of names must hold strings only")
+    return data
+
+
+def int_list(data: object) -> list[int]:
+    """A stored list of whole numbers. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, list) or not all(type(item) is int for item in data):
+        raise TypeError("a stored list of numbers must hold whole numbers only")
+    return data
+
+
+def _strings(data: object) -> frozenset[str]:
+    return frozenset(string_list(data))
+
+
+def string_map(data: object) -> dict[str, str]:
+    """A stored ``text -> text`` map. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in data.items()
+    ):
+        raise TypeError("a stored map must map strings to strings")
+    return dict(data)
+
+
 #: A set of names read from one file (scripted effects, division templates).
-NAMES_ON_DISK: DiskAnalysis[frozenset[str]] = DiskAnalysis("names", _sorted_strings, frozenset)
+NAMES_ON_DISK: DiskAnalysis[frozenset[str]] = DiskAnalysis("names", _sorted_strings, _strings)
 
 
 def _pairs_to_lists(pairs: tuple[tuple[str, str], ...]) -> list[list[str]]:
     return [list(pair) for pair in pairs]
 
 
-def _lists_to_pairs(data: list[list[str]]) -> tuple[tuple[str, str], ...]:
-    return tuple((str(first), str(second)) for first, second in data)
+def _lists_to_pairs(data: object) -> tuple[tuple[str, str], ...]:
+    """Stored pairs of names. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, list) or not all(
+        isinstance(pair, list) and len(pair) == 2 and isinstance(pair[0], str) and isinstance(pair[1], str)
+        for pair in data
+    ):
+        raise TypeError("stored pairs must be a list of two-string lists")
+    return tuple((pair[0], pair[1]) for pair in data)
 
 
 #: Ordered pairs of names read from one file (equipment and what unlocks it).
@@ -238,7 +275,7 @@ def _prune(directory: Path, name: str, current: Path) -> None:
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
-        for old in versions[_KEEP_VERSIONS - 1 :]:
+        for old in versions[_KEEP_VERSIONS:]:
             old.unlink(missing_ok=True)
         limit = time.time() - _STALE_TEMPORARY_S
         for temporary in directory.glob(f".{name}-*.tmp"):

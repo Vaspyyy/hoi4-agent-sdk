@@ -10,7 +10,6 @@ from ..idea_icons import (
 )
 from ..paths import (
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..types import (
     Idea,
@@ -78,7 +77,7 @@ class IdeasLayer(CountriesLayer):
         if existing is not None and existing.path is not None:
             self._dirty_idea_files.add(existing.path)
         if path is not None:
-            idea.path = resolve_mod_output_path(self.mod_root, path)
+            idea.path = self._output_path(path)
         elif existing is not None and existing.path is not None:
             idea.path = existing.path
         else:
@@ -147,7 +146,7 @@ class IdeasLayer(CountriesLayer):
         touched_fields = set(kwargs) - {"path"}
         old_path = idea.path
         if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+            kwargs["path"] = self._output_path(kwargs["path"])
         modifier_supplied = "modifier" in kwargs
         modifier_val = kwargs.pop("modifier", None)
         if modifier_supplied and modifier_val is not None:
@@ -192,4 +191,4 @@ class IdeasLayer(CountriesLayer):
             ValueError: ``tag`` is invalid or ``path`` is outside the mod.
         """
         tag = self._require_country_reference(tag)
-        self._cached_idea_file[tag] = resolve_mod_output_path(self.mod_root, path)
+        self._cached_idea_file[tag] = self._output_path(path)

@@ -9,7 +9,7 @@ import re
 from collections.abc import Collection
 from pathlib import Path
 
-from .._disk_cache import NAMES_ON_DISK, PAIRS_ON_DISK, DiskAnalysis
+from .._disk_cache import NAMES_ON_DISK, PAIRS_ON_DISK, DiskAnalysis, string_map
 from ..characters import AdvisorRole
 from ..events import VALID_EVENT_TYPES
 from ..focus_layout import allow_branch_condition, block_allow_branch_condition
@@ -34,6 +34,7 @@ from ..script_references import (
 )
 from ..syntax import parse
 from ..textio import decode_text, read_text
+from ._shared import _keep_recent
 from ._sources import SourcesLayer
 
 # ``[?name]`` in a localisation text reads a variable or a flag
@@ -209,7 +210,7 @@ def _sprite_textures(text: str) -> dict[str, str]:
     return parsed
 
 
-_TEXTURES_ON_DISK: DiskAnalysis[dict[str, str]] = DiskAnalysis("sprite_textures", dict, dict)
+_TEXTURES_ON_DISK: DiskAnalysis[dict[str, str]] = DiskAnalysis("sprite_textures", dict, string_map)
 
 
 def _loc_value_names(text: str) -> frozenset[str]:
@@ -656,10 +657,19 @@ class CatalogsLayer(SourcesLayer):
         return icons
 
     def _known_sprite_textures(self) -> dict[str, str]:
+        # Results of an earlier run are reused by exact file text. The texts
+        # of this run and the newest older ones are kept, so the cache does
+        # not grow with every edit of a long session.
+        scanned_before = self._sprite_text_parse_cache
+        scanned: dict[str, dict[str, str]] = {}
+
         def scan_text(text: str, textures: dict[str, str]) -> None:
-            cached = self._sprite_text_parse_cache.get(text)
+            cached = scanned.get(text)
             if cached is None:
-                cached = self._sprite_text_parse_cache[text] = _sprite_textures(text)
+                cached = scanned_before.get(text)
+                if cached is None:
+                    cached = _sprite_textures(text)
+                scanned[text] = cached
             textures.update(cached)
 
         def scan(base: ContentView, textures: dict[str, str]) -> None:
@@ -691,6 +701,7 @@ class CatalogsLayer(SourcesLayer):
             for path, content in self._pending_asset_writes.items():
                 if path.suffix.lower() == ".gfx":
                     scan_text(decode_text(content), textures)
+            self._sprite_text_parse_cache = _keep_recent(scanned_before, scanned)
             return textures
 
         # The country package check asks once per country; within one

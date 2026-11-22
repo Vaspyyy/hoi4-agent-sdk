@@ -29,6 +29,7 @@ from ._characters import CharactersLayer
 from ._context import ContextLayer
 from ._oob_validation import OobValidationLayer
 from ._oobs import OobsLayer
+from ._shared import _keep_recent
 
 # A localisation key: no spaces, with an underscore (``GER_erwin_rommel``).
 # A name without one is the text the SDK wrote, not a key.
@@ -236,14 +237,22 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
         cored: dict[str, set[int]] = {}
         activated: dict[str, set[str]] = {}
         sources: dict[str, set[str]] = {}
+        # Trees parsed for an earlier run are reused by exact body text. The
+        # bodies of this run and the newest older ones are kept, so the cache
+        # does not grow with every edit of a long session.
+        parsed_before = self._runtime_activation_parse_cache
+        parsed: dict[str, PdxNode | None] = {}
         for source, body in scripts:
-            if body not in self._runtime_activation_parse_cache:
-                try:
-                    self._runtime_activation_parse_cache[body] = parse_pdx(body)
-                except ParseError:
-                    # General script validation owns syntax diagnostics.
-                    self._runtime_activation_parse_cache[body] = None
-            root = self._runtime_activation_parse_cache[body]
+            if body not in parsed:
+                if body in parsed_before:
+                    parsed[body] = parsed_before[body]
+                else:
+                    try:
+                        parsed[body] = parse_pdx(body)
+                    except ParseError:
+                        # General script validation owns syntax diagnostics.
+                        parsed[body] = None
+            root = parsed[body]
             if root is None:
                 continue
             # The walker only reads nodes. Exact body keys remain valid even
@@ -264,6 +273,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     gained = True
                 if gained:
                     sources.setdefault(key, set()).add(source)
+        self._runtime_activation_parse_cache = _keep_recent(parsed_before, parsed, floor=256)
         return {
             key: (
                 frozenset(transferred.get(key, ())),

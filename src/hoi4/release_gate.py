@@ -22,6 +22,7 @@ from typing import Callable, Literal, TypeVar, cast
 from .mod import Mod
 from .idea_icons import DEFAULT_IDEA_ICON
 from .game_log import GameLogReport, parse_hoi4_error_log
+from .localisation import DEFAULT_LOCALISATION_LANGUAGE
 from .types import Focus, LoadDiagnostic, ValidationIssue
 from .validation import COUNTRY_PACKAGE_REQUIREMENT_CODES
 
@@ -384,7 +385,10 @@ def _probe_on_action(mod: Mod) -> str | None:
 
 
 def _probe_localization(mod: Mod) -> str | None:
-    entries = mod.all_loc()
+    # A text of the mod itself: all_loc() also holds what the game and the
+    # base mods define, and the probe is about editing the mod's own files.
+    own = mod._authored_loc_keys(DEFAULT_LOCALISATION_LANGUAGE)
+    entries = {key: text for key, text in mod.all_loc().items() if key in own}
     if not entries:
         return None
     key = max(entries, key=lambda candidate: (len(entries[candidate]), candidate))

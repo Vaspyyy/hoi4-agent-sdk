@@ -28,9 +28,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Any, Collection, Iterable, Iterator
+from typing import Collection, Iterable, Iterator
 
-from ._disk_cache import DiskAnalysis
+from ._disk_cache import DiskAnalysis, string_list, string_map
 from ._script_corpus import split_file
 from .script_scopes import CONTROL, BlockKind, Role, WalkState, walk_data, walk_script
 from .syntax import Assignment, Block, Document, Scalar, Tagged, parse
@@ -676,18 +676,27 @@ def _encode_definitions(found: Definitions) -> dict[str, object]:
     return data
 
 
-def _decode_definitions(data: dict[str, Any]) -> Definitions:
+def _decode_definitions(data: object) -> Definitions:
+    """Stored definitions. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, dict):
+        raise TypeError("stored definitions must be a map")
     found = Definitions()
     for key, (has_id, line) in data.get("events", {}).items():
-        found.events[key] = (bool(has_id), int(line))
+        if type(has_id) is not bool or type(line) is not int:
+            raise TypeError("a stored event must be [has an id, line]")
+        found.events[key] = (has_id, line)
     for key, (category, line) in data.get("ideas", {}).items():
-        found.ideas[key] = (str(category), int(line))
-    found.equipment.update(data.get("equipment", {}))
-    found.equipment_copies.extend(
-        (str(new), str(old), frozenset(named)) for new, old, named in data.get("equipment_copies", ())
-    )
+        if not isinstance(category, str) or type(line) is not int:
+            raise TypeError("a stored idea must be [category, line]")
+        found.ideas[key] = (category, line)
+    found.equipment.update(string_map(data.get("equipment", {})))
+    for new, old, named in data.get("equipment_copies", []):
+        if not isinstance(new, str) or not isinstance(old, str):
+            raise TypeError("a stored equipment copy must name two pieces of equipment")
+        found.equipment_copies.append((new, old, frozenset(string_list(named))))
     for name in ("advisor_ideas", "focus_trees", "technologies", "tags", "organizations"):
-        getattr(found, name).update(data.get(name, ()))
+        getattr(found, name).update(string_list(data.get(name, [])))
     return found
 
 

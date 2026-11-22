@@ -11,11 +11,11 @@ from ..characters import (
 )
 from ..countries import (
     _country_localisation_suffixes,
+    country_file_paths,
     serialize_country_colors_file,
 )
 from ..paths import (
     require_country_tag,
-    resolve_mod_output_path,
     safe_file_stem,
 )
 from ..types import (
@@ -98,7 +98,7 @@ class CountryAuthoringLayer(CharactersLayer):
             relative = (
                 self._base_content.relative(resolved) if self._base_content is not None else None
             )
-            return resolve_mod_output_path(self.mod_root, relative) if relative is not None else None
+            return self._output_path(relative) if relative is not None else None
 
         leader = Leader(
             name=leader_name,
@@ -135,6 +135,10 @@ class CountryAuthoringLayer(CharactersLayer):
             touched_fields={"*"},
         )
         self._countries[tag] = country
+        # Files of this tag may be on disk although no tag file names them,
+        # so the loader never read them. They are replaced: note them now.
+        for country_file in country_file_paths(self.mod_root, country):
+            self._note_target(country_file)
         self._created_country_tags.add(tag)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
@@ -320,7 +324,8 @@ class CountryAuthoringLayer(CharactersLayer):
         countries = {tag: self.get_country(tag) for tag in self.list_countries()}
         if not countries:
             raise ValueError("Cannot replace country colors with an empty registry")
-        target = resolve_mod_output_path(self.mod_root, "common/countries/colors.txt")
+        # The table this rebuild replaces, as it is now.
+        target = self._output_path("common/countries/colors.txt")
         self._script_file_updates[target] = serialize_country_colors_file(
             "", {tag: country.color for tag, country in countries.items()})
         self._dirty.add("script_files")

@@ -8,7 +8,6 @@ from pathlib import Path
 from ..ideologies import Ideology, SubIdeology
 from ..paths import (
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..errors import AlreadyExistsError, ReadOnlyError, not_found
 from ._core import CoreLayer
@@ -84,7 +83,7 @@ class IdeologiesLayer(CoreLayer):
                 f"Ideology '{ideology_id}' already exists. Use overwrite=True or update_ideology()."
             )
         target = (
-            resolve_mod_output_path(self.mod_root, path)
+            self._output_path(path)
             if path is not None
             else self.mod_root / "common" / "ideologies" / "00_mod_ideologies.txt"
         )
@@ -138,7 +137,7 @@ class IdeologiesLayer(CoreLayer):
             self._ideologies[ideology_id] = ideology
         old_path = ideology.path
         if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+            kwargs["path"] = self._output_path(kwargs["path"])
         _set_fields(ideology, kwargs, allow_path=True)
         ideology.touched_fields.update(key for key in kwargs if key != "path")
         if old_path is not None:

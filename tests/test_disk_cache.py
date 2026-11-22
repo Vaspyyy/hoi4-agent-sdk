@@ -201,6 +201,66 @@ def test_a_broken_store_file_is_ignored_and_rebuilt(
     assert json.loads(target.read_text(encoding="utf-8"))["entries"]
 
 
+def test_a_damaged_entry_of_names_is_computed_again(store: Path, tmp_path: Path) -> None:
+    """A string where a list of names belongs must not be read as a set of its letters."""
+
+    path = write(tmp_path / "game", "common/a.txt", "alpha beta")
+    compute = Counted()
+    read_through(path, compute)
+    disk_cache.flush()
+    (target,) = store.glob("names-*.json")
+    data = json.loads(target.read_text(encoding="utf-8"))
+    for entry in data["entries"].values():
+        entry[2] = "POISON"
+    target.write_text(json.dumps(data), encoding="utf-8")
+
+    new_process()
+    assert read_through(path, compute) == {"alpha", "beta"}
+    assert compute.calls == 2
+
+
+@pytest.mark.parametrize(
+    ("analysis", "damaged"),
+    [
+        (PAIRS_ON_DISK, "POISON"),
+        (PAIRS_ON_DISK, [["only one"]]),
+        (PAIRS_ON_DISK, [["a", 1]]),
+        (PAIRS_ON_DISK, ["ab"]),
+        (_STATE_HEADERS_ON_DISK, "POISON"),
+        (_STATE_HEADERS_ON_DISK, ["1", "STATE_1", "GER"]),
+        (_STATE_HEADERS_ON_DISK, [1, "STATE_1"]),
+        (_STATE_HEADERS_ON_DISK, [1, ["STATE_1"], None]),
+        (DEFINITIONS_ON_DISK, "POISON"),
+        (DEFINITIONS_ON_DISK, {"events": {"a.1": ["yes", 3]}}),
+        (DEFINITIONS_ON_DISK, {"ideas": {"spirit": ["country", "3"]}}),
+        (DEFINITIONS_ON_DISK, {"equipment": {"tank": 1}}),
+        (DEFINITIONS_ON_DISK, {"equipment_copies": [["new", "old", "POISON"]]}),
+        (DEFINITIONS_ON_DISK, {"technologies": "POISON"}),
+    ],
+)
+def test_a_damaged_entry_is_refused_by_its_decoder(analysis: DiskAnalysis, damaged: object) -> None:
+    """Refused with one of the errors the store takes as "compute it again"."""
+
+    with pytest.raises((TypeError, ValueError, KeyError, IndexError, AttributeError)):
+        analysis.decode(damaged)
+
+
+@pytest.mark.parametrize(
+    "damaged",
+    [
+        "POISON",
+        {"land": "12", "graph": [], "coastal": []},
+        {"land": [1], "graph": [["1", [2]]], "coastal": []},
+        {"land": [1], "graph": [[1, "23"]], "coastal": []},
+        {"land": [1], "graph": [[1, [2]]], "coastal": [1.5]},
+        {"land": [1], "coastal": []},
+    ],
+)
+def test_a_damaged_topology_is_refused_by_its_decoder(damaged: object) -> None:
+    with pytest.raises((TypeError, ValueError, KeyError, IndexError, AttributeError)):
+        _decode_topology(damaged)
+
+
 def test_an_entry_of_the_wrong_shape_is_computed_again(store: Path, tmp_path: Path) -> None:
     path = write(tmp_path / "game", "common/a.txt", "alpha beta")
     analysis = DiskAnalysis("shapes", list, lambda data: data["missing"])

@@ -12,7 +12,6 @@ from ..focus_layout import resolve_focus_positions, visual_overlap_issues
 from ..paths import (
     require_country_tag,
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..types import (
     Focus,
@@ -187,7 +186,7 @@ class FocusLayer(ContextLayer):
         _check_fields("update_focus_tree", tree, kwargs, allow_path=True)
         old_path = tree.path
         if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+            kwargs["path"] = self._output_path(kwargs["path"])
         _set_fields(tree, kwargs, allow_path=True)
         tree.touched = True
         if old_path is not None:

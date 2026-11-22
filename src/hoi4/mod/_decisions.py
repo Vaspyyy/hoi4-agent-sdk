@@ -8,7 +8,6 @@ from typing import Any, Iterable, Sequence, cast
 from ..decisions import category_files
 from ..paths import (
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..syntax import parse, quote
 from ..textio import read_text
@@ -173,7 +172,7 @@ class DecisionsLayer(LocalisationLayer):
                     "cannot safely overwrite the whole category. Consolidate it first."
                 )
         target = (
-            resolve_mod_output_path(self.mod_root, path)
+            self._output_path(path)
             if path is not None
             else (
                 existing.path
@@ -182,7 +181,7 @@ class DecisionsLayer(LocalisationLayer):
             )
         )
         definition_target = (
-            resolve_mod_output_path(self.mod_root, category_path)
+            self._output_path(category_path)
             if category_path is not None
             else (
                 existing.definition_path
@@ -265,14 +264,12 @@ class DecisionsLayer(LocalisationLayer):
         old_definition_path = category.definition_path
         category_path = kwargs.pop("category_path", None)
         target = (
-            resolve_mod_output_path(self.mod_root, kwargs.pop("path"))
+            self._output_path(kwargs.pop("path"))
             if "path" in kwargs
             else None
         )
         if category_path is not None:
-            category.definition_path = resolve_mod_output_path(
-                self.mod_root, category_path
-            )
+            category.definition_path = self._output_path(category_path)
         elif target is not None and category.definition_path is None:
             category.definition_path = _decision_category_definition_path(
                 self.mod_root, target, self._shadows_inherited
@@ -368,7 +365,7 @@ class DecisionsLayer(LocalisationLayer):
             category = self._extend_inherited_decision_category(category_id, path)
         elif path is not None:
             self._point_decision_category_at(
-                category, resolve_mod_output_path(self.mod_root, path)
+                category, self._output_path(path)
             )
         if existing is not None:
             old_category = self._decision_categories.get(existing.category)
@@ -475,9 +472,7 @@ class DecisionsLayer(LocalisationLayer):
                 plural="decision categories",
                 hint="Create it with create_decision_category() first.",
             )
-        target = resolve_mod_output_path(
-            self.mod_root, path or Path("common") / "decisions" / "mod_decisions.txt"
-        )
+        target = self._output_path(path or Path("common") / "decisions" / "mod_decisions.txt")
         category = DecisionCategory(id=category_id, path=target)
         self._decision_categories[category_id] = category
         self._dirty.add("decisions")

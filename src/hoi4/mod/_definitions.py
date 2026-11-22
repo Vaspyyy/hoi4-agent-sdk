@@ -72,7 +72,7 @@ class DefinitionsLayer(CoreLayer):
         source_bytes = source.read_bytes()
         text = decode_text(source_bytes)
         parsed = parse_pdx(text)
-        target = resolve_mod_output_path(self.mod_root, relative)
+        target = self._output_path(relative)
         if (target.exists() or target in self._script_file_updates) and not overwrite:
             raise FileExistsError(f"Script target already exists: {relative}")
         ideas: list[Idea] = []
@@ -122,6 +122,8 @@ class DefinitionsLayer(CoreLayer):
                 self._ideas[idea.id] = idea
             self._idea_file_containers[target] = container
             self._original_files[target] = text
+        # The file this import replaces, as it is now.
+        self._note_target(target)
         self._script_file_updates[target] = text
         self._format_donors[target] = source_bytes
         self._scan_cache.clear()
@@ -151,7 +153,8 @@ class DefinitionsLayer(CoreLayer):
                 files[relative] = (target, pending, True)
                 continue
             try:
-                files[relative] = (source, read_text(source), False)
+                # What is read here is what an edit of the file builds on.
+                files[relative] = (source, self._keep_source(source, read_text(source)), False)
             except (OSError, UnicodeDecodeError):
                 continue
         for target, text in self._script_file_updates.items():
@@ -229,6 +232,9 @@ class DefinitionsLayer(CoreLayer):
         target = resolve_mod_output_path(self.mod_root, relative)
         if text == original and target not in self._script_file_updates:
             return target
+        # Usually read (and noted) by ``_definition_texts``; a file of
+        # another kind's folder at an explicit path is noted here.
+        self._note_target(target)
         self._script_file_updates[target] = text
         self._scan_cache.clear()
         self._equipment_unlock_cache = None

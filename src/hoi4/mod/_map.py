@@ -629,10 +629,12 @@ class MapLayer(StatesLayer, CatalogsLayer):
             and self._mod_hides_inherited(Path(relative))
         ):
             return None
-        return read_text(source)
+        # What is read here is what an edit of the map file builds on.
+        return self._keep_source(source, read_text(source))
 
     def _queue_map_text(self, relative: str, text: str) -> None:
-        resolve_mod_output_path(self.mod_root, relative)
+        # The map file this edit replaces, as it is now.
+        self._note_target(resolve_mod_output_path(self.mod_root, relative))
         self._map_file_updates[relative] = text
         self._dirty.add("map")
 
@@ -961,7 +963,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 inherited_file = (
                     self.hoi4_install is not None and (self.hoi4_install / relative).is_file()
                 )
-            target = resolve_mod_output_path(self.mod_root, relative)
+            target = self._output_path(relative)
             self._deleted_state_files[target] = shadow if inherited_file else None
         self._states.pop(state_id, None)
         if state_id in self._state_ids:

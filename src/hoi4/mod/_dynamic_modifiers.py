@@ -9,7 +9,6 @@ from ..dynamic_modifiers import (
 )
 from ..paths import (
     require_script_id,
-    resolve_mod_output_path,
     safe_file_stem,
 )
 from ..script import (
@@ -70,7 +69,7 @@ class DynamicModifiersLayer(CoreLayer):
         if existing is not None and not overwrite:
             raise AlreadyExistsError(f"Dynamic modifier '{modifier_id}' already exists")
         target = (
-            resolve_mod_output_path(self.mod_root, path)
+            self._output_path(path)
             if path is not None
             else self.mod_root
             / "common"

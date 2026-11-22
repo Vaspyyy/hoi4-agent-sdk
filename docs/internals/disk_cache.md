@@ -56,7 +56,10 @@ There is one JSON file per store and code version, named
   modification time. An entry whose file now has another size or time is not
   used; the file is read again and its new result replaces the entry. A file
   changed less than three seconds ago is not stored at all: a second change
-  in the same tick of the clock could keep the same size and time.
+  in the same tick of the clock could keep the same size and time. Size and
+  time are all that is checked: a game or base-mod file rewritten with the
+  same size and with its old time set back keeps its stored result. Delete
+  the cache folder (or set `HOI4_SDK_DISK_CACHE=off`) after such a change.
 - **A changed SDK.** The code stamp is a hash of every Python source file of
   the `hoi4` package (and the Python version). Any change of the SDK starts
   new store files, so a changed analysis can never read old results. The
