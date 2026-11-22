@@ -153,22 +153,28 @@ def _name(model: Any) -> str:
 
 
 #: Every kind found through the index, by the name ``Mod`` uses for it.
+# Installed-game scan: focus trees, events, ideas, decisions, bookmarks and
+# dynamic modifiers have zero IDs repeated across files of their kind. A
+# whole-file override is the safe edit path for these definitions.
 INHERITED_KINDS: dict[str, InheritedKind] = {
-    "focus_tree": InheritedKind("focus tree", ("common/national_focus",), _focus_trees, _id),
-    "event": InheritedKind("event", ("events",), _events, _id),
-    "idea": InheritedKind("idea", ("common/ideas", "common/national_ideas"), _ideas, _id),
-    "decision": InheritedKind("decision", ("common/decisions",), _decisions, _id),
+    "focus_tree": InheritedKind("focus tree", ("common/national_focus",), _focus_trees, _id, whole_file=True),  # 0 repeated IDs
+    "event": InheritedKind("event", ("events",), _events, _id, whole_file=True),  # 0 repeated IDs
+    "idea": InheritedKind("idea", ("common/ideas", "common/national_ideas"), _ideas, _id, whole_file=True),  # 0 repeated IDs
+    "decision": InheritedKind("decision", ("common/decisions",), _decisions, _id, whole_file=True),  # 0 repeated IDs
     "decision_category": InheritedKind(
         "decision category",
         ("common/decisions/categories", "common/decisions"),
         _decision_categories,
         _id,
         plural="decision categories",
+        whole_file=True,
+        # The scan found 602 IDs in multiple files. Category definitions and
+        # their decision blocks compose, so return their combined contents.
         combine=_combine_categories,
     ),
-    "bookmark": InheritedKind("bookmark", ("common/bookmarks",), _bookmarks, _name),
+    "bookmark": InheritedKind("bookmark", ("common/bookmarks",), _bookmarks, _name, whole_file=True),  # 0 repeated IDs
     "dynamic_modifier": InheritedKind(
-        "dynamic modifier", ("common/dynamic_modifiers",), _dynamic_modifiers, _id
+        "dynamic modifier", ("common/dynamic_modifiers",), _dynamic_modifiers, _id, whole_file=True  # 0 repeated IDs
     ),
     # Hooks add up across files: every inherited occurrence counts, and an
     # edit of one is refused with its own message (see ``Mod.update_on_action``).
