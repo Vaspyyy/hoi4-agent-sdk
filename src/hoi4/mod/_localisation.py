@@ -111,9 +111,17 @@ class LocalisationLayer(CoreLayer):
             NotFoundError: ``key`` has no text in that language and no
                 default was given.
         """
-        language, entries, _, _ = self._loc_tables(language)
+        language, entries, sources, dirty_keys = self._loc_tables(language)
         key = self._normalize_loc_key(key)
         value = entries.get(key)
+        source = sources.get(key)
+        if not include_vanilla and key not in dirty_keys and source is not None:
+            if not self._in_mod_root(source) or not source.is_file():
+                value = None
+            elif self._content_layers is not None:
+                own_entries, _ = parse_localization_files([source])
+                if key not in own_entries:
+                    value = None
         if value is None and include_vanilla:
             value = self._game_loc(language).get(key)
         if value is None:

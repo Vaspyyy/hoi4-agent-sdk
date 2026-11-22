@@ -229,3 +229,17 @@ def test_effective_states_include_inherited_without_prior_lookup(tmp_path: Path)
     mod = Mod(root, hoi4_install=game)
     assert [state.id for state in mod._effective_states()] == [1]
     assert mod.list_states() == []
+
+
+def test_localisation_mod_only_excludes_base_layers(tmp_path: Path) -> None:
+    game, base, root = tmp_path / "game", tmp_path / "base", tmp_path / "mod"
+    root.mkdir()
+    write(game, "localisation/english/game_l_english.yml", 'l_english:\n game_key:0 "Game"\n')
+    write(base, "localisation/english/base_l_english.yml", 'l_english:\n base_key:0 "Base"\n')
+    mod = Mod(root, hoi4_install=game, base_mod_paths=[base])
+    assert mod.get_loc("base_key") == "Base"
+    assert mod.get_loc("game_key") == "Game"
+    assert mod.get_loc("base_key", include_vanilla=False, default=None) is None
+    assert mod.get_loc("game_key", include_vanilla=False, default=None) is None
+    mod.set_loc("base_key", "Changed")
+    assert mod.get_loc("base_key", include_vanilla=False) == "Changed"
