@@ -91,6 +91,7 @@ class EventsLayer(CoreLayer):
     def create_event(
         self,
         event_id: str,
+        *,
         title: str = "",
         description: str = "",
         event_type: str = "country_event",

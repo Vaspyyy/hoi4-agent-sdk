@@ -55,7 +55,7 @@ def test_unsupported_localization_destination_leaves_changes_untouched(
     before = mod.preview()
 
     with pytest.raises(ValueError, match="localisation/english"):
-        mod.set_loc("FIRST", "Neu", file_path=german)
+        mod.set_loc("FIRST", "Neu", path=german)
 
     assert mod.get_loc("FIRST") == "First"
     assert mod.preview() == before
@@ -75,7 +75,7 @@ def test_custom_english_localization_preserves_unedited_entries(tmp_path: Path) 
     original = '\ufeff# translator note\nl_english:\n FIRST:0 "First"\n SECOND:0 "Second"\n'
     path.write_text(original, encoding="utf-8")
     mod = Mod(tmp_path)
-    mod.set_loc("FIRST", "Updated", file_path=relative)
+    mod.set_loc("FIRST", "Updated", path=relative)
     result = mod.save(require_changes=True)
     assert result.written_files == [path]
     assert path.read_bytes() == original.replace('"First"', '"Updated"').encode("utf-8")

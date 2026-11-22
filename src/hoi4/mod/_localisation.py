@@ -229,19 +229,24 @@ class LocalisationLayer(CoreLayer):
         self,
         key: str,
         value: str,
-        file_path: str | Path | None = None,
         *,
+        path: str | Path | None = None,
         language: str = DEFAULT_LOCALISATION_LANGUAGE,
-        replace: bool = False,
+        overwrite_vanilla: bool = False,
     ) -> None:
         """Set one language's entry (English by default).
 
-        Custom destinations must be ``.yml`` files under
-        ``localisation/<language>``. ``replace=True`` routes the entry to
-        ``localisation/<language>/replace/`` (``mod_replace_l_<language>.yml``
-        unless ``file_path`` names another file there), which is how a mod
-        overrides keys defined by the base game.
+        Custom destinations (``path``) must be ``.yml`` files under
+        ``localisation/<language>``. ``overwrite_vanilla=True`` routes the
+        entry to ``localisation/<language>/replace/``
+        (``mod_replace_l_<language>.yml`` unless ``path`` names another file
+        there), which is how a mod overrides keys defined by the base game.
+
+        Raises:
+            ValueError: ``path`` is outside ``localisation/<language>``.
         """
+        file_path = path
+        replace = overwrite_vanilla
         language, entries, sources, dirty_keys = self._loc_tables(language)
         language_dir = self.mod_root / "localisation" / language
         target = None
@@ -254,7 +259,8 @@ class LocalisationLayer(CoreLayer):
                 )
             if replace and not target.is_relative_to(language_dir / "replace"):
                 raise ValueError(
-                    f"set_loc(replace=True) needs a file under localisation/{language}/replace"
+                    f"set_loc(overwrite_vanilla=True) needs a file under "
+                    f"localisation/{language}/replace"
                 )
         elif replace:
             target = self._default_loc_file_for(language, replace=True)
@@ -392,7 +398,7 @@ class LocalisationLayer(CoreLayer):
                         self._loc_sources.get(key, self.default_loc_file), language
                     )
                 )
-                self.set_loc(key, value, file_path, language=language)
+                self.set_loc(key, value, path=file_path, language=language)
                 written[language].append(key)
         return written
 

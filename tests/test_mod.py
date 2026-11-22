@@ -1361,7 +1361,7 @@ class TestModCountries:
             "ABC",
             "Override Land",
             overwrite=True,
-            allow_vanilla_override=True,
+            overwrite_vanilla=True,
         )
         preview = mod.preview()
 
@@ -1420,7 +1420,7 @@ class TestModCountries:
         assert mod.country_tag_conflicts("SIC") == ["vanilla: SIC (SIC)"]
         with pytest.raises(ValueError, match="vanilla HOI4"):
             mod.create_country("SIC", "Sicily")
-        country = mod.create_country("SIC", "Sicily", allow_vanilla_override=True)
+        country = mod.create_country("SIC", "Sicily", overwrite_vanilla=True)
         assert country.tag == "SIC"
 
     def test_country_tag_conflicts_include_vanilla_country_name(self, tmp_path):

@@ -74,7 +74,7 @@ class CountriesLayer(CoreLayer):
             conflicts.append(f"vanilla: {tag} ({label})")
         return conflicts
 
-    def suggest_tags(self, name: str, count: int = 5) -> list[str]:
+    def suggest_tags(self, name: str, *, count: int = 5) -> list[str]:
         taken = set(self._countries) | self._vanilla_tags
         token = _normalize_name_token(name)
         candidates: list[str] = []

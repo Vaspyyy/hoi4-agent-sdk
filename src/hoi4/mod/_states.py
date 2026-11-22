@@ -52,7 +52,7 @@ class StatesLayer(CountriesLayer):
         all_ids = set(self._state_ids) | set(self._states.keys())
         return sorted(all_ids)
 
-    def state_index(self, include_vanilla: bool = True) -> list[dict]:
+    def state_index(self, *, include_vanilla: bool = True) -> list[dict]:
         cached = self._state_index_cache.get(include_vanilla)
         if cached is not None:
             return [
@@ -98,13 +98,15 @@ class StatesLayer(CountriesLayer):
         self._state_index_cache[include_vanilla] = [dict(entry) for entry in result]
         return [entry for entry in result if entry["id"] not in self._deleted_state_ids]
 
-    def get_state_name_map(self, include_vanilla: bool = True) -> dict[int, str]:
+    def get_state_name_map(self, *, include_vanilla: bool = True) -> dict[int, str]:
         return {
             entry["id"]: entry.get("display_name") or entry.get("name") or str(entry["id"])
             for entry in self.state_index(include_vanilla=include_vanilla)
         }
 
-    def find_state(self, query: str, include_vanilla: bool = True, limit: int = 10) -> list[dict]:
+    def find_state(
+        self, query: str, *, include_vanilla: bool = True, limit: int = 10
+    ) -> list[dict]:
         needle = _fold_search_text(query)
         if not needle:
             return []

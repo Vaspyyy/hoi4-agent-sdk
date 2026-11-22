@@ -39,6 +39,7 @@ class CountryAuthoringLayer(CharactersLayer):
         self,
         tag: str,
         name: str,
+        *,
         adjective: str = "",
         color: tuple[int, int, int] = (128, 128, 128),
         capital: int = 1,
@@ -54,7 +55,7 @@ class CountryAuthoringLayer(CharactersLayer):
         technologies: dict[str, int] | None = None,
         oob: str = "",
         overwrite: bool = False,
-        allow_vanilla_override: bool = False,
+        overwrite_vanilla: bool = False,
     ) -> Country:
         tag = require_country_tag(tag)
         existing = self._countries.get(tag)
@@ -80,10 +81,10 @@ class CountryAuthoringLayer(CharactersLayer):
                     f"exist and would be overwritten: {displayed}. Pass overwrite=True "
                     "only if replacing those orphaned files is intentional."
                 )
-        if tag in self._vanilla_tags and not allow_vanilla_override:
+        if tag in self._vanilla_tags and not overwrite_vanilla:
             raise ValueError(
                 f"Country tag '{tag}' is already used by vanilla HOI4. "
-                "Choose an unused tag or pass allow_vanilla_override=True intentionally."
+                "Choose an unused tag or pass overwrite_vanilla=True intentionally."
             )
         if leader_ideology is None:
             leader_ideology = self._default_leader_ideology_for_party(ruling_party)

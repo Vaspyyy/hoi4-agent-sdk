@@ -273,7 +273,7 @@ def test_create_state_validates_inputs_and_is_atomic(tmp_path: Path) -> None:
         mod.create_state([1, 2, 3], name="Everything")
     # A failure after provinces moved (bad localisation path) rolls back.
     with pytest.raises(ValueError, match="localisation"):
-        mod.create_state([3], name="Rollback", localisation_file="notes.txt")
+        mod.create_state([3], name="Rollback", loc_path="notes.txt")
 
     assert mod.get_state(1).provinces == [1, 2, 3]
     assert 3 not in mod.list_states()

@@ -113,7 +113,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             diffs.append(f"Binary asset {action}: {rel} ({len(content)} bytes)")
         return "\n".join(diffs)
 
-    def save(self, require_changes: bool = False) -> SaveResult:
+    def save(self, *, require_changes: bool = False) -> SaveResult:
         if not self._dirty:
             message = "No changes written: save() was called with no dirty changes"
             warnings.warn(message, RuntimeWarning, stacklevel=2)

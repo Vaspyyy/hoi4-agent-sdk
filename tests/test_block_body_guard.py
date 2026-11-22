@@ -493,7 +493,7 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "new state",
-        _parameters(Mod.create_state, frozenset({"localisation_file", "provinces"})),
+        _parameters(Mod.create_state, frozenset({"loc_path", "provinces"})),
         create_with=lambda mod, field, value: mod.create_state(
             [3], **{"name": "New", field: value}
         ),
@@ -501,7 +501,7 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "new strategic region",
-        _parameters(Mod.create_strategic_region, frozenset({"localisation_file", "provinces"})),
+        _parameters(Mod.create_strategic_region, frozenset({"loc_path", "provinces"})),
         create_with=lambda mod, field, value: mod.create_strategic_region(
             **{"name": "Region", "provinces": [3], field: value}
         ),
@@ -515,10 +515,10 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "order of battle",
-        _parameters(Mod.create_oob, frozenset({"path", "kind", "country_tag"})),
+        _parameters(Mod.create_oob, frozenset({"path", "kind", "tag"})),
         create_with=lambda mod, field, value: mod.create_oob(
             **{
-                "name": "ZZZ_1936", "country_tag": "ZZZ", "assign": False,
+                "name": "ZZZ_1936", "tag": "ZZZ", "assign": False,
                 "templates": [_TEMPLATE], "divisions": [DivisionUnit("Line", 1)],
                 field: value,
             }

@@ -54,12 +54,12 @@ class IdeasLayer(CoreLayer):
     def create_idea(
         self,
         idea_id: str,
+        *,
         icon: str = DEFAULT_IDEA_ICON,
         modifier: dict[str, str | int | float | bool] | None = None,
         category: str = "country",
         path: str | Path | None = None,
         overwrite: bool = False,
-        *,
         removal_cost: str | int | float | None = None,
     ) -> Idea:
         idea_id = require_script_id(idea_id, label="idea ID")

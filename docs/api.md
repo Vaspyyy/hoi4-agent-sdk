@@ -137,9 +137,9 @@ history, characters, and localization.
 | `list_countries() -> list[str]` | Sorted tag list | All loaded country tags |
 | `is_country_tag_available(tag: str) -> bool` | `bool` | False if the tag exists in the mod or vanilla install |
 | `country_tag_conflicts(tag: str) -> list[str]` | `list[str]` | Returns conflict details such as `"mod: TAG (Name)"` or `"vanilla: TAG (Name)"` |
-| `suggest_tags(name: str, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
+| `suggest_tags(name: str, *, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
 | `get_country(tag: str, *, default=...) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. A tag no one defines raises `NotFoundError` (or returns `default`); it is never invented. |
-| `create_country(tag, name, adjective="", color=(128,128,128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. Raises for existing mod or vanilla tags unless explicitly allowed. |
+| `create_country(tag, name, *, adjective="", color=(128,128,128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, overwrite_vanilla=False) -> Country` | `Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. Raises for existing mod or vanilla tags unless explicitly allowed. |
 | `update_country(tag: str, **kwargs) -> Country` | `Country` | Update modeled country fields, including `color` and `color_ui`. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
 | `delete_country(tag: str) -> None` | `None` | Stage deletion of a mod-owned country and its generated localization. Raises `NotFoundError` for an unknown tag and `ReadOnlyError` for a game or base-mod country (that needs an explicit total-conversion strategy). |
 
@@ -230,12 +230,12 @@ large portrait used elsewhere.
 |--------|-------------|
 | `list_oobs(include_vanilla=False) -> list[str]` | List known `history/units` stems |
 | `get_oob(name, *, include_vanilla=True, default=...) -> OrderOfBattle` | Load a mod or vanilla OOB |
-| `create_oob(name, country_tag, templates=(), divisions=(), fleets=(), air_wings=(), kind="auto", required_dlc=(), excluded_dlc=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write one land, naval, or air OOB and assign it with the correct country-history effect |
+| `create_oob(name, tag, *, templates=(), divisions=(), fleets=(), air_wings=(), kind="auto", required_dlc=(), excluded_dlc=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write one land, naval, or air OOB and assign it with the correct country-history effect |
 | `update_oob(name, templates=None, divisions=None, fleets=None, air_wings=None, country_tag=None, kind=None, required_dlc=None, excluded_dlc=None, assign=False) -> OrderOfBattle` | Replace selected modeled collections and assignment metadata while preserving neighboring production, comments, and unknown fields |
 | `delete_oob(name, unassign=True) -> None` | Delete a mod-owned OOB and optionally clear country references; raises `NotFoundError` or, for a game OOB, `ReadOnlyError` |
 | `assign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="") -> None` | Raises `NotFoundError` for an undefined country, or (with a game install) an unknown OOB. Assign an existing OOB through `set_oob`, `set_naval_oob`, or `set_air_oob`, optionally under DLC conditions or a dated history block |
 | `unassign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="") -> None` | Remove one exact dated/conditioned assignment without re-rendering surrounding history; raises `NotFoundError` when there is no such assignment |
-| `create_equipment_variant(country_tag, variant) -> EquipmentVariant` | Append a country-history equipment variant, including optional DLC conditions |
+| `create_equipment_variant(tag, variant) -> EquipmentVariant` | Append a country-history equipment variant, including optional DLC conditions |
 
 Air-wing updates retain existing location/equipment occurrence order, including
 repeated locations, and preserve enclosing comments and unknown fields. New or
@@ -404,9 +404,9 @@ states for copying, use `get_country_context(tag, copy_states=True)` or
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `list_states() -> list[int]` | Sorted state IDs | All loaded state IDs |
-| `state_index(include_vanilla=True) -> list[dict]` | `list[dict]` | Cached state metadata with `id`, raw loc `name`, localized `display_name`, `file_name`, `owner`, `path`, and `source` |
-| `get_state_name_map(include_vanilla=True) -> dict[int, str]` | `dict[int,str]` | State ID to display name |
-| `find_state(query: str, include_vanilla=True, limit=10) -> list[dict]` | `list[dict]` | Search by ID or localized state name, with stale filename fallback. Each result includes `matched`. |
+| `state_index(*, include_vanilla=True) -> list[dict]` | `list[dict]` | Cached state metadata with `id`, raw loc `name`, localized `display_name`, `file_name`, `owner`, `path`, and `source` |
+| `get_state_name_map(*, include_vanilla=True) -> dict[int, str]` | `dict[int,str]` | State ID to display name |
+| `find_state(query: str, *, include_vanilla=True, limit=10) -> list[dict]` | `list[dict]` | Search by ID or localized state name, with stale filename fallback. Each result includes `matched`. |
 | `get_state(state_id: int, *, default=...) -> State` | `State` | Cached or reads from mod/vanilla without writing. Raises `NotFoundError`. |
 | `set_state_owner(state_id: int, tag: str, add_core: bool = True) -> State` | `State` | Change owner, optionally add core |
 | `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field. List fields such as `cores` and `provinces` append unique values instead of replacing. |
@@ -455,16 +455,16 @@ Province-list edits remove or append the affected IDs in place.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `create_state(provinces, *, name, owner=None, cores=None, state_category="rural", manpower=0, state_id=None, resources=None, buildings="", impassable=False, localisation_file=None, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True)` | `int` | New `history/states/<id>-<name>.txt` (ID defaults to the highest effective ID + 1) plus `STATE_<id>` localisation. Provinces leave their states with their victory points and `history.buildings` province blocks. `owner`/`cores` set to `None` copy the source state that contributes the most provinces. Report warnings are issued as `RuntimeWarning`. |
+| `create_state(provinces, *, name, owner=None, cores=None, state_category="rural", manpower=0, state_id=None, resources=None, buildings="", impassable=False, loc_path=None, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True)` | `int` | New `history/states/<id>-<name>.txt` (ID defaults to the highest effective ID + 1) plus `STATE_<id>` localisation. Provinces leave their states with their victory points and `history.buildings` province blocks. `owner`/`cores` set to `None` copy the source state that contributes the most provinces. Report warnings are issued as `RuntimeWarning`. |
 | `move_provinces(provinces, to_state, *, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True)` | `MapEditReport` | Same data-moving rules. Emptying a source raises `ValueError` unless `delete_empty_states=True` (the file is deleted, or shadowed by an empty override when inherited) or `allow_empty_source=True` (kept empty, with a warning). |
 | `split_state(state_id, provinces, **create_state_kwargs)` | `int` | `create_state()` for provinces that must all belong to `state_id` |
 | `list_strategic_regions()` / `get_strategic_region(region_id)` | `StrategicRegion` | `id`, `name`, `provinces`, `path`, `has_weather` |
 | `move_provinces_to_strategic_region(provinces, region_id)` | `StrategicRegion` | Moves land or sea provinces; refuses to empty a region |
-| `create_strategic_region(name, provinces, *, region_id=None, weather=None, localisation_file=None)` | `int` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
+| `create_strategic_region(name, provinces, *, region_id=None, weather=None, loc_path=None)` | `int` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
 | `list_supply_nodes()` / `add_supply_node(province)` / `remove_supply_node(province)` | `list[int]` / `int` / `None` | Land provinces only; adding an existing node raises `AlreadyExistsError`, removing a missing one `NotFoundError` |
 | `list_railways()` / `add_railway(level, provinces, *, check_adjacency=True)` | `Railway` | Levels 1-5. Consecutive provinces must be adjacent when the province map and the `map` extra are available. |
 | `remove_railway(railway)` / `set_railway_level(railway, level)` | `None` | Select a listed `Railway`, or a province route matched in either direction; no match raises `NotFoundError` |
-| `list_map_buildings(state_id=None)` / `add_map_building(state_id, building, x, y, z, rotation, adjacent_sea_province=0)` | `MapBuilding` | `z` is the north-south map coordinate |
+| `list_map_buildings(state_id=None)` / `add_map_building(state_id, building, x, y, z, rotation, *, adjacent_sea_province=0)` | `MapBuilding` | `z` is the north-south map coordinate |
 | `remove_map_buildings(state_id=None, building=None, *, entries=())` | `None` | Remove positions by filters or listed entries; a missing state, a stale entry or no match raises `NotFoundError` |
 
 `MapEditReport` lists the moved provinces, source states, deleted or emptied
@@ -505,7 +505,7 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 |--------|---------|-------------|
 | `list_events() -> list[str]` | Sorted event IDs | All loaded events |
 | `get_event(event_id: str, *, default=...) -> Event` | `Event` | Raises `NotFoundError` with close matches if not found |
-| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer the namespace: the text before the last dot. Conditional titles and descriptions are written before the plain fallback. |
+| `create_event(event_id, *, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer the namespace: the text before the last dot. Conditional titles and descriptions are written before the plain fallback. |
 | `ensure_event(event_id: str, **kwargs) -> Event` | `Event` | Idempotent create-or-update wrapper |
 | `update_event(event_id: str, **kwargs) -> Event` | `Event` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
 | `update_event_option(event_id: str, option: int \| str, **kwargs) -> EventOption` | `EventOption` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |
@@ -788,11 +788,11 @@ SDK output as an error and removes it when the idea is edited.
 |--------|---------|-------------|
 | `list_ideas() -> list[str]` | Sorted idea IDs | All loaded ideas |
 | `get_idea(idea_id: str, *, default=...) -> Idea` | `Idea` | Raises `NotFoundError` if not found |
-| `create_idea(idea_id, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, *, desc="", removal_cost=None) -> Idea` | `Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
+| `create_idea(idea_id, *, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, removal_cost=None) -> Idea` | `Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
 | `ensure_idea(idea_id, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
 | `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |
 | `delete_idea(idea_id: str) -> None` | `None` | Stage the deletion; raises `NotFoundError` |
-| `suggest_idea_icons(query: str, count=5) -> list[str]` | `list[str]` | Rank loaded `GFX_idea_` sprites and return canonical bare stems. Prefixed queries remain accepted. |
+| `suggest_idea_icons(query: str, *, count=5) -> list[str]` | `list[str]` | Rank loaded `GFX_idea_` sprites and return canonical bare stems. Prefixed queries remain accepted. |
 
 ### Example
 
@@ -868,8 +868,8 @@ static checks do not establish the layout displayed by the game.
 |--------|---------|-------------|
 | `list_focus_trees() -> list[str]` | Sorted tree IDs | All loaded tree IDs |
 | `get_focus_tree(tree_id: str, *, default=...) -> FocusTree` | `FocusTree` | Raises `NotFoundError` if not found |
-| `create_focus_tree(tree_id: str, country_tag: str, overwrite=False) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
-| `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields; an existing tree of another country raises `ValueError` |
+| `create_focus_tree(tree_id: str, tag: str, *, overwrite=False) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
+| `ensure_focus_tree(tree_id: str, tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields; an existing tree of another country raises `ValueError` |
 | `update_focus_tree(tree_id: str, **kwargs) -> FocusTree` | `FocusTree` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id: str) -> None` | `None` | Remove tree; raises `NotFoundError` |
 | `add_focus(tree_id: str, focus: Focus) -> Focus` | `Focus` | Append focus to tree; an id the tree has raises `AlreadyExistsError` |
@@ -878,14 +878,14 @@ static checks do not establish the layout displayed by the game.
 | `get_focus(tree_id: str, focus_id: str, *, default=...) -> Focus` | `Focus` | Find focus in tree; a missing tree or focus raises `NotFoundError` (or returns `default`) |
 | `update_focus(tree_id: str, focus_id: str, **kwargs) -> Focus` | `Focus` | Update any Focus field |
 | `focus_tree_bounds(tree_id: str) -> dict[str, int]` | Bounds dict | `min_x`, `max_x`, `min_y`, `max_y`, `width`, `height` |
-| `place_continuous_focus_below_tree(tree_id, padding=400, x=50) -> str` | Position body | Sets `continuous_focus_position` below the lowest focus row |
+| `place_continuous_focus_below_tree(tree_id, *, padding=400, x=50) -> str` | Position body | Sets `continuous_focus_position` below the lowest focus row |
 | `assert_no_visual_overlap(tree_id, min_continuous_padding=100) -> None` | `None` | Raises `ValueError` on duplicate focus positions or too-high continuous focus |
 | `auto_layout_branch(tree_id, focuses, anchor_focus_id=None, x=None, y_start=None, spacing_y=1, chain_prerequisites=True) -> list[Focus]` | `list[Focus]` | Assign positions/prerequisites before inserting a generated branch |
 | `insert_focus_after(tree_id, anchor_focus_id, focus, add_prerequisite=True, relative_position=True) -> Focus` | `Focus` | Insert a focus after an existing focus and optionally wire prerequisite/relative positioning |
 | `insert_branch(tree_id, anchor_focus_id, focuses, chain_prerequisites=True) -> list[Focus]` | `list[Focus]` | Insert a vertical branch after an anchor focus; a duplicate id raises `AlreadyExistsError` before anything is inserted |
 | `append_to_focus_reward(tree_id, focus_id, effect) -> Focus` | `Focus` | Append an effect to an existing focus reward; raises `NotFoundError` |
 | `set_focuses_mutually_exclusive(tree_id, focus_a_id, focus_b_id) -> None` | `None` | Add reciprocal simple mutual exclusion groups; raises `NotFoundError` |
-| `set_focus_loc(focus_id, name, description, file_path=None) -> None` | `None` | Set both focus name and description localization |
+| `set_focus_loc(focus_id, name, description, *, path=None) -> None` | `None` | Set both focus name and description localization |
 | `create_industrial_branch(tree_id, tag, anchor_focus_id=None, state_id=None, grounded=True) -> list[Focus]` | `list[Focus]` | Generate a small grounded industrial branch with localization |
 
 `update_focus_tree()` rejects `country_tag` with `TypeError` for existing trees,
@@ -977,7 +977,7 @@ uncovers the game's text again).
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_loc(key, *, language="english", default=...) -> str` | `str` | Get one language's localized string: the mod's entry, else the game's. A key with no text raises `NotFoundError`; pass `default=None` to get `None` instead |
-| `set_loc(key, value, file_path=None, *, language="english", replace=False) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `replace=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `file_path` inside `replace/`), which is how a mod overrides base-game keys. |
+| `set_loc(key, value, *, path=None, language="english", overwrite_vanilla=False) -> None` | `None` | Set entry. Routes to its existing file, an explicit `path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `overwrite_vanilla=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `path` inside `replace/`), which is how a mod overrides base-game keys. |
 | `delete_loc(key, *, language="english") -> None` | `None` | Remove one language's entry; raises `NotFoundError`, or `ReadOnlyError` for a key only the game defines |
 | `search_loc(query, *, language="english") -> dict[str, str]` | `dict` | Case-insensitive substring search in one language's keys and values, the game's included |
 | `all_loc(*, language="english") -> dict[str, str]` | `dict` | Full copy of one language's entries: the game's, with the mod's on top |
@@ -1024,7 +1024,7 @@ mod.search_loc("independence")
 
 # Translations and vanilla overrides.
 mod.set_loc("WST_independence", "Unabhängigkeit erklären", language="german")
-mod.set_loc("GER_anschluss", "Union with Austria", replace=True)
+mod.set_loc("GER_anschluss", "Union with Austria", overwrite_vanilla=True)
 mod.copy_loc_to_languages(languages=["french", "spanish"])
 ```
 
@@ -1401,7 +1401,7 @@ mod_root/
       mod_l_english.yml              # Default localization target
       {TAG}_country_l_english.yml    # Country-specific localization
       replace/
-        mod_replace_l_english.yml    # set_loc(..., replace=True) overrides
+        mod_replace_l_english.yml    # set_loc(..., overwrite_vanilla=True) overrides
     german/                          # Same layout for every other language
       mod_l_german.yml
 ```

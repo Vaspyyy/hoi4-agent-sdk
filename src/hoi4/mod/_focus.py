@@ -83,16 +83,27 @@ class FocusLayer(ContextLayer, EffectsLayer):
         return self._focus_trees[tree_id]
 
     def create_focus_tree(
-        self, tree_id: str, country_tag: str, overwrite: bool = False
+        self, tree_id: str, tag: str, *, overwrite: bool = False
     ) -> FocusTree:
+        """Create an empty focus tree for the country ``tag``.
+
+        Returns:
+            The new tree.
+
+        Raises:
+            AlreadyExistsError: The tree exists and ``overwrite`` is false.
+            NotFoundError: A game install is configured and no one defines ``tag``.
+        """
         tree_id = require_script_id(tree_id, label="focus tree ID")
         existing = self._focus_trees.get(tree_id)
         if existing is not None and not overwrite:
-            raise ValueError(
-                f"Focus tree '{tree_id}' already exists. "
-                "Use overwrite=True to replace it or update_focus_tree()/add_focus() to patch it."
+            raise already_exists(
+                "focus tree",
+                tree_id,
+                hint="Use overwrite=True to replace it or update_focus_tree()/add_focus() "
+                "to patch it.",
             )
-        tag = self._require_country_reference(country_tag)
+        tag = self._require_country_reference(tag)
         path = (
             existing.path
             if existing is not None and existing.path is not None
@@ -105,7 +116,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
         self._dirty_focus_trees.add(tree_id)
         return tree
 
-    def ensure_focus_tree(self, tree_id: str, country_tag: str, **kwargs) -> FocusTree:
+    def ensure_focus_tree(self, tree_id: str, tag: str, **kwargs) -> FocusTree:
         """Create a focus tree if missing, otherwise patch tree-level fields.
 
         Returns:
@@ -116,7 +127,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
             ValueError: The tree exists for another country.
         """
         existing = self.get_focus_tree(tree_id, default=None)
-        tag = require_country_tag(country_tag)
+        tag = require_country_tag(tag)
         _check_fields(
             "ensure_focus_tree",
             existing or FocusTree(id=tree_id),
@@ -321,8 +332,13 @@ class FocusLayer(ContextLayer, EffectsLayer):
         }
 
     def place_continuous_focus_below_tree(
-        self, tree_id: str, padding: int = 400, x: int = 50
+        self, tree_id: str, *, padding: int = 400, x: int = 50
     ) -> str:
+        """Put the continuous focus box ``padding`` below the tree; return the position.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+        """
         bounds = self.focus_tree_bounds(tree_id)
         y = (bounds["max_y"] + 1) * 100 + padding
         position = f"x = {x} y = {y}"
@@ -517,10 +533,12 @@ class FocusLayer(ContextLayer, EffectsLayer):
         focus_id: str,
         name: str,
         description: str,
-        file_path: str | Path | None = None,
+        *,
+        path: str | Path | None = None,
     ) -> None:
-        self.set_loc(focus_id, name, file_path=file_path)
-        self.set_loc(f"{focus_id}_desc", description, file_path=file_path)
+        """Set a focus's name and ``<id>_desc`` text (English), optionally in ``path``."""
+        self.set_loc(focus_id, name, path=path)
+        self.set_loc(f"{focus_id}_desc", description, path=path)
 
     def create_industrial_branch(
         self,

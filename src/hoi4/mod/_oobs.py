@@ -226,7 +226,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
     def create_oob(
         self,
         name: str,
-        country_tag: str,
+        tag: str,
         *,
         templates: Sequence[DivisionTemplate] = (),
         divisions: Sequence[DivisionUnit] = (),
@@ -240,7 +240,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         path: str | Path | None = None,
     ) -> OrderOfBattle:
         name = require_script_id(name, label="OOB name")
-        country_tag = self._require_country_reference(country_tag)
+        country_tag = self._require_country_reference(tag)
         existing = self._oobs.get(name)
         if existing is not None and not overwrite:
             raise ValueError(
@@ -660,7 +660,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
 
     def create_equipment_variant(
         self,
-        country_tag: str,
+        tag: str,
         variant: EquipmentVariant,
     ) -> EquipmentVariant:
         """Append a validated equipment variant to country history.
@@ -672,7 +672,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 unlocked.
         """
 
-        country_tag = self._require_known_country(country_tag)
+        country_tag = self._require_known_country(tag)
         if not variant.name.strip():
             raise ValueError("Equipment variant name cannot be empty")
         if not variant.equipment_type.strip():

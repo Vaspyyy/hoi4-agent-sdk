@@ -109,7 +109,7 @@ def import_flag_to_mod(
     mod_root: str | Path,
     tag: str,
     src_image: str | Path,
-    vanilla_override: bool = False,
+    overwrite_vanilla: bool = False,
     *,
     ideologies: Iterable[str | None] | None = None,
     resize_mode: Literal["stretch", "cover", "contain"] = "stretch",
@@ -117,18 +117,18 @@ def import_flag_to_mod(
 ) -> tuple[FlagAssetSet, ...]:
     """Import a source image as the three TGA sizes HOI4 expects.
 
-    ``vanilla_override=True`` writes the base flag and the four vanilla ideology
+    ``overwrite_vanilla=True`` writes the base flag and the four vanilla ideology
     variants.  Alternatively, pass an explicit ``ideologies`` iterable where
     ``None`` means the unsuffixed base flag.
     """
 
     normalized_tag = require_country_tag(tag)
-    if ideologies is not None and vanilla_override:
-        raise ValueError("Pass either vanilla_override or ideologies, not both")
+    if ideologies is not None and overwrite_vanilla:
+        raise ValueError("Pass either overwrite_vanilla or ideologies, not both")
     selected_ideologies = (
         tuple(ideologies)
         if ideologies is not None
-        else ((None,) + VANILLA_FLAG_IDEOLOGIES if vanilla_override else (None,))
+        else ((None,) + VANILLA_FLAG_IDEOLOGIES if overwrite_vanilla else (None,))
     )
     if not selected_ideologies:
         raise ValueError("At least one flag variant is required")

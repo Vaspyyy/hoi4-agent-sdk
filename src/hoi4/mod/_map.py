@@ -107,7 +107,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         resources: dict[str, str | int | float] | None = None,
         buildings: str = "",
         impassable: bool = False,
-        localisation_file: str | Path | None = None,
+        loc_path: str | Path | None = None,
         allow_empty_source: bool = False,
         delete_empty_states: bool = False,
         reassign_map_buildings: bool = True,
@@ -190,7 +190,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 delete_empty_states=delete_empty_states,
                 reassign_map_buildings=reassign_map_buildings,
             )
-            self.set_loc(f"STATE_{new_id}", name.strip(), file_path=localisation_file)
+            self.set_loc(f"STATE_{new_id}", name.strip(), path=loc_path)
         except Exception:
             self._restore(snapshot)
             raise
@@ -317,7 +317,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         *,
         region_id: int | None = None,
         weather: str | None = None,
-        localisation_file: str | Path | None = None,
+        loc_path: str | Path | None = None,
     ) -> int:
         """Queue a new strategic region and return its ID.
 
@@ -373,7 +373,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         texts[relative] = render_strategic_region(
             new_id, f"STRATEGICREGION_{new_id}", province_list, weather_text
         )
-        self.set_loc(f"STRATEGICREGION_{new_id}", name.strip(), file_path=localisation_file)
+        self.set_loc(f"STRATEGICREGION_{new_id}", name.strip(), path=loc_path)
         for path, text in texts.items():
             self._queue_map_text(path, text)
         return new_id
@@ -490,6 +490,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         y: float,
         z: float,
         rotation: float,
+        *,
         adjacent_sea_province: int = 0,
     ) -> MapBuilding:
         """Queue a ``map/buildings.txt`` position (``z`` is the north-south axis)."""

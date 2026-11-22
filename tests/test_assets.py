@@ -46,7 +46,7 @@ class TestFlags:
     def test_vanilla_override_and_custom_variants(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "flag.png")
         root = tmp_path / "mod"
-        variants = import_flag_to_mod(root, "GER", source, vanilla_override=True)
+        variants = import_flag_to_mod(root, "GER", source, overwrite_vanilla=True)
         assert [variant.ideology for variant in variants] == [
             None,
             "neutrality",

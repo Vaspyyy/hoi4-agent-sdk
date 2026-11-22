@@ -176,13 +176,13 @@ class ContextLayer(StatesLayer, CatalogsLayer):
         context = self.get_country_context(tag, copy_states=True)
         return [self.get_state(state["id"]) for state in context["states"]]
 
-    def suggest_focus_icons(self, query: str, count: int = 5) -> list[str]:
+    def suggest_focus_icons(self, query: str, *, count: int = 5) -> list[str]:
         icons = sorted(self._known_focus_icons())
         if not icons:
             icons = sorted(COMMON_FOCUS_ICONS)
         return self._rank_icons(query, icons, count)
 
-    def suggest_idea_icons(self, query: str, count: int = 5) -> list[str]:
+    def suggest_idea_icons(self, query: str, *, count: int = 5) -> list[str]:
         icons = sorted(
             icon.removeprefix(IDEA_SPRITE_PREFIX)
             for icon in self._known_focus_icons()

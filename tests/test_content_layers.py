@@ -325,7 +325,7 @@ def test_delete_last_inherited_localization_preserves_empty_override(tmp_path, e
     assert not mod.preview()
     assert all(p.read_bytes() == original for p, original in originals.items())
     # The retained header/comment baseline also survives adding a new entry.
-    mod.set_loc("new_key", "New", file_path=target)
+    mod.set_loc("new_key", "New", path=target)
     result = mod.save(require_changes=True)
     print(result)
     assert target in result.written_files
