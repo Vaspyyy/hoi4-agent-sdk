@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from hoi4 import DEFINITION_KINDS, Mod
+from hoi4 import DEFINITION_KINDS, AlreadyExistsError, Mod
 from hoi4.definitions import get_definition_kind, remove_definition, upsert_definition
 from hoi4.parser import parse_pdx
 
@@ -71,16 +71,16 @@ def test_entry_style_domains_use_identifier_fields() -> None:
 def test_facade_creates_typed_definitions_transactionally(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     with mod.transaction():
-        mod.create_scripted_effect("ABC_effect", "add_political_power = 5")
+        mod.create_definition("scripted_effect", "ABC_effect", "add_political_power = 5")
         assert "ABC_effect" in mod.preview()
     assert not mod.preview()
 
-    mod.create_scripted_effect("ABC_effect", "add_political_power = 5")
+    mod.create_definition("scripted_effect", "ABC_effect", "add_political_power = 5")
     mod.create_scripted_localisation("GetABCName", [("tag = ABC", "ABC_NAME_A"), ("", "ABC_NAME_B")])
-    mod.create_country_leader_trait("abc_trait", "political_power_factor = 0.1")
-    mod.create_unit_leader_trait("abc_general", "type = land\nattack_skill = 1")
-    mod.create_technology("abc_tech", "research_cost = 1")
-    mod.create_sub_unit("abc_battalion", "group = infantry\nmax_strength = 10")
+    mod.create_definition("country_leader_trait", "abc_trait", "political_power_factor = 0.1")
+    mod.create_definition("unit_leader_trait", "abc_general", "type = land\nattack_skill = 1")
+    mod.create_definition("technology", "abc_tech", "research_cost = 1")
+    mod.create_definition("sub_unit", "abc_battalion", "group = infantry\nmax_strength = 10")
     mod.create_ai_strategy("abc_ai", [("antagonize", "XYZ", 100), ("role_ratio", "armor", 10)],
                            enable="tag = ABC")
     mod.create_opinion_modifier("abc_opinion", value=25, decay=1, trade=True)
@@ -118,10 +118,10 @@ def test_facade_creates_typed_definitions_transactionally(tmp_path: Path) -> Non
 def test_identifiers_are_unique_and_overwrite_patches_in_place(tmp_path: Path) -> None:
     _write(tmp_path, "common/technologies/infantry.txt", TECH_SOURCE)
     mod = Mod(tmp_path)
-    with pytest.raises(ValueError, match="already exists in common/technologies/infantry.txt"):
-        mod.create_technology("base_tech", "research_cost = 5")
+    with pytest.raises(AlreadyExistsError, match="already exists. It is in common/technologies/infantry.txt"):
+        mod.create_definition("technology", "base_tech", "research_cost = 5")
     with pytest.raises(ValueError, match="update it there"):
-        mod.create_technology("base_tech", "research_cost = 5", overwrite=True,
+        mod.create_definition("technology", "base_tech", "research_cost = 5", overwrite=True,
                               path="common/technologies/other.txt")
     mod.update_definition("technology", "base_tech", "research_cost = 5 # keep me\nunknown_future_key = { a = b }")
     mod.save()
@@ -140,7 +140,7 @@ def test_inherited_definitions_are_copied_into_the_mod_before_editing(tmp_path: 
            "opinion_modifiers = {\n\tvanilla_a = { value = 10 }\n\tvanilla_b = { value = 20 }\n}\n")
     root = tmp_path / "mod"
     mod = Mod(root, hoi4_install=game)
-    assert {d.id for d in mod.list_definitions("opinion_modifier")} >= {"vanilla_a", "vanilla_b"}
+    assert set(mod.list_definitions("opinion_modifier")) >= {"vanilla_a", "vanilla_b"}
     mod.update_definition("opinion_modifier", "vanilla_a", "value = 15")
     mod.save()
     copied = (root / "common/opinion_modifiers/00_opinion.txt").read_text(encoding="utf-8")
@@ -151,13 +151,13 @@ def test_inherited_definitions_are_copied_into_the_mod_before_editing(tmp_path: 
 def test_bodies_cannot_escape_and_paths_must_match_domain(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     with pytest.raises(ValueError):
-        mod.create_scripted_effect("bad", "} evil = {")
+        mod.create_definition("scripted_effect", "bad", "} evil = {")
     with pytest.raises(ValueError):
-        mod.create_scripted_effect("bad id", "add_stability = 0.1")
+        mod.create_definition("scripted_effect", "bad id", "add_stability = 0.1")
     with pytest.raises(ValueError, match="common/technologies"):
-        mod.create_technology("ok", "research_cost = 1", path="common/scripted_effects/x.txt")
+        mod.create_definition("technology", "ok", "research_cost = 1", path="common/scripted_effects/x.txt")
     with pytest.raises(ValueError, match="common/units"):
-        mod.create_sub_unit("ok", "group = infantry", path="common/units/nested/x.txt")
+        mod.create_definition("sub_unit", "ok", "group = infantry", path="common/units/nested/x.txt")
     with pytest.raises(ValueError, match="identifier"):
         mod.create_definition("autonomy_state", "auto", "id = other")
     with pytest.raises(ValueError, match="Unknown definition kind"):
@@ -169,16 +169,16 @@ def test_sub_units_ignore_nested_equipment_directory(tmp_path: Path) -> None:
     _write(tmp_path, "common/units/equipment/guns.txt", "equipments = {\n\tgun = { year = 1918 }\n}\n")
     _write(tmp_path, "common/units/infantry.txt", "sub_units = {\n\tinfantry = { group = infantry }\n}\n")
     mod = Mod(tmp_path)
-    assert [d.id for d in mod.list_definitions("sub_unit")] == ["infantry"]
-    assert [d.id for d in mod.list_definitions("equipment")] == ["gun"]
+    assert mod.list_definitions("sub_unit") == ["infantry"]
+    assert mod.list_definitions("equipment") == ["gun"]
     with pytest.raises(ValueError, match="common/units"):
-        mod.create_sub_unit("x", "group = infantry", path="common/units/equipment/x.txt")
+        mod.create_definition("sub_unit", "x", "group = infantry", path="common/units/equipment/x.txt")
 
 
 def test_created_scripted_effects_and_technologies_are_known_to_validation(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
-    mod.create_scripted_effect("ABC_custom_effect", "add_political_power = 1")
-    mod.create_technology("abc_new_tech", "research_cost = 1")
+    mod.create_definition("scripted_effect", "ABC_custom_effect", "add_political_power = 1")
+    mod.create_definition("technology", "abc_new_tech", "research_cost = 1")
     assert "ABC_custom_effect" in mod._effective_custom_script_tokens()["effect"]
     issues = mod.validate()
     assert not [issue for issue in issues if "abc_new_tech" in issue.message]

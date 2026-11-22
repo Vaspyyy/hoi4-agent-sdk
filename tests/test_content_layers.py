@@ -125,9 +125,9 @@ def test_replaced_vanilla_script_ids_do_not_block_public_authoring(tmp_path, lay
     put(top, "descriptor.mod", 'replace_path="common/scripted_triggers"')
     source = put(tmp_path, "import.txt", "example = { always = yes }")
     mod = Mod(top, hoi4_install=game, base_mod_paths=[base] if layered else [])
-    mod.create_scripted_trigger("example", "always = yes")
-    with pytest.raises(ValueError, match="already queued"):
-        mod.create_scripted_trigger("example", "always = no", path="common/scripted_triggers/other.txt")
+    mod.create_definition("scripted_trigger", "example", "always = yes")
+    with pytest.raises(ValueError, match="already exists"):
+        mod.create_definition("scripted_trigger", "example", "always = no", path="common/scripted_triggers/other.txt")
     with pytest.raises(ValueError, match="conflict"):
         mod.import_script_file(source, "common/scripted_triggers/import.txt")
     result = mod.save(require_changes=True)
@@ -143,7 +143,7 @@ def test_replaced_vanilla_script_ids_do_not_block_public_authoring(tmp_path, lay
     # Without replacement the vanilla collision is active for both APIs.
     active = Mod(tmp_path / "active", hoi4_install=game, base_mod_paths=[base] if layered else [])
     with pytest.raises(ValueError, match="already exists"):
-        active.create_scripted_trigger("example", "always = yes")
+        active.create_definition("scripted_trigger", "example", "always = yes")
     with pytest.raises(ValueError, match="conflict"):
         active.import_script_file(source, "common/scripted_triggers/import.txt")
 

@@ -9,12 +9,6 @@ from typing import Sequence
 from ..definitions import DefinitionKind, ScriptDefinition
 from ..ideas import read_ideas_file, scan_idea_ids_file
 from ..layers import relative_content_path
-from ..parser import (
-    PdxNode,
-)
-from ..patching import (
-    set_block,
-)
 from ..paths import (
     resolve_mod_output_path,
 )
@@ -22,7 +16,7 @@ from ..types import (
     Idea,
     ValidationError,
 )
-from ..errors import NotFoundError, not_found
+from ..errors import NotFoundError, already_exists, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ..textio import decode_text, read_text
@@ -135,88 +129,6 @@ class DefinitionsLayer(CoreLayer):
         self._dirty.add("script_files")
         return target
 
-    def create_scripted_trigger(
-        self, trigger_id: str, body: str, *, path: str | Path | None = None,
-        overwrite: bool = False,
-    ) -> Path:
-        """Queue a named scripted trigger, preserving sibling definitions.
-
-        ``body`` contains no outer braces. Syntax is checked immediately;
-        installed-game domain/scope correctness remains the caller's responsibility.
-        Like other mutations, this participates in preview, transactions and save.
-        """
-        from ..parser import parse_pdx
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", trigger_id):
-            raise ValueError("Invalid scripted trigger identifier")
-        relative = relative_content_path(path or "common/scripted_triggers/00_generated_triggers.txt")
-        if relative.parent != Path("common/scripted_triggers") or relative.suffix != ".txt":
-            raise ValueError("Scripted triggers must use a common/scripted_triggers/*.txt path")
-        parsed_request = parse_pdx(f"{trigger_id} = {{\n{body}\n}}")
-        definitions = [node for node in parsed_request.children if not node.is_comment]
-        if len(definitions) != 1 or definitions[0].key != trigger_id or not definitions[0].is_block():
-            raise ValueError("Scripted trigger body must not escape its enclosing block")
-        requested = definitions[0]
-
-        def remember(text: str, index: dict[str, PdxNode]) -> None:
-            # Keep only a few recent immutable text versions when appending
-            # hundreds of definitions; avoid retaining quadratic history.
-            if text not in self._script_trigger_index_cache and len(self._script_trigger_index_cache) >= 8:
-                self._script_trigger_index_cache.pop(next(iter(self._script_trigger_index_cache)))
-            self._script_trigger_index_cache[text] = index
-
-        def index_for(text: str) -> dict[str, PdxNode]:
-            if text not in self._script_trigger_index_cache:
-                index: dict[str, PdxNode] = {}
-                for node in parse_pdx(text).children:
-                    if node.key is not None:
-                        index.setdefault(node.key, node)
-                remember(text, index)
-            return self._script_trigger_index_cache[text]
-
-        def structure(node: PdxNode) -> tuple:
-            return (node.key, node.value, node.operator, node.block, node.quoted,
-                    tuple(structure(child) for child in node.children if not child.is_comment))
-        target = resolve_mod_output_path(self.mod_root, relative)
-        source = self.content_source(relative)
-        text = self._script_file_updates.get(target)
-        if text is None:
-            text = read_text(source) if source else ""
-        current_index = index_for(text)
-        existing = current_index.get(trigger_id)
-        if existing is not None and not overwrite:
-            raise ValueError(f"Scripted trigger {trigger_id!r} already exists")
-        for other_relative, other_source in self.content_files("common/scripted_triggers").items():
-            if Path(other_relative) == relative:
-                continue
-            other_target = resolve_mod_output_path(self.mod_root, other_relative)
-            other_text = self._script_file_updates.get(other_target)
-            if other_text is None:
-                other_text = other_source.read_text(encoding="utf-8-sig")
-            if trigger_id in index_for(other_text):
-                raise ValueError(f"Scripted trigger {trigger_id!r} already exists in {other_relative}")
-        for other_target, other_text in self._script_file_updates.items():
-            if (other_target.parent == target.parent and other_target != target
-                    and trigger_id in index_for(other_text)):
-                raise ValueError(f"Scripted trigger {trigger_id!r} already queued in another file")
-        # Collision checks still run for an otherwise unchanged request.
-        if existing is not None and structure(existing) == structure(requested):
-            return target
-        if existing is None:
-            fragment = set_block("", trigger_id, body)
-            newline = "\r\n" if "\r\n" in text else "\n"
-            fragment = fragment.replace("\n", newline)
-            updated = text + (newline if text and not text.endswith("\n") else "") + fragment + newline
-        else:
-            updated = set_block(text, trigger_id, body)
-        if updated == text:
-            return target
-        updated_index = dict(current_index)
-        updated_index[trigger_id] = requested
-        remember(updated, updated_index)
-        self._script_file_updates[target] = updated
-        self._dirty.add("scripted_triggers")
-        return target
-
     # ── Keyed common/ definitions ─────────────────────────────
 
     def definition_kinds(self) -> dict[str, DefinitionKind]:
@@ -250,12 +162,21 @@ class DefinitionsLayer(CoreLayer):
                 files[str(relative_path)] = (target, text, True)
         return dict(sorted(files.items()))
 
-    def list_definitions(self, kind: str | DefinitionKind) -> list[ScriptDefinition]:
-        """List effective definitions of one domain, including pending edits.
+    def list_definitions(self, kind: str | DefinitionKind) -> list[str]:
+        """List the ids of the effective definitions of one domain, sorted.
 
-        Inherited base-game and base-mod files are read through the configured
-        content layers; files overridden by the mod are hidden.
+        Pending edits count. Inherited base-game and base-mod files are read
+        through the configured content layers; files overridden by the mod
+        are hidden. ``get_definition(kind, id)`` returns one of them.
+
+        Raises:
+            ValueError: ``kind`` is not a definition kind.
         """
+
+        return sorted({definition.id for definition in self._effective_definitions(kind)})
+
+    def _effective_definitions(self, kind: str | DefinitionKind) -> list[ScriptDefinition]:
+        """Every effective definition of one domain in load order, duplicates included."""
 
         from ..definitions import get_definition_kind, read_definitions
         resolved = get_definition_kind(kind)
@@ -290,7 +211,7 @@ class DefinitionsLayer(CoreLayer):
 
         from ..definitions import get_definition_kind
         resolved = get_definition_kind(kind)
-        for definition in self.list_definitions(resolved):
+        for definition in self._effective_definitions(resolved):
             if definition.id == definition_id:
                 return definition
         if default is not MISSING:
@@ -301,7 +222,7 @@ class DefinitionsLayer(CoreLayer):
         return not_found(
             kind.name.replace("_", " "),
             definition_id,
-            (definition.id for definition in self.list_definitions(kind)),
+            self.list_definitions(kind),
         )
 
     def _queue_definition_text(self, relative: Path, text: str, original: str) -> Path:
@@ -322,7 +243,7 @@ class DefinitionsLayer(CoreLayer):
         *,
         path: str | Path | None = None,
         overwrite: bool = False,
-    ) -> Path:
+    ) -> ScriptDefinition:
         """Queue one keyed definition in a supported ``common/`` domain.
 
         ``body`` is the definition interior without its outer braces (and, for
@@ -333,6 +254,18 @@ class DefinitionsLayer(CoreLayer):
         effective domain. With ``overwrite=True`` an existing definition is
         patched in its current file, copying an inherited file into the mod
         first. Unrelated bytes of every touched file are preserved.
+
+        Kinds include ``scripted_effect``, ``scripted_trigger``,
+        ``country_leader_trait``, ``unit_leader_trait``, ``technology`` and
+        ``sub_unit``; ``definition_kinds()`` lists them all.
+
+        Returns:
+            The queued definition (``source_path`` is the file it goes to).
+
+        Raises:
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            ValueError: ``kind`` is unknown, the path is outside the domain's
+                folder, or the body escapes its block.
         """
 
         from ..definitions import (
@@ -346,8 +279,21 @@ class DefinitionsLayer(CoreLayer):
         existing = self.get_definition(resolved, definition_id, default=None)
         if existing is not None:
             if not overwrite:
+                raise already_exists(
+                    resolved.name.replace("_", " "),
+                    definition_id,
+                    hint=f"It is in {existing.relative_path}; pass overwrite=True or "
+                    "call update_definition() to change it.",
+                )
+            copies = sum(
+                1
+                for definition in self._effective_definitions(resolved)
+                if definition.id == definition_id
+            )
+            if copies > 1:
                 raise ValueError(
-                    f"{resolved.name} {definition_id!r} already exists in {existing.relative_path}"
+                    f"{resolved.name} {definition_id!r} is defined {copies} times; "
+                    "remove the extra definitions before overwriting it"
                 )
             relative = Path(existing.relative_path)
             if path is not None and relative_content_path(path) != relative:
@@ -366,10 +312,20 @@ class DefinitionsLayer(CoreLayer):
         updated = upsert_definition(original, resolved, definition_id, body)
         from ..parser import parse_pdx
         parse_pdx(updated.lstrip("﻿"))
-        return self._queue_definition_text(relative, updated, original)
+        self._queue_definition_text(relative, updated, original)
+        return self.get_definition(resolved, definition_id)
 
-    def update_definition(self, kind: str | DefinitionKind, definition_id: str, body: str) -> Path:
-        """Replace an existing definition's body in its current file."""
+    def update_definition(
+        self, kind: str | DefinitionKind, definition_id: str, body: str
+    ) -> ScriptDefinition:
+        """Replace an existing definition's body in its current file.
+
+        Returns:
+            The updated definition.
+
+        Raises:
+            NotFoundError: No effective definition of that kind has this id.
+        """
 
         from ..definitions import get_definition_kind
         resolved = get_definition_kind(kind)
@@ -407,7 +363,7 @@ class DefinitionsLayer(CoreLayer):
             ):
                 continue
             seen: dict[str, str] = {}
-            for definition in self.list_definitions(kind):
+            for definition in self._effective_definitions(kind):
                 if definition.id not in seen:
                     seen[definition.id] = definition.relative_path
                     continue
@@ -427,9 +383,9 @@ class DefinitionsLayer(CoreLayer):
         if self.hoi4_install is None:
             return issues
         known_traits = {
-            definition.id
+            definition_id
             for kind in ("country_leader_trait", "unit_leader_trait")
-            for definition in self.list_definitions(kind)
+            for definition_id in self.list_definitions(kind)
         }
         if not known_traits:
             return issues
@@ -452,18 +408,6 @@ class DefinitionsLayer(CoreLayer):
                         ))
         return issues
 
-    def create_scripted_effect(
-        self, effect_id: str, body: str, *, path: str | Path | None = None,
-        overwrite: bool = False,
-    ) -> Path:
-        """Queue a named scripted effect (``common/scripted_effects``)."""
-
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", effect_id):
-            raise ValueError("Invalid scripted effect identifier")
-        return self.create_definition(
-            "scripted_effect", effect_id, body, path=path, overwrite=overwrite,
-        )
-
     def create_scripted_localisation(
         self,
         name: str,
@@ -471,7 +415,7 @@ class DefinitionsLayer(CoreLayer):
         *,
         path: str | Path | None = None,
         overwrite: bool = False,
-    ) -> Path:
+    ) -> ScriptDefinition:
         """Queue a ``defined_text`` usable as ``[Root.GetName]`` or ``[GetName]``.
 
         ``entries`` are ``(trigger_body, localisation_key)`` pairs evaluated in
@@ -488,50 +432,6 @@ class DefinitionsLayer(CoreLayer):
             path=path, overwrite=overwrite,
         )
 
-    def create_country_leader_trait(
-        self, trait_id: str, body: str, *, path: str | Path | None = None,
-        overwrite: bool = False,
-    ) -> Path:
-        """Queue a country-leader or advisor trait in ``common/country_leader``."""
-
-        return self.create_definition(
-            "country_leader_trait", trait_id, body, path=path, overwrite=overwrite,
-        )
-
-    def create_unit_leader_trait(
-        self, trait_id: str, body: str, *, path: str | Path | None = None,
-        overwrite: bool = False,
-    ) -> Path:
-        """Queue an army/navy commander trait in ``common/unit_leader``."""
-
-        return self.create_definition(
-            "unit_leader_trait", trait_id, body, path=path, overwrite=overwrite,
-        )
-
-    def create_technology(
-        self, technology_id: str, body: str, *, path: str | Path | None = None,
-        overwrite: bool = False,
-    ) -> Path:
-        """Queue a technology inside a ``technologies = { }`` container.
-
-        The new identifier is immediately known to ``set_technology`` and
-        tech-bonus validation in this ``Mod`` instance.
-        """
-
-        return self.create_definition(
-            "technology", technology_id, body, path=path, overwrite=overwrite,
-        )
-
-    def create_sub_unit(
-        self, sub_unit_id: str, body: str, *, path: str | Path | None = None,
-        overwrite: bool = False,
-    ) -> Path:
-        """Queue a battalion/company type inside ``sub_units = { }``."""
-
-        return self.create_definition(
-            "sub_unit", sub_unit_id, body, path=path, overwrite=overwrite,
-        )
-
     def create_ai_strategy(
         self,
         plan_id: str,
@@ -543,7 +443,7 @@ class DefinitionsLayer(CoreLayer):
         extra: str = "",
         path: str | Path | None = None,
         overwrite: bool = False,
-    ) -> Path:
+    ) -> ScriptDefinition:
         """Queue an ``ai_strategy`` plan from ``(type, id, value)`` entries.
 
         For example ``[("antagonize", "FRA", 100), ("role_ratio", "armor", 15)]``;
@@ -572,7 +472,7 @@ class DefinitionsLayer(CoreLayer):
         max_trust: int | float | None = None,
         path: str | Path | None = None,
         overwrite: bool = False,
-    ) -> Path:
+    ) -> ScriptDefinition:
         """Queue an opinion modifier for ``add_opinion_modifier``."""
 
         from ..definitions import render_scalar_mapping
@@ -598,7 +498,7 @@ class DefinitionsLayer(CoreLayer):
         *,
         path: str | Path | None = None,
         overwrite: bool = False,
-    ) -> Path:
+    ) -> ScriptDefinition:
         """Queue a named static modifier (``common/modifiers``)."""
 
         from ..definitions import render_scalar_mapping

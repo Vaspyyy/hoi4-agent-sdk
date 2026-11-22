@@ -20,6 +20,13 @@ REMOVED_MOD_NAMES = [
     "suggest_tag",
     "suggest_focus_icon",
     "suggest_idea_icon",
+    "create_scripted_trigger",
+    "create_scripted_effect",
+    "create_country_leader_trait",
+    "create_unit_leader_trait",
+    "create_technology",
+    "create_sub_unit",
+    "upsert_focus",
 ]
 
 
@@ -588,3 +595,28 @@ def test_ensure_refuses_a_different_parent(full_mod: Mod) -> None:
     full_mod.create_decision_category("zz_other")
     with pytest.raises(ValueError, match="is in category 'zz_cat', not 'zz_other'"):
         full_mod.ensure_decision("zz_other", "zz_dec", cost=1)
+
+
+# ── definitions ─────────────────────────────────────────────────────
+
+
+def test_definition_writers_return_the_definition(tmp_path) -> None:
+    from hoi4 import AlreadyExistsError, ScriptDefinition
+
+    mod = Mod(tmp_path)
+    created = mod.create_definition("scripted_trigger", "zz_trigger", "always = yes")
+    assert isinstance(created, ScriptDefinition)
+    assert created.relative_path == "common/scripted_triggers/00_sdk_generated.txt"
+    assert created.pending
+    updated = mod.update_definition("scripted_trigger", "zz_trigger", "always = no")
+    assert isinstance(updated, ScriptDefinition) and "always = no" in updated.body
+    with pytest.raises(AlreadyExistsError):
+        mod.create_definition("scripted_trigger", "zz_trigger", "always = yes")
+    for result in (
+        mod.create_static_modifier("zz_static", {"stability_factor": 0.1}),
+        mod.create_opinion_modifier("zz_opinion", value=10),
+        mod.create_ai_strategy("zz_plan", [("antagonize", "GER", 100)]),
+        mod.create_scripted_localisation("GetZz", [("", "ZZ_KEY")]),
+    ):
+        assert isinstance(result, ScriptDefinition)
+    assert mod.list_definitions("scripted_trigger") == ["zz_trigger"]

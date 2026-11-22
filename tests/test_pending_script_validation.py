@@ -47,7 +47,7 @@ def test_pending_and_inherited_custom_tokens_are_known(tmp_path):
     folder.mkdir(parents=True)
     (folder / "base.txt").write_text("base_check = { always = yes }")
     mod = Mod(tmp_path / "mod", hoi4_install=game, base_mod_paths=[base])
-    mod.create_scripted_trigger("pending_check", "base_check = yes")
+    mod.create_definition("scripted_trigger", "pending_check", "base_check = yes")
     source = tmp_path / "source.txt"
     source.write_text(
         "pending_effect = { if = { limit = { pending_check = yes } add_stability = 0.1 } }"
@@ -64,7 +64,7 @@ def test_trigger_rejects_body_escaping_wrapper_without_mutation(tmp_path):
 
     mod = Mod(tmp_path)
     with pytest.raises(ValueError, match="enclosing block"):
-        mod.create_scripted_trigger("first", "always = yes } injected = { always = no")
+        mod.create_definition("scripted_trigger", "first", "always = yes } injected = { always = no")
     assert mod.preview() == ""
 
 

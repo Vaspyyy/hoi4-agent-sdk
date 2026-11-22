@@ -1981,7 +1981,7 @@ SDK writes remain exclusively inside the writable mod.
 | Method | Description |
 |--------|-------------|
 | `import_script_file(source_path, relative_path, *, overwrite=False) -> Path` | Syntax-check and queue an unchanged UTF-8 `.txt` support file inside the writable mod. Returns its destination; nothing is written until `save()`. |
-| `create_scripted_trigger(trigger_id, body, *, path=None, overwrite=False) -> Path` | Queue a named trigger while retaining sibling definitions. `body` omits outer braces; the default path is `common/scripted_triggers/00_generated_triggers.txt`. |
+| `create_definition("scripted_trigger", trigger_id, body, *, path=None, overwrite=False) -> ScriptDefinition` | Queue a named trigger while retaining sibling definitions. `body` omits outer braces; the default path is `common/scripted_triggers/00_sdk_generated.txt`. |
 
 `import_script_file()` accepts direct `.txt` files under `common/ideas`,
 `common/national_ideas`, `common/scripted_triggers`, `common/scripted_effects`,
@@ -2019,7 +2019,8 @@ validation findings and test gameplay normally.
 mod.import_script_file(
     "/path/to/reviewed/laws.txt", "common/ideas/reviewed_laws.txt",
 )
-mod.create_scripted_trigger(
+mod.create_definition(
+    "scripted_trigger",
     "my_campaign_prepared", "has_war_support > 0.4\nhas_stability > 0.5",
 )
 # Validate, inspect preview, then save using this same Mod instance.
@@ -2035,10 +2036,10 @@ identifier is a field (for example `defined_text = { name = GetFoo ... }`).
 | Method | Description |
 |--------|-------------|
 | `definition_kinds() -> dict[str, DefinitionKind]` | Supported domains. |
-| `list_definitions(kind) -> list[ScriptDefinition]` | Effective definitions from the mod, base mods and the game, including pending edits. |
+| `list_definitions(kind) -> list[str]` | Sorted ids of the effective definitions from the mod, base mods and the game, including pending edits. |
 | `get_definition(kind, definition_id, *, default=...) -> ScriptDefinition` | One definition (missing raises `NotFoundError`, or returns `default`); `body` omits outer braces and entry identifier fields. |
-| `create_definition(kind, definition_id, body, *, path=None, overwrite=False) -> Path` | Queue a definition. Containers are created or reused; identifiers must be unique across the effective domain. `overwrite=True` patches an existing definition in its current file. |
-| `update_definition(kind, definition_id, body) -> Path` | Replace an existing body in place. Inherited files are copied into the mod first. |
+| `create_definition(kind, definition_id, body, *, path=None, overwrite=False) -> ScriptDefinition` | Queue a definition and return it (`source_path` is the file it goes to). Containers are created or reused; identifiers must be unique across the effective domain (`AlreadyExistsError` otherwise). `overwrite=True` patches an existing definition in its current file. |
+| `update_definition(kind, definition_id, body) -> ScriptDefinition` | Replace an existing body in place and return the definition; raises `NotFoundError`. Inherited files are copied into the mod first. |
 | `delete_definition(kind, definition_id) -> None` | Remove one definition and keep every sibling; raises `NotFoundError`. |
 
 Supported kinds: `scripted_effect`, `scripted_trigger`, `scripted_localisation`,
@@ -2055,14 +2056,16 @@ Supported kinds: `scripted_effect`, `scripted_trigger`, `scripted_localisation`,
 no default file because vanilla groups subdoctrines by folder, so pass
 `path="common/doctrines/subdoctrines/<land|sea|air|special_forces>/....txt"`.
 
-Typed helpers render common bodies:
+A scripted effect, a leader trait, a technology or a sub-unit is a plain
+`create_definition()` call: `mod.create_definition("scripted_effect", id, body)`,
+`"country_leader_trait"`, `"unit_leader_trait"`, `"technology"`, `"sub_unit"`.
+
+Typed helpers render the bodies of the other common kinds and return the
+`ScriptDefinition`:
 
 | Method | Writes |
 |--------|--------|
-| `create_scripted_effect(effect_id, body)` | `common/scripted_effects` |
 | `create_scripted_localisation(name, [(trigger_body, loc_key), ...])` | `defined_text` with ordered `text` alternatives; an empty trigger is the final fallback. |
-| `create_country_leader_trait(trait_id, body)` / `create_unit_leader_trait(trait_id, body)` | `leader_traits = { ... }` in `common/country_leader` / `common/unit_leader` |
-| `create_technology(technology_id, body)` / `create_sub_unit(sub_unit_id, body)` | `technologies = { ... }` / `sub_units = { ... }` |
 | `create_ai_strategy(plan_id, [(type, id, value), ...], *, allowed="", enable="", abort="")` | `common/ai_strategy` |
 | `create_opinion_modifier(modifier_id, *, value, decay=None, trade=False, target=False, days=None, ...)` | `opinion_modifiers = { ... }` |
 | `create_static_modifier(modifier_id, {modifier: value})` | `common/modifiers` |
@@ -2078,7 +2081,7 @@ warnings for character role traits that no `common/country_leader` or
 semantics remain the caller's responsibility.
 
 ```python
-mod.create_technology("ABC_rifle_tech", "research_cost = 1.5\nstart_year = 1936")
+mod.create_definition("technology", "ABC_rifle_tech", "research_cost = 1.5\nstart_year = 1936")
 mod.create_scripted_localisation(
     "GetABCLeaderTitle",
     [("has_government = fascism", "ABC_TITLE_FASCIST"), ("", "ABC_TITLE_DEFAULT")],
