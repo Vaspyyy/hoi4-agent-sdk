@@ -486,6 +486,144 @@ def test_a_loading_section_is_not_on_the_object_until_it_is_complete(
     assert "_events" in vars(mod)
 
 
+# ── Files that appear after their section loaded ─────────────────
+
+OOB = (
+    'division_template = {\n\tname = "Inf"\n\tregiments = { infantry = { x = 0 y = 0 } }\n}\n'
+    "units = { }\n"
+)
+
+
+def test_a_state_file_that_appeared_later_is_loaded_properly_after_discard(mod_root: Path) -> None:
+    """A lookup finds the new file; the loader has to see it too once edits are dropped."""
+
+    mod = Mod(mod_root)
+    assert mod.list_states() == [1]
+    _write(mod_root, "history/states/2-New.txt", STATE.replace("id = 1", "id = 2"))
+    assert mod.get_state(2).id == 2
+
+    mod.discard()  # with HOI4_VERIFY_RELOAD=1 this also compares with a fresh Mod
+
+    assert mod.list_states() == [1, 2]
+    assert mod.list_states() == Mod(mod_root).list_states()
+
+
+def test_a_broken_oob_file_that_appeared_later_is_reported_after_discard(mod_root: Path) -> None:
+    _write(mod_root, "history/units/TST_1936.txt", OOB)
+    mod = Mod(mod_root)
+    assert mod.list_oobs() == ["TST_1936"]
+    _write(mod_root, "history/units/TST_new.txt", OOB + "units = {\n")
+    mod.get_oob("TST_new")
+
+    mod.discard()  # with HOI4_VERIFY_RELOAD=1 this also compares with a fresh Mod
+
+    reported = [(d.section, d.path.name) for d in mod.load_diagnostics]
+    assert reported == [(d.section, d.path.name) for d in Mod(mod_root).load_diagnostics]
+    assert ("oob", "TST_new.txt") in reported
+
+
+# ── A loader that fails ──────────────────────────────────────────
+
+
+@pytest.fixture
+def country_root(mod_root: Path) -> Path:
+    _write(mod_root, "common/country_tags/00_tags.txt", 'TST = "countries/Test.txt"\n')
+    _write(mod_root, "common/countries/Test.txt", "color = { 1 2 3 }\n")
+    _write(mod_root, "history/countries/TST - Test.txt", "capital = 1\n")
+    _write(mod_root, "history/units/TST_1936.txt", OOB)
+    return mod_root
+
+
+def test_a_section_loaded_inside_another_loader_keeps_its_own_files(country_root: Path) -> None:
+    """The OOB loader needs the countries: their files are theirs, not the OOBs'."""
+
+    country_file = country_root / "common/countries/Test.txt"
+    mod = Mod(country_root)
+
+    mod.list_oobs()
+
+    assert country_file in mod._section_files["countries"]
+    assert country_file not in mod._section_files["oobs"]
+    assert country_file in mod._section_reads["countries"]
+    assert country_file not in mod._section_reads["oobs"]
+
+
+def test_a_failed_loader_leaves_a_section_it_loaded_on_the_way_intact(
+    country_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    country_file = country_root / "common/countries/Test.txt"
+    oob_file = country_root / "history/units/TST_1936.txt"
+
+    original = Mod._load_oobs
+    attempts: list[int] = []
+
+    def load_oobs(self: Mod) -> None:
+        attempts.append(1)
+        if len(attempts) > 1:
+            original(self)
+            return
+        assert self._countries  # loads the countries inside this loader
+        self._original_files[oob_file] = self._read_source(oob_file)
+        raise RuntimeError("the OOBs cannot be read")
+
+    monkeypatch.setattr(Mod, "_load_oobs", load_oobs, raising=False)
+    mod = Mod(country_root)
+
+    with pytest.raises(RuntimeError, match="the OOBs cannot be read"):
+        mod.list_oobs()
+
+    assert mod._section_loaded == {"countries"}
+    # The countries are complete: their texts are held, their reads stand.
+    assert country_file in mod._original_files
+    assert country_file in mod._read_digests
+    # Nothing is left of the loader that failed.
+    assert oob_file not in mod._original_files
+    assert oob_file not in mod._read_digests
+    mod.update_country("TST", color=(9, 9, 9))
+    mod.save()
+    assert "9 9 9" in country_file.read_text(encoding="utf-8")
+
+
+def test_a_section_that_failed_to_load_takes_the_repaired_file(mod_root: Path) -> None:
+    """The attempt that failed holds nothing, so what it read is no baseline."""
+
+    path = mod_root / "common/ideas/test.txt"
+    for file in mod_root.rglob("*.txt"):
+        _age(file)
+    mod = Mod(mod_root, strict_loading=True)
+    path.write_text("ideas = { country = {\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="test.txt"):
+        mod.discard()
+    assert "ideas" not in mod._section_loaded
+
+    path.write_text(IDEAS.replace("0.1", "0.2"), encoding="utf-8")
+    mod.update_idea("test_spirit", icon="repaired")
+    mod.save()
+
+    saved = path.read_text(encoding="utf-8")
+    assert "repaired" in saved and "0.2" in saved
+
+
+def test_a_plain_value_of_a_section_is_staged_like_the_rest(
+    mod_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A loader sets it with ``_stage``: it is not on the object before the section is complete."""
+
+    seen: list[bool] = []
+    original = Mod._load_states
+
+    def watching_load(self: Mod) -> None:
+        original(self)
+        seen.append("_writable_state_directory_stamp" in vars(self))
+
+    monkeypatch.setattr(Mod, "_load_states", watching_load, raising=False)
+    mod = Mod(mod_root)
+
+    assert mod.list_states() == [1]
+    assert seen == [False]
+    assert mod._writable_state_directory_stamp is not None
+
+
 # ── Lookups of game content ──────────────────────────────────────
 
 

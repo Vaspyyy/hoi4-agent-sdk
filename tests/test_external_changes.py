@@ -3,6 +3,16 @@
 One case per kind of content the SDK writes. The files are old (their time
 proves nothing about the moment they were read), so every case depends on
 what the readers noted, not on a digest taken because a file was fresh.
+
+The change made behind the SDK is a real one: another value of the same
+size, where possible the very value the SDK's own edit sets. The rule under
+test: the first read of a file is what the SDK knows of it, until ``save()``,
+``discard()`` or ``reload()``.
+
+* changed before that first read: the file is taken as it is, the save works
+  and keeps the rest of the change;
+* changed after it, before or after the SDK's own edit: ``save()`` refuses
+  and leaves the file alone.
 """
 
 from __future__ import annotations
@@ -81,7 +91,7 @@ CASES: dict[str, tuple[str, Step, Step]] = {
     "country history": (
         "history/countries/MOD - Modland.txt",
         lambda mod: mod.get_country("MOD"),
-        lambda mod: mod.update_country("MOD", capital=2, ruling_party="democratic"),
+        lambda mod: mod.update_country("MOD", capital=2, ruling_party="fascism"),
     ),
     "state": (
         "history/states/2-Modstate.txt",
@@ -146,6 +156,27 @@ CASES: dict[str, tuple[str, Step, Step]] = {
 }
 
 
+# What changes behind the SDK's back: (text in the file, what replaces it).
+CHANGES: dict[str, tuple[str, str]] = {
+    "tags": ('MOD = "countries/Modland.txt"\n', 'MOD = "countries/Modland.txt"\nEXT = "countries/Modland.txt"\n'),
+    "colors": ("10 20 30", "40 50 60"),
+    "country file": ("10 20 30", "40 50 60"),
+    "country history": ("neutrality", "democratic"),
+    "state": ("manpower = 100", "manpower = 777"),
+    "supply nodes": ("1 10", "1 30"),
+    "scripted trigger": ("always = yes", "has_war = no"),
+    "technology": ("research_cost = 1", "research_cost = 9"),
+    "event": ("title = mod_ev.1.t", "title = mod_ev.1.z"),
+    "localisation": ('"Mine"', '"Ours"'),
+    "idea": ("stability_factor = 0.1", "stability_factor = 0.9"),
+    "focus": ("cost = 1", "cost = 9"),
+    "decision": ("cost = 1", "cost = 9"),
+    "on_action": ("log = x", "log = z"),
+    "character": ("name = MOD_guy", "name = MOD_gal"),
+    "oob": ('"Inf"', '"Art"'),
+}
+
+
 @pytest.fixture
 def old_mod(tmp_path: Path) -> Path:
     old = time.time() - 600
@@ -165,59 +196,173 @@ def _marker(relative: str) -> str:
     return "# external change\n"
 
 
-@pytest.mark.parametrize("read_first", [True, False], ids=["read", "not read"])
-@pytest.mark.parametrize("case", sorted(CASES))
-def test_a_touch_never_blocks_a_save(old_mod: Path, case: str, read_first: bool) -> None:
+def _change(path: Path, case: str, *, same_time: bool, marker: str = "") -> str:
+    """Change ``path`` as another program would; returns the text it holds then."""
+
+    old, new = CHANGES[case]
+    before = path.stat()
+    text = path.read_text(encoding="utf-8")
+    assert old in text
+    changed = text.replace(old, new) + marker
+    path.write_text(changed, encoding="utf-8")
+    if same_time:
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    return changed
+
+
+TIMES = pytest.mark.parametrize("same_time", [False, True], ids=["new time", "old time set back"])
+READ_FIRST = pytest.mark.parametrize("read_first", [True, False], ids=["read", "not read"])
+EVERY_CASE = pytest.mark.parametrize("case", sorted(CASES))
+
+
+@pytest.mark.parametrize("when", ["before the read", "after the read", "after the edit"])
+@READ_FIRST
+@EVERY_CASE
+def test_a_touch_never_blocks_a_save(old_mod: Path, case: str, read_first: bool, when: str) -> None:
     relative, read, edit = CASES[case]
     mod = Mod(old_mod)
+    if when == "before the read":
+        os.utime(old_mod / relative, None)
     if read_first:
         read(mod)
-    os.utime(old_mod / relative, None)
+    if when == "after the read":
+        os.utime(old_mod / relative, None)
 
     edit(mod)
+    if when == "after the edit":
+        os.utime(old_mod / relative, None)
     mod.save()
 
 
-@pytest.mark.parametrize("same_time", [False, True], ids=["new time", "old time set back"])
-@pytest.mark.parametrize("read_first", [True, False], ids=["read", "not read"])
-@pytest.mark.parametrize("case", sorted(CASES))
-def test_a_change_behind_the_sdk_is_refused_or_kept(
+@TIMES
+@READ_FIRST
+@EVERY_CASE
+def test_a_change_before_the_first_read_is_built_on(
     old_mod: Path, case: str, read_first: bool, same_time: bool
 ) -> None:
-    """Never lost: ``save()`` refuses, or what it writes is built on the changed file."""
+    """Nothing was read yet: the file is taken as it is, as a fresh ``Mod`` would."""
 
     relative, read, edit = CASES[case]
     path = old_mod / relative
     marker = _marker(relative)
     mod = Mod(old_mod)
+    _change(path, case, same_time=same_time, marker=marker)
     if read_first:
         read(mod)
-    before = path.stat()
-    path.write_text(path.read_text(encoding="utf-8") + marker, encoding="utf-8")
-    if same_time:
-        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
 
     edit(mod)
-    try:
-        mod.save()
-    except ExternalModificationError:
-        pass
+    mod.save()
     assert marker.strip() in path.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize(
-    "case",
-    ["event", "localisation", "idea", "focus", "decision", "on_action", "character", "oob"],
-)
-def test_a_change_after_the_section_loaded_is_refused(old_mod: Path, case: str) -> None:
-    """The model in memory was built from the older text: the save has to stop."""
+@TIMES
+@EVERY_CASE
+def test_a_change_after_the_first_read_is_refused(old_mod: Path, case: str, same_time: bool) -> None:
+    """What is in memory was built from the older text: the save has to stop."""
 
     relative, read, edit = CASES[case]
     path = old_mod / relative
     mod = Mod(old_mod)
     read(mod)
-    path.write_text(path.read_text(encoding="utf-8") + _marker(relative), encoding="utf-8")
+    changed = _change(path, case, same_time=same_time)
 
     edit(mod)
     with pytest.raises(ExternalModificationError, match=Path(relative).name):
         mod.save()
+    assert path.read_text(encoding="utf-8") == changed
+
+
+@TIMES
+@READ_FIRST
+@EVERY_CASE
+def test_a_change_after_the_edit_is_refused(
+    old_mod: Path, case: str, read_first: bool, same_time: bool
+) -> None:
+    """The edit is waiting to be saved: a change of its file since then is not overwritten."""
+
+    relative, read, edit = CASES[case]
+    path = old_mod / relative
+    mod = Mod(old_mod)
+    if read_first:
+        read(mod)
+    edit(mod)
+    changed = _change(path, case, same_time=same_time)
+
+    with pytest.raises(ExternalModificationError, match=Path(relative).name):
+        mod.save()
+    assert path.read_text(encoding="utf-8") == changed
+
+
+# ── Edits that replace a file they did not read ─────────────────────────────
+
+NAMES = "MOD = {\n\tmale = { names = { Old } }\n\tsurnames = { Name }\n}\n"
+
+
+def _import_trigger(mod: Mod, source: Path) -> None:
+    mod.import_script_file(source, "common/scripted_triggers/st.txt", overwrite=True)
+
+
+def _name_pool(mod: Mod, source: Path) -> None:
+    mod.set_country_name_pool("MOD", male_names=["New"], surnames=["Name"])
+
+
+def _color_table(mod: Mod, source: Path) -> None:
+    mod.rebuild_country_color_table()
+
+
+# name: (the file that is replaced, text another program writes there, the edit)
+REPLACING: dict[str, tuple[str, tuple[str, str], Callable[[Mod, Path], None]]] = {
+    "import_script_file": ("common/scripted_triggers/st.txt", ("always = yes", "has_war = no"), _import_trigger),
+    "set_country_name_pool": ("common/names/00_generated_names.txt", ("Old", "Odd"), _name_pool),
+    "rebuild_country_color_table": ("common/countries/colors.txt", ("10 20 30", "40 50 60"), _color_table),
+}
+
+
+@pytest.fixture
+def replacing_mod(old_mod: Path) -> tuple[Path, Path]:
+    names = old_mod / "common/names/00_generated_names.txt"
+    names.parent.mkdir(parents=True)
+    names.write_text(NAMES, encoding="utf-8")
+    # A full colour table is only rebuilt for a mod that replaces every tag.
+    descriptor = old_mod / "descriptor.mod"
+    descriptor.write_text('name = "t"\nreplace_path = "common/country_tags"\n', encoding="utf-8")
+    old = time.time() - 600
+    for path in (names, descriptor):
+        os.utime(path, (old, old))
+    source = old_mod.parent / f"{old_mod.name}_source.txt"
+    source.write_text("my_trig = { always = no }\n", encoding="utf-8")
+    return old_mod, source
+
+
+@pytest.mark.parametrize("name", sorted(REPLACING))
+def test_an_edit_that_replaces_a_file_saves_after_a_touch(
+    replacing_mod: tuple[Path, Path], name: str
+) -> None:
+    root, source = replacing_mod
+    relative, _, edit = REPLACING[name]
+    mod = Mod(root)
+    edit(mod, source)
+    os.utime(root / relative, None)
+
+    mod.save()
+
+
+@TIMES
+@pytest.mark.parametrize("name", sorted(REPLACING))
+def test_an_edit_that_replaces_a_file_refuses_a_change_since_the_edit(
+    replacing_mod: tuple[Path, Path], name: str, same_time: bool
+) -> None:
+    root, source = replacing_mod
+    relative, (old, new), edit = REPLACING[name]
+    path = root / relative
+    mod = Mod(root)
+    edit(mod, source)
+    before = path.stat()
+    changed = path.read_text(encoding="utf-8").replace(old, new)
+    path.write_text(changed, encoding="utf-8")
+    if same_time:
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    with pytest.raises(ExternalModificationError, match=Path(relative).name):
+        mod.save()
+    assert path.read_text(encoding="utf-8") == changed

@@ -198,14 +198,15 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 excluded_dlc=(reference.excluded_dlc if reference is not None else ()),
             )
             self._oobs[name] = oob
+            # Not one of the OOBs the section loaded: a file of the game or a
+            # base mod, or a mod file that is new or that the loader refused.
+            # It is only this lookup's cache, so save() and discard() load
+            # the section again (and with it the loader's diagnostics).
+            self._reload_on_discard.add("oobs")
             if path.resolve(strict=False).is_relative_to(self.mod_root):
                 text = read_text(path)
                 self._original_files.setdefault(path, text)
                 self._note_read(path, text)
-            else:
-                # An OOB of the game or a base mod, cached by this lookup:
-                # save() and discard() drop it with the section.
-                self._reload_on_discard.add("oobs")
             return oob
         raise KeyError(f"OOB '{name}' not found")
 
@@ -679,7 +680,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         target = resolve_mod_output_path(self.mod_root, relative)
         self._original_files.setdefault(
             target,
-            self._read_current_text(target)
+            self._read_noted_text(target)
             or read_text(source),
         )
         if parse(oob.raw_text).problems:

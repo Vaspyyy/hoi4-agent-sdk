@@ -21,6 +21,11 @@ All notable changes to this project are documented here. The format follows
   rebuilt for a file whose size or modification time changed and for any new
   version of the SDK. `HOI4_SDK_DISK_CACHE=off` turns it, and the vocabulary
   cache, off. See [docs/internals/disk_cache.md](docs/internals/disk_cache.md).
+  The very first `validate()` after an update of the SDK starts with empty
+  caches: it builds the script vocabulary again and fills the store, and so
+  takes longer than it did before this version (measured on a small mod:
+  about 70 s once, where the old version with its vocabulary cache already
+  filled took about 40 s). Every run after that is the fast one.
 - `hoi4.syntax`: one lossless syntax tree for Paradox script. Every node knows
   its exact position in the source, so reading is a tree query and writing is
   the replacement of one span. It understands typed blocks (`rgb { }`,
@@ -207,7 +212,12 @@ All notable changes to this project are documented here. The format follows
 - A file is read when its section is first used, not when `Mod(...)` is
   built. A file that was changed, touched or created in between is read as
   it is then, which is what a fresh `Mod` would see, and can be edited and
-  saved. A change after the SDK read the file is still refused by `save()`.
+  saved. A change after the SDK first read the file is still refused by
+  `save()`, whether it happens before or after the SDK's own edit. An edit
+  that replaces a file without reading it (`import_script_file(...,
+  overwrite=True)`, `rebuild_country_color_table()`,
+  `set_country_name_pool()`, the map files) takes the file as it is when
+  the edit is made: a change of it between the edit and `save()` is refused.
 - Reading one `Mod` from several threads keeps working, although content
   now loads on first use: a thread that asks for a section while another
   thread loads it waits until the section is complete. (Changing a `Mod`
@@ -221,7 +231,12 @@ All notable changes to this project are documented here. The format follows
 - A symlink in a base mod that leaves the base mod's folder is refused when
   it is read, not when the `Mod` is built.
 - `copy.copy(mod)` gives a copy that keeps its own account of which
-  sections are loaded.
+  sections are loaded. It is still a shallow copy: the two share the
+  content loaded at that moment and the list of unsaved edits, but not
+  what either loads later. Use `copy.deepcopy(mod)` or a second
+  `Mod(root)` for an independent one.
+- The release gate's localisation probe edits a text the mod itself
+  defines. With base mods it could pick a text of a base mod before.
 - A load failure in a file that was changed or broken after `Mod(...)` was
   built, but before its section was first used, is now reported as a load
   diagnostic (`load_failure` in `validate()`), like any file that fails to load.

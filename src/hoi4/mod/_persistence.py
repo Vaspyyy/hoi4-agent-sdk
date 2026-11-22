@@ -733,7 +733,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
 
         staged = [*self._script_file_updates, *self._pending_asset_writes]
         fingerprints, digests = self._scan_fingerprints()
-        changed = _changed_files(self._fingerprints, self._read_digests, fingerprints, digests)
+        known_digests = {**self._scan_digests, **self._read_digests}
+        changed = _changed_files(self._fingerprints, known_digests, fingerprints, digests)
         names, mapped = self._sections_to_unload([*written, *staged, *changed])
         if not mapped or self._base_mods_changed():
             # A descriptor, a path outside the mod or a changed base mod
@@ -747,7 +748,9 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         self._fingerprints = fingerprints
         for path in changed:
             self._read_digests.pop(path, None)
-        self._read_digests.update(digests)
+        self._scan_digests = {
+            path: digest for path, digest in digests.items() if path not in self._read_digests
+        }
         self._after_reload()
 
     def _sections_to_unload(self, paths: Sequence[Path]) -> tuple[set[str], bool]:
@@ -829,21 +832,13 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         try:
             self._load_all_sections()
             fresh._load_all_sections()
-            skipped = {
-                attribute: self._fill_cache_for_check(fresh, attribute, lookup)
-                for section in self._sections.sections
-                for attribute, lookup in section.caches
-            }
+            for section in self._sections.sections:
+                for attribute, lookup in section.caches:
+                    self._fill_cache_for_check(fresh, attribute, lookup)
             for section in self._sections.sections:
                 for attribute, _ in section.data:
                     live_value = self.__dict__[attribute]
                     fresh_value = fresh.__dict__[attribute]
-                    if skipped.get(attribute):
-                        assert isinstance(live_value, dict)
-                        live_value = {
-                            key: value for key, value in live_value.items()
-                            if key not in skipped[attribute]
-                        }
                     if attribute == "_inherited_state_source_paths" and (
                         live_value is None or fresh_value is None
                     ):
@@ -878,33 +873,26 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         finally:
             self._unload_sections(self._section_loaded - before)
 
-    def _fill_cache_for_check(
-        self, fresh: PersistenceLayer, attribute: str, lookup: str
-    ) -> set[object]:
+    def _fill_cache_for_check(self, fresh: PersistenceLayer, attribute: str, lookup: str) -> None:
         """Let ``fresh`` look up what lookups added to a cache of this mod.
 
-        Returns the keys to leave out of the comparison: entries read from the
-        game or a base mod. Those layers are shared and cannot differ, and the
-        same entry may be read in more than one way.
+        Only entries of the mod's own files: a lookup that cached content of
+        the game or a base mod marks its section (``_reload_on_discard``), so
+        none should be left. One that is shows up as a difference.
         """
 
         live = self.__dict__[attribute]
         known = fresh.__dict__[attribute]
-        skipped: set[object] = set()
         for key in list(live):
             if key in known:
                 continue
             value = live[key] if isinstance(live, dict) else None
             if value is not None and not _comes_from(value, self.mod_root):
-                # A lookup cached content of the game or a base mod. The
-                # section should have been dropped (``_reload_on_discard``);
-                # left in, it shows up as a difference below.
                 continue
             try:
                 getattr(fresh, lookup)(key)
             except KeyError:
                 pass
-        return skipped
 
 
 def _comes_from(value: object, root: Path) -> bool:

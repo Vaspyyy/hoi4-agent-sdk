@@ -17,7 +17,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Iterable
 
-from ._disk_cache import DiskAnalysis
+from ._disk_cache import DiskAnalysis, int_list
 from ._file_cache import cached_files_result
 from .layers import ContentView, as_view
 from .map_render import parse_definition_csv
@@ -282,12 +282,17 @@ def _encode_topology(topology: _Topology) -> dict[str, list]:
     }
 
 
-def _decode_topology(data: dict[str, list]) -> _Topology:
-    return (
-        frozenset(int(item) for item in data["land"]),
-        {int(province): {int(item) for item in neighbours} for province, neighbours in data["graph"]},
-        frozenset(int(item) for item in data["coastal"]),
-    )
+def _decode_topology(data: object) -> _Topology:
+    """A stored topology. Anything else is a damaged entry and is computed again."""
+
+    if not isinstance(data, dict) or not isinstance(data["graph"], list):
+        raise TypeError("a stored topology must be a map with a list of neighbours")
+    graph: dict[int, set[int]] = {}
+    for province, neighbours in data["graph"]:
+        if type(province) is not int:
+            raise TypeError("a stored province id must be a whole number")
+        graph[province] = set(int_list(neighbours))
+    return frozenset(int_list(data["land"])), graph, frozenset(int_list(data["coastal"]))
 
 
 _TOPOLOGY_ON_DISK = DiskAnalysis("province_topology", _encode_topology, _decode_topology)

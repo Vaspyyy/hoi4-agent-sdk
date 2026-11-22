@@ -171,6 +171,8 @@ class CountriesLayer(CoreLayer):
         sections.append(f"surnames = {{ {family} }}")
         if call:
             sections.append(f"callsigns = {{ {call} }}")
+        # save() patches the generated names file: note it as it is now.
+        self._note_target(self.mod_root / "common" / "names" / "00_generated_names.txt")
         self._country_name_pool_updates[tag] = "\n".join(sections)
         self._dirty.add("country_names")
         self._scan_cache.pop("country_name_pools", None)
@@ -291,7 +293,7 @@ class CountriesLayer(CoreLayer):
                 relative = self._base_content.relative(source.resolve(strict=False)) or fallback
             target = resolve_mod_output_path(self.mod_root, relative)
             setattr(country, field_name, target)
-            self._original_files.setdefault(target, self._read_current_text(target))
+            self._original_files.setdefault(target, self._read_noted_text(target))
 
     @staticmethod
     def default_leader_ideology(ruling_party: str) -> str:

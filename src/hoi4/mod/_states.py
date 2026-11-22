@@ -194,6 +194,10 @@ class StatesLayer(CoreLayer):
             }
             self._state_source_paths.update(paths)
             self._writable_state_directory_stamp = stamp
+            # The folder changed after the section loaded. What this lookup
+            # finds there is not what the loader knows (its ids, its
+            # diagnostics): discard() and save() load the section again.
+            self._reload_on_discard.add("states")
         f = self._state_source_paths.get(state_id)
         if f is not None and not f.exists():
             f = None
@@ -252,7 +256,7 @@ class StatesLayer(CoreLayer):
             state.raw_text = repair(state.raw_text)
         state.path = target
         self._state_source_paths[state.id] = target
-        self._original_files.setdefault(target, self._read_current_text(target))
+        self._original_files.setdefault(target, self._read_noted_text(target))
         return True
 
     def set_state_owner(self, state_id: int, tag: str, add_core: bool = True) -> State:

@@ -553,7 +553,8 @@ class MapLayer(StatesLayer, CatalogsLayer):
         return self._keep_source(source, read_text(source))
 
     def _queue_map_text(self, relative: str, text: str) -> None:
-        resolve_mod_output_path(self.mod_root, relative)
+        # The map file this edit replaces, as it is now.
+        self._note_target(resolve_mod_output_path(self.mod_root, relative))
         self._map_file_updates[relative] = text
         self._dirty.add("map")
 

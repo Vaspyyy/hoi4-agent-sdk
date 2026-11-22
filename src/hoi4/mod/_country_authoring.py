@@ -289,6 +289,8 @@ class CountryAuthoringLayer(CharactersLayer):
         if not countries:
             raise ValueError("Cannot replace country colors with an empty registry")
         target = resolve_mod_output_path(self.mod_root, "common/countries/colors.txt")
+        # The table this rebuild replaces, as it is now.
+        self._note_target(target)
         self._script_file_updates[target] = serialize_country_colors_file(
             "", {tag: country.color for tag, country in countries.items()})
         self._dirty.add("script_files")

@@ -63,7 +63,8 @@ reads `_countries`). The rest of the code reads `self._events` as before.
    that file into `_original_files`. The descriptor, or a path outside the
    mod, reloads everything (`reload()`);
 3. sections changed in memory without a dirty mark (`_reload_on_discard`:
-   inherited content loaded for editing);
+   what a lookup cached that the section's loader did not load, see "The
+   reload check");
 4. every section that depends on one of these.
 
 All edit buffers are emptied and `_original_files` keeps only the texts owned
@@ -90,13 +91,40 @@ changed, appeared or went away, `save()` and `discard()` reload everything.
 (`.txt .yml .gfx .lua .mod`), taken with `stat` alone. `_read_digests` holds a
 digest of the text the SDK read from a file (`_note_read`).
 
-The first read of a file takes it as it is then, with its fingerprint of
-that moment. So a file that was touched, changed or created after `Mod()`
-and before its section first loaded is simply read, as a fresh `Mod` would
-read it, and `save()` may write it. A later read of the same file does not
-move the baseline while a loaded section still holds an older text of it
-(`_original_files`): what is in memory was built from that text, so the
-change keeps looking like one and `save()` refuses to overwrite it.
+**The first read of a file is what the SDK knows of it.** It takes the file
+as it is then, with its fingerprint of that moment. So a file that was
+touched, changed or created after `Mod()` and before anything read it is
+simply read, as a fresh `Mod` would read it, and `save()` may write it.
+
+That first read stands until the baseline is taken again: by `save()` for
+the files it wrote, by `discard()` for the files that changed on disk, and
+by `reload()` for all. A later read never moves it. What is in memory, or
+staged for a save, was built from the first text, so a change behind the
+SDK's back keeps looking like one and `save()` refuses to overwrite it.
+
+Who notes a read:
+
+- Every loader, for every mod file it reads (`_read_source`,
+  `_keep_source`). That includes files it reads only to learn something
+  and that a later edit rewrites: the country tag files, `colors.txt`, the
+  header of every state file, the definition and map files.
+- An edit that builds on the text of a file, when the edit is made
+  (`_read_noted_text`: the mod's copy of an inherited state, country,
+  character or OOB file).
+- An edit that replaces or patches a file it did not read, when the edit is
+  made (`_note_target`): `import_script_file(overwrite=True)`,
+  `rebuild_country_color_table()`, `set_country_name_pool()`, the map files.
+- Not the reads made while a save is rendered (`_read_current_text`). They
+  happen a moment before the check below and must not become what that
+  check compares with.
+
+A loader that fails holds nothing of what it read, so those reads are
+forgotten (`_section_reads` tells which are its own) and the next attempt
+takes the files as they are then, after a repair for example.
+
+With `HOI4_VERIFY_RELOAD=1`, a file that is about to be overwritten and has
+no noted read raises `AssertionError`. The test suite runs with it, so a
+reader that forgets to note is found there, whatever the age of its files.
 
 Two questions are asked of them, with different care:
 
@@ -110,13 +138,14 @@ Two questions are asked of them, with different care:
   time was set back looks unchanged to `stat`, and this is the last check
   before the content is replaced. A different text raises
   `ExternalModificationError`. Only the files being written are read, so
-  this costs almost nothing. A file the SDK never read has no digest: for it
-  only size and time are known, and a different fingerprint counts as
-  changed.
+  this costs almost nothing. Should a file have no noted read after all, the
+  check uses what else is known: the digest the scan took of it (see the
+  next point), a text a loaded section holds, or size and time alone.
 - File times are coarse: a file rewritten within the same tick keeps its time.
   A file changed less than two seconds before its fingerprint was taken is
   "racy" (git's word). Its fingerprint never proves it unchanged, and its digest
-  is taken when the fingerprint is.
+  is taken when the fingerprint is (`_scan_digests`, kept apart from the
+  noted reads: a scan is not a read anything was built from).
 - After a save, the written files get new fingerprints and digests. A discard
   takes the fingerprints of the whole mod again, which is also how it finds
   files changed on disk.
@@ -133,6 +162,8 @@ loaded at construction: no thread ever sees a half-filled section.
   through `__getattr__`; for any other thread the attribute is still
   missing, so it lands in `__getattr__` too, waits for the lock and finds
   the section complete. The values become attributes only at the end.
+- A loader sets a plain value of its section (a number, not a container)
+  with `_stage`, so that it appears with the rest and not before.
 - The price is one `__getattr__` call per access while a section loads,
   which is not measurable on a large mod (loading every section of a mod
   with 11,297 files: 6.3 s before and after).
@@ -149,9 +180,14 @@ the inherited layers), loads every section of both, lets the fresh one look up
 what lookups added to the live caches, and compares every section attribute,
 the load diagnostics and `_original_files` by value. A difference raises
 `AssertionError` naming the section, the attribute and the first differing id.
-Sections the check loaded are unloaded again afterwards. Cache entries read
-from the game or a base mod are left out: those layers are shared, and the
-same entry can be read in more than one way.
+Sections the check loaded are unloaded again afterwards.
+
+A lookup may cache something the loader did not load: content of the game
+or a base mod (`get_country`, `get_state`, `get_character`, `get_oob`), or
+a mod file that appeared after the section loaded. It then puts its section
+into `_reload_on_discard`, and `save()` and `discard()` load that section
+again. So no such entry is left when the check runs; one that is shows up
+as a difference.
 
 `tests/conftest.py` turns the check on for the whole suite. When it fails,
 fix the registry (a missing dependency, folder or dirty name), not the check.

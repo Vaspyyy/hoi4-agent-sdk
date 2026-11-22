@@ -63,10 +63,26 @@ from ..types import (
     State,
 )
 
+def _decode_state_header(data: object) -> tuple[int, str, str | None] | None:
+    """A stored state header. Anything else is a damaged entry and is read again."""
+
+    if data is None:
+        return None
+    if (
+        not isinstance(data, list)
+        or len(data) != 3
+        or type(data[0]) is not int
+        or not isinstance(data[1], str)
+        or not (data[2] is None or isinstance(data[2], str))
+    ):
+        raise TypeError("a stored state header must be [id, name, owner]")
+    return data[0], data[1], data[2]
+
+
 _STATE_HEADERS_ON_DISK: DiskAnalysis[tuple[int, str, str | None] | None] = DiskAnalysis(
     "state_index_header",
     lambda header: list(header) if header is not None else None,
-    lambda data: (int(data[0]), str(data[1]), data[2]) if data is not None else None,
+    _decode_state_header,
 )
 
 def _path_under(path: Path, root: Path) -> bool:
@@ -512,6 +528,8 @@ class CoreLayer:
         self._section_diagnostics: dict[str, list[LoadDiagnostic]] = {}
         # Files each section's loader put in ``_original_files``.
         self._section_files: dict[str, set[Path]] = {}
+        # The files each section's loader was the first to read (``_note_read``).
+        self._section_reads: dict[str, set[Path]] = {}
         self.mod_root = Path(mod_root).resolve()
         self.hoi4_install = Path(hoi4_install).resolve() if hoi4_install else None
         if isinstance(base_mod_paths, (str, bytes)):
@@ -527,6 +545,9 @@ class CoreLayer:
         # read from a file while it still had that fingerprint.
         self._fingerprints: dict[Path, _Fingerprint] = {}
         self._read_digests: dict[Path, bytes] = {}
+        # Digests the scan itself took of files that were fresh then (their
+        # time proves nothing). Not a noted read: see ``_note_read``.
+        self._scan_digests: dict[Path, bytes] = {}
         # The same for the base mods' text files, so discard() can tell
         # whether the inherited content changed (the game is not watched).
         self._base_fingerprints: dict[Path, _Fingerprint] = {}
@@ -613,24 +634,39 @@ class CoreLayer:
         staged = {attribute: factory() for attribute, factory in section.data}
         self._section_staged[name] = staged
         self._section_diagnostics[name] = []
-        before = set(self._original_files)
+        held_before = set(self._original_files)
+        noted_before = set(self._read_digests)
+        loaded_before = set(self._section_loaded)
+
+        def own(now: Iterable[Path], earlier: set[Path], of_sections: dict[str, set[Path]]) -> set[Path]:
+            # A section this loader needed (countries for the OOBs) loaded
+            # inside it and keeps what is its own.
+            nested: set[Path] = set()
+            for other in self._section_loaded - loaded_before:
+                nested |= of_sections.get(other, set())
+            return set(now) - earlier - nested
+
         self._section_loading.append(name)
         try:
             getattr(self, section.loader)()
         except BaseException as error:
             self._section_loading.pop()
             del self._section_staged[name]
-            for path in set(self._original_files) - before:
+            for path in own(self._original_files, held_before, self._section_files):
                 del self._original_files[path]
+            # Nothing is held of what this attempt read, so the next attempt
+            # reads the files as they are then (after a repair, say).
+            for path in own(self._read_digests, noted_before, self._section_reads):
+                del self._read_digests[path]
             self._forget_sections({name})
             if isinstance(error, AttributeError):
                 # Raised from ``__getattr__``, it would read as a missing name.
                 raise RuntimeError(f"Loading the {name} section failed: {error}") from error
             raise
         self._section_loading.pop()
-        self._section_files[name] = set(self._original_files) - before
+        self._section_files[name] = own(self._original_files, held_before, self._section_files)
+        self._section_reads[name] = own(self._read_digests, noted_before, self._section_reads)
         for attribute, value in staged.items():
-            # A loader may have assigned an attribute itself (a scalar).
             self.__dict__.setdefault(attribute, value)
         del self._section_staged[name]
         self._section_loaded.add(name)
@@ -651,11 +687,22 @@ class CoreLayer:
         clone._section_thread = None
         clone._section_diagnostics = dict(self._section_diagnostics)
         clone._section_files = {name: set(paths) for name, paths in self._section_files.items()}
+        clone._section_reads = {name: set(paths) for name, paths in self._section_reads.items()}
         return clone
 
     def _load_all_sections(self) -> None:
         for section in self._sections.sections:
             self._load_section(section.name)
+
+    def _stage(self, attribute: str, value: object) -> None:
+        """Set a plain value of a section from inside its loader.
+
+        Assigned as an attribute it would be on the object at once, and
+        another thread could read it before the section is complete.
+        """
+
+        section = self._sections.by_attribute[attribute]
+        self._section_staged[section.name][attribute] = value
 
     def _forget_sections(self, names: Collection[str]) -> None:
         """Drop the data of sections; the next read loads them from disk again."""
@@ -666,6 +713,7 @@ class CoreLayer:
             self._section_loaded.discard(name)
             self._section_diagnostics.pop(name, None)
             self._section_files.pop(name, None)
+            self._section_reads.pop(name, None)
 
     def _unload_sections(self, names: Collection[str], dropped_files: Collection[Path] = ()) -> None:
         """Forget sections and the original texts nothing loaded still owns.
@@ -775,7 +823,8 @@ class CoreLayer:
     def _capture_source_baseline(self) -> None:
         """Take the current state of every text file of the mod as the baseline."""
 
-        self._fingerprints, self._read_digests = self._scan_fingerprints()
+        self._fingerprints, self._scan_digests = self._scan_fingerprints()
+        self._read_digests = {}
         self._base_fingerprints, self._base_digests = self._scan_fingerprints(self.base_mod_paths)
 
     def _base_mods_changed(self) -> bool:
@@ -835,35 +884,47 @@ class CoreLayer:
         return (stat.st_size, stat.st_mtime_ns, stat.st_mtime_ns >= time.time_ns() - _RACY_NS)
 
     def _note_read(self, path: Path, text: str) -> None:
-        """Remember what the SDK read from a mod file: its baseline from now on.
+        """Remember what the SDK read from a mod file: its baseline from then on.
 
-        The first read of a file takes it as it is then. A file that was
-        touched, changed or created after ``Mod()`` and before its section
-        first loaded is simply read, as a fresh ``Mod`` would read it, and
-        ``save()`` may write it.
+        Only the FIRST read since the baseline was last taken counts (``Mod()``,
+        ``save()`` of that file, ``discard()``, ``reload()``). It takes the
+        file as it is then: a file that was touched, changed or created after
+        ``Mod()`` and before anything read it is simply read, as a fresh
+        ``Mod`` would read it.
 
-        A later read does not move the baseline while a loaded section still
-        holds an older text of the file (``_original_files``): what is in
-        memory was built from that text, so a change behind the SDK's back
-        must keep looking like one, and ``save()`` refuses to overwrite it.
+        A later read never moves the baseline. What is in memory, or staged
+        for a save, was built from the first text, so a change behind the
+        SDK's back has to keep looking like one until ``save()`` refuses it.
         """
 
         key = path if path in self._fingerprints else path.resolve(strict=False)
+        if key in self._read_digests:
+            return
         if key not in self._fingerprints and not key.is_relative_to(self.mod_root):
             return
-        digest = _text_digest(text)
-        known = self._read_digests.get(key)
-        if known == digest:
-            return
-        if known is not None:
-            held = self._original_files.get(key)
-            if held is not None and held != text:
-                return
         current = self._fingerprint(key)
         if current is None:
             return
         self._fingerprints[key] = current
-        self._read_digests[key] = digest
+        self._read_digests[key] = _text_digest(text)
+        self._scan_digests.pop(key, None)
+
+    def _note_target(self, path: Path) -> None:
+        """Note the text of a mod file that an edit is about to replace or patch.
+
+        Called when the edit is made, not when it is saved: a change of the
+        file between the two is then refused by ``save()``. A file that does
+        not exist (yet) has nothing to note.
+        """
+
+        key = path if path in self._fingerprints else path.resolve(strict=False)
+        if key in self._read_digests or not key.is_relative_to(self.mod_root):
+            return
+        try:
+            text = read_text(key)
+        except (OSError, ValueError):
+            return
+        self._note_read(key, text)
 
     def _read_source(self, path: Path) -> str:
         """Read a mod file for loading, remembering what was read."""
@@ -884,6 +945,7 @@ class CoreLayer:
                 continue
             self._fingerprints[key] = current
             self._read_digests[key] = _text_digest(read_text(key))
+            self._scan_digests.pop(key, None)
 
     def _changed_behind_our_back(self, path: Path) -> bool:
         """Whether a mod file that is about to be overwritten changed since its baseline.
@@ -906,17 +968,22 @@ class CoreLayer:
             return True
         digest = self._read_digests.get(key)
         if digest is None:
-            held = self._original_files.get(key)
-            if held is not None:
-                digest = _text_digest(held)
-            elif os.environ.get("HOI4_VERIFY_RELOAD") == "1":
-                # The test suite runs with this switch: every reader whose
-                # text ends up in a written file has to note what it read.
+            if os.environ.get("HOI4_VERIFY_RELOAD") == "1":
+                # The test suite runs with this switch. Every loader that
+                # reads a file, and every edit that stages a rewrite of one,
+                # has to note what was there (``_note_read``, ``_note_target``).
                 raise AssertionError(
                     f"{key} is about to be overwritten, but nothing noted what was read "
-                    "from it (_note_read): a touch would be refused and a change missed"
+                    "from it: a touch would be refused and a change missed"
                 )
-            else:
+            # Nothing noted a read. Fall back to what is known: the text at
+            # the last scan (a file that was fresh then), a text a section
+            # holds, or size and time alone.
+            digest = self._scan_digests.get(key)
+            held = self._original_files.get(key)
+            if digest is None and held is not None:
+                digest = _text_digest(held)
+            if digest is None:
                 return not _same_file_state(recorded, current)
         try:
             return digest != _text_digest(read_text(key))
@@ -1088,6 +1155,19 @@ class CoreLayer:
         return any(relative.is_relative_to(Path(path)) for path in hidden)
 
     def _read_current_text(self, path: Path) -> str:
+        """The text of a file as it is now, for rendering and comparing.
+
+        It notes nothing: a read made while a save is being rendered must
+        not become the baseline the save is then checked against.
+        """
+
+        if not path.exists():
+            return ""
+        return read_text(path)
+
+    def _read_noted_text(self, path: Path) -> str:
+        """The text of a mod file that an edit builds on (``""`` when missing), noted."""
+
         if not path.exists():
             return ""
         text = read_text(path)

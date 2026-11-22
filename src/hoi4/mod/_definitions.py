@@ -126,6 +126,8 @@ class DefinitionsLayer(CoreLayer):
                 self._ideas[idea.id] = idea
             self._idea_file_containers[target] = container
             self._original_files[target] = text
+        # The file this import replaces, as it is now.
+        self._note_target(target)
         self._script_file_updates[target] = text
         self._format_donors[target] = source_bytes
         self._scan_cache.clear()

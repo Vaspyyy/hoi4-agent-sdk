@@ -451,7 +451,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 cached.path = target
         self._original_files.setdefault(
             target,
-            self._read_current_text(target) or source_text,
+            self._read_noted_text(target) or source_text,
         )
         character.path = target
         self._dirty_character_files.add(target)

@@ -111,12 +111,24 @@ def _sorted_strings(values: frozenset[str]) -> list[str]:
     return sorted(values)
 
 
-def _strings(data: object) -> frozenset[str]:
-    """A stored list of names. Anything else is a damaged entry and is read again."""
+def string_list(data: object) -> list[str]:
+    """A stored list of texts. Anything else is a damaged entry and is read again."""
 
     if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
-        raise TypeError("a stored set of names must be a list of strings")
-    return frozenset(data)
+        raise TypeError("a stored list of names must hold strings only")
+    return data
+
+
+def int_list(data: object) -> list[int]:
+    """A stored list of whole numbers. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, list) or not all(type(item) is int for item in data):
+        raise TypeError("a stored list of numbers must hold whole numbers only")
+    return data
+
+
+def _strings(data: object) -> frozenset[str]:
+    return frozenset(string_list(data))
 
 
 def string_map(data: object) -> dict[str, str]:
@@ -137,8 +149,15 @@ def _pairs_to_lists(pairs: tuple[tuple[str, str], ...]) -> list[list[str]]:
     return [list(pair) for pair in pairs]
 
 
-def _lists_to_pairs(data: list[list[str]]) -> tuple[tuple[str, str], ...]:
-    return tuple((str(first), str(second)) for first, second in data)
+def _lists_to_pairs(data: object) -> tuple[tuple[str, str], ...]:
+    """Stored pairs of names. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, list) or not all(
+        isinstance(pair, list) and len(pair) == 2 and isinstance(pair[0], str) and isinstance(pair[1], str)
+        for pair in data
+    ):
+        raise TypeError("stored pairs must be a list of two-string lists")
+    return tuple((pair[0], pair[1]) for pair in data)
 
 
 #: Ordered pairs of names read from one file (equipment and what unlocks it).
