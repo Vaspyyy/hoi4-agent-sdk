@@ -6,6 +6,7 @@ import dataclasses
 import re
 from typing import Literal, Sequence, cast
 
+from .._disk_cache import PAIRS_ON_DISK
 from ..oob import (
     EquipmentVariant,
     find_equipment_variants,
@@ -20,6 +21,24 @@ from ..types import (
     ValidationError,
 )
 from ._catalogs import CatalogsLayer
+
+
+def _special_project_unlocks(text: str) -> tuple[tuple[str, str], ...]:
+    """``(equipment, "sp:<project>")`` for each equipment a project enables, in order."""
+
+    pairs: list[tuple[str, str]] = []
+    for project in parse(text).root.assignments():
+        if project.block is None:
+            continue
+        for output in project.block.assignments("project_output"):
+            if output.block is None:
+                continue
+            for enabled in output.block.assignments("enable_equipments"):
+                if enabled.block is None:
+                    continue
+                for equipment in enabled.block.values():
+                    pairs.append((equipment.value, f"sp:{project.name}"))
+    return tuple(pairs)
 
 _DATE_ASSIGNMENT_RE = re.compile(r"\d{1,4}\.\d{1,2}\.\d{1,2}(?:\.\d{1,2})?")
 
@@ -118,23 +137,24 @@ class EquipmentLayer(CatalogsLayer):
         return errors
 
     def _special_project_unlocks(self) -> dict[str, tuple[str, ...]]:
-        """Equipment that special projects enable, as ``sp:<project>``."""
+        """Equipment that special projects enable, as ``sp:<project>``.
 
+        The country package check asks once per country; within one
+        validate() run the files do not change, so they are read once.
+        """
+
+        return dict(self._run_cached("special_project_unlocks", self._read_special_project_unlocks))
+
+    def _read_special_project_unlocks(self) -> dict[str, tuple[str, ...]]:
         unlocks: dict[str, list[str]] = {}
-        for _, text in self._effective_script_texts("common/special_projects/projects"):
-            for project in parse(text).root.assignments():
-                if project.block is None:
-                    continue
-                for output in project.block.assignments("project_output"):
-                    if output.block is None:
-                        continue
-                    for enabled in output.block.assignments("enable_equipments"):
-                        if enabled.block is None:
-                            continue
-                        for equipment in enabled.block.values():
-                            unlocks.setdefault(equipment.value, []).append(
-                                f"sp:{project.name}"
-                            )
+        for _, pairs in self._effective_script_results(
+            "common/special_projects/projects",
+            "special_project_unlocks",
+            _special_project_unlocks,
+            PAIRS_ON_DISK,
+        ):
+            for equipment, project in pairs:
+                unlocks.setdefault(equipment, []).append(project)
         return {key: tuple(value) for key, value in unlocks.items()}
 
     @classmethod

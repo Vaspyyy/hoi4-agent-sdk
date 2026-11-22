@@ -289,15 +289,16 @@ def _extract_category_metadata(body: str) -> dict[str, str]:
     return metadata
 
 
-def load_decisions_file(path: Path) -> list[DecisionCategory]:
+def load_decisions_file(path: Path, *, text: str | None = None) -> list[DecisionCategory]:
     """Load the categories of a ``common/decisions`` file with their decisions.
 
     A category block may appear more than once in one file: the game reopens
     the category. All its blocks become one :class:`DecisionCategory` holding
-    the decisions of every block in source order.
+    the decisions of every block in source order. ``text`` is the file's
+    content when the caller has read it.
     """
 
-    txt = read_text(path)
+    txt = text if text is not None else read_text(path)
     categories: dict[str, DecisionCategory] = {}
     bodies: dict[str, list[str]] = {}
     for span in top_level_assignments(txt):
@@ -382,10 +383,12 @@ def category_in_file(category: DecisionCategory, path: Path) -> DecisionCategory
     )
 
 
-def load_decision_categories_file(path: Path) -> list[DecisionCategory]:
-    """Load category metadata from ``common/decisions/categories``."""
+def load_decision_categories_file(
+    path: Path, *, text: str | None = None
+) -> list[DecisionCategory]:
+    """Load category metadata from ``common/decisions/categories`` (or the file's ``text``)."""
 
-    txt = read_text(path)
+    txt = text if text is not None else read_text(path)
     categories: list[DecisionCategory] = []
     for span in top_level_assignments(txt):
         if not _is_block_span(span):

@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Collection, Iterable, Iterator
 
+from ._disk_cache import DiskAnalysis, string_list, string_map
 from ._script_corpus import split_file
 from .script_scopes import CONTROL, BlockKind, Role, WalkState, walk_data, walk_script
 from .syntax import Assignment, Block, Document, Scalar, Tagged, parse
@@ -630,4 +631,107 @@ def file_references(
         own,
         owners_of(doc, relative, characters=characters),
         definitions_of(doc, relative),
+    )
+
+
+# Storing on disk
+#
+# ``FILE_REFERENCES_ON_DISK`` turns the references of a file into plain JSON
+# data and back, so ``hoi4._disk_cache`` can keep the game's references
+# between processes. A ref is a list of its fields in order; the fields at
+# the end that hold their default value are left out.
+
+_REF_DEFAULTS = (True, True, "", False, False, "", -1)
+_REF_REQUIRED = 8
+
+
+def _encode_ref(ref: ScriptRef) -> list[object]:
+    row: list[object] = [
+        ref.kind, ref.action, ref.value, ref.offset, ref.line, ref.column, ref.scope, ref.key,
+        ref.certain, ref.statement, ref.scope_key, ref.hidden, ref.guarded, ref.iterator,
+        ref.root,
+    ]
+    end = len(row)
+    while end > _REF_REQUIRED and row[end - 1] == _REF_DEFAULTS[end - 1 - _REF_REQUIRED]:
+        end -= 1
+    return row[:end]
+
+
+def _encode_definitions(found: Definitions) -> dict[str, object]:
+    data: dict[str, object] = {}
+    if found.events:
+        data["events"] = {key: list(value) for key, value in found.events.items()}
+    if found.ideas:
+        data["ideas"] = {key: list(value) for key, value in found.ideas.items()}
+    if found.equipment:
+        data["equipment"] = dict(found.equipment)
+    if found.equipment_copies:
+        data["equipment_copies"] = [
+            [new, old, sorted(named)] for new, old, named in found.equipment_copies
+        ]
+    for name in ("advisor_ideas", "focus_trees", "technologies", "tags", "organizations"):
+        values = getattr(found, name)
+        if values:
+            data[name] = sorted(values)
+    return data
+
+
+def _decode_definitions(data: object) -> Definitions:
+    """Stored definitions. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, dict):
+        raise TypeError("stored definitions must be a map")
+    found = Definitions()
+    for key, (has_id, line) in data.get("events", {}).items():
+        if type(has_id) is not bool or type(line) is not int:
+            raise TypeError("a stored event must be [has an id, line]")
+        found.events[key] = (has_id, line)
+    for key, (category, line) in data.get("ideas", {}).items():
+        if not isinstance(category, str) or type(line) is not int:
+            raise TypeError("a stored idea must be [category, line]")
+        found.ideas[key] = (category, line)
+    found.equipment.update(string_map(data.get("equipment", {})))
+    for new, old, named in data.get("equipment_copies", []):
+        if not isinstance(new, str) or not isinstance(old, str):
+            raise TypeError("a stored equipment copy must name two pieces of equipment")
+        found.equipment_copies.append((new, old, frozenset(string_list(named))))
+    for name in ("advisor_ideas", "focus_trees", "technologies", "tags", "organizations"):
+        getattr(found, name).update(string_list(data.get(name, [])))
+    return found
+
+
+#: How :class:`Definitions` of one file go to disk and back.
+DEFINITIONS_ON_DISK: DiskAnalysis[Definitions] = DiskAnalysis(
+    "definitions", _encode_definitions, _decode_definitions
+)
+
+
+def encode_file_references(found: FileReferences) -> dict[str, object]:
+    """``found`` as plain JSON data (see :func:`decode_file_references`)."""
+
+    return {
+        "path": found.path,
+        "relative": found.relative,
+        "own": found.own,
+        "owners": [
+            [owner.kind, owner.id, owner.scope, owner.line, [_encode_ref(ref) for ref in owner.refs]]
+            for owner in found.owners
+        ],
+        "defines": _encode_definitions(found.defines),
+    }
+
+
+def decode_file_references(data: dict) -> FileReferences:
+    """The :class:`FileReferences` that :func:`encode_file_references` was given."""
+
+    owners = [
+        ScriptOwner(kind, owner_id, scope, line, [ScriptRef(*row) for row in refs])
+        for kind, owner_id, scope, line, refs in data["owners"]
+    ]
+    return FileReferences(
+        str(data["path"]),
+        str(data["relative"]),
+        bool(data["own"]),
+        owners,
+        _decode_definitions(data["defines"]),
     )

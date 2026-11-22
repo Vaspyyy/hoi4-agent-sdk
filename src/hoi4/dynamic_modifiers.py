@@ -15,7 +15,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_value
-from .syntax import Block, Scalar, parse, require_entry, require_well_formed
+from .syntax import Block, Document, Scalar, parse, require_entry, require_well_formed
 from .textio import read_text
 
 _RESERVED_SCALARS = {"icon", "attacker_modifier"}
@@ -34,11 +34,16 @@ class DynamicModifier:
     touched_fields: set[str] = field(default_factory=set)
 
 
-def load_dynamic_modifiers_text(text: str, path: Path | None = None) -> list[DynamicModifier]:
-    """Read every ``id = { ... }`` definition at the top level of a file's text."""
+def load_dynamic_modifiers_text(
+    text: str, path: Path | None = None, *, document: Document | None = None
+) -> list[DynamicModifier]:
+    """Read every ``id = { ... }`` definition at the top level of a file's text.
+
+    ``document`` is ``text`` already parsed.
+    """
 
     modifiers: list[DynamicModifier] = []
-    for item in parse(text).root.assignments():
+    for item in (document if document is not None else parse(text)).root.assignments():
         if item.op != "=" or type(item.value) is not Block:
             continue
         modifiers.append(_parse_dynamic_modifier(item.key.value, item.value, path))

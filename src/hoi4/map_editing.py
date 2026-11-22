@@ -14,7 +14,7 @@ import textwrap
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from .patching import AssignmentSpan, append_assignment, replace_assignment, top_level_assignments
 from .syntax import Assignment, Block, Scalar, parse, require_statement, require_well_formed
@@ -857,3 +857,49 @@ def validate_map_consistency(
                 )
             )
     return errors
+
+
+# Storing on disk: how parsed regions and buildings of the game's map go to
+# plain JSON data and back (see ``hoi4._disk_cache``).
+
+
+def encode_strategic_regions(regions: list[StrategicRegion]) -> list[list[object]]:
+    return [
+        [region.id, region.name, list(region.provinces), region.path, region.has_weather]
+        for region in regions
+    ]
+
+
+def decode_strategic_regions(data: list[list[Any]]) -> list[StrategicRegion]:
+    return [
+        StrategicRegion(int(item[0]), str(item[1]), tuple(item[2]), str(item[3]), bool(item[4]))
+        for item in data
+    ]
+
+
+def encode_map_buildings(parsed: tuple[list[MapBuilding], list[int]]) -> list[object]:
+    buildings, malformed = parsed
+    return [
+        [
+            [
+                item.state_id, item.building, item.x, item.y, item.z, item.rotation,
+                item.adjacent_sea_province, item.index,
+            ]
+            for item in buildings
+        ],
+        list(malformed),
+    ]
+
+
+def decode_map_buildings(data: list[Any]) -> tuple[list[MapBuilding], list[int]]:
+    rows, malformed = data
+    return (
+        [
+            MapBuilding(
+                int(row[0]), str(row[1]), float(row[2]), float(row[3]), float(row[4]),
+                float(row[5]), int(row[6]), int(row[7]),
+            )
+            for row in rows
+        ],
+        [int(index) for index in malformed],
+    )

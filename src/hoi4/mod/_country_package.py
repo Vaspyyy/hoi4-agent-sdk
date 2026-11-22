@@ -27,17 +27,85 @@ from ..types import (
     Country,
     ValidationError,
 )
-from ..script_references import dynamic_tags_of
-from ..syntax import parse
 from ..validation import validate_country
 from ._characters import CharactersLayer
 from ._context import ContextLayer
 from ._oob_validation import OobValidationLayer
 from ._oobs import OobsLayer
+from ._shared import _keep_recent
 
 # A localisation key: no spaces, with an underscore (``GER_erwin_rommel``).
 # A name without one is the text the SDK wrote, not a key.
 _KEY_LIKE_RE = re.compile(r"[\w.\-]*_[\w.\-]*")
+
+
+def _runtime_activation_of(
+    root: PdxNode,
+) -> dict[str, tuple[set[int], set[int], set[str]]]:
+    """What one effect gives each key's runtime activation evidence.
+
+    For a country tag, that is the states it gets with ``transfer_state``
+    inside its own block, the states that add its core inside a state
+    block, and how it is activated (``release``, ``release_puppet``,
+    ``puppet``, ``create_subject``). A block keyed by the tag puts the
+    effects below it in the tag's scope; a numeric block (a state) ends it
+    and starts a state scope, which the tag's own block ends again. Every
+    block key is recorded, because any string may be asked about.
+    """
+
+    found: dict[str, tuple[set[int], set[int], set[str]]] = {}
+
+    def entry(key: str) -> tuple[set[int], set[int], set[str]]:
+        value = found.get(key)
+        if value is None:
+            value = found[key] = (set(), set(), set())
+        return value
+
+    def scalar_int(node: PdxNode) -> int | None:
+        if node.value is None:
+            return None
+        try:
+            return int(node.value)
+        except ValueError:
+            return None
+
+    # ``scoped``: the keys of the blocks entered since the last state block,
+    # which are the keys in whose country scope a statement runs. ``state``:
+    # the id of that state block, or None outside one. A statement is in
+    # the state scope of key K when ``state`` is set and K's own block was
+    # not entered below it. A state block's own key counts as entered, so a
+    # key that is all digits is in its own scope there, as the per-country
+    # walk this replaces had it.
+    def walk(node: PdxNode, scoped: frozenset[str], state: int | None) -> None:
+        if node.is_block() and node.key:
+            if node.key.isdigit():
+                scoped, state = frozenset({node.key}), int(node.key)
+            else:
+                scoped = scoped | {node.key}
+        key = node.key
+        if key == "transfer_state" and scoped:
+            state_id = scalar_int(node)
+            if state_id is not None:
+                for tag in scoped:
+                    entry(tag)[0].add(state_id)
+        if (
+            key == "add_core_of"
+            and node.value is not None
+            and state is not None
+            and node.value not in scoped
+        ):
+            entry(node.value)[1].add(state)
+        if key in {"release", "release_puppet", "puppet"} and node.value is not None:
+            entry(node.value)[2].add(key)
+        if key == "create_subject" and node.is_block():
+            for child in node.children:
+                if child.key in {"subject", "target"} and child.value is not None:
+                    entry(child.value)[2].add("create_subject")
+        for child in node.children:
+            walk(child, scoped, state)
+
+    walk(root, frozenset(), None)
+    return found
 
 
 class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, CharactersLayer):
@@ -60,14 +128,6 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
             )
             errors.extend(self._validate_equipment_variant_unlocks(country))
         return errors
-
-    def _dynamic_country_tags(self) -> set[str]:
-        """Tags declared after ``dynamic_tags = yes`` in a tag file."""
-
-        tags: set[str] = set()
-        for _, text in self._effective_script_texts("common/country_tags"):
-            tags |= dynamic_tags_of(parse(text).root)
-        return tags
 
     def _recruited_leader_ideologies(self, country: Country) -> list[str] | None:
         """Ideologies of the recruited characters that can lead the country.
@@ -98,6 +158,28 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
     ) -> tuple[set[int], set[int], set[str], set[str]]:
         """Return runtime state transfers, cores, activators, and source labels."""
 
+        transfers, cores, activators, sources = self._runtime_activation_index().get(
+            tag, (frozenset(), frozenset(), frozenset(), frozenset())
+        )
+        return set(transfers), set(cores), set(activators), set(sources)
+
+    def _runtime_activation_index(
+        self,
+    ) -> dict[str, tuple[frozenset[int], frozenset[int], frozenset[str], frozenset[str]]]:
+        """The runtime activation evidence of every block key, read once per validate() run.
+
+        The country package check asks for every country; walking all
+        focus, event, decision and on-action effects once per country took
+        most of a large mod's validation. One walk of each effect records,
+        for every key it could be asked about, what that key's evidence
+        would gain from it. Outside a run it is built on every call.
+        """
+
+        return self._run_cached("runtime_activation_index", self._build_runtime_activation_index)
+
+    def _build_runtime_activation_index(
+        self,
+    ) -> dict[str, tuple[frozenset[int], frozenset[int], frozenset[str], frozenset[str]]]:
         scripts: list[tuple[str, str]] = []
         display_paths: dict[Path, str] = {}
 
@@ -154,86 +236,56 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     action.path,
                 )
 
-        transferred_states: set[int] = set()
-        cored_states: set[int] = set()
-        activators: set[str] = set()
-        sources: set[str] = set()
-
-        def scalar_int(node: PdxNode) -> int | None:
-            if node.value is None:
-                return None
-            try:
-                return int(node.value)
-            except ValueError:
-                return None
-
-        def walk(
-            node: PdxNode,
-            *,
-            in_country_scope: bool = False,
-            state_scope: int | None = None,
-        ) -> None:
-            country_scope = in_country_scope
-            nested_state_scope = state_scope
-            if node.is_block():
-                if node.key == tag:
-                    country_scope = True
-                    nested_state_scope = None
-                elif node.key and node.key.isdigit():
-                    nested_state_scope = int(node.key)
-                    country_scope = False
-            if country_scope and node.key == "transfer_state":
-                state_id = scalar_int(node)
-                if state_id is not None:
-                    transferred_states.add(state_id)
-            if (
-                nested_state_scope is not None
-                and node.key == "add_core_of"
-                and node.value == tag
-            ):
-                cored_states.add(nested_state_scope)
-            if node.key in {"release", "release_puppet", "puppet"} and node.value == tag:
-                activators.add(node.key)
-            if node.key == "create_subject" and node.is_block():
-                if any(
-                    child.key in {"subject", "target"} and child.value == tag
-                    for child in node.children
-                ):
-                    activators.add("create_subject")
-            for child in node.children:
-                walk(
-                    child,
-                    in_country_scope=country_scope,
-                    state_scope=nested_state_scope,
-                )
-
+        transferred: dict[str, set[int]] = {}
+        cored: dict[str, set[int]] = {}
+        activated: dict[str, set[str]] = {}
+        sources: dict[str, set[str]] = {}
+        # Trees parsed for an earlier run are reused by exact body text. The
+        # bodies of this run and the newest older ones are kept, so the cache
+        # does not grow with every edit of a long session.
+        parsed_before = self._runtime_activation_parse_cache
+        parsed: dict[str, PdxNode | None] = {}
         for source, body in scripts:
-            before = (
-                len(transferred_states),
-                len(cored_states),
-                len(activators),
-            )
-            if body not in self._runtime_activation_parse_cache:
-                try:
-                    self._runtime_activation_parse_cache[body] = parse_pdx(body)
-                except ParseError:
-                    # General script validation owns syntax diagnostics.
-                    self._runtime_activation_parse_cache[body] = None
-            root = self._runtime_activation_parse_cache[body]
+            if body not in parsed:
+                if body in parsed_before:
+                    parsed[body] = parsed_before[body]
+                else:
+                    try:
+                        parsed[body] = parse_pdx(body)
+                    except ParseError:
+                        # General script validation owns syntax diagnostics.
+                        parsed[body] = None
+            root = parsed[body]
             if root is None:
                 continue
             # The walker only reads nodes. Exact body keys remain valid even
             # when effects change or an authoring transaction rolls back.
-            walk(root)
-            after = (
-                len(transferred_states),
-                len(cored_states),
-                len(activators),
+            found = _runtime_activation_of(root)
+            # A script is a source of a key when it adds something new to
+            # that key's evidence, in script order.
+            for key, (states, cores, activators) in found.items():
+                gained = False
+                for kind, values in ((transferred, states), (cored, cores)):
+                    known = kind.setdefault(key, set())
+                    if not values <= known:
+                        known |= values
+                        gained = True
+                known_activators = activated.setdefault(key, set())
+                if not activators <= known_activators:
+                    known_activators |= activators
+                    gained = True
+                if gained:
+                    sources.setdefault(key, set()).add(source)
+        self._runtime_activation_parse_cache = _keep_recent(parsed_before, parsed, floor=256)
+        return {
+            key: (
+                frozenset(transferred.get(key, ())),
+                frozenset(cored.get(key, ())),
+                frozenset(activated.get(key, ())),
+                frozenset(sources.get(key, ())),
             )
-            if after != before:
-                sources.add(source)
-
-        return transferred_states, cored_states, activators, sources
+            for key in transferred.keys() | cored.keys() | activated.keys()
+        }
 
     def validate_country_package(
         self,

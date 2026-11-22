@@ -220,6 +220,8 @@ def test_country_colors_corrupted_after_load_has_registered_error(tmp_path: Path
         encoding="utf-8",
     )
     mod = Mod(mod_root, hoi4_install=game_root)
+    # Content loads on first use: load it before the file breaks.
+    assert not mod.load_diagnostics
 
     colors.write_text("GER = { color = rgb { 9 8 7 }\n", encoding="utf-8")
     issues = mod.validate(stage="build")

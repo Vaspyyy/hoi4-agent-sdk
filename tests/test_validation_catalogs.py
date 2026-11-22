@@ -295,14 +295,116 @@ def test_a_deleted_idea_does_not_come_back_after_save(tmp_path):
     assert "I_keep" in mod._known_idea_ids()
 
 
-def test_discard_forgets_the_references_of_the_mods_files(tmp_path):
+def test_discard_forgets_the_references_of_changed_files_only(tmp_path):
     root = mod_root(tmp_path)
-    write(root, "common/scripted_effects/e.txt", "my_effect = { add_political_power = 1 }\n")
+    effects = write(
+        root, "common/scripted_effects/e.txt", "my_effect = { add_political_power = 1 }\n"
+    )
+    events = write(
+        root, "events/e.txt", "add_namespace = e\ncountry_event = { id = e.1 }\n"
+    )
     mod = Mod(root)
     mod.validate(stage="release")
-    assert mod._own_reference_cache
+    assert {effects, events} <= set(mod._own_reference_cache)
+    # Nothing changed: the entries (checked against the text on every use) stay.
     mod.discard()
-    assert not mod._own_reference_cache
+    assert {effects, events} <= set(mod._own_reference_cache)
+    # An edit unloads the events section, and its files' entries go with it.
+    mod.update_event("e.1", title="e.1.t")
+    mod.discard()
+    assert effects in mod._own_reference_cache
+    assert events not in mod._own_reference_cache
+    # A file changed on disk is forgotten as well.
+    effects.write_text("my_effect = { add_political_power = 2 }\n", encoding="utf-8")
+    mod.discard()
+    assert effects not in mod._own_reference_cache
+    assert mod.validate(stage="release") == Mod(root).validate(stage="release")
+
+
+def own_corpus(mod: Mod) -> list[tuple[object, ...]]:
+    """The references of the mod's own files, with the scope of each."""
+
+    return [
+        (
+            found.relative,
+            tuple(
+                (owner.kind, owner.id, owner.scope, tuple(
+                    (ref.kind, ref.action, ref.value, ref.scope, ref.line) for ref in owner.refs
+                ))
+                for owner in found.owners
+            ),
+        )
+        for found in mod._build_reference_corpus(inherited=False)
+    ]
+
+
+def test_cached_own_references_follow_the_character_names(tmp_path):
+    """The references of own files are read with the character ids, cached by
+    text and by the identity of the id set: they must equal a fresh Mod's
+    after character edits, a partial discard and a section that reloads."""
+
+    from hoi4.characters import AdvisorRole, Character
+
+    root = mod_root(tmp_path)
+    write(root, "common/country_tags/00_countries.txt", 'CCH = "countries/Cch.txt"\n')
+    write(root, "common/countries/Cch.txt", "color = { 1 2 3 }\n")
+    write(
+        root,
+        "common/characters/CCH.txt",
+        "characters = {\n CCH_hero = {\n  name = CCH_hero\n"
+        "  advisor = { slot = political_advisor idea_token = cch_hero_tok }\n }\n}\n",
+    )
+    write(
+        root,
+        "events/e.txt",
+        "add_namespace = e\ncountry_event = { id = e.1 is_triggered_only = yes\n"
+        " immediate = {\n  CCH_hero = { owner = { set_country_flag = hero_flag } }\n"
+        "  CCH_new = { owner = { set_country_flag = new_flag } }\n } }\n",
+    )
+    new_character = Character(
+        id="CCH_new",
+        name="CCH_new",
+        roles=[AdvisorRole(slot="political_advisor", idea_token="cch_new_tok")],
+    )
+    mod = Mod(root)
+    start = own_corpus(mod)
+    assert start == own_corpus(Mod(root))
+
+    assert mod.delete_character("CCH_hero")
+    deleted = own_corpus(mod)
+    fresh = Mod(root)
+    assert fresh.delete_character("CCH_hero")
+    assert deleted == own_corpus(fresh)
+    assert deleted != start
+
+    mod.discard()
+    assert own_corpus(mod) == start
+
+    mod.create_character("CCH", new_character)
+    created = own_corpus(mod)
+    fresh = Mod(root)
+    fresh.create_character("CCH", new_character)
+    assert created == own_corpus(fresh)
+    assert created != start
+
+    # A partial discard keeps the entries of files no unloaded section reads,
+    # and the names go back to the saved ones.
+    mod.discard()
+    assert own_corpus(mod) == start
+    mod.update_event("e.1", title="e.1.t")
+    mod.discard()
+    assert own_corpus(mod) == start
+    first = mod.validate(stage="release")
+    assert mod.delete_character("CCH_hero")
+    assert mod.validate(stage="release") == fresh_validate(root, delete="CCH_hero")
+    mod.discard()
+    assert mod.validate(stage="release") == first
+
+
+def fresh_validate(root: Path, *, delete: str) -> list[ValidationError]:
+    mod = Mod(root)
+    assert mod.delete_character(delete)
+    return mod.validate(stage="release")
 
 
 # ── Small things ────────────────────────────────────────────────────

@@ -87,14 +87,16 @@ def _bookmark_spans(container_body: str) -> list[AssignmentSpan]:
     ]
 
 
-def load_bookmarks_file(path: Path) -> list[Bookmark]:
+def load_bookmarks_file(path: Path, *, text: str | None = None) -> list[Bookmark]:
     """Load every ``bookmark`` of every top-level ``bookmarks`` block.
 
     ``source_index`` counts bookmarks across all ``bookmarks`` blocks of the
-    file, in source order.
+    file, in source order. ``text`` is the file's content when the caller has
+    read it.
     """
 
-    text = read_text(path)
+    if text is None:
+        text = read_text(path)
     result: list[Bookmark] = []
     for container in _container_spans(text):
         container_body = _block_body(text, container)

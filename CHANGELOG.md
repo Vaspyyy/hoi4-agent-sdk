@@ -8,6 +8,24 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- A disk cache of what validation reads out of the game's own files (and
+  base mods): references, division templates, sprites, characters, states,
+  map data and localisation. A new process reads the stored results instead
+  of parsing the game again, so the first `validate()` of a process on a
+  small mod takes about 3 to 4 seconds instead of about 40. The catalogs'
+  per-file scans of the inherited files (definitions, country tags, focus,
+  event and idea ids, shared focuses, localisation keys and more) are stored
+  too. It lives in
+  `~/.cache/hoi4-sdk/file-results/` (or under `$XDG_CACHE_HOME` or
+  `$HOI4_SDK_CACHE_DIR`), holds only results for inherited files, and is
+  rebuilt for a file whose size or modification time changed and for any new
+  version of the SDK. `HOI4_SDK_DISK_CACHE=off` turns it, and the vocabulary
+  cache, off. See [docs/internals/disk_cache.md](docs/internals/disk_cache.md).
+  The very first `validate()` after an update of the SDK starts with empty
+  caches: it builds the script vocabulary again and fills the store, and so
+  takes longer than it did before this version (measured on a small mod:
+  about 70 s once, where the old version with its vocabulary cache already
+  filled took about 40 s). Every run after that is the fast one.
 - `hoi4.syntax`: one lossless syntax tree for Paradox script. Every node knows
   its exact position in the source, so reading is a tree query and writing is
   the replacement of one span. It understands typed blocks (`rgb { }`,
@@ -151,6 +169,90 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **The first `validate()` of a large mod is about twice as fast.** On a mod
+  with 397 countries the warm first `validate()` went from about 65 s to
+  about 34 s, and a second `validate()` in the same process from about 45 s
+  to about 14 s (rough, on a busy machine). The country package check no
+  longer repeats work for every country: the runtime activation evidence of
+  all effects, the province ownership of the whole map and the special
+  project unlocks are built once per `validate()` run, and the enclosed
+  territory search starts at the country's own border. A section's first
+  load reads and parses each file once instead of up to three reads and two
+  parses. `discard()` keeps the cached references of the mod's files that
+  did not change.
+- **`Mod(root)` is fast, and `save()` no longer reloads the whole mod.**
+  Content now loads one section at a time (events, states, countries,
+  localisation and so on) the first time it is used, so an agent that edits
+  one event reads only the events. After `save()` and `discard()`, only the
+  sections that had edits, whose files were written or changed on disk, or
+  that are built from those load again on next use; everything else stays in
+  memory. On a large mod (11,297 files, 157 MB) construction went from about
+  15 s to 0.2 s, and saving one event edit from about 15 s to 0.3 s.
+  `strict_loading=True` still loads everything at construction, and
+  `load_diagnostics` loads what is missing and lists diagnostics in the same
+  order as before. `reload()` still reloads everything.
+- **Base mods are read where they are, not copied.** With `base_mod_paths`,
+  `Mod` used to clone every content file of the game and the base mods into a
+  temporary folder (about 39,000 files and 4.3 GB for the game) on every
+  `Mod()`, `discard()` and `reload()`. Now `hoi4.layers.ContentLayers` answers
+  each read from the winning source file, with the same precedence,
+  `replace_path` and results. With a mod on top of a base mod: construction
+  went from about 8 s to 0.03 s, `discard()` from about 9.5 s to 0.15 s, the
+  first `validate()` from about 22 s to 18 s, and nothing is copied. `discard()` and `save()` reload only what changed, as
+  without base mods, unless a text file of a base mod changed on disk. Paths
+  in models, reports and `get_country_context()` now name the real game or
+  base-mod file instead of a file in the temporary copy.
+- **Much less memory for the external-change check.** `Mod` no longer keeps a
+  copy of the bytes of every text file of the mod. It records each file's size
+  and modification time, and a digest of the text it read. A file whose time
+  changed but whose text did not (a `touch`) can still be overwritten; any
+  other change behind the SDK's back still raises `ExternalModificationError`
+  (before a file is overwritten, its text is compared, whatever its size
+  and time say).
+- A file is read when its section is first used, not when `Mod(...)` is
+  built. A file that was changed, touched or created in between is read as
+  it is then, which is what a fresh `Mod` would see, and can be edited and
+  saved. A change after the SDK first read the file is still refused by
+  `save()`, whether it happens before or after the SDK's own edit. An edit
+  that replaces a file without reading it (`import_script_file(...,
+  overwrite=True)`, `rebuild_country_color_table()`,
+  `set_country_name_pool()`, the map files) takes the file as it is when
+  the edit is made: a change of it between the edit and `save()` is refused.
+- Reading one `Mod` from several threads keeps working, although content
+  now loads on first use: a thread that asks for a section while another
+  thread loads it waits until the section is complete. (Changing a `Mod`
+  from two threads was never safe and still is not.)
+- With base mods, the files below a folder are read in one fixed order on
+  every Python version and file system. Before, the order was that of
+  `Path.rglob` of the running Python and of the temporary copy's file
+  system. On Python 3.11 and 3.12 this can change which of two definitions
+  wins when an inherited layer defines the same key twice in nested
+  folders (on 3.13 and later the order is the same as before).
+- When a mod has two history files for one tag (`TAG - A.txt` and
+  `TAG - B.txt`), the first by name is read, on every file system. Before,
+  the order of the directory listing decided, which differs between file
+  systems.
+- A symlink in a base mod that leaves the base mod's folder is refused when
+  it is read, not when the `Mod` is built.
+- `copy.copy(mod)` gives a copy that keeps its own account of which
+  sections are loaded. It is still a shallow copy: the two share the
+  content loaded at that moment and the list of unsaved edits, but not
+  what either loads later. Use `copy.deepcopy(mod)` or a second
+  `Mod(root)` for an independent one.
+- The release gate's localisation probe edits a text the mod itself
+  defines. With base mods it could pick a text of a base mod before.
+- A load failure in a file that was changed or broken after `Mod(...)` was
+  built, but before its section was first used, is now reported as a load
+  diagnostic (`load_failure` in `validate()`), like any file that fails to load.
+- `transaction()` copies only the sections that are loaded; a section first
+  loaded inside the transaction is unloaded again on rollback.
+- `get_loc`, `search_loc` and `all_loc` return the game's own text for a key
+  the mod does not define, also when only `hoi4_install` is set (base mods
+  already worked this way). The mod's entry wins, the game is indexed on the
+  first lookup the mod misses (once per language), and saving never writes
+  the game's entries into the mod.
+- The script vocabulary cache follows `$XDG_CACHE_HOME` when it is set and
+  `$HOI4_SDK_CACHE_DIR` is not.
 - **An edit to one field now changes only that field.** Focus trees, events,
   on-actions, ideas, ideologies, dynamic modifiers, decisions, bookmarks,
   countries, characters, country tags, states and orders of battle are read

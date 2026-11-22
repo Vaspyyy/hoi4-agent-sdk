@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional
 
+from .._disk_cache import NAMES_ON_DISK
 from ..characters import (
     Character,
 )
@@ -14,15 +15,14 @@ from ..countries import (
 from ..localisation import (
     DEFAULT_LOCALISATION_LANGUAGE,
     LOCALISATION_LANGUAGES,
-    YML_ENTRY_RE,
     localisation_file_name,
+    localisation_keys_in,
     normalize_localisation_language,
     normalize_localization_key,
     parse_localization_dir,
+    parse_localization_files,
 )
-from ..paths import (
-    resolve_mod_output_path,
-)
+from ..paths import resolve_mod_output_path
 from ..textio import read_text
 from ..types import (
     Country,
@@ -45,12 +45,14 @@ class LocalisationLayer(CoreLayer):
         loc_sources: dict[str, Path],
     ) -> None:
         if self._content_layers is not None:
-            assert self._base_content_root is not None
-            inherited = self._base_content_root / "localisation" / language
-            entries, sources = parse_localization_dir(inherited)
+            inherited = self._content_layers.rglob(Path("localisation") / language, "*.yml")
+            relatives = {source: relative for relative, source in inherited.items()}
+            entries, sources = parse_localization_files(
+                inherited.values(), file_entries=self._localisation_file_entries
+            )
             loc_entries.update(entries)
             for key, source in sources.items():
-                target = self.mod_root / source.relative_to(self._base_content_root)
+                target = self.mod_root / relatives[source]
                 loc_sources[key] = target
                 if target not in self._original_files:
                     self._original_files[target] = read_text(source)
@@ -65,7 +67,7 @@ class LocalisationLayer(CoreLayer):
         # from an empty baseline and silently discard its existing content.
         for path in loc_dir.rglob("*.yml"):
             if path.is_file():
-                self._original_files[path] = read_text(path)
+                self._original_files[path] = self._read_source(path)
 
     @property
     def default_loc_file(self) -> Path:
@@ -85,9 +87,50 @@ class LocalisationLayer(CoreLayer):
     def get_loc(
         self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
     ) -> Optional[str]:
-        """Return one language's text for ``key``; no cross-language fallback."""
-        _, entries, _, _ = self._loc_tables(language)
-        return entries.get(self._normalize_loc_key(key))
+        """Return one language's text for ``key``; no cross-language fallback.
+
+        The mod's entry (with unsaved edits) wins; a key the mod does not
+        define comes from the game's own files of that language.
+        """
+        language, entries, _, _ = self._loc_tables(language)
+        key = self._normalize_loc_key(key)
+        value = entries.get(key)
+        if value is None:
+            value = self._game_loc(language).get(key)
+        return value
+
+    def _game_loc(self, language: str) -> dict[str, str]:
+        """The game's own entries of one language, read on first use.
+
+        Only for a mod without base mods: with base mods, the inherited
+        layers (the game among them) are already part of the mod's tables.
+        Files the mod hides with ``replace_path`` are left out, and entries in
+        a ``replace`` folder win over the others, as in the game. The entries
+        never become the mod's: saving does not write them.
+        """
+
+        if self._content_layers is not None or self.hoi4_install is None:
+            return {}
+        language = normalize_localisation_language(language)
+        cached = self._game_loc_entries.get(language)
+        if cached is not None:
+            return cached
+        files = [
+            (relative, path)
+            for relative, path in self.content_files(Path("localisation") / language).items()
+            if path.suffix.lower() == ".yml" and not self._in_mod_root(path)
+        ]
+        files.sort(
+            key=lambda item: "replace" in (part.lower() for part in Path(item[0]).parts[2:-1])
+        )
+        cached = {}
+        for _, path in files:
+            try:
+                cached.update(self._localisation_file_entries(path))
+            except (OSError, ValueError):
+                continue
+        self._game_loc_entries[language] = cached
+        return cached
 
     def _has_loc(self, key: str) -> bool:
         """Return whether an English localisation key exists anywhere the game looks.
@@ -122,14 +165,12 @@ class LocalisationLayer(CoreLayer):
                 if path.suffix.lower() != ".yml":
                     continue
                 try:
-                    text = read_text(path)
+                    keys = self._cached_result(
+                        "localisation_keys", path, localisation_keys_in, NAMES_ON_DISK
+                    )
                 except (OSError, ValueError):
                     continue
-                index = own if path.is_relative_to(self.mod_root) else inherited
-                for line in text.splitlines():
-                    match = YML_ENTRY_RE.match(line)
-                    if match is not None:
-                        index.add(normalize_localization_key(match.group(1)))
+                (own if self._in_mod_root(path) else inherited).update(keys)
             self._scan_cache["validation_loc_keys"] = inherited
             self._scan_cache["validation_mod_loc_keys"] = own
         if key in inherited:
@@ -195,6 +236,7 @@ class LocalisationLayer(CoreLayer):
                 raise ValueError(
                     f"set_loc(replace=True) needs a file under localisation/{language}/replace"
                 )
+            self._note_target(target)
         elif replace:
             target = self._default_loc_file_for(language, replace=True)
         key = self._normalize_loc_key(key)
@@ -206,6 +248,9 @@ class LocalisationLayer(CoreLayer):
             sources[key] = target
         elif key not in sources:
             sources[key] = self._default_loc_file_for(language)
+        # The file the key goes to may be one the loader did not read (the
+        # default file behind a linked folder, which the loader skips).
+        self._note_target(sources[key])
         self._dirty.add("localization")
         dirty_keys.add(key)
         if old_source is not None:
@@ -232,13 +277,19 @@ class LocalisationLayer(CoreLayer):
     def search_loc(
         self, query: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
     ) -> dict[str, str]:
-        _, entries, _, _ = self._loc_tables(language)
         q = query.lower()
-        return {k: v for k, v in entries.items() if q in k.lower() or q in v.lower()}
+        return {
+            k: v
+            for k, v in self.all_loc(language=language).items()
+            if q in k.lower() or q in v.lower()
+        }
 
     def all_loc(self, *, language: str = DEFAULT_LOCALISATION_LANGUAGE) -> dict[str, str]:
-        _, entries, _, _ = self._loc_tables(language)
-        return dict(entries)
+        """Every entry of one language: the game's, with the mod's on top."""
+        language, entries, _, _ = self._loc_tables(language)
+        merged = dict(self._game_loc(language))
+        merged.update(entries)
+        return merged
 
     def copy_loc_to_languages(
         self,

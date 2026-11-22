@@ -31,7 +31,7 @@ from .patching import (
     set_scalar,
 )
 from .paths import require_country_tag, resolve_mod_output_path
-from .syntax import Assignment, Block, parse, quote, require_well_formed, unquote
+from .syntax import Assignment, Block, Document, parse, quote, require_well_formed, unquote
 from .textio import read_text, write_text
 from .types import Focus, FocusTree
 
@@ -66,11 +66,17 @@ def load_focus_tree(
     return trees[0] if trees else None
 
 
-def load_focus_trees(path: Path, text: str | None = None) -> list[FocusTree]:
-    """Return the ``focus_tree`` blocks of a file, then its top-level focus container."""
+def load_focus_trees(
+    path: Path, text: str | None = None, *, document: Document | None = None
+) -> list[FocusTree]:
+    """Return the ``focus_tree`` blocks of a file, then its top-level focus container.
 
-    txt = text if text is not None else read_text(path)
-    root = parse(txt).root
+    ``document`` is the file already parsed (from ``text``, if given).
+    """
+
+    if document is None:
+        document = parse(text if text is not None else read_text(path))
+    root = document.root
     constants = _file_constants(root)
     trees = [
         _parse_tree(item.block, tree_id, path, constants)

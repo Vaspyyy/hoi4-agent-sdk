@@ -21,6 +21,7 @@ import dataclasses
 from collections import defaultdict
 from typing import Iterable
 
+from .._disk_cache import NAMES_ON_DISK
 from ..oob import (
     OOBReference,
     OrderOfBattle,
@@ -220,7 +221,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
             names |= _division_template_names(country.raw_history)
         for relative in _TEMPLATE_SCRIPT_DIRS:
             for _, found in self._effective_script_results(
-                relative, "division_template_names", _division_template_names
+                relative, "division_template_names", _division_template_names, NAMES_ON_DISK
             ):
                 names |= found
         return names
@@ -272,12 +273,9 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         cached = self._oobs.get(name)
         if cached is not None:
             return cached
-        roots = [self.mod_root]
-        if self._base_content_root is not None:
-            roots.append(self._base_content_root)
-        for root in roots:
-            path = root / "history" / "units" / f"{name}.txt"
-            if path.is_file():
+        for view in self._data_views():
+            path = view.file(f"history/units/{name}.txt")
+            if path is not None:
                 return load_oob_file(path, name=name)
         return None
 

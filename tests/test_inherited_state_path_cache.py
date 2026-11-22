@@ -21,9 +21,10 @@ def test_inherited_paths_are_scanned_once_and_resolve_content_not_filename(tmp_p
     actual = build_state_index
     calls = []
 
-    def counting_index(directory):
-        calls.append(directory)
-        return actual(directory)
+    def counting_index(files, **options):
+        files = list(files)
+        calls.append(files)
+        return actual(files, **options)
 
     patch_mod_helper(build_state_index, counting_index)
     assert mod.get_state(2).id == 2
@@ -33,7 +34,7 @@ def test_inherited_paths_are_scanned_once_and_resolve_content_not_filename(tmp_p
     for _ in range(3):
         with pytest.raises(KeyError):
             mod.get_state(999)
-    assert calls == [game / "history/states"]
+    assert calls == [[game / "history/states/1-NoSpace.txt", game / "history/states/2 - StaleFilename.txt"]]
     assert not (target / "history/states").exists()
 
 

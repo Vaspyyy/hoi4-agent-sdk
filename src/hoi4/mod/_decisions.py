@@ -8,7 +8,6 @@ from typing import Any, Iterable, Sequence, cast
 from ..decisions import category_files
 from ..paths import (
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..syntax import quote
 from ..types import (
@@ -18,6 +17,7 @@ from ..types import (
 from ._effects import EffectsLayer
 from ._localisation import LocalisationLayer
 from ._shared import (
+    _check_fields,
     _decision_category_definition_path,
     _join_script_parts,
     _set_fields,
@@ -140,7 +140,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
                     "cannot safely overwrite the whole category. Consolidate it first."
                 )
         target = (
-            resolve_mod_output_path(self.mod_root, path)
+            self._output_path(path)
             if path is not None
             else (
                 existing.path
@@ -149,7 +149,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             )
         )
         definition_target = (
-            resolve_mod_output_path(self.mod_root, category_path)
+            self._output_path(category_path)
             if category_path is not None
             else (
                 existing.definition_path
@@ -162,6 +162,8 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             raise ValueError(
                 "Decision category_path must point inside common/decisions/categories"
             )
+        for noted in (target, definition_target):
+            self._note_target(noted)
         if existing is not None:
             self._dirty_decision_files.update(category_files(existing))
             if existing.definition_path is not None:
@@ -203,26 +205,28 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         old_definition_path = category.definition_path
         category_path = kwargs.pop("category_path", None)
         target = (
-            resolve_mod_output_path(self.mod_root, kwargs.pop("path"))
+            self._output_path(kwargs.pop("path"))
             if "path" in kwargs
             else None
         )
+        # Work out the new definition file and check everything before the
+        # category changes: a rejected call leaves it as it was.
+        definition_path = category.definition_path
         if category_path is not None:
-            category.definition_path = resolve_mod_output_path(
-                self.mod_root, category_path
-            )
-        elif target is not None and category.definition_path is None:
-            category.definition_path = _decision_category_definition_path(
+            definition_path = self._output_path(category_path)
+        elif target is not None and definition_path is None:
+            definition_path = _decision_category_definition_path(
                 self.mod_root, target, self._shadows_inherited
             )
         if (
-            category.definition_path is not None
-            and category.definition_path.parent
-            != self.mod_root / "common" / "decisions" / "categories"
+            definition_path is not None
+            and definition_path.parent != self.mod_root / "common" / "decisions" / "categories"
         ):
             raise ValueError(
                 "Decision category_path must point inside common/decisions/categories"
             )
+        _check_fields(category, kwargs)
+        category.definition_path = definition_path
         _set_fields(category, kwargs)
         if target is not None:
             self._point_decision_category_at(category, target)
@@ -306,7 +310,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             category = self.create_decision_category(category_id, path=path)
         elif path is not None:
             self._point_decision_category_at(
-                category, resolve_mod_output_path(self.mod_root, path)
+                category, self._output_path(path)
             )
         if existing is not None:
             old_category = self._decision_categories.get(existing.category)

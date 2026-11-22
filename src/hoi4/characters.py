@@ -155,10 +155,13 @@ def role_key(role: CharacterRole) -> str:
     return "navy_leader"
 
 
-def load_characters_file(path: Path, *, country_tag: str = "") -> list[Character]:
-    """Load every direct character definition from one source file."""
+def load_characters_file(
+    path: Path, *, country_tag: str = "", text: str | None = None
+) -> list[Character]:
+    """Load every direct character definition from one source file (or its ``text``)."""
 
-    text = read_text(path)
+    if text is None:
+        text = read_text(path)
     wrapper = next(
         (
             span

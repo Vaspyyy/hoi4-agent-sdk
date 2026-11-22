@@ -41,8 +41,9 @@ def test_order_replacement_and_original_provenance(tmp_path):
     assert layers.source("events/old.txt") is None
     assert layers.source("events/a.txt") is None
     assert layers.source("events/b.txt") == b / "events/b.txt"
-    assert not (layers.root / "history/states/2.txt").exists()
-    layers.close()
+    # The top's own file is not part of what the top inherits.
+    assert layers.file("history/states/2.txt") is None
+    assert layers.source("history/states/2.txt") == top / "history/states/2.txt"
     assert expected.read_text() == state("ITA")
 
 
@@ -170,17 +171,14 @@ def test_state_fallback_save_and_reload_do_not_write_bases(tmp_path):
     assert mod.get_state(1).owner == "FRA"
 
 
-def test_private_snapshot_and_asset_precedence(tmp_path):
+def test_asset_precedence_reads_the_source_in_place(tmp_path):
     game, a, b, top = roots(tmp_path)
     put(game, "gfx/a.dds", "old")
     original = put(a, "gfx/a.dds", "new")
     layers = ContentLayers(game, [a, b], top)
     assert layers.source("gfx/a.dds") == original
-    (layers.root / "gfx/a.dds").write_text("changed snapshot")
-    assert original.read_text() == "new"
-    path = layers.root
-    layers.close()
-    assert not path.exists()
+    assert layers.file("gfx/a.dds") == original
+    assert layers.rglob("gfx") == {Path("gfx/a.dds"): original}
 
 
 def test_config_and_dependencies(tmp_path):

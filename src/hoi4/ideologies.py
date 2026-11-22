@@ -23,7 +23,7 @@ from .patching import (
     top_level_assignments,
 )
 from .script import pdx_value
-from .syntax import Assignment, Block, parse, quote, require_entry, require_key
+from .syntax import Assignment, Block, Document, parse, quote, require_entry, require_key
 from .textio import read_text
 
 VANILLA_AI_BEHAVIORS = ("democratic", "communist", "fascist", "neutral")
@@ -94,12 +94,19 @@ def _definitions(container: Assignment) -> list[Assignment]:
 
 
 def load_ideologies_text(
-    text: str, path: Path | None = None, *, is_vanilla: bool = False
+    text: str,
+    path: Path | None = None,
+    *,
+    is_vanilla: bool = False,
+    document: Document | None = None,
 ) -> list[Ideology]:
-    """Load every ideology from one file's text, retaining duplicate definitions."""
+    """Load every ideology from one file's text, retaining duplicate definitions.
+
+    ``document`` is ``text`` already parsed.
+    """
 
     ideologies: list[Ideology] = []
-    for container in _containers(parse(text).root):
+    for container in _containers((document if document is not None else parse(text)).root):
         for item in _definitions(container):
             assert type(item.value) is Block
             ideology = _parse_ideology(item.key.value, item.value)

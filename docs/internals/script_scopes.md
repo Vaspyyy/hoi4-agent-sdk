@@ -185,7 +185,9 @@ counts before `save()`.
 
 What comes from the install (the documentation, definitions, characters and
 usage counts) is stored as JSON under `~/.cache/hoi4-sdk/script-vocabulary/`
-(or `$HOI4_SDK_CACHE_DIR/script-vocabulary/`). The file name is a hash of
+(or `$HOI4_SDK_CACHE_DIR/script-vocabulary/`, or under `$XDG_CACHE_HOME`).
+`HOI4_SDK_DISK_CACHE=off` turns it off. The per-file results of the game's
+files have a cache of their own next to it ([disk_cache.md](disk_cache.md)). The file name is a hash of
 the cache schema (`_CACHE_SCHEMA`), the SDK version, the install path and the
 size and modification time of every documentation and script file, so a game
 update or a new SDK reads the install again. A missing, broken or stale file

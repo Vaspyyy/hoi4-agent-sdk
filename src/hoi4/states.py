@@ -13,7 +13,7 @@ import textwrap
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 from .map_editing import list_ints, patch_int_list_body
 from .parser import PdxNode, parse_pdx, serialize_pdx
@@ -78,16 +78,21 @@ def _filename_state_id(path: Path) -> int | None:
     return int(digits) if digits else None
 
 
-def find_state_file(states_dir: Path, state_id: int) -> Optional[Path]:
+def _state_files(states: Path | Iterable[Path]) -> list[Path]:
+    if not isinstance(states, Path):
+        return list(states)
+    return sorted(states.glob("*.txt")) if states.is_dir() else []
+
+
+def find_state_file(states_dir: Path | Iterable[Path], state_id: int) -> Optional[Path]:
     """Return the file in ``states_dir`` whose state block has ``id = state_id``.
 
-    Files whose name starts with the ID are checked first, but the file's own
-    ``id`` always decides, because file names are not authoritative.
+    ``states_dir`` is a folder, or its state files sorted by name. Files whose
+    name starts with the ID are checked first, but the file's own ``id``
+    always decides, because file names are not authoritative.
     """
 
-    if not states_dir.is_dir():
-        return None
-    paths = sorted(states_dir.glob("*.txt"))
+    paths = _state_files(states_dir)
     likely = [path for path in paths if _filename_state_id(path) == state_id]
     others = [path for path in paths if _filename_state_id(path) != state_id]
     for path in likely + others:
@@ -922,23 +927,45 @@ def patch_state_history_owner_cores_text(
     return serialize_state(state)
 
 
-def build_state_index(states_dir: Path) -> list[dict]:
-    """Return one entry per state file, identified by the file's own ``id``."""
+def state_index_header(text: str) -> tuple[int, str, str | None] | None:
+    """``(id, name, owner)`` of a state file's text, or ``None`` without an id."""
+
+    return state_header_of(parse(text).root)
+
+
+def state_header_of(root: Block) -> tuple[int, str, str | None] | None:
+    """``(id, name, owner)`` of a parsed state file, or ``None`` without an id."""
+
+    state_assignment = _state_assignment(root)
+    block = state_assignment.block if state_assignment is not None else None
+    if block is None:
+        return None
+    sid = _int_or_none(block.scalar("id"))
+    if sid is None:
+        return None
+    history = block.block("history")
+    owner = history.scalar("owner") if history is not None else None
+    return sid, block.scalar("name") or "", owner
+
+
+def build_state_index(
+    states_dir: Path | Iterable[Path],
+    *,
+    header: Callable[[Path], tuple[int, str, str | None] | None] | None = None,
+) -> list[dict]:
+    """Return one entry per state file, identified by the file's own ``id``.
+
+    ``states_dir`` is a folder, or its state files sorted by name. ``header``
+    reads ``(id, name, owner)`` of one file (as :func:`state_index_header`
+    does); pass one that remembers its answers.
+    """
 
     out: list[dict] = []
-    if not states_dir.is_dir():
-        return out
-    for f in sorted(states_dir.glob("*.txt")):
-        state_assignment = _state_assignment(parse(read_text(f)).root)
-        block = state_assignment.block if state_assignment is not None else None
-        if block is None:
+    for f in _state_files(states_dir):
+        found = header(f) if header is not None else state_index_header(read_text(f))
+        if found is None:
             continue
-        sid = _int_or_none(block.scalar("id"))
-        if sid is None:
-            continue
-        history = block.block("history")
-        owner = history.scalar("owner") if history is not None else None
-        name = block.scalar("name") or ""
+        sid, name, owner = found
         filename_name = _state_name_from_filename(f, sid)
         out.append(
             {
@@ -954,6 +981,19 @@ def build_state_index(states_dir: Path) -> list[dict]:
 
 
 def _state_name_from_filename(path: Path, state_id: int) -> str:
+    """The file name without its leading state id and separators.
+
+    Works like ``re.sub(rf"^\\s*{state_id}\\s*[-_\\s]*", "", stem).strip()``
+    without building a pattern per state.
+    """
+
     stem = path.stem
-    name = re.sub(rf"^\s*{state_id}\s*[-_\s]*", "", stem).strip()
-    return name
+    text = stem.lstrip()
+    prefix = str(state_id)
+    if not text.startswith(prefix):
+        return stem.strip()
+    rest = text[len(prefix) :]
+    index = 0
+    while index < len(rest) and (rest[index].isspace() or rest[index] in "-_"):
+        index += 1
+    return rest[index:].strip()

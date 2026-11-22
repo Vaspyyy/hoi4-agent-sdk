@@ -60,7 +60,7 @@ class BookmarksLayer(CoreLayer):
         if existing is not None:
             self.delete_bookmark(name)
         target = (
-            resolve_mod_output_path(self.mod_root, path)
+            self._output_path(path)
             if path is not None
             else self.mod_root
             / "common"
@@ -99,7 +99,7 @@ class BookmarksLayer(CoreLayer):
             raise ValueError(f"Internal bookmark fields: {sorted(forbidden)}")
         old_path = bookmark.path
         if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+            kwargs["path"] = self._output_path(kwargs["path"])
         if "filters" in kwargs:
             kwargs["filters"] = normalize_block_body(kwargs["filters"])
         if "effect" in kwargs:
@@ -195,7 +195,7 @@ class BookmarksLayer(CoreLayer):
         end = require_bookmark_date(end_date, label="bookmark end date")
         target = resolve_mod_output_path(self.mod_root, path)
         if target not in self._original_files:
-            self._original_files[target] = self._read_current_text(target)
+            self._original_files[target] = self._read_noted_text(target)
         self._bookmark_date_defines = (target, start, end)
         self._dirty.add("bookmark_dates")
         return target

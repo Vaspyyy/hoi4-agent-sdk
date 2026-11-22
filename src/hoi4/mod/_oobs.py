@@ -28,7 +28,6 @@ from ..patching import (
 from ..paths import (
     require_country_tag,
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..syntax import parse, repair
 from ..textio import read_text
@@ -145,13 +144,10 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
     # ── Land orders of battle ───────────────────────────────────
 
     def list_oobs(self, *, include_vanilla: bool = False) -> list[str]:
-        if include_vanilla and self._base_content_root is not None:
-            directory = self._base_content_root / "history" / "units"
-            if directory.is_dir():
-                return sorted(
-                    set(self._oobs)
-                    | {path.stem for path in directory.glob("*.txt")}
-                )
+        if include_vanilla and self._base_content is not None:
+            inherited = self._base_content.glob("history/units", "*.txt")
+            if inherited:
+                return sorted(set(self._oobs) | {path.stem for path in inherited.values()})
         return sorted(self._oobs)
 
     def get_oob(
@@ -165,10 +161,10 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         if cached is not None:
             return cached
         candidates = [self.mod_root / "history" / "units" / f"{name}.txt"]
-        if include_vanilla and self._base_content_root is not None:
-            candidates.append(
-                self._base_content_root / "history" / "units" / f"{name}.txt"
-            )
+        if include_vanilla and self._base_content is not None:
+            inherited = self._base_content.file(f"history/units/{name}.txt")
+            if inherited is not None:
+                candidates.append(inherited)
         country_tag = next(
             (
                 country.tag
@@ -201,11 +197,15 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 excluded_dlc=(reference.excluded_dlc if reference is not None else ()),
             )
             self._oobs[name] = oob
+            # Not one of the OOBs the section loaded: a file of the game or a
+            # base mod, or a mod file that is new or that the loader refused.
+            # It is only this lookup's cache, so save() and discard() load
+            # the section again (and with it the loader's diagnostics).
+            self._reload_on_discard.add("oobs")
             if path.resolve(strict=False).is_relative_to(self.mod_root):
-                self._original_files.setdefault(
-                    path,
-                    read_text(path),
-                )
+                text = read_text(path)
+                self._original_files.setdefault(path, text)
+                self._note_read(path, text)
             return oob
         raise KeyError(f"OOB '{name}' not found")
 
@@ -233,10 +233,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 f"OOB '{name}' already exists. Use overwrite=True only for "
                 "deliberate replacement."
             )
-        target = resolve_mod_output_path(
-            self.mod_root,
-            path or Path("history") / "units" / f"{name}.txt",
-        )
+        target = self._output_path(path or Path("history") / "units" / f"{name}.txt")
         inferred_kind = _oob_content_kind(
             templates,
             divisions,
@@ -670,15 +667,16 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             return
         if source.resolve(strict=False).is_relative_to(self.mod_root):
             return
-        if self._base_content_root is None:
-            raise ValueError(f"Cannot retarget OOB '{oob.name}' without a HOI4 install")
-        target = resolve_mod_output_path(
-            self.mod_root,
-            source.resolve(strict=False).relative_to(self._base_content_root),
+        relative = (
+            self._base_content.relative(source.resolve(strict=False))
+            if self._base_content is not None else None
         )
+        if relative is None:
+            raise ValueError(f"Cannot retarget OOB '{oob.name}' without a HOI4 install")
+        target = self._output_path(relative)
         self._original_files.setdefault(
             target,
-            self._read_current_text(target)
+            self._read_noted_text(target)
             or read_text(source),
         )
         if parse(oob.raw_text).problems:

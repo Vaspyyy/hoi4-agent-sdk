@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Protocol
 
+from ._disk_cache import NAMES_ON_DISK
 from ._file_cache import cached_file_result
-from .localisation import YML_ENTRY_RE, normalize_localization_key, parse_localization_dir
+from .localisation import localisation_keys_in, parse_localization_dir
 from .script_references import (
     COUNTRY,
     Definitions,
@@ -142,6 +144,7 @@ def _inherited_localization_keys(mod: LivenessSource) -> set[str]:
     roots = [*mod.base_mod_paths]
     if mod.hoi4_install is not None:
         roots.append(mod.hoi4_install)
+    mod_root = os.path.join(os.fspath(mod.mod_root), "")
     keys: set[str] = set()
     for root in roots:
         folder = Path(root) / "localisation"
@@ -151,22 +154,17 @@ def _inherited_localization_keys(mod: LivenessSource) -> set[str]:
             relative = path.relative_to(folder).as_posix().lower()
             if "english" not in relative:
                 continue
+            # The game's and base mods' files are kept on disk for later
+            # processes; a mod inside the game folder is never stored.
+            disk = None if os.fspath(path).startswith(mod_root) else NAMES_ON_DISK
             try:
-                keys |= cached_file_result("localisation_keys", path, _yml_keys)
+                found: frozenset[str] = cached_file_result(
+                    "localisation_keys", path, localisation_keys_in, disk=disk
+                )
             except (OSError, ValueError):
                 continue
+            keys |= found
     return keys
-
-
-def _yml_keys(text: str) -> frozenset[str]:
-    """The keys of a localisation file, read the way the game finds them."""
-
-    found: set[str] = set()
-    for line in text.splitlines():
-        match = YML_ENTRY_RE.match(line)
-        if match is not None:
-            found.add(normalize_localization_key(match.group(1)))
-    return frozenset(found)
 
 
 @dataclass(frozen=True)

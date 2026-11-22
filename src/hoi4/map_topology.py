@@ -17,6 +17,9 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Iterable
 
+from ._disk_cache import DiskAnalysis, int_list
+from ._file_cache import cached_files_result
+from .layers import ContentView, as_view
 from .map_render import parse_definition_csv
 from .textio import read_text
 from .types import State
@@ -32,48 +35,82 @@ class TerritoryComponent:
     contains_capital: bool = False
 
 
+@dataclass(frozen=True)
+class ProvinceOwnership:
+    """The effective map with the state and owner of each land province.
+
+    Built once (:func:`province_ownership`) and shared when the territory of
+    many countries is checked against the same states, such as the country
+    package check of every country in one ``validate()`` run.
+    """
+
+    land: frozenset[int]
+    graph: dict[int, set[int]]
+    coastal: frozenset[int]
+    state_by_id: dict[int, State]
+    # Land province -> the state that lists it (the last such state wins).
+    province_to_state: dict[int, int]
+    # Owner tag -> its states, in the order the states were given.
+    states_of: dict[str, list[State]]
+
+
+def province_ownership(
+    mod_root: Path,
+    hoi4_install: Path | ContentView | None,
+    states: Iterable[State],
+) -> ProvinceOwnership:
+    """The effective map and the owner of every land province of ``states``.
+
+    Raises like :func:`load_province_grid`.
+    """
+
+    land, graph, coastal = _effective_topology(mod_root, hoi4_install)
+    effective_states = tuple(states)
+    states_of: dict[str, list[State]] = {}
+    for state in effective_states:
+        if state.owner:
+            states_of.setdefault(state.owner, []).append(state)
+    return ProvinceOwnership(
+        land=land,
+        graph=graph,
+        coastal=coastal,
+        state_by_id={state.id: state for state in effective_states},
+        province_to_state={
+            province_id: state.id
+            for state in effective_states
+            for province_id in state.provinces
+            if province_id in land
+        },
+        states_of=states_of,
+    )
+
+
 def find_country_territory_components(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
     states: Iterable[State],
     *,
     country_tag: str,
     capital_state_id: int,
     minimum_land_provinces: int = 2,
     allowed_state_ids: Iterable[int] = (),
+    ownership: ProvinceOwnership | None = None,
 ) -> tuple[TerritoryComponent, ...]:
     """Return significant owned components disconnected from the capital.
 
     Mod map files override their installed-game counterparts.  Pixel borders
-    and valid explicit adjacency rows both contribute graph edges.
+    and valid explicit adjacency rows both contribute graph edges. Pass
+    ``ownership`` (built from the same ``states``) to share the map between
+    calls.
     """
 
     if minimum_land_provinces < 1:
         raise ValueError("minimum_land_provinces must be at least 1")
-    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
-    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
-    adjacency_path = _optional_effective_map_file(
-        mod_root,
-        hoi4_install,
-        "adjacencies.csv",
-    )
-    fingerprints = (
-        provinces_path.stat().st_mtime_ns,
-        definition_path.stat().st_mtime_ns,
-        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
-    )
-    land_provinces, graph, _coastal_land_provinces = _load_province_topology(
-        provinces_path,
-        definition_path,
-        adjacency_path,
-        fingerprints,
-    )
+    if ownership is None:
+        ownership = province_ownership(mod_root, hoi4_install, states)
+    land_provinces, graph = ownership.land, ownership.graph
 
-    owned_states = {
-        state.id: state
-        for state in states
-        if state.owner == country_tag
-    }
+    owned_states = {state.id: state for state in ownership.states_of.get(country_tag, ())}
     if capital_state_id not in owned_states:
         return ()
 
@@ -92,11 +129,9 @@ def find_country_territory_components(
     state_graph: dict[int, set[int]] = {
         state_id: set() for state_id in owned_states
     }
-    for province_id, neighbours in graph.items():
-        left_state = province_to_state.get(province_id)
-        if left_state is None:
-            continue
-        for neighbour in neighbours:
+    # Only the country's own provinces can start an edge between its states.
+    for province_id, left_state in province_to_state.items():
+        for neighbour in graph.get(province_id, ()):
             right_state = province_to_state.get(neighbour)
             if right_state is None or right_state == left_state:
                 continue
@@ -142,89 +177,89 @@ def find_country_territory_components(
 
 def find_enclosed_foreign_components(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
     states: Iterable[State],
     *,
     country_tag: str,
     minimum_land_provinces: int = 1,
     allowed_state_ids: Iterable[int] = (),
+    ownership: ProvinceOwnership | None = None,
 ) -> tuple[TerritoryComponent, ...]:
     """Return foreign land components completely enclosed by ``country_tag``.
 
     A component touching sea or unmapped land is not considered enclosed.  This
     avoids reporting coastal countries or incomplete map data as holes while
-    still catching one-state and multi-state land enclaves.
+    still catching one-state and multi-state land enclaves. Pass
+    ``ownership`` (built from the same ``states``) to share the map between
+    calls.
     """
 
     if minimum_land_provinces < 1:
         raise ValueError("minimum_land_provinces must be at least 1")
-    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
-    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
-    adjacency_path = _optional_effective_map_file(
-        mod_root,
-        hoi4_install,
-        "adjacencies.csv",
-    )
-    fingerprints = (
-        provinces_path.stat().st_mtime_ns,
-        definition_path.stat().st_mtime_ns,
-        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
-    )
-    land_provinces, graph, coastal_land_provinces = _load_province_topology(
-        provinces_path,
-        definition_path,
-        adjacency_path,
-        fingerprints,
-    )
-    effective_states = tuple(states)
-    state_by_id = {state.id: state for state in effective_states}
-    province_to_state = {
-        province_id: state.id
-        for state in effective_states
-        for province_id in state.provinces
-        if province_id in land_provinces
-    }
-    foreign_provinces = {
+    if ownership is None:
+        ownership = province_ownership(mod_root, hoi4_install, states)
+    graph, coastal = ownership.graph, ownership.coastal
+    province_to_state, state_by_id = ownership.province_to_state, ownership.state_by_id
+
+    def owner(province_id: int) -> str | None:
+        state_id = province_to_state.get(province_id)
+        return None if state_id is None else state_by_id[state_id].owner
+
+    own = [
         province_id
         for province_id, state_id in province_to_state.items()
-        if state_by_id[state_id].owner
-        and state_by_id[state_id].owner != country_tag
-    }
-    foreign_graph = {
-        province_id: graph.get(province_id, set()) & foreign_provinces
-        for province_id in foreign_provinces
-    }
+        if state_by_id[state_id].owner == country_tag
+    ]
+    # An enclosed component is a connected set of foreign provinces whose
+    # neighbours all belong to the country, so it touches the country's
+    # border: search outward from there. The map's edges go both ways, so a
+    # search from any province of a component finds all of it. A search
+    # stops at the first sign that its component is not enclosed: the coast,
+    # land of no state or of a state without owner, or a province an earlier
+    # stopped search reached (connected to it, so the same component). A
+    # finished search has walked its whole component.
+    seen: set[int] = set()
     allowed = set(allowed_state_ids)
     result: list[TerritoryComponent] = []
-    for province_ids in _connected_components(foreign_graph):
-        if len(province_ids) < minimum_land_provinces:
+    for start in sorted(
+        {neighbour for province_id in own for neighbour in graph.get(province_id, ())}
+    ):
+        if start in seen:
             continue
-        if province_ids & coastal_land_provinces:
+        start_owner = owner(start)
+        if not start_owner or start_owner == country_tag:
             continue
-        state_ids = {
-            province_to_state[province_id]
-            for province_id in province_ids
-            if province_id in province_to_state
-        }
-        if not state_ids or state_ids <= allowed:
+        component = {start}
+        seen.add(start)
+        stack = [start]
+        enclosed = True
+        while stack and enclosed:
+            current = stack.pop()
+            if current in coastal:
+                enclosed = False
+                break
+            for neighbour in graph.get(current, ()):
+                if neighbour in component:
+                    continue
+                neighbour_owner = owner(neighbour)
+                if neighbour_owner == country_tag:
+                    continue
+                if not neighbour_owner or neighbour in seen:
+                    enclosed = False
+                    break
+                component.add(neighbour)
+                seen.add(neighbour)
+                stack.append(neighbour)
+        if not enclosed or len(component) < minimum_land_provinces:
             continue
-        boundary = {
-            neighbour
-            for province_id in province_ids
-            for neighbour in graph.get(province_id, ())
-            if neighbour not in province_ids
-        }
-        if not boundary or any(
-            neighbour not in province_to_state
-            or state_by_id[province_to_state[neighbour]].owner != country_tag
-            for neighbour in boundary
-        ):
+        state_ids = {province_to_state[province_id] for province_id in component}
+        if state_ids <= allowed:
             continue
         result.append(
             TerritoryComponent(
                 state_ids=tuple(sorted(state_ids)),
-                province_ids=tuple(sorted(province_ids)),
-                land_province_count=len(province_ids),
+                province_ids=tuple(sorted(component)),
+                land_province_count=len(component),
             )
         )
     return tuple(
@@ -235,16 +270,88 @@ def find_enclosed_foreign_components(
     )
 
 
+_Topology = tuple[frozenset[int], dict[int, set[int]], frozenset[int]]
+
+
+def _encode_topology(topology: _Topology) -> dict[str, list]:
+    land, graph, coastal = topology
+    return {
+        "land": sorted(land),
+        "graph": [[province, sorted(neighbours)] for province, neighbours in graph.items()],
+        "coastal": sorted(coastal),
+    }
+
+
+def _decode_topology(data: object) -> _Topology:
+    """A stored topology. Anything else is a damaged entry and is computed again."""
+
+    if not isinstance(data, dict) or not isinstance(data["graph"], list):
+        raise TypeError("a stored topology must be a map with a list of neighbours")
+    graph: dict[int, set[int]] = {}
+    for province, neighbours in data["graph"]:
+        if type(province) is not int:
+            raise TypeError("a stored province id must be a whole number")
+        graph[province] = set(int_list(neighbours))
+    return frozenset(int_list(data["land"])), graph, frozenset(int_list(data["coastal"]))
+
+
+_TOPOLOGY_ON_DISK = DiskAnalysis("province_topology", _encode_topology, _decode_topology)
+
+
+def _effective_topology(mod_root: Path, hoi4_install: Path | ContentView | None) -> _Topology:
+    """Land provinces, the land adjacency graph and coastal land of the effective map.
+
+    Kept in memory while the map files are unchanged. When the mod has no
+    map files of its own, the result is also kept on disk for later
+    processes (``hoi4._disk_cache``).
+    """
+
+    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
+    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
+    adjacency_path = _optional_effective_map_file(mod_root, hoi4_install, "adjacencies.csv")
+    fingerprints = (
+        provinces_path.stat().st_mtime_ns,
+        definition_path.stat().st_mtime_ns,
+        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
+    )
+    paths = [provinces_path, definition_path]
+    if adjacency_path is not None:
+        paths.append(adjacency_path)
+    inherited = not any(path.is_relative_to(mod_root) for path in paths)
+    return _load_province_topology(
+        provinces_path, definition_path, adjacency_path, fingerprints, inherited
+    )
+
+
 @lru_cache(maxsize=4)
 def _load_province_topology(
     provinces_path: Path,
     definition_path: Path,
     adjacency_path: Path | None,
     fingerprints: tuple[int, int, int],
-) -> tuple[frozenset[int], dict[int, set[int]], frozenset[int]]:
+    on_disk: bool = False,
+) -> _Topology:
     # ``fingerprints`` is intentionally unused in the body: it forms part of
     # the cache key so replacing a map file invalidates the derived graph.
     del fingerprints
+    if on_disk:
+        paths = [provinces_path, definition_path]
+        if adjacency_path is not None:
+            paths.append(adjacency_path)
+        return cached_files_result(
+            "province_topology",
+            paths,
+            lambda: _compute_province_topology(provinces_path, definition_path, adjacency_path),
+            _TOPOLOGY_ON_DISK,
+        )
+    return _compute_province_topology(provinces_path, definition_path, adjacency_path)
+
+
+def _compute_province_topology(
+    provinces_path: Path,
+    definition_path: Path,
+    adjacency_path: Path | None,
+) -> _Topology:
     try:
         np = import_module("numpy")
         image_module = import_module("PIL.Image")
@@ -347,7 +454,7 @@ class ProvinceGrid:
         return province_id or None
 
 
-def load_province_grid(mod_root: Path, hoi4_install: Path | None) -> ProvinceGrid:
+def load_province_grid(mod_root: Path, hoi4_install: Path | ContentView | None) -> ProvinceGrid:
     """Load the effective ``provinces.bmp`` as a province-ID lookup grid.
 
     Raises ``FileNotFoundError`` when a map file is missing and
@@ -385,7 +492,7 @@ def _load_province_grid(
 
 def load_land_adjacency(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
 ) -> dict[int, set[int]]:
     """Return the effective land-province adjacency graph.
 
@@ -393,26 +500,13 @@ def load_land_adjacency(
     contribute edges. Raises like :func:`load_province_grid`.
     """
 
-    provinces_path = _effective_map_file(mod_root, hoi4_install, "provinces.bmp")
-    definition_path = _effective_map_file(mod_root, hoi4_install, "definition.csv")
-    adjacency_path = _optional_effective_map_file(mod_root, hoi4_install, "adjacencies.csv")
-    fingerprints = (
-        provinces_path.stat().st_mtime_ns,
-        definition_path.stat().st_mtime_ns,
-        adjacency_path.stat().st_mtime_ns if adjacency_path is not None else 0,
-    )
-    _land, graph, _coastal = _load_province_topology(
-        provinces_path,
-        definition_path,
-        adjacency_path,
-        fingerprints,
-    )
+    _land, graph, _coastal = _effective_topology(mod_root, hoi4_install)
     return graph
 
 
 def _effective_map_file(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
     filename: str,
 ) -> Path:
     path = _optional_effective_map_file(mod_root, hoi4_install, filename)
@@ -425,16 +519,14 @@ def _effective_map_file(
 
 def _optional_effective_map_file(
     mod_root: Path,
-    hoi4_install: Path | None,
+    hoi4_install: Path | ContentView | None,
     filename: str,
 ) -> Path | None:
-    for root in (mod_root, hoi4_install):
-        if root is None:
-            continue
-        candidate = root / "map" / filename
-        if candidate.is_file():
-            return candidate
-    return None
+    candidate = mod_root / "map" / filename
+    if candidate.is_file():
+        return candidate
+    inherited = as_view(hoi4_install)
+    return inherited.file(Path("map") / filename) if inherited is not None else None
 
 
 def _province_types(path: Path) -> dict[int, str]:

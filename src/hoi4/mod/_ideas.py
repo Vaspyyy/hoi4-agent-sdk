@@ -11,7 +11,6 @@ from ..idea_icons import (
 from ..paths import (
     require_country_tag,
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..types import (
     Idea,
@@ -71,7 +70,7 @@ class IdeasLayer(CoreLayer):
         if existing is not None and existing.path is not None:
             self._dirty_idea_files.add(existing.path)
         if path is not None:
-            idea.path = resolve_mod_output_path(self.mod_root, path)
+            idea.path = self._output_path(path)
         elif existing is not None and existing.path is not None:
             idea.path = existing.path
         else:
@@ -84,6 +83,8 @@ class IdeasLayer(CoreLayer):
                 idea.path = self.mod_root / "common" / "ideas" / "mod_ideas.txt"
         if idea.path is not None and idea.path.parent.name == "ideas":
             self._idea_file_containers.setdefault(idea.path, "ideas")
+        if idea.path is not None:
+            self._note_target(idea.path)
         self._ideas[idea_id] = idea
         self._dirty.add("ideas")
         self._dirty_ideas.add(idea_id)
@@ -124,7 +125,7 @@ class IdeasLayer(CoreLayer):
         touched_fields = set(kwargs) - {"path"}
         old_path = idea.path
         if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+            kwargs["path"] = self._output_path(kwargs["path"])
         modifier_supplied = "modifier" in kwargs
         modifier_val = kwargs.pop("modifier", None)
         if modifier_supplied and modifier_val is not None:
@@ -161,4 +162,7 @@ class IdeasLayer(CoreLayer):
 
     def set_idea_path(self, tag: str, path: str | Path) -> None:
         tag = require_country_tag(tag)
-        self._cached_idea_file[tag] = resolve_mod_output_path(self.mod_root, path)
+        self._cached_idea_file[tag] = self._output_path(path)
+        # Not an edit that a save writes: discard() and a save of other
+        # things forget it with the section, as a full reload used to.
+        self._reload_on_discard.add("ideas")

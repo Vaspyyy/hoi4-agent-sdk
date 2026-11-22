@@ -7,8 +7,11 @@ Read, search, and modify HOI4 YML localization files.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
+from typing import Iterable
 
+from ._disk_cache import DiskAnalysis, string_map
 from ._file_cache import cached_file_result
 from .textio import decode_text, read_text, write_text
 
@@ -137,24 +140,71 @@ def _parse_quoted_value(line: str, start: int) -> str | None:
     return None
 
 
-def parse_localization_dir(loc_dir: Path) -> tuple[dict[str, str], dict[str, Path]]:
-    entries: dict[str, str] = {}
-    sources: dict[str, Path] = {}
+def parse_localization_dir(
+    loc_dir: Path,
+    *,
+    file_entries: Callable[[Path], dict[str, str]] | None = None,
+) -> tuple[dict[str, str], dict[str, Path]]:
+    """Every entry of the ``.yml`` files under ``loc_dir`` and the file it is in."""
 
     if not loc_dir.exists():
-        return entries, sources
+        return {}, {}
+    return parse_localization_files(loc_dir.rglob("*.yml"), file_entries=file_entries)
 
-    for f in loc_dir.rglob("*.yml"):
-        # The game's folder is read on every load and validation: keep each
-        # file's entries until the file changes. They are only read here.
-        file_entries = cached_file_result(
-            "localisation_entries", f, _localization_entries, read=_read_localization
-        )
-        for key, value in file_entries.items():
+
+def parse_localization_files(
+    files: Iterable[Path],
+    *,
+    file_entries: Callable[[Path], dict[str, str]] | None = None,
+) -> tuple[dict[str, str], dict[str, Path]]:
+    """Entries of localisation files in order (a later file wins), and their files.
+
+    ``file_entries`` reads one file (as :func:`localization_file_entries`
+    does); pass one that keeps the answers on disk for inherited files.
+    """
+
+    entries: dict[str, str] = {}
+    sources: dict[str, Path] = {}
+    read_file = file_entries if file_entries is not None else localization_file_entries
+    for f in files:
+        for key, value in read_file(f).items():
             entries[key] = value
             sources[key] = f
 
     return entries, sources
+
+
+def localization_file_entries(path: Path) -> dict[str, str]:
+    """The entries of one ``.yml`` file, kept in memory until it changes.
+
+    The game's folder is read on every load and validation. The result is
+    shared: never change it.
+    """
+
+    return cached_file_result(
+        "localisation_entries", path, _localization_entries, read=_read_localization
+    )
+
+
+#: How :func:`localization_file_entries` results go to disk and back.
+LOCALISATION_ON_DISK: DiskAnalysis[dict[str, str]] = DiskAnalysis(
+    "localisation_entries", dict, string_map
+)
+
+
+def localisation_keys_in(text: str) -> frozenset[str]:
+    """The keys of a localisation file, read the way the game finds them.
+
+    Only ``KEY:0 "`` at the start of a line counts, so a line whose text the
+    strict reader rejects (such as inner quotes) still names its key.
+    """
+
+    found: set[str] = set()
+    for line in text.splitlines():
+        match = YML_ENTRY_RE.match(line)
+        if match is not None:
+            found.add(normalize_localization_key(match.group(1)))
+    return frozenset(found)
 
 
 def parse_localization_file(path: Path) -> dict[str, str]:

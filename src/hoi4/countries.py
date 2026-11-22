@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import colorsys
 import re
+from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
 from .characters import _string_like
+from .layers import ContentView, as_view
 from .patching import (
     AssignmentSpan,
     append_assignment,
@@ -180,43 +182,51 @@ def _int_or_none(value: str | None) -> int | None:
 def read_country(
     mod_root: Path,
     tag: str,
-    hoi4_install: Optional[Path] = None,
+    hoi4_install: Path | ContentView | None = None,
     _loc_cache: Optional[dict[str, dict[str, str]]] = None,
-    _tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+    _tag_mappings: Optional[dict[ContentView, dict[str, str]]] = None,
     _color_sources: Optional[dict[Path, str | None]] = None,
 ) -> Country:
-    country = Country(tag=tag)
+    """Read a country from the mod, falling back to ``hoi4_install``.
 
-    _read_definition(country, mod_root, hoi4_install, _tag_mappings)
+    ``hoi4_install`` is the game folder or a view of what the mod inherits.
+    """
+
+    country = Country(tag=tag)
+    mod = as_view(mod_root)
+    inherited = as_view(hoi4_install)
+    assert mod is not None
+
+    _read_definition(country, mod, inherited, _tag_mappings)
     _read_color(
         country,
-        mod_root,
-        hoi4_install,
+        mod,
+        inherited,
         _tag_mappings,
         _color_sources,
     )
-    _read_history(country, mod_root, hoi4_install)
-    _read_character(country, mod_root, hoi4_install)
+    _read_history(country, mod, inherited)
+    _read_character(country, mod, inherited)
 
     if _loc_cache is not None:
         _read_loc_from_cache(country, _loc_cache)
     else:
-        _read_localisation(country, mod_root, hoi4_install)
+        _read_localisation(country, mod, inherited)
 
     return country
 
 
 def _read_definition(
     country: Country,
-    mod_root: Path,
-    hoi4_install: Optional[Path],
-    tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+    mod_root: ContentView,
+    hoi4_install: ContentView | None,
+    tag_mappings: Optional[dict[ContentView, dict[str, str]]] = None,
 ) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
         p = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
-        if p and p.exists():
+        if p is not None:
             txt = read_text(p)
             country.definition_path = p.resolve()
             country.raw_definition = txt
@@ -233,9 +243,9 @@ def _read_definition(
 
 def _read_color(
     country: Country,
-    mod_root: Path,
-    hoi4_install: Optional[Path],
-    tag_mappings: Optional[dict[Path, dict[str, str]]] = None,
+    mod_root: ContentView,
+    hoi4_install: ContentView | None,
+    tag_mappings: Optional[dict[ContentView, dict[str, str]]] = None,
     color_sources: Optional[dict[Path, str | None]] = None,
 ) -> None:
     """Resolve country colour using the same vanilla-then-mod precedence as HOI4."""
@@ -246,12 +256,12 @@ def _read_color(
         if base is None:
             continue
         definition = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
-        if definition is not None and definition.is_file():
+        if definition is not None:
             color = read_color(_root(read_text(definition)))
             if color is not None:
                 resolved = color
-        colors_path = base / "common" / "countries" / "colors.txt"
-        if not colors_path.is_file():
+        colors_path = base.file("common/countries/colors.txt")
+        if colors_path is None:
             continue
         if color_sources is not None and colors_path in color_sources:
             text = color_sources[colors_path]
@@ -271,14 +281,13 @@ def _read_color(
     country.color_ui = resolved_ui
 
 
-def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+def _read_history(
+    country: Country, mod_root: ContentView, hoi4_install: ContentView | None
+) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
-        d = base / "history" / "countries"
-        if not d.exists():
-            continue
-        f = _find_history_file(d, country.tag)
+        f = _find_history_file(base, country.tag)
         if not f:
             continue
         txt = read_text(f)
@@ -350,21 +359,22 @@ def _read_history(country: Country, mod_root: Path, hoi4_install: Optional[Path]
         return
 
 
-def _read_localisation(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+def _read_localisation(
+    country: Country, mod_root: ContentView, hoi4_install: ContentView | None
+) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
-        loc_dir = base / "localisation" / "english"
-        if not loc_dir.exists():
-            continue
+        folder = Path("localisation") / "english"
         candidates = [
-            loc_dir / "countries_l_english.yml",
-            loc_dir / "countries_cosmetic_l_english.yml",
+            found
+            for name in ("countries_l_english.yml", "countries_cosmetic_l_english.yml")
+            if (found := base.file(folder / name)) is not None
         ]
-        candidates.extend(f for f in loc_dir.rglob("*.yml") if f not in candidates)
+        candidates.extend(
+            f for f in base.rglob(folder, "*.yml").values() if f not in candidates
+        )
         for f in candidates:
-            if not f.exists():
-                continue
             raw = f.read_bytes()
             txt = decode_text(raw)
             if f"{country.tag}:" not in txt:
@@ -378,28 +388,48 @@ def _read_localisation(country: Country, mod_root: Path, hoi4_install: Optional[
             return
 
 
-def _build_loc_cache(mod_root: Path) -> dict[str, dict[str, str]]:
+def _build_loc_cache(
+    root: Path | ContentView,
+    *,
+    file_entries: Callable[[Path], dict[str, dict[str, str]]] | None = None,
+) -> dict[str, dict[str, str]]:
+    """Country name entries of every English localisation file, by tag.
+
+    ``file_entries`` reads one file (as :func:`country_loc_entries` does on
+    its text); pass one that keeps the answers on disk for inherited files.
+    """
+
     cache: dict[str, dict[str, str]] = {}
-    loc_dir = mod_root / "localisation" / "english"
-    if not loc_dir.exists():
-        return cache
-    for f in loc_dir.rglob("*.yml"):
-        raw = f.read_bytes()
-        txt = decode_text(raw)
-        for line in txt.splitlines():
-            s = line.strip()
-            if not s or s.startswith("#") or s.startswith("l_"):
-                continue
-            m = re.match(r"^\s*([A-Z0-9]{3}[A-Z0-9_]*):", s)
-            if m:
-                tag_key = m.group(1)
-                tag = tag_key[:3] if len(tag_key) >= 3 and tag_key[:3].isupper() else None
-                if tag and tag not in cache:
-                    cache[tag] = {}
-                if tag:
-                    val = s.split(" ", 1)[-1].strip().strip('"')
-                    cache[tag][tag_key] = val
+    view = as_view(root)
+    assert view is not None
+    for f in view.rglob("localisation/english", "*.yml").values():
+        found = (
+            file_entries(f) if file_entries is not None
+            else country_loc_entries(decode_text(f.read_bytes()))
+        )
+        for tag, entries in found.items():
+            cache.setdefault(tag, {}).update(entries)
     return cache
+
+
+def country_loc_entries(text: str) -> dict[str, dict[str, str]]:
+    """``tag -> {key: text}`` of the lines of one localisation file that start with a tag."""
+
+    cache: dict[str, dict[str, str]] = {}
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith("l_"):
+            continue
+        m = _COUNTRY_LOC_KEY_RE.match(s)
+        if m:
+            tag_key = m.group(1)
+            tag = tag_key[:3] if len(tag_key) >= 3 and tag_key[:3].isupper() else None
+            if tag:
+                cache.setdefault(tag, {})[tag_key] = s.split(" ", 1)[-1].strip().strip('"')
+    return cache
+
+
+_COUNTRY_LOC_KEY_RE = re.compile(r"^\s*([A-Z0-9]{3}[A-Z0-9_]*):")
 
 
 def _read_loc_from_cache(country: Country, cache: dict[str, dict[str, str]]) -> None:
@@ -413,14 +443,16 @@ def _read_loc_from_cache(country: Country, cache: dict[str, dict[str, str]]) -> 
             country.adjective = val
 
 
-def _read_character(country: Country, mod_root: Path, hoi4_install: Optional[Path]) -> None:
+def _read_character(
+    country: Country, mod_root: ContentView, hoi4_install: ContentView | None
+) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
-        p = base / f"common/characters/{country.tag}_characters.txt"
-        if not p.exists():
-            p = base / f"common/characters/{country.tag}.txt"
-        if not p.exists():
+        p = base.file(f"common/characters/{country.tag}_characters.txt")
+        if p is None:
+            p = base.file(f"common/characters/{country.tag}.txt")
+        if p is None:
             continue
         txt = read_text(p)
         country.character_path = p.resolve()
@@ -678,11 +710,10 @@ def seed_country_colors_file(original: str, vanilla: str) -> str:
     return text
 
 
-def _find_history_file(history_dir: Path, tag: str) -> Optional[Path]:
-    for f in history_dir.glob(f"{tag} - *.txt"):
-        return f
-    for f in history_dir.glob(f"{tag}*.txt"):
-        return f
+def _find_history_file(base: ContentView, tag: str) -> Optional[Path]:
+    for pattern in (f"{tag} - *.txt", f"{tag}*.txt"):
+        for f in base.glob("history/countries", pattern).values():
+            return f
     return None
 
 
@@ -722,12 +753,7 @@ def write_country_definition(mod_root: Path, country: Country) -> None:
 
 def write_country_history(mod_root: Path, country: Country) -> None:
     tag = country.tag
-    safe_name = safe_file_stem(country.name or tag, fallback=tag)
-    p = (
-        mod_root / f"history/countries/{tag} - {safe_name}.txt"
-        if {"*", "name"} & country.touched_fields or country.history_path is None
-        else country.history_path
-    )
+    p = country_history_target(mod_root, country)
     p.parent.mkdir(parents=True, exist_ok=True)
 
     for old in p.parent.glob(f"{tag} - *.txt"):
@@ -767,12 +793,7 @@ def write_all_country_files(mod_root: Path, country: Country) -> list[Path]:
     write_country_definition(mod_root, country)
     written.append(country.definition_path or mod_root / f"common/countries/{country.tag}.txt")
     write_country_history(mod_root, country)
-    safe_name = safe_file_stem(country.name or country.tag, fallback=country.tag)
-    written.append(
-        mod_root / f"history/countries/{country.tag} - {safe_name}.txt"
-        if {"*", "name"} & country.touched_fields or country.history_path is None
-        else country.history_path
-    )
+    written.append(country_history_target(mod_root, country))
     write_character_file(mod_root, country)
     if country.leader:
         written.append(
@@ -793,6 +814,23 @@ def country_file_paths(mod_root: Path, country: Country) -> list[Path]:
     if country.leader:
         paths.append(country.character_path or mod_root / f"common/characters/{tag}_characters.txt")
     return paths
+
+
+def country_history_target(
+    mod_root: Path, country: Country, *, keep_history_path: bool = False
+) -> Path:
+    """The history file a save writes for ``country``.
+
+    A name change renames the file to ``TAG - Name.txt`` unless
+    ``keep_history_path`` is true (see :func:`serialize_country_files`).
+    """
+
+    tag = require_country_tag(country.tag)
+    renamed = {"*", "name"} & country.touched_fields and not keep_history_path
+    if country.history_path is not None and not renamed:
+        return country.history_path
+    safe_name = safe_file_stem(country.name or tag, fallback=tag)
+    return mod_root / f"history/countries/{tag} - {safe_name}.txt"
 
 
 def serialize_country_files(
@@ -836,13 +874,7 @@ def serialize_country_files(
             definition = set_color(definition, "color", (r, g, b))
     files[def_path] = definition
 
-    safe_name = safe_file_stem(country.name or tag, fallback=tag)
-    hist_path = (
-        mod_root / f"history/countries/{tag} - {safe_name}.txt"
-        if country.history_path is None
-        or ({"*", "name"} & country.touched_fields and not keep_history_path)
-        else country.history_path
-    )
+    hist_path = country_history_target(mod_root, country, keep_history_path=keep_history_path)
     leader = country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1")
     recruited_characters = list(
         dict.fromkeys(

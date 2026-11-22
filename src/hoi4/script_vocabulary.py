@@ -36,6 +36,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable, Iterator, Literal, Mapping, Sequence, cast
 
+from ._disk_cache import cache_root, disk_cache_enabled
 from ._script_corpus import script_blocks
 from .script_scopes import ScriptStatement, walk_script
 from .syntax import Assignment, Block, Tagged, parse
@@ -377,14 +378,16 @@ def load_game_script_vocabulary(
     """Read the vocabulary of a game install.
 
     What is derived from the install is cached under the user cache folder
-    (``~/.cache/hoi4-sdk/script-vocabulary``, or ``$HOI4_SDK_CACHE_DIR``). The
-    cache key covers the SDK version, this module's source and the size and
-    modification time of every file the vocabulary is read from, so a game
-    update or a new SDK reads the install again. Pass ``cache=False`` to
-    neither read nor write the cache.
+    (``~/.cache/hoi4-sdk/script-vocabulary``; see ``hoi4._disk_cache.cache_root``
+    for ``$HOI4_SDK_CACHE_DIR`` and ``$XDG_CACHE_HOME``). The cache key covers
+    the SDK version, the cache schema and the size and modification time of
+    every file the vocabulary is read from, so a game update or a new SDK reads
+    the install again. Pass ``cache=False``, or set
+    ``HOI4_SDK_DISK_CACHE=off``, to neither read nor write the cache.
     """
 
     root = Path(hoi4_install).resolve()
+    cache = cache and disk_cache_enabled()
     data = _cached_install_data(root) if cache else None
     if data is None:
         data = _install_data(root)
@@ -398,9 +401,7 @@ def load_game_script_vocabulary(
 
 
 def _cache_dir() -> Path:
-    configured = os.environ.get("HOI4_SDK_CACHE_DIR")
-    base = Path(configured) if configured else Path.home() / ".cache" / "hoi4-sdk"
-    return base / "script-vocabulary"
+    return cache_root() / "script-vocabulary"
 
 
 def _sdk_version() -> str:

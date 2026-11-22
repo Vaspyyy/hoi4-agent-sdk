@@ -12,7 +12,6 @@ from ..focus_layout import resolve_focus_positions, visual_overlap_issues
 from ..paths import (
     require_country_tag,
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..types import (
     Focus,
@@ -72,6 +71,9 @@ class FocusLayer(ContextLayer, EffectsLayer):
         )
         tree = FocusTree(id=tree_id, country_tag=tag, path=path, touched=True)
         self._focus_trees[tree_id] = tree
+        # The loader has read this file if it is there; noted all the same,
+        # like every target an edit names.
+        self._note_target(path)
         self._original_files.setdefault(path, "")
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
@@ -120,7 +122,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
             )
         old_path = tree.path
         if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+            kwargs["path"] = self._output_path(kwargs["path"])
         _set_fields(tree, kwargs, allow_path=True)
         tree.touched = True
         if old_path is not None:

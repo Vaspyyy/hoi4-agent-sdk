@@ -29,6 +29,7 @@ from ..types import (
     Idea,
     OnAction,
 )
+from .._disk_cache import NAMES_ON_DISK, DiskAnalysis
 from .._file_cache import cached_file_result
 from ._localisation import LocalisationLayer
 from ..textio import read_text
@@ -64,9 +65,9 @@ class SourcesLayer(LocalisationLayer):
         # The effective fallback already applies layer precedence and replace_path.
         # Test existence, not truthiness: an empty writable override is authoritative.
         text = ""
-        for root in self._data_roots():
-            source = root / relative
-            if source.is_file():
+        for view in self._data_views():
+            source = view.file(relative)
+            if source is not None:
                 text = self._read_current_text(source)
                 break
         # Compare original bodies in one scan. Rebuilding a large roster
@@ -94,6 +95,7 @@ class SourcesLayer(LocalisationLayer):
         relative: str,
         purpose: str,
         compute: Callable[[str], T],
+        disk: DiskAnalysis[T] | None = None,
         *,
         skip: Collection[Path] = (),
     ) -> Iterator[tuple[Path, T]]:
@@ -101,10 +103,11 @@ class SourcesLayer(LocalisationLayer):
 
         The answer for a file on disk is remembered until the file changes
         (``hoi4._file_cache``), so a second validation does not read the
-        game's folders again. Files with pending edits are always computed
-        from their pending text. The result may be shared: never change it.
-        ``skip`` names target paths (in the mod) to leave out, such as the
-        files whose content the loaded models hold.
+        game's folders again. With ``disk``, the answers for inherited files
+        are also kept on disk for later processes. Files with pending edits
+        are always computed from their pending text. The result may be
+        shared: never change it. ``skip`` names target paths (in the mod) to
+        leave out, such as the files whose content the loaded models hold.
         """
 
         for target, source, pending in self._effective_script_files(relative):
@@ -113,6 +116,8 @@ class SourcesLayer(LocalisationLayer):
             try:
                 if pending is not None:
                     yield target, compute(pending())
+                elif disk is not None:
+                    yield target, self._cached_result(purpose, source, compute, disk)
                 else:
                     yield target, cached_file_result(purpose, source, compute)
             except (OSError, ValueError):
@@ -161,7 +166,7 @@ class SourcesLayer(LocalisationLayer):
                                ("trigger", "common/scripted_triggers")):
             typed_kind = cast(ScriptTokenKind, kind)
             for _, names in self._effective_script_results(
-                relative, "top_level_block_keys", _top_level_block_keys
+                relative, "top_level_block_keys", _top_level_block_keys, NAMES_ON_DISK
             ):
                 result[typed_kind].update(names)
         return result

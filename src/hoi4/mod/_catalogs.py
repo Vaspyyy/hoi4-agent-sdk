@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import re
 from collections.abc import Collection
 from pathlib import Path
 
-from .._file_cache import cached_file_result
+from .._disk_cache import NAMES_ON_DISK, PAIRS_ON_DISK, DiskAnalysis, string_map
 from ..characters import AdvisorRole
 from ..events import VALID_EVENT_TYPES
 from ..focus_layout import allow_branch_condition, block_allow_branch_condition
 from ..ideas import idea_ids_in_text
+from ..layers import ContentView, FolderView
 from ..parser import (
     iter_assignment_blocks,
 )
@@ -20,14 +22,19 @@ from ..patching import (
     top_level_assignments,
 )
 from ..script_references import (
+    DEFINITIONS_ON_DISK,
     Definitions,
     FileReferences,
+    decode_file_references,
     definitions_of,
+    encode_file_references,
     file_references,
+    dynamic_tags_of,
     resolve_equipment,
 )
 from ..syntax import parse
 from ..textio import decode_text, read_text
+from ._shared import _keep_recent
 from ._sources import SourcesLayer
 
 # ``[?name]`` in a localisation text reads a variable or a flag
@@ -35,24 +42,9 @@ from ._sources import SourcesLayer
 _LOC_VALUE_RE = re.compile(r"\[\?([A-Za-z_@][A-Za-z0-9_.@]*)")
 # Folders whose script the game reads as effects, triggers and definitions.
 _CORPUS_DIRECTORIES = ("common", "events", "history")
-
-
-def _inherited_references(path: Path, relative: str) -> FileReferences | None:
-    """The references of an inherited file, kept until the file changes.
-
-    A second Mod over the same game, or a second validation, does not parse
-    the whole game again.
-    """
-
-    key = str(path)
-    try:
-        return cached_file_result(
-            f"file_references:{relative}",
-            path,
-            lambda text: file_references(key, relative, text, own=False),
-        )
-    except (OSError, ValueError):
-        return None
+_REFERENCES_ON_DISK = DiskAnalysis(
+    "file_references", encode_file_references, decode_file_references
+)
 
 
 _FOCUS_KEYS = ("focus", "shared_focus", "joint_focus")
@@ -100,6 +92,26 @@ def _shared_focuses_in(text: str) -> dict[str, tuple[frozenset[str], str | None]
                 )
                 found[focus_id] = (parents, block_allow_branch_condition(block))
     return found
+
+
+# A list of ``[id, prerequisites, condition]`` in the file's order. JSON keeps
+# ``null`` (no ``allow_branch``) apart from ``""`` (one that always holds).
+_SHARED_FOCUSES_ON_DISK: DiskAnalysis[dict[str, tuple[frozenset[str], str | None]]] = (
+    DiskAnalysis(
+        "shared_focuses",
+        lambda found: [
+            [focus_id, sorted(parents), condition]
+            for focus_id, (parents, condition) in found.items()
+        ],
+        lambda data: {
+            str(focus_id): (
+                frozenset(str(parent) for parent in parents),
+                None if condition is None else str(condition),
+            )
+            for focus_id, parents, condition in data
+        },
+    )
+)
 
 
 def _sprite_names(text: str) -> frozenset[str]:
@@ -172,13 +184,118 @@ def _character_ids(text: str) -> frozenset[str]:
     )
 
 
+def _sprite_textures(text: str) -> dict[str, str]:
+    """``name -> texturefile`` of every ``spriteType`` in a ``.gfx`` text."""
+
+    parsed: dict[str, str] = {}
+    for body, _, _ in iter_assignment_blocks(text, "spriteType"):
+        assignments = {
+            span.key: span
+            for span in top_level_assignments(body)
+            if not span.is_block
+        }
+        name_span = assignments.get("name")
+        texture_span = assignments.get("texturefile")
+        if name_span is None or texture_span is None:
+            continue
+        name = body[name_span.value_start : name_span.value_end].strip().strip('"')
+        texture = (
+            body[texture_span.value_start : texture_span.value_end]
+            .strip()
+            .strip('"')
+            .replace("\\", "/")
+        )
+        if name and texture:
+            parsed[name] = texture
+    return parsed
+
+
+_TEXTURES_ON_DISK: DiskAnalysis[dict[str, str]] = DiskAnalysis("sprite_textures", dict, string_map)
+
+
+def _loc_value_names(text: str) -> frozenset[str]:
+    """Names a localisation text reads with ``[?name]``; every dotted part counts."""
+
+    found: set[str] = set()
+    for match in _LOC_VALUE_RE.finditer(text):
+        found.update(part for part in match.group(1).split(".") if part)
+    return frozenset(found)
+
+
+def _technology_unlocks(text: str) -> tuple[tuple[str, str], ...]:
+    """``(equipment, technology)`` for each ``enable_equipments`` entry, in order."""
+
+    pairs: list[tuple[str, str]] = []
+    for wrapper in parse(text).root.assignments("technologies"):
+        if wrapper.block is None:
+            continue
+        for technology in wrapper.block.assignments():
+            if technology.block is None:
+                continue
+            for enabled in technology.block.blocks("enable_equipments"):
+                for equipment in enabled.values():
+                    pairs.append((equipment.value, technology.key.value))
+    return tuple(pairs)
+
+
+def _dynamic_tags(text: str) -> frozenset[str]:
+    """Tags declared after ``dynamic_tags = yes`` in a country tags file."""
+
+    return frozenset(dynamic_tags_of(parse(text).root))
+
+
+def _province_types(text: str) -> dict[int, str]:
+    """``province id -> type`` (``land``, ``sea``, ``lake``) of ``map/definition.csv``."""
+
+    province_types: dict[int, str] = {}
+    for row in csv.reader(io.StringIO(text), delimiter=";"):
+        if len(row) < 5:
+            continue
+        try:
+            numeric_id = int(row[0].strip())
+        except ValueError:
+            continue
+        province_types[numeric_id] = row[4].strip().lower()
+    return province_types
+
+
+_PROVINCE_TYPES_ON_DISK: DiskAnalysis[dict[int, str]] = DiskAnalysis(
+    "province_types",
+    lambda types: [[province, kind] for province, kind in types.items()],
+    lambda data: {int(province): str(kind) for province, kind in data},
+)
+
+
 class CatalogsLayer(SourcesLayer):
     """Catalogs of known identifiers (ideas, events, technologies, equipment, sprites)."""
+
+    def _inherited_references(self, path: Path, relative: str) -> FileReferences | None:
+        """The references of an inherited file, kept until the file changes.
+
+        A second Mod over the same game, or a second validation, does not
+        parse the whole game again; a later process reads them from disk.
+        """
+
+        key = str(path)
+        try:
+            found = self._cached_result(
+                f"file_references:{relative}",
+                path,
+                lambda text: file_references(key, relative, text, own=False),
+                _REFERENCES_ON_DISK,
+            )
+        except (OSError, ValueError):
+            return None
+        if found.path != key:
+            # Stored by a process that read the same file at another path.
+            found = dataclasses.replace(found, path=key)
+        return found
 
     def _definitions_in(self, relative: str, *, skip: Collection[Path] = ()) -> Definitions:
         """What the effective files of one folder define, read from the tree.
 
-        Each file is read once while it is unchanged (``hoi4._file_cache``);
+        Each file is read once while it is unchanged (``hoi4._file_cache``),
+        and an inherited file's result is kept on disk for later processes;
         a file with a pending import is read from its pending text. ``skip``
         leaves out mod files whose content the loaded models hold.
         """
@@ -190,6 +307,7 @@ class CatalogsLayer(SourcesLayer):
             relative,
             f"definitions:{relative}",
             lambda text: definitions_of(parse(text), label),
+            DEFINITIONS_ON_DISK,
             skip=skip,
         ):
             merged.events.update(found.events)
@@ -252,8 +370,12 @@ class CatalogsLayer(SourcesLayer):
                 if pending is not None:
                     found = definitions_of(parse(pending()), label).tags
                 else:
-                    found = cached_file_result(
-                        purpose, source, lambda text: definitions_of(parse(text), label)
+                    # The same entry as ``_definitions_in("common/country_tags")``.
+                    found = self._cached_result(
+                        purpose,
+                        source,
+                        lambda text: definitions_of(parse(text), label),
+                        DEFINITIONS_ON_DISK,
                     ).tags
             except (OSError, ValueError):
                 continue
@@ -295,7 +417,8 @@ class CatalogsLayer(SourcesLayer):
         ``shared_focus = ID`` in a tree puts ``ID`` on its canvas, and with it
         the shared focuses below it; a focus of the tree that hangs below one
         is hidden with it. The mod's own come from the models (with pending
-        edits), the inherited ones from a scan of each file.
+        edits), the inherited ones from a scan of each file (kept on disk
+        for later processes).
         """
 
         parents: dict[str, frozenset[str]] = {}
@@ -311,7 +434,11 @@ class CatalogsLayer(SourcesLayer):
                     conditions[focus.id] = allow_branch_condition(focus)
         replaced = set(self._group_focus_trees_by_file(dirty_only=True))
         for _, found in self._effective_script_results(
-            "common/national_focus", "shared_focuses", _shared_focuses_in, skip=replaced
+            "common/national_focus",
+            "shared_focuses",
+            _shared_focuses_in,
+            _SHARED_FOCUSES_ON_DISK,
+            skip=replaced,
         ):
             for focus_id, (refs, condition) in found.items():
                 if focus_id not in parents:
@@ -340,7 +467,7 @@ class CatalogsLayer(SourcesLayer):
         ids = {focus.id for tree in self._focus_trees.values() for focus in tree.focuses}
         replaced = set(self._group_focus_trees_by_file(dirty_only=True))
         for _, found in self._effective_script_results(
-            "common/national_focus", "focus_ids", _focus_ids, skip=replaced
+            "common/national_focus", "focus_ids", _focus_ids, NAMES_ON_DISK, skip=replaced
         ):
             ids |= found
         return ids
@@ -352,28 +479,23 @@ class CatalogsLayer(SourcesLayer):
         localisation it inherits.
         """
 
-        def names_in(text: str) -> set[str]:
-            found: set[str] = set()
-            for match in _LOC_VALUE_RE.finditer(text):
-                found.update(part for part in match.group(1).split(".") if part)
-            return found
-
         inherited = self._scan_cache.get("localisation_value_names")
         if inherited is None:
             inherited = set()
-            base = self._base_content_root
-            folder = base / "localisation" if base is not None else None
-            if folder is not None and folder.is_dir():
-                for path in folder.rglob("*english*.yml"):
+            if self._base_content is not None:
+                for path in self._base_content.rglob("localisation", "*english*.yml").values():
                     try:
-                        inherited |= names_in(read_text(path))
+                        found = self._cached_result(
+                            "localisation_value_names", path, _loc_value_names, NAMES_ON_DISK
+                        )
                     except (OSError, ValueError):
                         continue
+                    inherited |= found
             self._scan_cache["localisation_value_names"] = inherited
         names = set(inherited)
         for value in self._loc_entries.values():
             if "[?" in value:
-                names |= names_in(value)
+                names |= _loc_value_names(value)
         return names
 
     def _pending_script_texts(self) -> dict[Path, str | None]:
@@ -437,8 +559,8 @@ class CatalogsLayer(SourcesLayer):
         for relative, path in sorted(sources.items()):
             if not relative.endswith(".txt"):
                 continue
-            if not path.is_relative_to(self.mod_root):
-                found = _inherited_references(path, relative)
+            if not self._in_mod_root(path):
+                found = self._inherited_references(path, relative)
                 if found is not None:
                     corpus.append(found)
                 continue
@@ -489,7 +611,7 @@ class CatalogsLayer(SourcesLayer):
         replaced.update(self._script_file_updates)
         for relative in ("common/ideas", "common/national_ideas"):
             for _, found in self._effective_script_results(
-                relative, "idea_ids", _idea_ids, skip=replaced
+                relative, "idea_ids", _idea_ids, NAMES_ON_DISK, skip=replaced
             ):
                 ids |= found
         return ids
@@ -498,7 +620,7 @@ class CatalogsLayer(SourcesLayer):
         ids = set(self._events)
         replaced = set(self._group_events_by_file(dirty_only=True)[0])
         for _, found in self._effective_script_results(
-            "events", "event_ids", _event_ids, skip=replaced
+            "events", "event_ids", _event_ids, NAMES_ON_DISK, skip=replaced
         ):
             ids |= found
         return ids
@@ -507,7 +629,7 @@ class CatalogsLayer(SourcesLayer):
         ids = set(self._characters)
         replaced = set(self._group_characters_by_file(dirty_only=True))
         for _, found in self._effective_script_results(
-            "common/characters", "character_ids", _character_ids, skip=replaced
+            "common/characters", "character_ids", _character_ids, NAMES_ON_DISK, skip=replaced
         ):
             ids |= found
         return ids
@@ -525,48 +647,33 @@ class CatalogsLayer(SourcesLayer):
             if self.mod_root / name in self._pending_asset_writes:
                 continue
             try:
-                icons |= cached_file_result("sprite_names", source, _sprite_names)
+                found = self._cached_result("sprite_names", source, _sprite_names, NAMES_ON_DISK)
             except (OSError, ValueError):
                 continue
+            icons |= found
         for path, content in self._pending_asset_writes.items():
             if path.suffix.lower() == ".gfx":
                 icons |= _sprite_names(decode_text(content))
         return icons
 
     def _known_sprite_textures(self) -> dict[str, str]:
-        def scan_text(text: str, textures: dict[str, str]) -> None:
-            cached = self._sprite_text_parse_cache.get(text)
-            if cached is not None:
-                textures.update(cached)
-                return
-            parsed: dict[str, str] = {}
-            for body, _, _ in iter_assignment_blocks(text, "spriteType"):
-                assignments = {
-                    span.key: span
-                    for span in top_level_assignments(body)
-                    if not span.is_block
-                }
-                name_span = assignments.get("name")
-                texture_span = assignments.get("texturefile")
-                if name_span is None or texture_span is None:
-                    continue
-                name = body[name_span.value_start : name_span.value_end].strip().strip('"')
-                texture = (
-                    body[texture_span.value_start : texture_span.value_end]
-                    .strip()
-                    .strip('"')
-                    .replace("\\", "/")
-                )
-                if name and texture:
-                    parsed[name] = texture
-            self._sprite_text_parse_cache[text] = parsed
-            textures.update(parsed)
+        # Results of an earlier run are reused by exact file text. The texts
+        # of this run and the newest older ones are kept, so the cache does
+        # not grow with every edit of a long session.
+        scanned_before = self._sprite_text_parse_cache
+        scanned: dict[str, dict[str, str]] = {}
 
-        def scan(base: Path, textures: dict[str, str]) -> None:
-            interface_dir = base / "interface"
-            if not interface_dir.is_dir():
-                return
-            for path in interface_dir.rglob("*.gfx"):
+        def scan_text(text: str, textures: dict[str, str]) -> None:
+            cached = scanned.get(text)
+            if cached is None:
+                cached = scanned_before.get(text)
+                if cached is None:
+                    cached = _sprite_textures(text)
+                scanned[text] = cached
+            textures.update(cached)
+
+        def scan(base: ContentView, textures: dict[str, str]) -> None:
+            for path in base.rglob("interface", "*.gfx").values():
                 try:
                     text = read_text(path)
                     scan_text(text, textures)
@@ -575,23 +682,39 @@ class CatalogsLayer(SourcesLayer):
 
         if self._sprite_texture_cache is None:
             vanilla: dict[str, str] = {}
-            if self._base_content_root is not None:
-                scan(self._base_content_root, vanilla)
+            if self._base_content is not None:
+                # The game's sprites are kept on disk for later processes.
+                for path in self._base_content.rglob("interface", "*.gfx").values():
+                    try:
+                        found: dict[str, str] = self._cached_result(
+                            "sprite_textures", path, _sprite_textures, _TEXTURES_ON_DISK
+                        )
+                    except (OSError, ValueError):
+                        continue
+                    vanilla.update(found)
             self._sprite_texture_cache = vanilla
-        textures = dict(self._sprite_texture_cache)
-        scan(self.mod_root, textures)
-        for path, content in self._pending_asset_writes.items():
-            if path.suffix.lower() == ".gfx":
-                scan_text(decode_text(content), textures)
-        return dict(textures)
+        vanilla_textures = self._sprite_texture_cache
+
+        def build() -> dict[str, str]:
+            textures = dict(vanilla_textures)
+            scan(FolderView(self.mod_root), textures)
+            for path, content in self._pending_asset_writes.items():
+                if path.suffix.lower() == ".gfx":
+                    scan_text(decode_text(content), textures)
+            self._sprite_text_parse_cache = _keep_recent(scanned_before, scanned)
+            return textures
+
+        # The country package check asks once per country; within one
+        # validate() run the mod's files do not change, so read them once.
+        return dict(self._run_cached("sprite_textures", build))
 
     def _texture_exists(self, relative_path: str) -> bool:
         normalized = relative_path.replace("\\", "/").lstrip("/")
-        return any(
-            (root / normalized).is_file()
-            for root in (self.mod_root, self._base_content_root)
-            if root is not None
-        ) or (self.mod_root / normalized) in self._pending_asset_writes
+        return (
+            (self.mod_root / normalized).is_file()
+            or (self._base_content is not None and self._base_content.file(normalized) is not None)
+            or (self.mod_root / normalized) in self._pending_asset_writes
+        )
 
     def _known_technology_ids(self) -> set[str]:
         return set(self._definitions_in("common/technologies").technologies)
@@ -600,18 +723,11 @@ class CatalogsLayer(SourcesLayer):
         if self._equipment_unlock_cache is not None:
             return dict(self._equipment_unlock_cache)
         unlocks: dict[str, list[str]] = {}
-        for _, text in self._effective_script_texts("common/technologies"):
-            for wrapper in parse(text).root.assignments("technologies"):
-                if wrapper.block is None:
-                    continue
-                for technology in wrapper.block.assignments():
-                    if technology.block is None:
-                        continue
-                    for enabled in technology.block.blocks("enable_equipments"):
-                        for equipment in enabled.values():
-                            unlocks.setdefault(equipment.value, []).append(
-                                technology.key.value
-                            )
+        for _, pairs in self._effective_script_results(
+            "common/technologies", "equipment_unlocks", _technology_unlocks, PAIRS_ON_DISK
+        ):
+            for equipment, technology in pairs:
+                unlocks.setdefault(equipment, []).append(technology)
         self._equipment_unlock_cache = {
             equipment: tuple(dict.fromkeys(technologies))
             for equipment, technologies in unlocks.items()
@@ -622,12 +738,22 @@ class CatalogsLayer(SourcesLayer):
         found = self._definitions_in("common/units/equipment")
         return set(resolve_equipment(found.equipment, found.equipment_copies))
 
+    def _dynamic_country_tags(self) -> set[str]:
+        """Tags declared after ``dynamic_tags = yes`` in a tag file: civil-war tags."""
+
+        tags: set[str] = set()
+        for _, found in self._effective_script_results(
+            "common/country_tags", "dynamic_tags", _dynamic_tags, NAMES_ON_DISK
+        ):
+            tags |= found
+        return tags
+
     def _known_country_name_pool_tags(self) -> set[str]:
         """Tags with a name pool; the pending ``set_country_name_pool`` edits count."""
 
         tags: set[str] = set()
         for _, found in self._effective_script_results(
-            "common/names", "name_pool_tags", _name_pool_tags
+            "common/names", "name_pool_tags", _name_pool_tags, NAMES_ON_DISK
         ):
             tags |= found
         return tags
@@ -643,7 +769,7 @@ class CatalogsLayer(SourcesLayer):
         }
         result: set[str] = set()
         for _, found in self._effective_script_results(
-            "common/units", "sub_unit_types", _sub_unit_types, skip=nested
+            "common/units", "sub_unit_types", _sub_unit_types, NAMES_ON_DISK, skip=nested
         ):
             result |= found
         return result
@@ -658,24 +784,19 @@ class CatalogsLayer(SourcesLayer):
                 if separator and id_text.isdigit():
                     cached_result[int(id_text)] = province_type
             return cached_result
-        path: Path | None = None
-        for root in (self.mod_root, self._base_content_root):
-            if root is None:
-                continue
-            candidate = root / "map" / "definition.csv"
-            if candidate.is_file():
-                path = candidate
-                break
+        path: Path | None = next(
+            (
+                found for view in self._data_views()
+                if (found := view.file("map/definition.csv")) is not None
+            ),
+            None,
+        )
         province_types: dict[int, str] = {}
         if path is not None:
-            for row in csv.reader(io.StringIO(read_text(path)), delimiter=";"):
-                if len(row) < 5:
-                    continue
-                try:
-                    numeric_id = int(row[0].strip())
-                except ValueError:
-                    continue
-                province_types[numeric_id] = row[4].strip().lower()
+            rows: dict[int, str] = self._cached_result(
+                "province_types", path, _province_types, _PROVINCE_TYPES_ON_DISK
+            )
+            province_types = dict(rows)
         self._scan_cache["province_type_rows"] = {
             f"{province_id}:{province_type}"
             for province_id, province_type in province_types.items()

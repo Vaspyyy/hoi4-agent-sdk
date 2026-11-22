@@ -38,7 +38,20 @@ If no config file exists, use `Mod()` directly with explicit paths:
 mod = Mod("/path/to/my_mod", hoi4_install="/path/to/hoi4")
 ```
 
-Loader failures are available through `mod.load_diagnostics`. Pass `strict_loading=True` to `Mod(...)` when malformed discovered files should abort construction instead of being skipped with a diagnostic.
+`Mod(...)` reads no content yet. Each kind of content (countries, characters,
+OOBs, states, focus trees, events, on-actions, decisions, ideas, ideologies,
+dynamic modifiers, bookmarks, localisation) loads the first time something
+uses it, so a script that edits one event reads only the event files.
+
+Loader failures are available through `mod.load_diagnostics`; reading it loads
+every kind of content that is not loaded yet. Pass `strict_loading=True` to
+`Mod(...)` when malformed discovered files should abort construction instead of
+being skipped with a diagnostic: it loads everything at construction.
+
+After `save()`, only the content whose files were written (and what is built
+from it) loads again on next use. `discard()` drops every unsaved edit and
+picks up files changed on disk the same way: what had no edits and whose files
+did not change stays in memory. `reload()` reloads everything.
 
 A script file in the mod's own folder with unbalanced braces (or another
 syntax problem) is a load failure. Files from the game or a base mod are read
@@ -894,15 +907,27 @@ English. English loads with the mod; another language is indexed on its first
 use. Languages are never mixed: `get_loc(key, language="german")` returns `None`
 for an English-only key rather than falling back.
 
+The readers (`get_loc`, `search_loc`, `all_loc`) also see the game's own
+text: a key the mod does not define comes from the game's
+`localisation/<language>` files, with entries in a `replace` folder winning,
+and the mod's entry (with unsaved edits) always wins over the game's. With
+base mods, the game is one of the inherited layers above. With only
+`hoi4_install`, the game's files of a language are indexed on the first
+lookup the mod's tables miss, not at load. Files the mod hides with
+`replace_path` are left out. The game's entries are never part of the mod:
+`save()` does not write them, and `set_loc`, `delete_loc` and
+`copy_loc_to_languages` work on the mod's entries only (deleting a mod entry
+uncovers the game's text again).
+
 ### Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_loc(key, *, language="english") -> str \| None` | `str \| None` | Get one language's localized string |
+| `get_loc(key, *, language="english") -> str \| None` | `str \| None` | Get one language's localized string: the mod's entry, else the game's |
 | `set_loc(key, value, file_path=None, *, language="english", replace=False) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `replace=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `file_path` inside `replace/`), which is how a mod overrides base-game keys. |
 | `delete_loc(key, *, language="english") -> bool` | `bool` | Remove one language's entry |
-| `search_loc(query, *, language="english") -> dict[str, str]` | `dict` | Case-insensitive substring search in one language's keys and values |
-| `all_loc(*, language="english") -> dict[str, str]` | `dict` | Full copy of one language's entries |
+| `search_loc(query, *, language="english") -> dict[str, str]` | `dict` | Case-insensitive substring search in one language's keys and values, the game's included |
+| `all_loc(*, language="english") -> dict[str, str]` | `dict` | Full copy of one language's entries: the game's, with the mod's on top |
 | `copy_loc_to_languages(keys=None, languages=None, *, overwrite=False) -> dict[str, list[str]]` | `dict` | Fill missing translations with the English text so players of other languages do not see raw keys. `keys` defaults to every English key the mod authors (inherited base-game text is never copied); `languages` defaults to every non-English language. New entries go to the file mirroring their English source (`events_l_english.yml` -> `events_l_german.yml`, `replace/` kept). Existing translations are kept unless `overwrite=True`. Returns the keys written per language. |
 
 Deleting a character or country also removes its generated keys from every
@@ -1056,8 +1081,9 @@ its severity. Stages are:
 Pass `validate_icons=True` to scan real interface `.gfx` files and warn about
 missing focus and idea icons. Pass `strict_localization=True` for a final audit
 of event, idea, country, and leader localization. Icon/reference and installed
-vocabulary scans are cached per `Mod` instance; call `reload()` (or the
-equivalent `discard()`) to discard queued edits and refresh from disk.
+vocabulary scans are cached per `Mod` instance; call `reload()` (or
+`discard()`, which also drops these caches) to discard queued edits and
+refresh from disk.
 
 With `hoi4_install` configured, `game_script_vocabulary()` exposes documented
 effect, trigger, and modifier tokens, installed-game usage counts by domain,
@@ -1108,7 +1134,7 @@ It is deliberately structural. `analysis_scope` is `"structural"` and
 prove that popularity thresholds, variables, or mutually dependent triggers
 are achievable in an actual campaign.
 
-`preview()` and `save()` compare every target source file with the byte snapshot captured when `Mod` loaded. If a legacy Studio writer or another worker changes one, they raise `ExternalModificationError` instead of overwriting it. Use one `Mod` per operation/thread; on this exception, call `reload()` and deliberately reapply the edit.
+`preview()` and `save()` check every target source file against the state recorded when `Mod` loaded (or last saved, discarded or reloaded): its size and modification time, and a digest of the text the SDK read. If a legacy Studio writer or another worker changes one, they raise `ExternalModificationError` instead of overwriting it. A file whose modification time changed but whose text did not (a `touch`) is not a change. Use one `Mod` per operation/thread; on this exception, call `reload()` and deliberately reapply the edit.
 
 Long validations expose phase progress and cooperative cancellation:
 
@@ -1860,7 +1886,8 @@ Without base mods, `content_source()` and `content_files()` apply the writable
 descriptor's replacement paths to vanilla fallback files as well. Writable
 files remain visible within replaced directories. In this unlayered mode,
 these two discovery methods reread `descriptor.mod` on each call; with base
-mods, call `reload()` after changing a descriptor to rebuild the layer snapshot.
+mods, the descriptors are read when the `Mod` is built: call `reload()` after
+changing one.
 
 `write_mod_descriptors(..., dependencies=["Magna Europa"])` (and the
 `generate_mod_descriptor` wrapper) writes dependency names into both descriptors;
@@ -1885,13 +1912,16 @@ this does not infer filesystem paths or replacement policy.
   writable facade's model lists. A clean facade validation is therefore not a
   full audit of all inherited base script files.
 
-The fallback uses a private temporary content snapshot under
-`~/.cache/hoi4-sdk`, with copy-on-write clones where supported and safe copies
-otherwise. It excludes executables, music, and packed DLC. Asset-heavy installs
-can require substantial space on filesystems without reflinks. Never hardlink
-snapshot content to game files. `reload()`/`discard()` rebuild the snapshot to
-observe changed dependencies; temporary snapshots are automatically cleaned up
-with their instance. SDK writes remain exclusively inside the writable mod.
+The fallback copies nothing: every read goes to the winning file in the game
+or base mod folder, where it is (`hoi4.layers.ContentLayers`). Only the runtime
+content folders are layered (`common`, `history`, `events`, `decisions`, `map`,
+`gfx`, `interface`, `localisation`, `localization`, `portraits`,
+`documentation`); executables, music and packed DLC are not. Building a `Mod`
+with base mods costs about the same as without them. `save()` and `discard()`
+reload only what changed, as without base mods; when a text file of a base mod
+changed, appeared or went away (found by size and modification time, like the
+mod's own files), they reload everything. The game folder is not watched.
+SDK writes remain exclusively inside the writable mod.
 
 
 ### Support script imports and scripted triggers
@@ -2038,8 +2068,8 @@ explain the syntax tree, span patching and byte-exact file I/O in detail.
 | `hoi4.textio.read_text(path)` / `decode_text(data)` | File to text with `"\n"` line endings, no byte-order mark, no byte dropped. |
 | `hoi4.textio.encode_text(text, *, like=None, bom=None)` / `write_text(path, text, *, like=None, bom=None)` | Text back to bytes in the format of `like` (encoding, byte-order mark, line endings). |
 | `hoi4.parse_pdx(text, *, strict=True) -> PdxNode` | Editable tree. Raises `ParseError` on malformed input unless `strict=False`. `PdxNode.key_quoted` says whether the key was quoted, `PdxNode.tag` holds `rgb` for a typed block. |
-| `hoi4.focus.load_focus_tree(path, text=None, *, tree_id=None)` | The first tree of a focus file, or the one with `tree_id` (the file stem selects the shared-focus container). `load_focus_trees(path, text=None)` returns all of them. |
-| `hoi4.ideas.read_ideas_text(text, path=None) -> tuple[list[Idea], str]` | Every idea of an ideas file and the container name (`ideas` or `country_ideas`). |
+| `hoi4.focus.load_focus_tree(path, text=None, *, tree_id=None)` | The first tree of a focus file, or the one with `tree_id` (the file stem selects the shared-focus container). `load_focus_trees(path, text=None, *, document=None)` returns all of them; `document` is the text already parsed with `hoi4.syntax.parse`. |
+| `hoi4.ideas.read_ideas_text(text, path=None, *, document=None) -> tuple[list[Idea], str]` | Every idea of an ideas file and the container name (`ideas` or `country_ideas`). Pass `document` when the text is already parsed. |
 | `hoi4.ideologies.load_ideologies_text(text, path=None, *, is_vanilla=False)` | Every ideology of a file's text. |
 | `hoi4.dynamic_modifiers.load_dynamic_modifiers_text(text, path=None)` | Every top-level dynamic modifier of a file's text. |
 | `hoi4.countries.color_from_value(value)` | RGB of a colour value from the syntax tree (`rgb`, plain, `hsv`, `hsv360`), or `None`. |

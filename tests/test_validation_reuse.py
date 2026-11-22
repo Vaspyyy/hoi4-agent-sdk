@@ -157,3 +157,33 @@ def test_shared_data_is_built_once_per_run(mod: Mod, monkeypatch: pytest.MonkeyP
 
     mod.validate(stage="release")
     assert counts["_build_semantic_script_sources"] == 2
+
+
+def test_the_mods_sprites_are_read_once_per_run(
+    mod: Mod, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hoi4.mod._catalogs as catalogs
+
+    write(
+        mod.mod_root,
+        "interface/mod.gfx",
+        "spriteTypes = { spriteType = { name = GFX_mod texturefile = gfx/mod.dds } }\n",
+    )
+    reads: list[Path] = []
+    original = catalogs.read_text
+
+    def counted(path: Path) -> str:
+        reads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(catalogs, "read_text", counted)
+    mod._validation_run = {}
+    try:
+        assert mod._known_sprite_textures()["GFX_mod"] == "gfx/mod.dds"
+        assert mod._known_sprite_textures()["GFX_mod"] == "gfx/mod.dds"
+    finally:
+        mod._validation_run = None
+    assert reads == [mod.mod_root / "interface/mod.gfx"]
+    # Outside a run every call reads the mod again, so edits show at once.
+    mod._known_sprite_textures()
+    assert len(reads) == 2

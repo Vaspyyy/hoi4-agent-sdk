@@ -11,11 +11,12 @@ from ..characters import (
 )
 from ..countries import (
     _country_localisation_suffixes,
+    country_file_paths,
+    country_history_target,
     serialize_country_colors_file,
 )
 from ..paths import (
     require_country_tag,
-    resolve_mod_output_path,
     safe_file_stem,
 )
 from ..types import (
@@ -24,6 +25,7 @@ from ..types import (
 )
 from ._characters import CharactersLayer
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
 
@@ -90,12 +92,10 @@ class CountryAuthoringLayer(CharactersLayer):
             resolved = path.resolve(strict=False)
             if resolved.is_relative_to(self.mod_root):
                 return resolved
-            if self._base_content_root is not None and resolved.is_relative_to(self._base_content_root):
-                return resolve_mod_output_path(
-                    self.mod_root,
-                    resolved.relative_to(self._base_content_root),
-                )
-            return None
+            relative = (
+                self._base_content.relative(resolved) if self._base_content is not None else None
+            )
+            return self._output_path(relative) if relative is not None else None
 
         leader = Leader(
             name=leader_name,
@@ -132,6 +132,7 @@ class CountryAuthoringLayer(CharactersLayer):
             touched_fields={"*"},
         )
         self._countries[tag] = country
+        self._note_country_files(country)
         self._created_country_tags.add(tag)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
@@ -180,7 +181,6 @@ class CountryAuthoringLayer(CharactersLayer):
             country = self.get_country(tag)
         if country is None:
             return False
-        self._materialize_country_override(country)
         leader_kwargs = {}
         other_kwargs = {}
         for key, value in kwargs.items():
@@ -190,6 +190,15 @@ class CountryAuthoringLayer(CharactersLayer):
                 leader_kwargs[key.removeprefix("leader_")] = value
             else:
                 other_kwargs[key] = value
+        # Check the names before anything changes: a rejected call must not
+        # leave the country pointing at mod files that do not exist.
+        _check_fields(country, other_kwargs)
+        if leader_kwargs:
+            _check_fields(
+                country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1"),
+                leader_kwargs,
+            )
+        self._materialize_country_override(country)
         if other_kwargs:
             _set_fields(country, other_kwargs)
             if "color" in other_kwargs and "color_ui" not in other_kwargs:
@@ -210,9 +219,29 @@ class CountryAuthoringLayer(CharactersLayer):
             self._sync_country_loc(country)
         if leader_kwargs and country.leader is not None:
             self._sync_leader_character_model(country)
+        self._note_country_files(country)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
         return True
+
+    def _note_country_files(self, country: Country) -> None:
+        """Note the files a save will write for ``country``, as they are now.
+
+        They may be on disk although nothing has read them: files of a tag
+        that no tag file registers, or the history file that a new name
+        moves to (``TAG - Name.txt``). The save replaces them.
+        """
+
+        targets = country_file_paths(self.mod_root, country)
+        # Both names the history file can get. Which one the save takes
+        # depends on whether the file overrides an inherited one, and that
+        # is asked again when the save renders: it can have changed by then.
+        targets.extend(
+            country_history_target(self.mod_root, country, keep_history_path=keep)
+            for keep in (False, True)
+        )
+        for target in targets:
+            self._note_target(target)
 
     def _sync_leader_character_model(self, country: Country) -> None:
         leader = country.leader
@@ -290,7 +319,8 @@ class CountryAuthoringLayer(CharactersLayer):
         countries = {tag: self.get_country(tag) for tag in self.list_countries()}
         if not countries:
             raise ValueError("Cannot replace country colors with an empty registry")
-        target = resolve_mod_output_path(self.mod_root, "common/countries/colors.txt")
+        # The table this rebuild replaces, as it is now.
+        target = self._output_path("common/countries/colors.txt")
         self._script_file_updates[target] = serialize_country_colors_file(
             "", {tag: country.color for tag, country in countries.items()})
         self._dirty.add("script_files")

@@ -15,9 +15,11 @@ from ..idea_icons import (
 )
 from ..ideas import read_ideas_file
 from ..map_topology import (
+    ProvinceOwnership,
     TerritoryComponent,
     find_country_territory_components,
     find_enclosed_foreign_components,
+    province_ownership,
 )
 from ..paths import (
     require_country_tag,
@@ -73,44 +75,39 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
             "focus_trees": [],
         }
 
-        for base in [self._base_content_root, self.mod_root]:
-            if base is None:
-                continue
-            states_dir = base / "history" / "states"
-            if states_dir.exists():
-                for state_path in sorted(states_dir.glob("*.txt")):
-                    try:
-                        state_text = read_text(state_path)
-                    except Exception:
-                        continue
-                    if (
-                        f"owner = {tag}" not in state_text
-                        and f"add_core_of = {tag}" not in state_text
-                    ):
-                        continue
-                    try:
-                        state = read_state(state_path, text=state_text)
-                    except Exception:
-                        continue
-                    if state.owner == tag or tag in state.cores:
-                        if copy_states:
-                            try:
-                                state = self.get_state(state.id)
-                                if self._materialize_state_override(state):
-                                    self._dirty.add("states")
-                                    self._dirty_states.add(state.id)
-                            except KeyError:
-                                pass
-                        context["states"].append(dataclasses.asdict(state))
-
-            for ideas_dir in [base / "common" / "ideas", base / "common" / "national_ideas"]:
-                if not ideas_dir.exists():
+        for base in reversed(self._data_views()):
+            for state_path in base.glob("history/states", "*.txt").values():
+                try:
+                    state_text = read_text(state_path)
+                except Exception:
                     continue
-                candidates = [ideas_dir / f"{tag}.txt"]
+                if (
+                    f"owner = {tag}" not in state_text
+                    and f"add_core_of = {tag}" not in state_text
+                ):
+                    continue
+                try:
+                    state = read_state(state_path, text=state_text)
+                except Exception:
+                    continue
+                if state.owner == tag or tag in state.cores:
+                    if copy_states:
+                        try:
+                            state = self.get_state(state.id)
+                            if self._materialize_state_override(state):
+                                self._dirty.add("states")
+                                self._dirty_states.add(state.id)
+                        except KeyError:
+                            pass
+                    context["states"].append(dataclasses.asdict(state))
+
+            for ideas_dir in ("common/ideas", "common/national_ideas"):
+                names = [f"{tag}.txt"]
                 if country.name:
-                    candidates.append(ideas_dir / f"{country.name.lower().replace(' ', '_')}.txt")
-                for path in candidates:
-                    if not path.exists():
+                    names.append(f"{country.name.lower().replace(' ', '_')}.txt")
+                for name in names:
+                    path = base.file(f"{ideas_dir}/{name}")
+                    if path is None:
                         continue
                     try:
                         ideas, _ = read_ideas_file(path)
@@ -119,28 +116,26 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
                     for idea in ideas:
                         context["ideas"].append(dataclasses.asdict(idea))
 
-            focus_dir = base / "common" / "national_focus"
-            if focus_dir.exists():
-                for path in sorted(focus_dir.glob("*.txt")):
-                    try:
-                        raw_focus_text = read_text(path)
-                    except Exception:
-                        continue
-                    if tag not in raw_focus_text:
-                        continue  # cheap skip: the tag is not mentioned at all
-                    try:
-                        trees = load_focus_trees(path, text=raw_focus_text)
-                    except Exception:
-                        continue
-                    for tree in trees:
-                        if tree.country_tag == tag:
-                            context["focus_trees"].append(
-                                {
-                                    "id": tree.id,
-                                    "path": str(path),
-                                    "focus_ids": [focus.id for focus in tree.focuses],
-                                }
-                            )
+            for path in base.glob("common/national_focus", "*.txt").values():
+                try:
+                    raw_focus_text = read_text(path)
+                except Exception:
+                    continue
+                if tag not in raw_focus_text:
+                    continue  # cheap skip: the tag is not mentioned at all
+                try:
+                    trees = load_focus_trees(path, text=raw_focus_text)
+                except Exception:
+                    continue
+                for tree in trees:
+                    if tree.country_tag == tag:
+                        context["focus_trees"].append(
+                            {
+                                "id": tree.id,
+                                "path": str(path),
+                                "focus_ids": [focus.id for focus in tree.focuses],
+                            }
+                        )
 
         for key, value in self._loc_entries.items():
             if key == tag or key.startswith(f"{tag}_"):
@@ -224,14 +219,16 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
         if not self._is_known_country_tag(tag):
             raise KeyError(f"Country '{tag}' is not defined")
         country = self.get_country(tag)
+        states, ownership = self._territory_map()
         return find_country_territory_components(
             self.mod_root,
-            self._base_content_root,
-            self._effective_states(),
+            self._base_content,
+            states,
             country_tag=tag,
             capital_state_id=country.capital,
             minimum_land_provinces=minimum_land_provinces,
             allowed_state_ids=allowed_state_ids,
+            ownership=ownership,
         )
 
     def find_enclosed_foreign_states(
@@ -246,11 +243,27 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
         tag = require_country_tag(tag)
         if not self._is_known_country_tag(tag):
             raise KeyError(f"Country '{tag}' is not defined")
+        states, ownership = self._territory_map()
         return find_enclosed_foreign_components(
             self.mod_root,
-            self._base_content_root,
-            self._effective_states(),
+            self._base_content,
+            states,
             country_tag=tag,
             minimum_land_provinces=minimum_land_provinces,
             allowed_state_ids=allowed_state_ids,
+            ownership=ownership,
         )
+
+    def _territory_map(self) -> tuple[list[State], ProvinceOwnership]:
+        """The effective states and the owner of every province of the map.
+
+        Built once per validate() run, where the country package check asks
+        for every country; outside a run, on every call. Raises like
+        ``find_disconnected_states()`` when the map cannot be read.
+        """
+
+        def build() -> tuple[list[State], ProvinceOwnership]:
+            states = self._effective_states()
+            return states, province_ownership(self.mod_root, self._base_content, states)
+
+        return self._run_cached("territory_map", build)

@@ -26,14 +26,19 @@ settings.register_profile(
 )
 settings.load_profile(os.environ.get("HOI4_HYPOTHESIS_PROFILE", "ci"))
 
+# Every save() and discard() checks that reloading only what changed gives the
+# same data as a full reload (see docs/internals/mod_sections.md).
+os.environ.setdefault("HOI4_VERIFY_RELOAD", "1")
+
 
 @pytest.fixture(autouse=True, scope="session")
 def private_vocabulary_cache(tmp_path_factory: pytest.TempPathFactory) -> None:
-    """Keep the script vocabulary cache of the test run out of the user's cache.
+    """Keep the disk caches of the test run out of the user's cache.
 
-    The user cache keeps only a few installs. The many small fake installs the
-    tests build would push the real game's entry out, and the next real
-    validation would read the whole game again.
+    That is the script vocabulary and the per-file results of inherited files
+    (``hoi4._disk_cache``). The user cache keeps only a few installs. The many
+    small fake installs the tests build would push the real game's entry out,
+    and the next real validation would read the whole game again.
     """
 
     if "HOI4_SDK_CACHE_DIR" not in os.environ:

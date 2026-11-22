@@ -80,6 +80,8 @@ def test_rejected_country_tag_keeps_clean_tree_clean(tmp_path: Path) -> None:
     original = (Path(__file__).parent / "fixtures/GER_focus.txt").read_bytes()
     path.write_bytes(original)
     mod = Mod(tmp_path)
+    # Sections load on first use; compare the fully loaded state.
+    mod._load_all_sections()
     before = mod._snapshot()
 
     with pytest.raises(TypeError, match="country_tag"):

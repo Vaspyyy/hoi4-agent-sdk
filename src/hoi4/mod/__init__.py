@@ -54,14 +54,14 @@ only the ones it does not already reach through another base.
 * ``_definitions``: Script imports and the keyed ``common/`` definition API. Uses only
   ``_core``.
 * ``_assets``: Flag, portrait, icon and picture imports. Uses only ``_core``.
-* ``_loading``: Initial load of every content type from disk. Uses ``_localisation``,
-  ``_countries``.
+* ``_loading``: Loaders of every content type, run section by section on first use.
+  Uses ``_countries``.
 * ``_script_validation``: Script vocabulary, reference and localisation validation. Uses
   ``_localisation``, ``_sources``, ``_catalogs``, ``_states``.
 * ``_oob_validation``: Order-of-battle validation against the effective game data. Uses
   ``_sources``, ``_catalogs``, ``_equipment``, ``_countries``, ``_states``.
 * ``_country_package``: Country package completeness validation. Uses
-  ``_localisation``, ``_sources``, ``_catalogs``, ``_equipment``, ``_countries``,
+  ``_localisation``, ``_catalogs``, ``_equipment``, ``_countries``,
   ``_characters``, ``_oobs``, ``_states``, ``_context``, ``_oob_validation``.
 * ``_validation``: The staged ``validate()`` entry point and related reports. Uses
   ``_localisation``, ``_sources``, ``_catalogs``, ``_states``, ``_map``, ``_context``, ``_definitions``,
@@ -127,8 +127,12 @@ class Mod(
             strict_loading=strict_loading,
             base_mod_paths=base_mod_paths,
         )
-        self._load()
+        # Content loads section by section on first use (see ``SECTIONS`` in
+        # ``_core``). Strict loading reads everything now, so a broken file
+        # still fails here.
         self._capture_source_baseline()
+        if strict_loading:
+            self._load_all_sections()
 
     @classmethod
     def from_config(

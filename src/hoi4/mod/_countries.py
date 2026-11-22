@@ -22,7 +22,6 @@ from ..patching import (
 )
 from ..paths import (
     require_country_tag,
-    resolve_mod_output_path,
 )
 from ..politics import LEADER_IDEOLOGIES_BY_PARTY, RULING_PARTIES
 from ..script import (
@@ -64,7 +63,7 @@ class CountriesLayer(CoreLayer):
             country = read_country(
                 self.mod_root,
                 tag,
-                self._base_content_root,
+                self._base_content,
                 _tag_mappings=self._country_tag_mappings,
                 _color_sources=self._country_color_sources,
             )
@@ -122,20 +121,20 @@ class CountriesLayer(CoreLayer):
         country = read_country(
             self.mod_root,
             tag,
-            self._base_content_root,
+            self._base_content,
             _tag_mappings=self._country_tag_mappings,
             _color_sources=self._country_color_sources,
         )
         self._countries[tag] = country
+        # Not one of the mod's loaded countries: a country of the game, a
+        # base mod, or a new file. It is only a lookup's cache, so save() and
+        # discard() drop it with the section, as a full reload used to.
+        self._reload_on_discard.add("countries")
         for path in country_file_paths(self.mod_root, country):
             if path.exists():
-                self._original_files.setdefault(
-                    path, read_text(path)
-                )
-                if path.resolve(strict=False).is_relative_to(self.mod_root):
-                    self._source_baseline.setdefault(
-                        path.resolve(strict=False), path.read_bytes()
-                    )
+                text = read_text(path)
+                self._original_files.setdefault(path, text)
+                self._note_read(path, text)
         return country
 
     def set_country_name_pool(
@@ -171,6 +170,8 @@ class CountriesLayer(CoreLayer):
         sections.append(f"surnames = {{ {family} }}")
         if call:
             sections.append(f"callsigns = {{ {call} }}")
+        # save() patches the generated names file: note it as it is now.
+        self._note_target(self.mod_root / "common" / "names" / "00_generated_names.txt")
         self._country_name_pool_updates[tag] = "\n".join(sections)
         self._dirty.add("country_names")
         self._scan_cache.pop("country_name_pools", None)
@@ -287,14 +288,11 @@ class CountriesLayer(CoreLayer):
             # (Norway's history); the mod's copy is edited and written well formed.
             setattr(country, raw_field, repair(getattr(country, raw_field)))
             relative = fallback
-            if self._base_content_root is not None:
-                try:
-                    relative = source.resolve(strict=False).relative_to(self._base_content_root)
-                except ValueError:
-                    pass
-            target = resolve_mod_output_path(self.mod_root, relative)
+            if self._base_content is not None:
+                relative = self._base_content.relative(source.resolve(strict=False)) or fallback
+            target = self._output_path(relative)
             setattr(country, field_name, target)
-            self._original_files.setdefault(target, self._read_current_text(target))
+            self._original_files.setdefault(target, self._read_noted_text(target))
 
     @staticmethod
     def default_leader_ideology(ruling_party: str) -> str:

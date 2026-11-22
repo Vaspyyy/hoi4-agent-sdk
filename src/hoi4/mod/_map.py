@@ -7,8 +7,11 @@ import re
 import textwrap
 import warnings
 from pathlib import Path
-from typing import Any, Sequence
+from collections.abc import Callable
+from functools import partial
+from typing import Any, Sequence, TypeVar
 
+from .._disk_cache import DiskAnalysis
 from ..map_editing import (
     BUILDINGS_FILE,
     MAX_RAILWAY_LEVEL,
@@ -21,6 +24,10 @@ from ..map_editing import (
     StrategicRegion,
     add_supply_node_text,
     append_line,
+    decode_map_buildings,
+    decode_strategic_regions,
+    encode_map_buildings,
+    encode_strategic_regions,
     append_province_buildings,
     dated_history_province_references,
     join_victory_points,
@@ -55,9 +62,6 @@ from ..paths import (
     resolve_mod_output_path,
     safe_file_stem,
 )
-from ..states import (
-    build_state_index,
-)
 from ..types import (
     State,
     ValidationError,
@@ -65,6 +69,18 @@ from ..types import (
 from ._catalogs import CatalogsLayer
 from ._states import StatesLayer
 from ..textio import read_text
+
+_T = TypeVar("_T")
+
+
+def _parse_regions(text: str, *, path: str) -> list[StrategicRegion]:
+    return parse_strategic_regions(text, path)
+
+
+_REGIONS_ON_DISK = DiskAnalysis(
+    "strategic_regions", encode_strategic_regions, decode_strategic_regions
+)
+_BUILDINGS_ON_DISK = DiskAnalysis("map_buildings", encode_map_buildings, decode_map_buildings)
 
 
 class MapLayer(StatesLayer, CatalogsLayer):
@@ -500,6 +516,28 @@ class MapLayer(StatesLayer, CatalogsLayer):
             self._queue_map_text(BUILDINGS_FILE, remove_lines(text, indices))
         return len(indices)
 
+    def _map_result(
+        self,
+        relative: str,
+        purpose: str,
+        compute: Callable[[str], _T],
+        disk: DiskAnalysis[_T],
+    ) -> _T | None:
+        """``compute`` of a map file's pending or effective text; ``None`` when absent.
+
+        The result for an inherited file is kept on disk for later processes.
+        """
+
+        if relative in self._map_file_updates:
+            return compute(self._map_file_updates[relative])
+        source = self.content_source(relative)
+        if source is None or (
+            not source.is_relative_to(self.mod_root)
+            and self._mod_hides_inherited(Path(relative))
+        ):
+            return None
+        return self._cached_result(purpose, source, compute, disk)
+
     def _map_text(self, relative: str) -> str | None:
         """Pending or effective text of a map file; ``None`` when absent."""
 
@@ -511,10 +549,12 @@ class MapLayer(StatesLayer, CatalogsLayer):
             and self._mod_hides_inherited(Path(relative))
         ):
             return None
-        return read_text(source)
+        # What is read here is what an edit of the map file builds on.
+        return self._keep_source(source, read_text(source))
 
     def _queue_map_text(self, relative: str, text: str) -> None:
-        resolve_mod_output_path(self.mod_root, relative)
+        # The map file this edit replaces, as it is now.
+        self._note_target(resolve_mod_output_path(self.mod_root, relative))
         self._map_file_updates[relative] = text
         self._dirty.add("map")
 
@@ -593,7 +633,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
     def _optional_land_adjacency(self) -> dict[int, set[int]] | None:
         try:
-            return load_land_adjacency(self.mod_root, self._base_content_root)
+            return load_land_adjacency(self.mod_root, self._base_content)
         except (FileNotFoundError, RuntimeError, OSError, ValueError):
             return None
 
@@ -785,7 +825,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         partial = sorted({entry.state_id for entry in candidates} - fully_moved)
         if partial:
             try:
-                grid = load_province_grid(self.mod_root, self._base_content_root)
+                grid = load_province_grid(self.mod_root, self._base_content)
             except (FileNotFoundError, RuntimeError, OSError, ValueError) as error:
                 problems.append(
                     "map/buildings.txt positions of state(s) "
@@ -818,33 +858,28 @@ class MapLayer(StatesLayer, CatalogsLayer):
             resolved = candidate.resolve(strict=False)
             if resolved.is_relative_to(self.mod_root):
                 relatives.append(resolved.relative_to(self.mod_root))
-            elif self._base_content_root is not None and resolved.is_relative_to(
-                self._base_content_root.resolve()
-            ):
-                relatives.append(resolved.relative_to(self._base_content_root.resolve()))
-        if self._base_content_root is not None:
-            if self._inherited_state_source_paths is None:
-                inherited_paths: dict[int, Path] = {}
-                for entry in build_state_index(self._base_content_root / "history" / "states"):
-                    if self._is_shadowed_by_mod(self._base_content_root, Path(entry["path"])):
-                        continue
-                    inherited_paths.setdefault(entry["id"], Path(entry["path"]))
-                self._inherited_state_source_paths = inherited_paths
-            inherited = self._inherited_state_source_paths.get(state_id)
+            elif self._base_content is not None:
+                relative = self._base_content.relative(resolved)
+                if relative is not None:
+                    relatives.append(relative)
+        if self._base_content is not None:
+            inherited = self._inherited_state_paths().get(state_id)
             if inherited is not None:
-                relatives.append(inherited.relative_to(self._base_content_root))
+                relative = self._base_content.relative(inherited)
+                assert relative is not None
+                relatives.append(relative)
         shadow = (
             f"# State {state_id} was removed by hoi4-agent-sdk map editing.\n"
             "# This empty file shadows the inherited definition.\n"
         )
         for relative in dict.fromkeys(relatives):
             if self._content_layers is not None:
-                inherited_file = relative in self._content_layers.lower_sources
+                inherited_file = self._content_layers.inherited(relative) is not None
             else:
                 inherited_file = (
                     self.hoi4_install is not None and (self.hoi4_install / relative).is_file()
                 )
-            target = resolve_mod_output_path(self.mod_root, relative)
+            target = self._output_path(relative)
             self._deleted_state_files[target] = shadow if inherited_file else None
         self._states.pop(state_id, None)
         if state_id in self._state_ids:
@@ -873,11 +908,16 @@ class MapLayer(StatesLayer, CatalogsLayer):
         if region_files:
             regions = []
             for relative in region_files:
-                text = self._map_text(relative)
-                if text is None:
-                    continue
                 try:
-                    regions.extend(parse_strategic_regions(text, relative))
+                    found = self._map_result(
+                        relative,
+                        f"strategic_regions:{relative}",
+                        partial(_parse_regions, path=relative),
+                        _REGIONS_ON_DISK,
+                    )
+                    if found is None:
+                        continue
+                    regions.extend(found)
                 except ParseError as error:
                     errors.append(
                         ValidationError(
@@ -889,7 +929,9 @@ class MapLayer(StatesLayer, CatalogsLayer):
                     )
         supply_text = self._map_text(SUPPLY_NODES_FILE)
         railway_text = self._map_text(RAILWAYS_FILE)
-        buildings_text = self._map_text(BUILDINGS_FILE)
+        buildings = self._map_result(
+            BUILDINGS_FILE, "map_buildings", parse_map_buildings, _BUILDINGS_ON_DISK
+        )
         adjacency = None
         if railway_text is not None and (
             RAILWAYS_FILE in self._map_file_updates
@@ -907,7 +949,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
                     else [province for _, province in parse_supply_nodes(supply_text)]
                 ),
                 railways=None if railway_text is None else parse_railways(railway_text),
-                buildings=None if buildings_text is None else parse_map_buildings(buildings_text),
+                buildings=buildings,
                 land_adjacency=adjacency,
                 railway_path=RAILWAYS_FILE,
                 supply_path=SUPPLY_NODES_FILE,
