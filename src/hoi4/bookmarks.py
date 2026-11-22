@@ -300,9 +300,10 @@ def _patch_bookmark_body(
             body = set_scalar(body, "default", value)
         elif field_name == "filters":
             body = set_block(body, "filters", bookmark.filters or None)
-        elif field_name == "effect":
+        elif field_name in ("effect", "countries"):
             # Effect blocks conventionally follow the country entries. Handle
             # this after country patching so a new bookmark matches that shape.
+            # The country entries are patched below, whatever was touched.
             continue
         else:
             raise ValueError(f"Unknown bookmark field: {field_name}")

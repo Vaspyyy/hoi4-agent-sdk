@@ -34,6 +34,9 @@ say what you got, no duplicate entry points, and the script builders moved to
 | `mod.create_oob(name, tag)` without content: no file written, but the country was assigned the name | writes the file with an empty `units = { }` | The country pointed at a file that did not exist |
 | `mod.set_state_owner(state_id=...)` (keyword) | `mod.set_state_owner(state_ids=...)`, or pass it by position | The argument takes one id or a list |
 | `mod.preview()` listing the files in an order that changed from run to run | lists them in path order | The same edits give the same text |
+| `mod.create_bookmark(name, ..., overwrite=True)` that raised (a wrong entry in `countries`, a path outside the mod): the bookmark that was there was gone, and the next `save()` wrote an empty file over it | the old bookmark stays as it was; the caller's `BookmarkCountry` objects are not changed either | A call that raises changes nothing |
+| `mod.update_bookmark(name, countries=[...])`: accepted, then `preview()` and `save()` raised `ValueError: Unknown bookmark field` | replaces the bookmark's country entries | No field that is accepted and cannot be written |
+| `mod.create_character(tag, character)` with a wrong item in `character.portraits` or `character.roles`, `mod.add_character_instance(id, "x")`, `mod.add_event_option(id, "x")`: `AttributeError`, at the call or later in `preview()` | `TypeError` at the call that names the argument | Same rule as for the list arguments |
 | `effects.set_politics(party, elections_frequency=n)` | drop the argument | HOI4's `set_politics` has no such field; the argument only raised |
 | `Mod.ruling_parties()` | `mod.available_ruling_parties()` | Hard-coded table; the replacement reads the real ideologies |
 | `Mod.leader_ideologies_for_party(party)` | `mod.available_leader_ideologies(party)` | Hard-coded table; the replacement reads the real ideologies |

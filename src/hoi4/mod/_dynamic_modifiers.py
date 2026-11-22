@@ -143,11 +143,11 @@ class DynamicModifiersLayer(CoreLayer):
             raise ValueError(
                 f"Immutable/internal dynamic modifier fields: {sorted(forbidden)}"
             )
-        _check_fields("update_dynamic_modifier", dynamic_modifier, dict(kwargs))
+        _check_fields("update_dynamic_modifier", dynamic_modifier, kwargs)
         for key in ("enable", "remove_trigger"):
             if key in kwargs:
                 kwargs[key] = normalize_block_body(str(kwargs[key]))
-        _set_fields(dynamic_modifier, dict(kwargs))
+        _set_fields(dynamic_modifier, kwargs)
         dynamic_modifier.touched_fields.update(kwargs)
         if dynamic_modifier.path is not None:
             self._dirty_dynamic_modifier_files.add(dynamic_modifier.path)

@@ -113,6 +113,18 @@ def _check_model_lists(method: str, model: type, values: dict[str, Any]) -> None
             values[name] = _require_items(method, name, values[name], classes)
 
 
+def _check_model(method: str, obj: object, label: str) -> None:
+    """Raise ``TypeError`` when ``obj`` is not a model or one of its lists holds another class.
+
+    For a model the caller built and hands over whole (a ``Character``, an
+    ``EventOption``): its lists are checked like the ``**fields`` of an update.
+    """
+    if not dataclasses.is_dataclass(obj) or isinstance(obj, type):
+        raise TypeError(f"{method}(): {label} must be a model object, got {type(obj).__name__}")
+    for name, classes in _model_list_fields(type(obj)).items():
+        setattr(obj, name, _require_items(method, f"{label}.{name}", getattr(obj, name), classes))
+
+
 _MODEL_LIST_FIELDS: dict[type, dict[str, tuple[type, ...]]] = {}
 
 

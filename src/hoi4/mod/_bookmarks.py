@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Unpack
 
+import copy
 from pathlib import Path
 
 from ..fields import BookmarkCountryFields, BookmarkFields
@@ -30,6 +31,21 @@ from ._shared import (
     _require_items,
     _set_fields,
 )
+
+
+def _checked_bookmark_countries(method: str, countries: object) -> list[BookmarkCountry]:
+    """Return copies of ``countries`` with tag and DLC names in their written form.
+
+    It raises before anything changes, and it leaves the caller's own objects
+    as they are.
+    """
+    checked: list[BookmarkCountry] = []
+    for country in _require_items(method, "countries", countries, (BookmarkCountry,)):
+        entry = copy.copy(country)
+        entry.tag = require_bookmark_country_key(country.tag)
+        entry.required_dlc = normalize_required_dlc(country.required_dlc)
+        checked.append(entry)
+    return checked
 
 
 def _missing_bookmark_country(
@@ -109,8 +125,9 @@ class BookmarksLayer(CoreLayer):
         existing = next((item for item in self._bookmarks if item.name == name), None)
         if existing is not None and not overwrite:
             raise AlreadyExistsError(f"Bookmark '{name}' already exists")
-        if existing is not None:
-            self.delete_bookmark(name)
+        # Every check comes before the old bookmark goes, so a call that
+        # raises leaves it as it was.
+        selected_countries = _checked_bookmark_countries("create_bookmark", countries or [])
         target = (
             self._output_path(path)
             if path is not None
@@ -119,12 +136,10 @@ class BookmarksLayer(CoreLayer):
             / "bookmarks"
             / f"{safe_file_stem(name, fallback='bookmark')}.txt"
         )
-        selected_countries: list[BookmarkCountry] = _require_items(
-            "create_bookmark", "countries", countries or [], (BookmarkCountry,)
-        )
-        for country in selected_countries:
-            country.tag = require_bookmark_country_key(country.tag)
-            country.required_dlc = normalize_required_dlc(country.required_dlc)
+        filters = normalize_block_body(filters)
+        effect = normalize_block_body(effect)
+        if existing is not None:
+            self.delete_bookmark(name)
         bookmark = Bookmark(
             name=name,
             description=description,
@@ -132,8 +147,8 @@ class BookmarksLayer(CoreLayer):
             picture=picture,
             default_country=default_country,
             default=default,
-            filters=normalize_block_body(filters),
-            effect=normalize_block_body(effect),
+            filters=filters,
+            effect=effect,
             countries=selected_countries,
             path=target,
         )
@@ -159,6 +174,10 @@ class BookmarksLayer(CoreLayer):
         if forbidden:
             raise ValueError(f"Internal bookmark fields: {sorted(forbidden)}")
         _check_fields("update_bookmark", bookmark, kwargs, allow_path=True)
+        if kwargs.get("countries") is not None:
+            kwargs["countries"] = _checked_bookmark_countries(
+                "update_bookmark", kwargs["countries"]
+            )
         old_path = bookmark.path
         if "path" in kwargs:
             kwargs["path"] = self._output_path(kwargs["path"])

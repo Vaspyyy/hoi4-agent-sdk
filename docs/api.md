@@ -1567,7 +1567,7 @@ sibling definitions. All non-reserved scalar assignments belong to the modeled
 | `list_bookmarks() -> list[str]` | The names of the loaded bookmarks, sorted, each once. |
 | `get_bookmark(name, *, default=...) -> Bookmark` | Gets one bookmark by name. |
 | `create_bookmark(name, *, description="", date="1936.1.1.12", picture="GFX_select_date_1936", default_country="", default=None, filters="", effect="randomize_weather = 22345", countries=None, path=None, overwrite=False) -> Bookmark` | Creates a bookmark; its default effect randomizes weather. |
-| `update_bookmark(name, **fields) -> Bookmark` | Source-patches modeled bookmark fields. |
+| `update_bookmark(name, **fields) -> Bookmark` | Source-patches modeled bookmark fields. `countries=[...]` replaces the country entries (use `add_bookmark_country()`, `update_bookmark_country()` and `delete_bookmark_country()` to change one). |
 | `add_bookmark_country(bookmark_name, country) -> BookmarkCountry` | Appends one ordered country entry; a second entry for the same tag and DLC raises `AlreadyExistsError`. |
 | `update_bookmark_country(bookmark_name, tag, *, occurrence=0, **fields) -> BookmarkCountry` | Patches one repeated tag occurrence using a zero-based index. |
 | `delete_bookmark_country(bookmark_name, tag, *, occurrence=0) -> None` | Deletes one repeated tag occurrence using a zero-based index; raises `NotFoundError` for a missing bookmark or entry. |

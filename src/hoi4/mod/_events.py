@@ -25,6 +25,7 @@ from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_field_names,
     _check_fields,
+    _check_model,
     _create_arguments,
     _require_items,
     _set_fields,
@@ -297,6 +298,7 @@ class EventsLayer(CoreLayer):
             AlreadyExistsError: The event already has an option with this name.
         """
         event = self.get_event(event_id)
+        _check_model("add_event_option", option, "option")
         if option.name and any(existing.name == option.name for existing in event.options):
             raise already_exists(
                 "event option",

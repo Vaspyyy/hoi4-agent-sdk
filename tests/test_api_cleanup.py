@@ -1160,3 +1160,78 @@ def test_a_generator_of_models_is_read_once_and_kept(tmp_path) -> None:
     mod.update_oob("ABC_x", templates=iter([DivisionTemplate(name="Mot", battalions=[Battalion("infantry", 0, 0)])]))
     assert [item.name for item in mod.get_oob("ABC_x").templates] == ["Mot"]
     assert "Mot" in mod.preview()
+
+
+# ── Round 3 of the review: bookmarks ──
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error"),
+    [
+        ({"countries": ["nope"]}, TypeError),
+        ({"countries": [hoi4.BookmarkCountry(tag="not a tag")]}, ValueError),
+        ({"path": "../../x.txt"}, ValueError),
+    ],
+)
+def test_a_failed_overwrite_keeps_the_bookmark_that_was_there(tmp_path, arguments, error) -> None:
+    mod = Mod(tmp_path)
+    mod.create_bookmark("ZZ", countries=[hoi4.BookmarkCountry(tag="GER")], description="zzz")
+    mod.save()
+    path = tmp_path / "common/bookmarks/ZZ.txt"
+    before = path.read_text(encoding="utf-8")
+    mod = Mod(tmp_path)
+    with pytest.raises(error):
+        mod.create_bookmark("ZZ", overwrite=True, **arguments)
+    assert mod.list_bookmarks() == ["ZZ"]
+    assert mod.get_bookmark("ZZ").description == "zzz"
+    assert mod.preview() == ""
+    with pytest.warns(RuntimeWarning, match="No changes written"):
+        mod.save()
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_create_bookmark_leaves_the_callers_entries_alone(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    good = hoi4.BookmarkCountry(tag="ger")
+    with pytest.raises(ValueError):
+        mod.create_bookmark("ZZ", countries=[good, hoi4.BookmarkCountry(tag="not a tag")])
+    assert good.tag == "ger"  # not rewritten by the call that failed
+    assert mod.list_bookmarks() == []
+    assert mod.create_bookmark("ZZ", countries=[good]).countries[0].tag == "GER"
+
+
+def test_update_bookmark_replaces_the_country_entries(tmp_path) -> None:
+    """Before, the field was accepted and then ``preview()`` and ``save()`` raised."""
+    mod = Mod(tmp_path)
+    mod.create_bookmark(
+        "ZZ",
+        countries=[hoi4.BookmarkCountry(tag="GER", history="GER_DESC"), hoi4.BookmarkCountry(tag="FRA")],
+    )
+    mod.save()
+    mod = Mod(tmp_path)
+    with pytest.raises(ValueError):
+        mod.update_bookmark("ZZ", countries=[hoi4.BookmarkCountry(tag="not a tag")])
+    assert mod.preview() == ""
+    mod.update_bookmark("ZZ", countries=(hoi4.BookmarkCountry(tag=tag) for tag in ("ITA", "FRA")))
+    assert '"GER"' not in mod.preview().replace('-\t\t"GER"', "")
+    mod.save()
+    fresh = Mod(tmp_path)
+    assert [entry.tag for entry in fresh.get_bookmark("ZZ").countries] == ["ITA", "FRA"]
+    assert not fresh.load_diagnostics
+
+
+def test_a_model_handed_over_whole_is_checked_too(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    with pytest.raises(TypeError, match=r"create_character\(\): character.portraits must"):
+        mod.create_character("ABC", hoi4.Character(id="ABC_x", name="X", portraits=["x"]))  # type: ignore[list-item]
+    with pytest.raises(TypeError, match=r"create_character\(\): character must be a model"):
+        mod.create_character("ABC", "ABC_x")  # type: ignore[arg-type]
+    assert mod.list_characters(include_vanilla=False) == ["ABC_leader_1"]  # only the country's own
+    mod.create_character("ABC", hoi4.Character(id="ABC_x", name="X"))
+    with pytest.raises(TypeError, match=r"add_character_instance\(\): instance must be a model"):
+        mod.add_character_instance("ABC_x", "x")  # type: ignore[arg-type]
+    mod.create_event("zz.1")
+    with pytest.raises(TypeError, match=r"add_event_option\(\): option must be a model"):
+        mod.add_event_option("zz.1", "zz.1.b")  # type: ignore[arg-type]
+    mod.preview()

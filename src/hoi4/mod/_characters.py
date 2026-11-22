@@ -24,7 +24,7 @@ from ..paths import (
 from ..textio import read_text
 from ..errors import AlreadyExistsError, NotFoundError, not_found
 from ._countries import CountriesLayer
-from ._shared import MISSING, _D, _Missing, _check_field_names, _check_model_lists
+from ._shared import MISSING, _D, _Missing, _check_field_names, _check_model, _check_model_lists
 from ._localisation import LocalisationLayer
 
 
@@ -157,6 +157,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 is outside the mod.
         """
         tag = require_country_tag(tag)
+        _check_model("create_character", character, "character")
         character_id = require_script_id(character.id, label="character ID")
         if recruit and not self._is_known_country_tag(tag):
             raise not_found(
@@ -292,6 +293,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 is configured.
         """
         character = self.get_character(character_id)
+        _check_model("add_character_instance", instance, "instance")
         self._materialize_character_override(character)
         new_instance = copy.deepcopy(instance)
         new_instance.source_occurrence = -1
