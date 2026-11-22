@@ -402,10 +402,13 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
                 self._dirty_decision_files.add(category.path)
         return True
 
-    def delete_decision(self, decision_id: str) -> bool:
-        decision = self._decisions.get(decision_id)
-        if decision is None:
-            return False
+    def delete_decision(self, decision_id: str) -> None:
+        """Stage the deletion of a decision; its category drops the reference.
+
+        Raises:
+            NotFoundError: No decision has this id.
+        """
+        decision = self.get_decision(decision_id)
         del self._decisions[decision_id]
         if decision.path is not None:
             self._dirty_decision_files.add(decision.path)
@@ -418,7 +421,6 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             if category.path is not None:
                 self._dirty_decision_files.add(category.path)
         self._dirty.add("decisions")
-        return True
 
     def create_decision_chain(
         self,

@@ -375,7 +375,7 @@ def test_shared_focus_references_are_edited_in_place(tmp_path: Path) -> None:
 def test_deleting_the_container_removes_only_top_level_focus_blocks(tmp_path: Path) -> None:
     path = _write(tmp_path, MIXED)
     mod = Mod(tmp_path)
-    assert mod.delete_focus_tree("TST_focus")
+    mod.delete_focus_tree("TST_focus")
     mod.save()
     written = path.read_text()
     assert "SH_root = " not in written and "id = SH_root" not in written
@@ -663,7 +663,7 @@ def test_several_trees_with_and_without_id_in_one_file(tmp_path: Path) -> None:
 def test_deleting_an_unnamed_tree_removes_only_that_block(tmp_path: Path) -> None:
     path = _write(tmp_path, MANY_TREES, name="many.txt")
     mod = Mod(tmp_path)
-    assert mod.delete_focus_tree("many_3")
+    mod.delete_focus_tree("many_3")
     mod.save()
     assert path.read_text() == MANY_TREES.replace(
         "focus_tree = {\n\tfocus = { id = c1 x = 0 }\n}\n", ""

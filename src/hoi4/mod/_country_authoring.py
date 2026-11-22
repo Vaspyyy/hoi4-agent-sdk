@@ -22,6 +22,7 @@ from ..types import (
     Country,
     Leader,
 )
+from ..errors import ReadOnlyError, not_found
 from ._characters import CharactersLayer
 from ._shared import (
     _set_fields,
@@ -243,23 +244,30 @@ class CountryAuthoringLayer(CharactersLayer):
             character.touched_fields.add("roles")
         self._mark_character_dirty(character)
 
-    def delete_country(self, tag: str) -> bool:
-        try:
-            tag = require_country_tag(tag)
-        except ValueError:
-            return False
+    def delete_country(self, tag: str) -> None:
+        """Stage the deletion of a country the mod defines, with its generated localisation.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+            ReadOnlyError: The game or a base mod defines ``tag``; removing it
+                needs a total-conversion tag replacement instead.
+        """
+        tag = require_country_tag(tag)
+        read_only = ReadOnlyError(
+            f"Cannot delete game country '{tag}' without an explicit total-conversion "
+            "tag replacement strategy"
+        )
         if tag not in self._countries:
-            return False
-        country = self._countries.pop(tag)
+            if self._is_known_country_tag(tag):
+                raise read_only
+            raise not_found("country", tag, self.list_countries(), plural="countries")
+        country = self._countries[tag]
         if any(
             path is not None and not path.resolve(strict=False).is_relative_to(self.mod_root)
             for path in (country.definition_path, country.history_path, country.character_path)
         ):
-            self._countries[tag] = country
-            raise ValueError(
-                f"Cannot delete vanilla country '{tag}' without an explicit total-conversion "
-                "tag replacement strategy"
-            )
+            raise read_only
+        del self._countries[tag]
         self._deleted_countries[tag] = country
         self._created_country_tags.discard(tag)
         loc_keys: list[str] = []
@@ -273,7 +281,6 @@ class CountryAuthoringLayer(CharactersLayer):
             self._delete_loc_all_languages(key)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
-        return True
 
     def rebuild_country_color_table(self) -> Path:
         """Queue a complete table for a conversion replacing all country tags.

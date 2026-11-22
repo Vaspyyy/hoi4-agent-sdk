@@ -308,7 +308,7 @@ def test_delete_last_inherited_localization_preserves_empty_override(tmp_path, e
         comment = "Override comment"
     originals = {p: p.read_bytes() for p in (game_source, source)}
     mod = Mod(top, hoi4_install=game, base_mod_paths=[a, b])
-    assert mod.delete_loc("ancient")
+    mod.delete_loc("ancient")
     assert mod.get_loc("ancient") is None
     assert mod.preview()
     result = mod.save(require_changes=True)
@@ -340,7 +340,7 @@ def test_delete_last_localization_without_fallback_removes_file(tmp_path, mode):
             'replace_path="localisation"')
     target = put(top, relative, 'l_english:\n ancient:0 "Top"\n')
     mod = Mod(top, base_mod_paths=[] if mode == "standalone" else [a, b])
-    assert mod.delete_loc("ancient")
+    mod.delete_loc("ancient")
     result = mod.save(require_changes=True)
     print(result)
     assert not target.exists()

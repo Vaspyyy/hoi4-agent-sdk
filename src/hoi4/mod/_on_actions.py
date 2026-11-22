@@ -248,16 +248,23 @@ class OnActionsLayer(CoreLayer):
         *,
         occurrence: int | None = None,
         source_path: str | Path | None = None,
-    ) -> bool:
-        actions = self._on_action_occurrences.get(action_id)
-        if not actions:
-            return False
+    ) -> None:
+        """Stage the deletion of one occurrence of an on-action hook.
+
+        When the hook has several occurrences, pass ``occurrence=`` or
+        ``source_path=`` to choose one.
+
+        Raises:
+            NotFoundError: The hook, or the chosen occurrence, does not exist.
+            ValueError: The hook has several occurrences and none was chosen.
+        """
         index, action = self._select_on_action_occurrence(
             action_id,
             occurrence=occurrence,
             source_path=source_path,
             require_unique=True,
         )
+        actions = self._on_action_occurrences[action_id]
         del actions[index]
         if actions:
             self._on_actions[action_id] = actions[0]
@@ -269,4 +276,3 @@ class OnActionsLayer(CoreLayer):
         self._dirty_on_action_files.add(
             action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
         )
-        return True

@@ -362,7 +362,7 @@ def test_runtime_released_country_is_not_treated_as_starting_country(
 ) -> None:
     mod = _build_complete_country(tmp_path)
     mod.set_state_owner(1, "OLD")
-    assert mod.delete_oob("ABC_1936")
+    mod.delete_oob("ABC_1936")
     tree = mod.create_focus_tree("old_focus", "OLD")
     mod.add_focus(
         tree.id,
@@ -397,7 +397,7 @@ def test_explicit_starting_lifecycle_retains_starting_package_requirements(
 ) -> None:
     mod = _build_complete_country(tmp_path)
     mod.set_state_owner(1, "OLD")
-    assert mod.delete_oob("ABC_1936")
+    mod.delete_oob("ABC_1936")
 
     codes = {
         finding.code
@@ -438,7 +438,7 @@ def test_runtime_release_validates_declared_capital_setup(
 ) -> None:
     mod = _build_complete_country(tmp_path)
     mod.set_state_owner(1, "OLD")
-    assert mod.delete_oob("ABC_1936")
+    mod.delete_oob("ABC_1936")
     tree = mod.create_focus_tree("old_focus", "OLD")
     mod.add_focus(
         tree.id,

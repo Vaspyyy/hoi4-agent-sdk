@@ -33,6 +33,12 @@ say what you got, no duplicate entry points, and the script builders moved to
 | `Mod.effect_block(...)`, `Mod.scope_block(...)` | `effects.block(...)`, `effects.scope_block(...)` | Pass-throughs to the module functions |
 | `hoi4.import_flag_to_mod(mod_root, ...)`, `hoi4.import_portrait_to_mod(mod_root, ...)`, `hoi4.write_portrait_gfx(mod_root, ...)` | `mod.import_flag_to_mod(...)` and friends (staged), or `hoi4.assets.import_flag_to_mod(...)` (writes at once) | Same names as the `Mod` methods but write at once and bypass transactions; no longer in `hoi4.__all__` |
 | `hoi4.version`, `hoi4.PackageNotFoundError` | `importlib.metadata.version`, `importlib.metadata.PackageNotFoundError` | Leaked imports |
+| `if mod.delete_x(id): ...` (bookmark, character, country, decision, dynamic_modifier, event, focus_tree, idea, ideology, loc, on_action, oob) returning `bool` | `mod.delete_x(id)` returns `None`; a missing target raises `NotFoundError` | A `False` that nobody checked hid typos |
+| `mod.delete_bookmark_country(name, tag, occurrence=n)`, `mod.delete_character_instance(id, n)` returning `False` for a missing entry | return `None`; a missing entry raises `NotFoundError` | Same rule for a missing child as for a missing parent |
+| `mod.delete_definition(kind, id)` returning the `Path` | returns `None` | `delete_*` returns nothing |
+| `mod.delete_country(tag)` with an invalid tag returning `False` | raises `ValueError` | An invalid tag is a mistake, not "not there" |
+| `mod.delete_country("GER")`, `mod.delete_ideology("fascism")`, `mod.delete_oob("GER_1936")` on game content: `False` or `ValueError` | `ReadOnlyError` (a `ValueError`) | Says why: game content is overridden, not deleted |
+| `mod.delete_loc(key)` for a key only the game defines: `False` | `ReadOnlyError`; override the text with `set_loc()` | Says why |
 | `hoi4.bookmarks.load_bookmarks`, `hoi4.decisions.write_decisions_file`, `hoi4.focus.write_focus_tree`, `hoi4.ideologies.load_ideologies`, `hoi4.localisation.delete_localization_keys`, `hoi4.on_actions.write_on_actions_file`, `hoi4.states.ensure_state_in_mod`, `hoi4.states.patch_state_history_owner_cores`, `hoi4.tags.load_all_tags`, `hoi4.validation.collect_character_ids` | the matching `Mod` method (`mod.list_bookmarks()`, `mod.save()`, ...) | Unused module functions that bypassed the `Mod` staging |
 
 ### Added

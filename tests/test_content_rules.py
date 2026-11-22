@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from hoi4 import Mod
+from hoi4 import Mod, ReadOnlyError
 from hoi4.types import Event, EventOption, Focus, FocusTree, Idea, ValidationError
 from hoi4.validation import (
     validate_event,
@@ -682,7 +682,10 @@ def test_strict_localisation_reads_names_the_way_the_game_does(tmp_path, game):
     mod.create_event("t.1", title="t.1.t", options=[EventOption(name="t.1.a", effect="x = 1")])
     # Drop the names create_country wrote, so only the game's keys remain.
     for key in [key for key in mod.all_loc() if key.startswith(("BSK", "NNN"))]:
-        mod.delete_loc(key)
+        try:
+            mod.delete_loc(key)
+        except ReadOnlyError:
+            pass  # the game's own key stays
     findings = mod.validate(stage="build", strict_localization=True, advice=True)
     missing = {(f.message.split("'")[3], f.severity) for f in findings if "localization" in f.code}
     assert ("BSK", "warning") not in missing  # BSK_fascism counts

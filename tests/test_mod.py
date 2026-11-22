@@ -25,6 +25,7 @@ from hoi4.validation import (
     validate_idea,
 )
 from hoi4.types import FocusTree
+from hoi4.errors import NotFoundError
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -77,7 +78,7 @@ class TestModFocusTrees:
 
     def test_delete_focus_tree(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.delete_focus_tree("german_focus")
+        mod.delete_focus_tree("german_focus")
         assert "german_focus" not in mod.list_focus_trees()
 
     def test_get_focus_tree_not_found(self, tmp_mod):
@@ -118,7 +119,7 @@ class TestModLocalization:
     def test_delete_loc(self, tmp_mod):
         mod = tmp_mod.mod
         mod.set_loc("TEST_KEY", "Test Value")
-        assert mod.delete_loc("TEST_KEY")
+        mod.delete_loc("TEST_KEY")
         assert mod.get_loc("TEST_KEY") is None
 
     def test_search_loc(self, tmp_mod):
@@ -483,12 +484,18 @@ class TestPass1Fixes:
     def test_update_nonexistent_idea_returns_false(self, tmp_mod):
         assert tmp_mod.mod.update_idea("no_idea", icon="X") is False
 
-    def test_delete_nonexistent_returns_false(self, tmp_mod):
+    def test_delete_nonexistent_raises(self, tmp_mod):
         mod = tmp_mod.mod
-        assert mod.delete_country("NOPE") is False
-        assert mod.delete_event("no.event") is False
-        assert mod.delete_idea("no_idea") is False
-        assert mod.delete_focus_tree("no_tree") is False
+        with pytest.raises(ValueError, match="Invalid country tag"):
+            mod.delete_country("NOPE")
+        with pytest.raises(NotFoundError):
+            mod.delete_country("NOP")
+        with pytest.raises(NotFoundError):
+            mod.delete_event("no.event")
+        with pytest.raises(NotFoundError):
+            mod.delete_idea("no_idea")
+        with pytest.raises(NotFoundError):
+            mod.delete_focus_tree("no_tree")
 
     def test_add_event_option_nonexistent_returns_false(self, tmp_mod):
         assert tmp_mod.mod.add_event_option("no.event", EventOption()) is False
@@ -502,7 +509,8 @@ class TestPass1Fixes:
         assert mod.get_focus("german_focus", "NONEXISTENT") is None
 
     def test_delete_loc_nonexistent(self, tmp_mod):
-        assert tmp_mod.mod.delete_loc("NO_KEY") is False
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.delete_loc("NO_KEY")
 
     def test_set_event_namespace_nonexistent(self, tmp_mod):
         mod = tmp_mod.mod
@@ -1460,7 +1468,7 @@ class TestModCountries:
 
     def test_delete_country(self, tmp_mod):
         mod = tmp_mod.with_country("WST")
-        assert mod.delete_country("WST")
+        mod.delete_country("WST")
         assert "WST" not in mod.list_countries()
 
     def test_save_persists_country(self, tmp_mod):
@@ -1834,7 +1842,7 @@ class TestModEvents:
         mod.create_on_action("on_startup", effect="add_stability = 0.05")
         mod.save()
 
-        assert mod.delete_on_action("on_startup") is True
+        mod.delete_on_action("on_startup")
         mod.save()
 
         on_action_file = tmp_mod.root / "common" / "on_actions" / "mod_on_actions.txt"
@@ -1870,7 +1878,7 @@ class TestModEvents:
 
     def test_delete_event(self, tmp_mod):
         mod = tmp_mod.with_events()
-        assert mod.delete_event("mymod.1.1")
+        mod.delete_event("mymod.1.1")
         assert "mymod.1.1" not in mod.list_events()
 
     def test_add_event_option(self, tmp_mod):
@@ -1980,7 +1988,7 @@ class TestModIdeas:
 
     def test_delete_idea(self, tmp_mod):
         mod = tmp_mod.with_ideas()
-        assert mod.delete_idea("GER_spirit_1")
+        mod.delete_idea("GER_spirit_1")
         assert "GER_spirit_1" not in mod.list_ideas()
 
     def test_save_persists_ideas(self, tmp_mod):

@@ -35,7 +35,7 @@ from ..textio import read_text
 from ..types import (
     Country,
 )
-from ..errors import not_found
+from ..errors import NotFoundError, ReadOnlyError, not_found
 from ._countries import CountriesLayer
 from ._equipment import EquipmentLayer
 
@@ -426,15 +426,28 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         self._dirty.add("oobs")
         return True
 
-    def delete_oob(self, name: str, *, unassign: bool = True) -> bool:
+    def delete_oob(self, name: str, *, unassign: bool = True) -> None:
+        """Stage the deletion of an OOB the mod defines.
+
+        ``unassign`` also removes every country history reference to it.
+
+        Raises:
+            NotFoundError: No OOB file has this name.
+            ReadOnlyError: Only the game or a base mod has it.
+        """
+        read_only = ReadOnlyError(f"Cannot delete game OOB '{name}'")
         try:
             oob = self.get_oob(name, include_vanilla=False)
-        except (KeyError, ValueError):
-            return False
+        except NotFoundError:
+            if self._base_content is not None and self._base_content.file(
+                f"history/units/{name}.txt"
+            ) is not None:
+                raise read_only from None
+            raise
         if oob.path is not None and not oob.path.resolve(strict=False).is_relative_to(
             self.mod_root
         ):
-            raise ValueError(f"Cannot delete vanilla OOB '{name}'")
+            raise read_only
         self._oobs.pop(oob.name, None)
         self._dirty_oobs.add(oob.name)
         if oob.path is not None:
@@ -452,7 +465,6 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                             excluded_dlc=reference.excluded_dlc,
                             date=reference.date,
                         )
-        return True
 
     def _assign_country_oob(self, tag: str, name: str) -> None:
         if name:

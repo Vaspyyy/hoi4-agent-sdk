@@ -88,7 +88,7 @@ def test_inherited_ideology_preview_save_reload(tmp_path, monkeypatch, operation
     assert reloaded.preview() == ""
     # Once saved, the snapshot is writable and ordinary deletion must still work.
     if control == "missing":
-        assert reloaded.delete_ideology("sibling")
+        reloaded.delete_ideology("sibling")
         result = reloaded.save(require_changes=True)
         print(result)
         assert "sibling" not in reloaded.list_ideologies()

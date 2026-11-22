@@ -203,7 +203,7 @@ def test_pending_idea_deletion_matches_reload(tmp_path, warm, directory):
     mod = Mod(root)
     if warm:
         assert not _unknown_ideas(mod.validate_effect("add_ideas = obsolete"))
-    assert mod.delete_idea("obsolete")
+    mod.delete_idea("obsolete")
     assert "obsolete" in source.read_text()  # The deletion is still pending.
 
     def diagnostics():
@@ -229,7 +229,7 @@ def test_pending_idea_deletion_rolls_back(tmp_path, warm):
     if warm:
         assert not _unknown_ideas(mod.validate_effect("add_ideas = obsolete"))
     with mod.transaction():
-        assert mod.delete_idea("obsolete")
+        mod.delete_idea("obsolete")
         assert len(_unknown_ideas(mod.validate_effect("add_ideas = obsolete"))) == 1
         assert not _unknown_ideas(mod.validate_effect("add_ideas = sibling"))
     assert mod.preview() == ""
@@ -246,7 +246,7 @@ def test_pending_idea_deletion_respects_inherited_file_precedence(tmp_path, same
     original = inherited.read_bytes()
     mod = Mod(root, base_mod_paths=[base])
     assert not _unknown_ideas(mod.validate_effect("add_ideas = shared"))
-    assert mod.delete_idea("shared")
+    mod.delete_idea("shared")
     # A different effective file can retain the ID. A same-path base file
     # remains shadowed by the writable file, even after its idea is deleted.
     assert bool(_unknown_ideas(mod.validate_effect("add_ideas = shared"))) == same_file

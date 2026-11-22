@@ -141,16 +141,18 @@ class IdeasLayer(CoreLayer):
         self._dirty_ideas.add(idea_id)
         return True
 
-    def delete_idea(self, idea_id: str) -> bool:
-        idea = self._ideas.get(idea_id)
-        if idea is None:
-            return False
+    def delete_idea(self, idea_id: str) -> None:
+        """Stage the deletion of an idea.
+
+        Raises:
+            NotFoundError: No idea has this id.
+        """
+        idea = self.get_idea(idea_id)
         if idea.path is not None:
             self._dirty_idea_files.add(idea.path)
         del self._ideas[idea_id]
         self._dirty.add("ideas")
         self._dirty_ideas.discard(idea_id)
-        return True
 
     def set_idea_path(self, tag: str, path: str | Path) -> None:
         tag = require_country_tag(tag)

@@ -10,7 +10,7 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
-from ..errors import not_found
+from ..errors import ReadOnlyError, not_found
 from ._core import CoreLayer
 from ._shared import (
     _set_fields,
@@ -121,13 +121,26 @@ class IdeologiesLayer(CoreLayer):
         self._dirty.add("ideologies")
         return True
 
-    def delete_ideology(self, ideology_id: str) -> bool:
-        ideology = self._ideologies.pop(ideology_id, None)
+    def delete_ideology(self, ideology_id: str) -> None:
+        """Stage the deletion of an ideology the mod defines.
+
+        Raises:
+            NotFoundError: No one defines ``ideology_id``.
+            ReadOnlyError: Only the game or a base mod defines it.
+        """
+        ideology = self._ideologies.get(ideology_id)
         if ideology is None:
-            return False
+            if ideology_id in self._vanilla_ideologies:
+                raise ReadOnlyError(
+                    f"Ideology '{ideology_id}' is game content; override its file "
+                    "instead of deleting it."
+                )
+            raise not_found(
+                "ideology", ideology_id, self.list_ideologies(include_vanilla=True)
+            )
+        del self._ideologies[ideology_id]
         if ideology.path is not None:
             self._dirty_ideology_files.add(ideology.path)
         self._dirty_ideologies.discard(ideology_id)
         self._script_vocabulary_cache = None
         self._dirty.add("ideologies")
-        return True

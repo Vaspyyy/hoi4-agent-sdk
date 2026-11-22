@@ -19,11 +19,22 @@ from ..paths import (
 from ..script import (
     normalize_block_body,
 )
-from ..errors import not_found
+from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
 from ._shared import (
     _set_fields,
 )
+
+
+def _missing_bookmark_country(
+    bookmark: Bookmark, tag: str, occurrence: int, count: int
+) -> NotFoundError:
+    return NotFoundError(
+        f"Bookmark '{bookmark.name}' has no entry {occurrence} for country '{tag}' "
+        f"({count} entries for that tag).",
+        kind="bookmark country",
+        id=tag,
+    )
 
 
 class BookmarksLayer(CoreLayer):
@@ -160,28 +171,37 @@ class BookmarksLayer(CoreLayer):
         tag: str,
         *,
         occurrence: int = 0,
-    ) -> bool:
+    ) -> None:
+        """Remove one country entry from a bookmark.
+
+        ``occurrence`` picks among repeated entries of the same tag (zero-based).
+
+        Raises:
+            NotFoundError: The bookmark, or that occurrence of ``tag`` in it,
+                does not exist.
+        """
         bookmark = self.get_bookmark(bookmark_name)
         tag = require_bookmark_country_key(tag)
         indices = [index for index, country in enumerate(bookmark.countries) if country.tag == tag]
         if occurrence < 0 or occurrence >= len(indices):
-            return False
+            raise _missing_bookmark_country(bookmark, tag, occurrence, len(indices))
         del bookmark.countries[indices[occurrence]]
         if bookmark.path is not None:
             self._dirty_bookmark_files.add(bookmark.path)
             self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
         self._dirty.add("bookmarks")
-        return True
 
-    def delete_bookmark(self, name: str) -> bool:
-        bookmark = next((item for item in self._bookmarks if item.name == name), None)
-        if bookmark is None:
-            return False
+    def delete_bookmark(self, name: str) -> None:
+        """Stage the deletion of a bookmark.
+
+        Raises:
+            NotFoundError: No bookmark is called ``name``.
+        """
+        bookmark = self.get_bookmark(name)
         self._bookmarks.remove(bookmark)
         if bookmark.path is not None:
             self._dirty_bookmark_files.add(bookmark.path)
         self._dirty.add("bookmarks")
-        return True
 
     def set_bookmark_date_range(
         self,

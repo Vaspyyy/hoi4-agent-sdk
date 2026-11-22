@@ -242,7 +242,7 @@ def test_repeated_on_action_in_one_file_edits_and_deletes_exact_occurrence(
     edited = source.replace("second = yes", "second = changed")
     assert path.read_text(encoding="utf-8") == edited
 
-    assert mod.delete_on_action("on_startup", occurrence=0)
+    mod.delete_on_action("on_startup", occurrence=0)
     mod.save(require_changes=True)
     content = path.read_text(encoding="utf-8")
     assert "first = yes" not in content
@@ -287,7 +287,7 @@ def test_deleting_last_occurrence_preserves_existing_file_comments(
     )
     mod = Mod(tmp_path)
 
-    assert mod.delete_on_action("on_startup")
+    mod.delete_on_action("on_startup")
     mod.save(require_changes=True)
 
     assert target.exists()
@@ -301,7 +301,7 @@ def test_deleting_last_occurrence_preserves_existing_file_comments(
 def test_create_then_delete_on_action_does_not_create_empty_file(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     mod.create_on_action("on_startup", effect="temporary = yes")
-    assert mod.delete_on_action("on_startup")
+    mod.delete_on_action("on_startup")
 
     assert mod.preview() == ""
     assert not (tmp_path / "common/on_actions/mod_on_actions.txt").exists()

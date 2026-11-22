@@ -356,8 +356,15 @@ class DefinitionsLayer(CoreLayer):
             raise self._definition_not_found(resolved, definition_id)
         return self.create_definition(resolved, definition_id, body, overwrite=True)
 
-    def delete_definition(self, kind: str | DefinitionKind, definition_id: str) -> Path:
-        """Remove a definition from its file, preserving every sibling."""
+    def delete_definition(self, kind: str | DefinitionKind, definition_id: str) -> None:
+        """Remove a definition from its file, preserving every sibling.
+
+        A definition inherited from the game or a base mod is removed by
+        writing an override of its file.
+
+        Raises:
+            NotFoundError: No effective definition of that kind has this id.
+        """
 
         from ..definitions import get_definition_kind, remove_definition
         resolved = get_definition_kind(kind)
@@ -366,7 +373,7 @@ class DefinitionsLayer(CoreLayer):
             raise self._definition_not_found(resolved, definition_id)
         relative = Path(existing.relative_path)
         original = self._definition_texts(resolved)[existing.relative_path][1]
-        return self._queue_definition_text(
+        self._queue_definition_text(
             relative, remove_definition(original, resolved, definition_id), original,
         )
 

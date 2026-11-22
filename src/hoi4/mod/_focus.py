@@ -87,15 +87,18 @@ class FocusLayer(ContextLayer, EffectsLayer):
             self.update_focus_tree(tree_id, **kwargs)
         return tree
 
-    def delete_focus_tree(self, tree_id: str) -> bool:
-        if tree_id not in self._focus_trees:
-            return False
-        tree = self._focus_trees.pop(tree_id)
+    def delete_focus_tree(self, tree_id: str) -> None:
+        """Stage the deletion of a focus tree.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+        """
+        tree = self.get_focus_tree(tree_id)
+        del self._focus_trees[tree_id]
         if tree.path:
             self._dirty_focus_files.add(tree.path)
         self._dirty.add("focus")
         self._dirty_focus_trees.discard(tree_id)
-        return True
 
     def update_focus_tree(self, tree_id: str, **kwargs) -> bool:
         """Patch tree-level fields; country selector reassignment is unsupported."""

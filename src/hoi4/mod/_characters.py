@@ -177,11 +177,17 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         character_id: str,
         *,
         remove_recruitment: bool = True,
-    ) -> bool:
-        try:
-            character = self.get_character(character_id, include_vanilla=False)
-        except (KeyError, ValueError):
-            return False
+    ) -> None:
+        """Stage the deletion of a loaded character and its localisation.
+
+        ``remove_recruitment`` also removes it from its country's
+        ``recruit_character`` list. A character loaded from the game or a
+        base mod is deleted by writing an override of its file.
+
+        Raises:
+            NotFoundError: No loaded character has this id.
+        """
+        character = self.get_character(character_id, include_vanilla=False)
         self._materialize_character_override(character)
         self._characters.pop(character.id, None)
         if character.path is not None:
@@ -196,7 +202,6 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             )
         self._delete_loc_all_languages(character.id)
         self._delete_loc_all_languages(f"{character.id}_desc")
-        return True
 
     def add_character_instance(
         self,
@@ -245,15 +250,28 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         self,
         character_id: str,
         occurrence: int,
-    ) -> bool:
+    ) -> None:
+        """Remove one ``instance`` block (zero-based ``occurrence``) of a character.
+
+        Raises:
+            NotFoundError: The character or that instance does not exist.
+        """
         character = self.get_character(character_id)
-        if occurrence < 0 or occurrence >= len(character.instances):
-            return False
+        self._require_character_instance(character, occurrence)
         self._materialize_character_override(character)
         character.instances.pop(occurrence)
         character.touched_fields.add("instances")
         self._mark_character_dirty(character)
-        return True
+
+    @staticmethod
+    def _require_character_instance(character: Character, occurrence: int) -> None:
+        if occurrence < 0 or occurrence >= len(character.instances):
+            raise NotFoundError(
+                f"Character '{character.id}' has no instance occurrence {occurrence} "
+                f"({len(character.instances)} instances).",
+                kind="character instance",
+                id=occurrence,
+            )
 
     def add_character_role(
         self,

@@ -990,7 +990,7 @@ def test_the_vocabulary_characters_are_the_mods_set(
     prepare(mode, lambda: names(new_mod()), monkeypatch)
     mod = new_mod()
     assert names(mod) == everyone
-    assert mod.delete_character("MOD_hero")
+    mod.delete_character("MOD_hero")
     assert names(mod) == everyone - {"mod_hero"}
     mod.discard()
     assert names(mod) == everyone

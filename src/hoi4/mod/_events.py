@@ -184,10 +184,13 @@ class EventsLayer(CoreLayer):
         self._dirty_events.add(event_id)
         return True
 
-    def delete_event(self, event_id: str) -> bool:
-        event = self._events.get(event_id)
-        if event is None:
-            return False
+    def delete_event(self, event_id: str) -> None:
+        """Stage the deletion of an event and its namespace mapping.
+
+        Raises:
+            NotFoundError: No event has this id.
+        """
+        event = self.get_event(event_id)
         old_path = (
             event.path
             or self.mod_root
@@ -199,7 +202,6 @@ class EventsLayer(CoreLayer):
         self._event_namespaces.pop(event_id, None)
         self._dirty.add("events")
         self._dirty_events.discard(event_id)
-        return True
 
     def set_event_namespace(self, event_id: str, namespace: str) -> None:
         if event_id in self._events:

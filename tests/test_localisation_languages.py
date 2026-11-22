@@ -17,6 +17,7 @@ from hoi4.localisation import (
     serialize_localization_file,
     write_localization_file,
 )
+from hoi4.errors import NotFoundError
 
 BOM = b"\xef\xbb\xbf"
 
@@ -178,8 +179,9 @@ def test_delete_loc_is_language_scoped(tmp_path: Path) -> None:
     write_loc(tmp_path, "english", "a_l_english.yml", ' K:0 "en"\n')
     write_loc(tmp_path, "german", "a_l_german.yml", ' K:0 "de"\n OTHER:0 "x"\n')
     mod = Mod(tmp_path)
-    assert mod.delete_loc("K", language="german")
-    assert not mod.delete_loc("K", language="german")
+    mod.delete_loc("K", language="german")
+    with pytest.raises(NotFoundError):
+        mod.delete_loc("K", language="german")
     assert mod.get_loc("K") == "en"
     mod.save()
     reloaded = Mod(tmp_path)
@@ -330,7 +332,7 @@ def test_delete_character_removes_shipped_translations(tmp_path: Path) -> None:
     mod.save()
     mod = Mod(tmp_path)
     assert mod.get_loc("ABC_hero", language="german") == "Hero"
-    assert mod.delete_character("ABC_hero")
+    mod.delete_character("ABC_hero")
     assert mod.get_loc("ABC_hero", language="german") is None
     assert mod.get_loc("ABC_hero_desc", language="german") is None
 

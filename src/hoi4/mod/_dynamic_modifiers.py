@@ -106,13 +106,16 @@ class DynamicModifiersLayer(CoreLayer):
         self._dirty.add("dynamic_modifiers")
         return True
 
-    def delete_dynamic_modifier(self, modifier_id: str) -> bool:
-        dynamic_modifier = self._dynamic_modifiers.pop(modifier_id, None)
-        if dynamic_modifier is None:
-            return False
+    def delete_dynamic_modifier(self, modifier_id: str) -> None:
+        """Stage the deletion of a dynamic modifier, keeping the rest of its file.
+
+        Raises:
+            NotFoundError: No dynamic modifier has this id.
+        """
+        dynamic_modifier = self.get_dynamic_modifier(modifier_id)
+        del self._dynamic_modifiers[modifier_id]
         self._dynamic_modifier_sources.pop(modifier_id, None)
         if dynamic_modifier.path is not None:
             self._dirty_dynamic_modifier_files.add(dynamic_modifier.path)
         self._dirty_dynamic_modifiers.add(modifier_id)
         self._dirty.add("dynamic_modifiers")
-        return True

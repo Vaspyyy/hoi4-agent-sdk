@@ -29,7 +29,7 @@ from ..textio import read_text
 from ..types import (
     Country,
 )
-from ..errors import not_found
+from ..errors import ReadOnlyError, not_found
 from ._core import CoreLayer
 
 
@@ -258,7 +258,29 @@ class LocalisationLayer(CoreLayer):
 
     def delete_loc(
         self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
-    ) -> bool:
+    ) -> None:
+        """Stage the deletion of one language's entry of ``key``.
+
+        Raises:
+            NotFoundError: ``key`` has no entry in that language.
+            ReadOnlyError: Only the game's own files define ``key``; override
+                it with ``set_loc()`` instead.
+        """
+        if not self._delete_loc_entry(key, language):
+            _, entries, _, _ = self._loc_tables(language)
+            if self._normalize_loc_key(key) in self._game_loc(language):
+                raise ReadOnlyError(
+                    f"Localisation key '{key}' comes from the game's own files; "
+                    "override it with set_loc() instead of deleting it."
+                )
+            raise not_found(
+                f"{normalize_localisation_language(language)} localisation key",
+                self._normalize_loc_key(key),
+                entries,
+            )
+
+    def _delete_loc_entry(self, key: str, language: str) -> bool:
+        """Delete one entry; False when there was none."""
         language, entries, sources, dirty_keys = self._loc_tables(language)
         key = self._normalize_loc_key(key)
         if key in entries:
@@ -394,9 +416,9 @@ class LocalisationLayer(CoreLayer):
 
     def _delete_loc_all_languages(self, key: str) -> None:
         """Delete ``key`` in English and every language the mod ships."""
-        self.delete_loc(key)
+        self._delete_loc_entry(key, DEFAULT_LOCALISATION_LANGUAGE)
         for language in self._shipped_loc_languages():
-            self.delete_loc(key, language=language)
+            self._delete_loc_entry(key, language)
 
     def _sync_country_loc(self, country: Country) -> None:
         name = country.name or country.tag

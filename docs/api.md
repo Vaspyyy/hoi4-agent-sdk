@@ -117,7 +117,7 @@ history, characters, and localization.
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
 | `create_country(tag, name, adjective="", color=(128,128,128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. Raises for existing mod or vanilla tags unless explicitly allowed. |
 | `update_country(tag: str, **kwargs) -> bool` | `bool` | Update modeled country fields, including `color` and `color_ui`. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
-| `delete_country(tag: str) -> bool` | `bool` | Stage deletion of a mod-owned country and its generated localization. Vanilla-backed countries require an explicit total-conversion strategy. |
+| `delete_country(tag: str) -> None` | `None` | Stage deletion of a mod-owned country and its generated localization. Raises `NotFoundError` for an unknown tag and `ReadOnlyError` for a game or base-mod country (that needs an explicit total-conversion strategy). |
 
 ### Example
 
@@ -175,10 +175,10 @@ ordering, and untouched variants.
 | `get_character(character_id, include_vanilla=True) -> Character` | Load a mod or vanilla character |
 | `create_character(tag, character, recruit=True, overwrite=False, path=None) -> Character` | Define a character, create localization, and normally add `recruit_character` to country history. `recruit=False` is for source-managed recruitment, never a runtime event effect. |
 | `update_character(character_id, **kwargs) -> bool` | Patch top-level `name` or `portraits` |
-| `delete_character(character_id, remove_recruitment=True) -> bool` | Delete a mod character and its generated localization/recruitment |
+| `delete_character(character_id, remove_recruitment=True) -> None` | Delete a loaded character and its generated localization/recruitment; raises `NotFoundError` when none is loaded |
 | `add_character_instance(character_id, instance)` | Append a DLC/source variant |
 | `update_character_instance(character_id, occurrence, **kwargs)` | Patch one selected repeated instance |
-| `delete_character_instance(character_id, occurrence)` | Delete one selected repeated instance |
+| `delete_character_instance(character_id, occurrence) -> None` | Delete one selected repeated instance; raises `NotFoundError` for a missing character or instance |
 | `add_character_role(character_id, role, instance_occurrence=None)` | Add a direct or instance-scoped role |
 | `update_character_role(character_id, role_type, occurrence=None, instance_occurrence=None, **kwargs)` | Patch one role; repeated matches require `occurrence` |
 | `remove_character_role(character_id, role_type, occurrence=None, instance_occurrence=None)` | Remove one role; ambiguous removal raises |
@@ -208,7 +208,7 @@ large portrait used elsewhere.
 | `get_oob(name, include_vanilla=True) -> OrderOfBattle` | Load a mod or vanilla OOB |
 | `create_oob(name, country_tag, templates=(), divisions=(), fleets=(), air_wings=(), kind="auto", required_dlc=(), excluded_dlc=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write one land, naval, or air OOB and assign it with the correct country-history effect |
 | `update_oob(name, templates=None, divisions=None, fleets=None, air_wings=None, country_tag=None, kind=None, required_dlc=None, excluded_dlc=None, assign=False) -> bool` | Replace selected modeled collections and assignment metadata while preserving neighboring production, comments, and unknown fields |
-| `delete_oob(name, unassign=True) -> bool` | Delete a mod-owned OOB and optionally clear country references |
+| `delete_oob(name, unassign=True) -> None` | Delete a mod-owned OOB and optionally clear country references; raises `NotFoundError` or, for a game OOB, `ReadOnlyError` |
 | `assign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="")` | Assign an existing OOB through `set_oob`, `set_naval_oob`, or `set_air_oob`, optionally under DLC conditions or a dated history block |
 | `unassign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="") -> bool` | Remove one exact dated/conditioned assignment without re-rendering surrounding history |
 | `create_equipment_variant(country_tag, variant) -> EquipmentVariant` | Append a country-history equipment variant, including optional DLC conditions |
@@ -485,7 +485,7 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 | `ensure_event(event_id: str, **kwargs) -> Event` | `Event` | Idempotent create-or-update wrapper |
 | `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
 | `update_event_option(event_id: str, option: int \| str, **kwargs) -> bool` | `bool` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |
-| `delete_event(event_id: str) -> bool` | `bool` | Remove event and its namespace mapping |
+| `delete_event(event_id: str) -> None` | `None` | Remove event and its namespace mapping; raises `NotFoundError` |
 | `set_event_namespace(event_id: str, namespace: str) -> None` | `None` | Set which file this event writes to (`{namespace}_events.txt`) |
 | `add_event_option(event_id: str, option: EventOption) -> bool` | `bool` | Append an option to an event |
 
@@ -573,7 +573,7 @@ once in one file. The SDK retains every occurrence.
 | `create_on_action(action_id, *, effect="", events=None, random_events=None, path=None, overwrite=False) -> OnAction` | `OnAction` | Creates an occurrence. The same hook may be extended in another file; an existing occurrence in the target file requires `overwrite=True`. |
 | `ensure_on_action(action_id, **kwargs) -> OnAction` | `OnAction` | Ensures the only occurrence or the one identified by `path`. |
 | `update_on_action(action_id, *, occurrence=None, source_path=None, **kwargs) -> bool` | `bool` | Patches one occurrence; ambiguous calls must provide an occurrence or source file. |
-| `delete_on_action(action_id, *, occurrence=None, source_path=None) -> bool` | `bool` | Deletes one occurrence; ambiguous calls must provide an occurrence or source file. |
+| `delete_on_action(action_id, *, occurrence=None, source_path=None) -> None` | `None` | Deletes one occurrence; ambiguous calls must provide an occurrence or source file. Raises `NotFoundError` for a missing hook or occurrence. |
 
 ### Example
 
@@ -652,7 +652,7 @@ patches those files separately.
 | `create_recovery_decision(category_id, decision_id, effect, hidden=False, ...) -> Decision` | `Decision` | Create a visible or hidden repair/migration decision for already-started saves |
 | `update_decision_category(category_id: str, **kwargs) -> bool` | `bool` | Update a decision category |
 | `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update any modeled decision field, including the mission/targeted/general fields; edits patch the source in place |
-| `delete_decision(decision_id: str) -> bool` | `bool` | Remove a decision |
+| `delete_decision(decision_id: str) -> None` | `None` | Remove a decision; raises `NotFoundError` |
 
 ### Example
 
@@ -767,7 +767,7 @@ SDK output as an error and removes it when the idea is edited.
 | `create_idea(idea_id, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, *, desc="", removal_cost=None) -> Idea` | `Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
 | `ensure_idea(idea_id, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
 | `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> bool` | `bool` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |
-| `delete_idea(idea_id: str) -> bool` | `bool` | Remove from cache |
+| `delete_idea(idea_id: str) -> None` | `None` | Stage the deletion; raises `NotFoundError` |
 | `suggest_idea_icons(query: str, count=5) -> list[str]` | `list[str]` | Rank loaded `GFX_idea_` sprites and return canonical bare stems. Prefixed queries remain accepted. |
 
 ### Example
@@ -847,7 +847,7 @@ static checks do not establish the layout displayed by the game.
 | `create_focus_tree(tree_id: str, country_tag: str, overwrite=False) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
 | `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields; `country_tag` is used only at creation |
 | `update_focus_tree(tree_id: str, **kwargs) -> bool` | `bool` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
-| `delete_focus_tree(tree_id: str) -> bool` | `bool` | Remove tree |
+| `delete_focus_tree(tree_id: str) -> None` | `None` | Remove tree; raises `NotFoundError` |
 | `add_focus(tree_id: str, focus: Focus) -> None` | `None` | Append focus to tree |
 | `upsert_focus(tree_id: str, focus: Focus) -> Focus` | `Focus` | Add a new focus or replace modeled fields on an existing focus |
 | `remove_focus(tree_id: str, focus_id: str) -> bool` | `bool` | Remove focus by ID |
@@ -953,7 +953,7 @@ uncovers the game's text again).
 |--------|---------|-------------|
 | `get_loc(key, *, language="english") -> str \| None` | `str \| None` | Get one language's localized string: the mod's entry, else the game's |
 | `set_loc(key, value, file_path=None, *, language="english", replace=False) -> None` | `None` | Set entry. Routes to its existing file, an explicit `file_path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `replace=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `file_path` inside `replace/`), which is how a mod overrides base-game keys. |
-| `delete_loc(key, *, language="english") -> bool` | `bool` | Remove one language's entry |
+| `delete_loc(key, *, language="english") -> None` | `None` | Remove one language's entry; raises `NotFoundError`, or `ReadOnlyError` for a key only the game defines |
 | `search_loc(query, *, language="english") -> dict[str, str]` | `dict` | Case-insensitive substring search in one language's keys and values, the game's included |
 | `all_loc(*, language="english") -> dict[str, str]` | `dict` | Full copy of one language's entries: the game's, with the mod's on top |
 | `copy_loc_to_languages(keys=None, languages=None, *, overwrite=False) -> dict[str, list[str]]` | `dict` | Fill missing translations with the English text so players of other languages do not see raw keys. `keys` defaults to every English key the mod authors (inherited base-game text is never copied); `languages` defaults to every non-English language. New entries go to the file mirroring their English source (`events_l_english.yml` -> `events_l_german.yml`, `replace/` kept). Existing translations are kept unless `overwrite=True`. Returns the keys written per language. |
@@ -1394,7 +1394,7 @@ atomic-save lifecycle as the original content model:
 | `get_ideology(ideology_id, *, include_vanilla=True) -> Ideology` | `Ideology` | Gets a mod or vanilla ideology definition. |
 | `create_ideology(ideology_id, *, color=(128,128,128), types=None, rules=None, modifiers=None, hidden_modifiers=None, faction_modifiers=None, dynamic_faction_names=None, ai_behavior="", can_host_government_in_exile=False, can_collaborate=False, effects=None, path=None, overwrite=False) -> Ideology` | `Ideology` | Creates a mod ideology definition. |
 | `update_ideology(ideology_id, **kwargs) -> bool` | `bool` | Source-patches a mod ideology or materializes a vanilla definition as a mod override. |
-| `delete_ideology(ideology_id) -> bool` | `bool` | Stages deletion of a mod ideology. |
+| `delete_ideology(ideology_id) -> None` | `None` | Stages deletion of a mod ideology; raises `NotFoundError`, or `ReadOnlyError` for a game ideology. |
 
 Creating or updating an ideology at a missing writable path (including the
 default `common/ideologies/00_mod_ideologies.txt`) preserves the complete effective
@@ -1412,7 +1412,7 @@ hidden by the saved override.
 | `get_dynamic_modifier(modifier_id) -> DynamicModifier` | Modifier | Gets one dynamic modifier. |
 | `create_dynamic_modifier(modifier_id, *, icon="", enable="", remove_trigger="", attacker_modifier=None, modifier=None, path=None, overwrite=False) -> DynamicModifier` | Modifier | Creates a native top-level entry under `common/dynamic_modifiers`. |
 | `update_dynamic_modifier(modifier_id, **kwargs) -> bool` | `bool` | Source-patches modeled fields or the direct modifier mapping. |
-| `delete_dynamic_modifier(modifier_id) -> bool` | `bool` | Stages deletion while preserving unrelated file content. |
+| `delete_dynamic_modifier(modifier_id) -> None` | `None` | Stages deletion while preserving unrelated file content; raises `NotFoundError`. |
 | `Mod.effect_add_dynamic_modifier(modifier_id, days=None, scope=None)` | `str` | Builds `add_dynamic_modifier`; optionally timed or scoped. |
 | `Mod.effect_remove_dynamic_modifier(modifier_id, scope=None)` | `str` | Builds `remove_dynamic_modifier`; optionally scoped. |
 | `Mod.effect_force_update_dynamic_modifier()` | `str` | Builds `force_update_dynamic_modifier = yes`. |
@@ -1433,8 +1433,8 @@ sibling definitions. All non-reserved scalar assignments belong to the modeled
 | `update_bookmark(name, **kwargs) -> bool` | `bool` | Source-patches modeled bookmark fields. |
 | `add_bookmark_country(bookmark_name, country) -> None` | `None` | Appends one ordered country entry. |
 | `update_bookmark_country(bookmark_name, tag, *, occurrence=0, **kwargs) -> bool` | `bool` | Patches one repeated tag occurrence using a zero-based index. |
-| `delete_bookmark_country(bookmark_name, tag, *, occurrence=0) -> bool` | `bool` | Deletes one repeated tag occurrence using a zero-based index. |
-| `delete_bookmark(name) -> bool` | `bool` | Stages deletion of a bookmark. |
+| `delete_bookmark_country(bookmark_name, tag, *, occurrence=0) -> None` | `None` | Deletes one repeated tag occurrence using a zero-based index; raises `NotFoundError` for a missing bookmark or entry. |
+| `delete_bookmark(name) -> None` | `None` | Stages deletion of a bookmark; raises `NotFoundError`. |
 | `set_bookmark_date_range(start_date, end_date, *, path="common/defines/zz_bookmark_dates.lua") -> Path` | `Path` | Stages `START_DATE` and `END_DATE` defines in the normal transaction. |
 
 The date helper edits every active literal `NDefines.NGame.START_DATE` and
@@ -2014,7 +2014,7 @@ identifier is a field (for example `defined_text = { name = GetFoo ... }`).
 | `get_definition(kind, definition_id) -> ScriptDefinition \| None` | One definition; `body` omits outer braces and entry identifier fields. |
 | `create_definition(kind, definition_id, body, *, path=None, overwrite=False) -> Path` | Queue a definition. Containers are created or reused; identifiers must be unique across the effective domain. `overwrite=True` patches an existing definition in its current file. |
 | `update_definition(kind, definition_id, body) -> Path` | Replace an existing body in place. Inherited files are copied into the mod first. |
-| `delete_definition(kind, definition_id) -> Path` | Remove one definition and keep every sibling. |
+| `delete_definition(kind, definition_id) -> None` | Remove one definition and keep every sibling; raises `NotFoundError`. |
 
 Supported kinds: `scripted_effect`, `scripted_trigger`, `scripted_localisation`,
 `country_leader_trait`, `unit_leader_trait`, `technology`, `sub_unit`,

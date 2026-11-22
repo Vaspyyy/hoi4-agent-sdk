@@ -225,7 +225,7 @@ def test_existing_country_update_does_not_emit_duplicate_generated_tag_and_delet
         preview = mod.preview()
         assert "00_generated_tags.txt" not in preview
 
-    assert mod.delete_country("ABC")
+    mod.delete_country("ABC")
     assert "custom_tags.txt" in mod.preview()
     mod.save()
     assert not tag_file.exists() or "ABC =" not in tag_file.read_text(encoding="utf-8")
@@ -242,7 +242,7 @@ def test_delete_dynamic_modifier_preserves_unrelated_content_in_same_file(
     )
     mod = Mod(tmp_path)
 
-    assert mod.delete_dynamic_modifier("ABC_growth")
+    mod.delete_dynamic_modifier("ABC_growth")
     mod.save()
 
     rendered = path.read_text(encoding="utf-8")

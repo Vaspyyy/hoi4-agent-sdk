@@ -324,7 +324,7 @@ def test_country_deletion_preview_save_reload(
     removed = original_countries[target]
     survivors = original_countries[:target] + original_countries[target + 1:]
 
-    assert mod.delete_bookmark_country(
+    mod.delete_bookmark_country(
         "BOOKMARK_NAME", removed.tag, occurrence=1 if case == "second_variant" else 0,
     )
     if edit_bookmark:
@@ -375,7 +375,7 @@ def test_new_same_tag_country_is_appended_without_reusing_source_occurrence(
     path.write_text(SOURCE, encoding="utf-8")
     mod = Mod(tmp_path)
     if delete_existing:
-        assert mod.delete_bookmark_country("BOOKMARK_NAME", "GER", occurrence=1)
+        mod.delete_bookmark_country("BOOKMARK_NAME", "GER", occurrence=1)
     added = BookmarkCountry(tag="GER", history="NEW_VARIANT", required_dlc=["New DLC"])
     mod.add_bookmark_country("BOOKMARK_NAME", added)
     assert added.source_index is None

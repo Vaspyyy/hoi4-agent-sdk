@@ -155,7 +155,7 @@ def test_reopened_category_new_decision_goes_to_last_block_and_delete_keeps_othe
     mod, path = _reopened_mod(tmp_path)
 
     mod.create_decision("political_actions", "third_decision", cost=30)
-    assert mod.delete_decision("first_decision")
+    mod.delete_decision("first_decision")
     _save(mod)
 
     saved = path.read_text(encoding="utf-8")
@@ -257,7 +257,7 @@ def test_deleting_the_last_shared_decision_of_a_file_keeps_the_category_block(
     mod, first, second = _cross_file_mod(tmp_path)
     before_second = second.read_text(encoding="utf-8")
 
-    assert mod.delete_decision("A_shared")
+    mod.delete_decision("A_shared")
     _save(mod)
 
     saved = first.read_text(encoding="utf-8")
@@ -479,7 +479,7 @@ def test_deleting_a_decision_of_the_earlier_file_of_a_spread_category(
 ) -> None:
     mod, first, second = _spread_mod(tmp_path)
 
-    assert mod.delete_decision("dec_a")
+    mod.delete_decision("dec_a")
     assert [d.id for d in mod.get_decision_category("shared_cat").decisions] == ["dec_b"]
     _save(mod)
 
@@ -567,7 +567,7 @@ def test_mod_files_extending_a_game_category(tmp_path: Path) -> None:
     assert category.paths == [first, second]
 
     mod.create_decision("shared_cat", "dec_c", cost=30)
-    assert mod.delete_decision("dec_a")
+    mod.delete_decision("dec_a")
     _save(mod)
 
     assert first.read_text(encoding="utf-8") == "shared_cat = {\n}\n"

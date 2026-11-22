@@ -186,11 +186,11 @@ def test_save_deletes_all_supported_objects_and_reports_files(tmp_path: Path) ->
     assert len(first.written_files) >= 8
 
     reloaded = Mod(tmp_path)
-    assert reloaded.delete_country("TST")
-    assert reloaded.delete_event("tst.1")
-    assert reloaded.delete_idea("TST_spirit")
-    assert reloaded.delete_focus_tree("tst_focus")
-    assert reloaded.delete_loc("TST_start")
+    reloaded.delete_country("TST")
+    reloaded.delete_event("tst.1")
+    reloaded.delete_idea("TST_spirit")
+    reloaded.delete_focus_tree("tst_focus")
+    reloaded.delete_loc("TST_start")
     second = reloaded.save(require_changes=True)
     assert second.written_files
 
