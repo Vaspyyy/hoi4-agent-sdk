@@ -818,12 +818,15 @@ class CoreLayer:
             self._read_digests[key] = _text_digest(read_text(key))
 
     def _changed_behind_our_back(self, path: Path) -> bool:
-        """Whether a mod file changed since its baseline.
+        """Whether a mod file that is about to be overwritten changed since its baseline.
 
-        Same fingerprint: unchanged. Otherwise the text is compared with the
-        digest of what the SDK read or saw at the baseline, so a ``touch``
-        that keeps the text is no change. A file without a baseline counts as
-        changed if it exists.
+        The text itself is compared with the digest of what the SDK read, so a
+        ``touch`` that keeps the text is no change, and a rewrite of the same
+        size whose time was set back is one: size and time cannot prove a
+        file unchanged, and this is the last check before its content is
+        replaced. A file the SDK never read has no digest; for it only size
+        and time are known. A file without a baseline counts as changed if
+        it exists.
         """
 
         key = path.resolve(strict=False)
@@ -833,10 +836,14 @@ class CoreLayer:
             return key.exists()
         if current is None or not key.is_file():
             return True
-        if _same_file_state(recorded, current):
-            return False
         digest = self._read_digests.get(key)
-        return digest is None or digest != _text_digest(read_text(key))
+        if digest is None:
+            return not _same_file_state(recorded, current)
+        try:
+            return digest != _text_digest(read_text(key))
+        except (OSError, ValueError):
+            # Unreadable now: not the text the SDK read.
+            return True
 
     def _refresh_content_layers(self) -> None:
         """Build the view of what the mod inherits (rereads the descriptors)."""

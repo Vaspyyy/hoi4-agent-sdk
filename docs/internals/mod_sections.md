@@ -91,11 +91,21 @@ changed, appeared or went away, `save()` and `discard()` reload everything.
 digest of the text the SDK read from a file while it still had its recorded
 fingerprint.
 
-- Same fingerprint: the file is unchanged.
-- Different fingerprint: the current text is compared with the digest. Same
-  text (a `touch`) is fine; otherwise the file changed behind the SDK's back,
-  and `save()` raises `ExternalModificationError`. A file without a digest
-  counts as changed.
+Two questions are asked of them, with different care:
+
+- **"What may have changed on disk?"** (which sections `discard()` and
+  `save()` drop). Same fingerprint: the file counts as unchanged. Different
+  fingerprint: the current text is compared with the digest, and the same
+  text (a `touch`) is no change.
+- **"May I overwrite this file?"** (`save()` and `preview()`, for every file
+  they are about to write). Here the text itself is always compared with the
+  digest, whatever the fingerprint says: a rewrite of the same size whose
+  time was set back looks unchanged to `stat`, and this is the last check
+  before the content is replaced. A different text raises
+  `ExternalModificationError`. Only the files being written are read, so
+  this costs almost nothing. A file the SDK never read has no digest: for it
+  only size and time are known, and a different fingerprint counts as
+  changed.
 - File times are coarse: a file rewritten within the same tick keeps its time.
   A file changed less than two seconds before its fingerprint was taken is
   "racy" (git's word). Its fingerprint never proves it unchanged, and its digest

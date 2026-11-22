@@ -273,6 +273,26 @@ def test_a_same_size_rewrite_within_the_timestamp_tick_is_refused(mod_root: Path
         mod.save()
 
 
+def test_a_same_size_rewrite_with_its_old_time_set_back_is_refused(mod_root: Path) -> None:
+    """Size and time cannot prove a file unchanged: the text is compared before it is replaced."""
+
+    path = mod_root / "events/test.txt"
+    _age(path)
+    before = path.stat()
+    mod = Mod(mod_root)
+    mod.update_event("test.1", title="new_title")
+    path.write_text(EVENTS.replace("test.1.d", "test.1.x"), encoding="utf-8")
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = path.stat()
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+
+    with pytest.raises(ExternalModificationError, match="events/test.txt"):
+        mod.preview()
+    with pytest.raises(ExternalModificationError, match="events/test.txt"):
+        mod.save()
+    assert "test.1.x" in path.read_text(encoding="utf-8")
+
+
 def test_a_touch_is_not_an_edit(mod_root: Path) -> None:
     path = mod_root / "events/test.txt"
     _age(path)
