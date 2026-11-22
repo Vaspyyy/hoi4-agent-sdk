@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import EnsureIdeaFields, IdeaFields
 from ..idea_icons import (
     DEFAULT_IDEA_ICON,
     normalize_idea_icon,
@@ -95,7 +98,7 @@ class IdeasLayer(CountriesLayer):
         self._dirty_ideas.add(idea_id)
         return idea
 
-    def ensure_idea(self, idea_id: str, *, merge_modifier: bool = False, **kwargs) -> Idea:
+    def ensure_idea(self, idea_id: str, *, merge_modifier: bool = False, **fields: Unpack[EnsureIdeaFields]) -> Idea:
         """Create an idea if missing, otherwise update the existing idea.
 
         Existing modifiers are replaced by default. Pass
@@ -107,6 +110,7 @@ class IdeasLayer(CountriesLayer):
         Raises:
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         existing = self.get_idea(idea_id, default=None)
         if existing is not None:
             _check_fields("ensure_idea", existing, kwargs, allow_path=True)
@@ -116,7 +120,7 @@ class IdeasLayer(CountriesLayer):
         )
         return self.create_idea(idea_id, **kwargs)
 
-    def update_idea(self, idea_id: str, *, merge_modifier: bool = False, **kwargs) -> Idea:
+    def update_idea(self, idea_id: str, *, merge_modifier: bool = False, **fields: Unpack[IdeaFields]) -> Idea:
         """Update an idea, replacing its modifier mapping by default.
 
         ``modifier={}`` therefore clears the block. Pass
@@ -129,6 +133,7 @@ class IdeasLayer(CountriesLayer):
             NotFoundError: No idea has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         idea = self.get_idea(idea_id)
         if "id" in kwargs:
             raise ValueError("Idea IDs are immutable; create a new idea instead")

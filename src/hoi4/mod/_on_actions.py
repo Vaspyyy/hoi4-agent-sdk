@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import EnsureOnActionFields, OnActionFields
 from ..paths import (
     require_script_id,
     resolve_mod_output_path,
@@ -207,7 +210,7 @@ class OnActionsLayer(CoreLayer):
         self._dirty_on_action_files.add(target)
         return action
 
-    def ensure_on_action(self, action_id: str, **kwargs) -> OnAction:
+    def ensure_on_action(self, action_id: str, **fields: Unpack[EnsureOnActionFields]) -> OnAction:
         """Ensure one occurrence, using the requested/default file as its identity.
 
         Returns:
@@ -217,6 +220,7 @@ class OnActionsLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
             ValueError: The hook occurs several times in the chosen file.
         """
+        kwargs: dict[str, Any] = dict(fields)
 
         occurrences = self._on_action_occurrences.get(action_id, [])
         if occurrences:
@@ -260,7 +264,7 @@ class OnActionsLayer(CoreLayer):
         *,
         occurrence: int | None = None,
         source_path: str | Path | None = None,
-        **kwargs,
+        **fields: Unpack[OnActionFields],
     ) -> OnAction:
         """Patch one occurrence of an on-action hook.
 
@@ -275,6 +279,7 @@ class OnActionsLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
             ValueError: The hook has several occurrences and none was chosen.
         """
+        kwargs: dict[str, Any] = dict(fields)
         _, action = self._select_on_action_occurrence(
             action_id,
             occurrence=occurrence,

@@ -6,8 +6,9 @@ import unicodedata
 from collections.abc import Sequence
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, Unpack
 
+from ..fields import StateFields
 from ..localisation import (
     parse_localization_files,
 )
@@ -307,7 +308,7 @@ class StatesLayer(CountriesLayer):
         *,
         add_cores: Sequence[str] = (),
         remove_cores: Sequence[str] = (),
-        **fields: Any,
+        **fields: Unpack[StateFields],
     ) -> State:
         """Set fields of a state; list fields such as ``cores`` are replaced.
 
@@ -323,25 +324,26 @@ class StatesLayer(CountriesLayer):
                 install) a tag no one defines is set as owner or core.
             TypeError: A field name is unknown; nothing changed.
         """
+        values: dict[str, Any] = dict(fields)
         state = self.get_state(state_id)
-        _check_fields("update_state", state, fields)
+        _check_fields("update_state", state, values)
         added = [self._require_country_reference(tag) for tag in add_cores]
         removed = {require_country_tag(tag) for tag in remove_cores}
         for tag in sorted(removed):
             if tag not in {core.upper() for core in state.cores}:
                 raise not_found("core", tag, state.cores, where=f"state {state_id}")
-        if fields.get("owner"):
-            fields["owner"] = self._require_country_reference(fields["owner"])
-        if "cores" in fields:
-            fields["cores"] = [self._require_country_reference(tag) for tag in fields["cores"]]
+        if values.get("owner"):
+            values["owner"] = self._require_country_reference(values["owner"])
+        if "cores" in values:
+            values["cores"] = [self._require_country_reference(tag) for tag in values["cores"]]
         self._materialize_state_override(state)
-        _set_fields(state, fields, method="update_state")
+        _set_fields(state, values, method="update_state")
         if removed:
             state.cores = [core for core in state.cores if core.upper() not in removed]
         for tag in added:
             if tag not in state.cores:
                 state.cores.append(tag)
-        if "victory_points" in fields:
+        if "victory_points" in values:
             state._victory_points_requested = True
         self._dirty.add("states")
         self._dirty_states.add(state_id)

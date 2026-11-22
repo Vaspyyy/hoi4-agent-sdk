@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import CountryFields
 from ..characters import (
     Character,
     CharacterPortrait,
@@ -177,7 +180,7 @@ class CountryAuthoringLayer(CharactersLayer):
 
         return country
 
-    def update_country(self, tag: str, **kwargs) -> Country:
+    def update_country(self, tag: str, **fields: Unpack[CountryFields]) -> Country:
         """Patch modeled country fields; ``leader_<field>`` sets the leader's fields.
 
         A country of the game or a base mod is copied into the mod first.
@@ -190,6 +193,7 @@ class CountryAuthoringLayer(CharactersLayer):
             TypeError: A field name is unknown; nothing changed.
             ValueError: ``tag`` is not a valid tag.
         """
+        kwargs: dict[str, Any] = dict(fields)
         tag = require_country_tag(tag)
         country = self._countries.get(tag)
         if country is None and tag in self._vanilla_tags:

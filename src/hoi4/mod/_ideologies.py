@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 import copy
 from pathlib import Path
 
+from ..fields import IdeologyFields
 from ..ideologies import Ideology, SubIdeology
 from ..paths import (
     require_script_id,
@@ -111,7 +114,7 @@ class IdeologiesLayer(CoreLayer):
         self._dirty.add("ideologies")
         return ideology
 
-    def update_ideology(self, ideology_id: str, **kwargs) -> Ideology:
+    def update_ideology(self, ideology_id: str, **fields: Unpack[IdeologyFields]) -> Ideology:
         """Patch fields of an ideology; a game ideology is copied into the mod first.
 
         Returns:
@@ -121,6 +124,7 @@ class IdeologiesLayer(CoreLayer):
             NotFoundError: No one defines ``ideology_id``.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         existing = self._ideologies.get(ideology_id)
         source = existing if existing is not None else self.get_ideology(ideology_id)
         forbidden = {"id", "raw_block", "touched_fields", "is_vanilla"} & set(kwargs)

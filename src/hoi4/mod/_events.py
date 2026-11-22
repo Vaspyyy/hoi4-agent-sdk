@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
+from ..fields import EnsureEventFields, EventFields, EventOptionFields
 from ..events import event_namespace
 from ..paths import (
     EVENT_NAMESPACE_RE,
@@ -151,7 +154,7 @@ class EventsLayer(CoreLayer):
         self._dirty_events.add(event_id)
         return event
 
-    def ensure_event(self, event_id: str, **kwargs) -> Event:
+    def ensure_event(self, event_id: str, **fields: Unpack[EnsureEventFields]) -> Event:
         """Create an event if missing, otherwise patch the existing event.
 
         Returns:
@@ -160,6 +163,7 @@ class EventsLayer(CoreLayer):
         Raises:
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         existing = self.get_event(event_id, default=None)
         if existing is not None:
             _check_fields("ensure_event", existing, kwargs, allow_path=True)
@@ -169,7 +173,7 @@ class EventsLayer(CoreLayer):
         )
         return self.create_event(event_id, **kwargs)
 
-    def update_event(self, event_id: str, **kwargs) -> Event:
+    def update_event(self, event_id: str, **fields: Unpack[EventFields]) -> Event:
         """Patch fields of an event; only the changed fields are rewritten on save.
 
         ``title`` and ``description`` are the plain keys the game falls back
@@ -184,6 +188,7 @@ class EventsLayer(CoreLayer):
             NotFoundError: No event has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         event = self.get_event(event_id)
         if "id" in kwargs:
             raise ValueError("Event IDs are immutable; create a new event instead")
@@ -282,7 +287,7 @@ class EventsLayer(CoreLayer):
         self._dirty_events.add(event_id)
         return added
 
-    def update_event_option(self, event_id: str, option: int | str, **kwargs) -> EventOption:
+    def update_event_option(self, event_id: str, option: int | str, **fields: Unpack[EventOptionFields]) -> EventOption:
         """Patch one option of an event, chosen by zero-based index or by name.
 
         Returns:
@@ -292,6 +297,7 @@ class EventsLayer(CoreLayer):
             NotFoundError: The event or the option does not exist.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         event = self.get_event(event_id)
         event_option: EventOption | None
         if isinstance(option, int):

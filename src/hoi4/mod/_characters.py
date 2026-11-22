@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 import copy
 import dataclasses
 from pathlib import Path
 
+from ..fields import CharacterFields, CharacterInstanceFields, CharacterRoleFields
 from ..characters import (
     AdvisorRole,
     Character,
@@ -170,7 +173,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         self._sync_character_loc(replacement)
         return replacement
 
-    def update_character(self, character_id: str, **kwargs: object) -> Character:
+    def update_character(self, character_id: str, **fields: Unpack[CharacterFields]) -> Character:
         """Patch a character's top-level ``name`` or ``portraits``.
 
         Roles and instances have their own methods. A character loaded from
@@ -183,6 +186,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             NotFoundError: No character has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         character = self.get_character(character_id)
         if "country_tag" in kwargs:
             raise TypeError(
@@ -256,7 +260,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         self,
         character_id: str,
         occurrence: int,
-        **kwargs: object,
+        **fields: Unpack[CharacterInstanceFields],
     ) -> CharacterInstance:
         """Patch ``allowed``, ``name`` or ``portraits`` of one instance (zero-based).
 
@@ -269,6 +273,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             NotFoundError: The character or that instance does not exist.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         character = self.get_character(character_id)
         self._require_character_instance(character, occurrence)
         _check_field_names(
@@ -337,7 +342,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         occurrence: int | None = None,
         instance_occurrence: int | None = None,
-        **kwargs: object,
+        **fields: Unpack[CharacterRoleFields],
     ) -> CharacterRole:
         """Patch one role of a character or of one of its instances.
 
@@ -353,6 +358,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             TypeError: A field name is unknown; nothing changed.
             ValueError: Several roles match and no ``occurrence`` was given.
         """
+        kwargs: dict[str, Any] = dict(fields)
         if role_type not in {
             "country_leader",
             "advisor",

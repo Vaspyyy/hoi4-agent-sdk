@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import dataclasses
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence, Unpack
 
+from ..fields import FocusFields, FocusTreeFields
 from ..focus import FOCUS_KINDS
 from ..focus_layout import resolve_focus_positions, visual_overlap_issues
 from ..paths import (
@@ -115,7 +116,7 @@ class FocusLayer(ContextLayer):
         self._dirty_focus_trees.add(tree_id)
         return tree
 
-    def ensure_focus_tree(self, tree_id: str, tag: str, **kwargs) -> FocusTree:
+    def ensure_focus_tree(self, tree_id: str, tag: str, **fields: Unpack[FocusTreeFields]) -> FocusTree:
         """Create a focus tree if missing, otherwise patch tree-level fields.
 
         Returns:
@@ -125,6 +126,7 @@ class FocusLayer(ContextLayer):
             TypeError: A field name is unknown; nothing changed.
             ValueError: The tree exists for another country.
         """
+        kwargs: dict[str, Any] = dict(fields)
         existing = self.get_focus_tree(tree_id, default=None)
         tag = require_country_tag(tag)
         _check_fields(
@@ -157,7 +159,7 @@ class FocusLayer(ContextLayer):
         self._dirty.add("focus")
         self._dirty_focus_trees.discard(tree_id)
 
-    def update_focus_tree(self, tree_id: str, **kwargs) -> FocusTree:
+    def update_focus_tree(self, tree_id: str, **fields: Unpack[FocusTreeFields]) -> FocusTree:
         """Patch tree-level fields; country selector reassignment is unsupported.
 
         Returns:
@@ -167,6 +169,7 @@ class FocusLayer(ContextLayer):
             NotFoundError: No focus tree has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         tree = self.get_focus_tree(tree_id)
         if "country_tag" in kwargs:
             raise TypeError(
@@ -251,7 +254,7 @@ class FocusLayer(ContextLayer):
                 return default
             raise
 
-    def update_focus(self, tree_id: str, focus_id: str, **kwargs) -> Focus:
+    def update_focus(self, tree_id: str, focus_id: str, **fields: Unpack[FocusFields]) -> Focus:
         """Patch fields of one focus.
 
         Returns:
@@ -261,6 +264,7 @@ class FocusLayer(ContextLayer):
             NotFoundError: The tree or the focus does not exist.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         tree = self.get_focus_tree(tree_id)
         focus = self._require_focus(tree, focus_id)
         if "id" in kwargs:

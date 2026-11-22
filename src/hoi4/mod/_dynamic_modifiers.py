@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import DynamicModifierFields
 from ..dynamic_modifiers import (
     DynamicModifier,
 )
@@ -100,7 +103,7 @@ class DynamicModifiersLayer(CoreLayer):
         self._dirty.add("dynamic_modifiers")
         return dynamic_modifier
 
-    def update_dynamic_modifier(self, modifier_id: str, **kwargs: object) -> DynamicModifier:
+    def update_dynamic_modifier(self, modifier_id: str, **fields: Unpack[DynamicModifierFields]) -> DynamicModifier:
         """Patch fields of a dynamic modifier in place.
 
         Returns:
@@ -110,6 +113,7 @@ class DynamicModifiersLayer(CoreLayer):
             NotFoundError: No dynamic modifier has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         dynamic_modifier = self.get_dynamic_modifier(modifier_id)
         forbidden = {"id", "path", "raw_block", "touched_fields"} & set(kwargs)
         if forbidden:

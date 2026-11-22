@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable, Sequence, cast
+from typing import Any, cast, Iterable, Sequence, Unpack
 
+from ..fields import DecisionCategoryFields, DecisionFields, EnsureDecisionCategoryFields, EnsureDecisionFields, MissionOptions, TargetedDecisionOptions
 from ..decisions import category_files
 from ..paths import (
     require_script_id,
@@ -216,7 +217,7 @@ class DecisionsLayer(LocalisationLayer):
         self._dirty_decision_category_files.add(definition_target)
         return category
 
-    def ensure_decision_category(self, category_id: str, **kwargs) -> DecisionCategory:
+    def ensure_decision_category(self, category_id: str, **fields: Unpack[EnsureDecisionCategoryFields]) -> DecisionCategory:
         """Create a decision category if missing, otherwise patch the existing one.
 
         Returns:
@@ -225,6 +226,7 @@ class DecisionsLayer(LocalisationLayer):
         Raises:
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         existing = self.get_decision_category(category_id, default=None)
         if existing is not None:
             _check_fields(
@@ -238,7 +240,7 @@ class DecisionsLayer(LocalisationLayer):
         )
         return self.create_decision_category(category_id, **kwargs)
 
-    def update_decision_category(self, category_id: str, **kwargs) -> DecisionCategory:
+    def update_decision_category(self, category_id: str, **fields: Unpack[DecisionCategoryFields]) -> DecisionCategory:
         """Patch fields of a decision category.
 
         ``path=`` moves its decisions' block to another file and
@@ -251,6 +253,7 @@ class DecisionsLayer(LocalisationLayer):
             NotFoundError: No decision category has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         category = self.get_decision_category(category_id)
         if "id" in kwargs:
             raise ValueError("Decision category IDs are immutable")
@@ -480,7 +483,7 @@ class DecisionsLayer(LocalisationLayer):
         self._dirty_decision_files.add(target)
         return category
 
-    def ensure_decision(self, category_id: str, decision_id: str, **kwargs) -> Decision:
+    def ensure_decision(self, category_id: str, decision_id: str, **fields: Unpack[EnsureDecisionFields]) -> Decision:
         """Create a decision if missing, otherwise patch the existing one.
 
         Returns:
@@ -490,6 +493,7 @@ class DecisionsLayer(LocalisationLayer):
             TypeError: A field name is unknown; nothing changed.
             ValueError: The decision exists in another category.
         """
+        kwargs: dict[str, Any] = dict(fields)
         existing = self.get_decision(decision_id, default=None)
         if existing is not None:
             if existing.category != category_id:
@@ -506,7 +510,7 @@ class DecisionsLayer(LocalisationLayer):
         )
         return self.create_decision(category_id, decision_id, **kwargs)
 
-    def update_decision(self, decision_id: str, **kwargs) -> Decision:
+    def update_decision(self, decision_id: str, **fields: Unpack[DecisionFields]) -> Decision:
         """Patch fields of a decision in place; its file and category stay.
 
         Returns:
@@ -516,6 +520,7 @@ class DecisionsLayer(LocalisationLayer):
             NotFoundError: No decision has this id.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         decision = self.get_decision(decision_id)
         if "id" in kwargs or "category" in kwargs:
             raise ValueError(
@@ -580,7 +585,7 @@ class DecisionsLayer(LocalisationLayer):
         if not steps:
             raise ValueError("create_decision_chain() requires at least one step")
 
-        category_kwargs: dict[str, object] = {}
+        category_kwargs: EnsureDecisionCategoryFields = {}
         if category_icon:
             category_kwargs["icon"] = category_icon
         if path is not None:
@@ -663,7 +668,7 @@ class DecisionsLayer(LocalisationLayer):
         selectable_mission: bool | None = None,
         loc_name: str = "",
         loc_desc: str = "",
-        **kwargs: Any,
+        **fields: Unpack[MissionOptions],
     ) -> Decision:
         """Create a mission: a timed decision that starts when ``activation``
         holds, completes with ``complete_effect`` once ``available`` holds, and
@@ -672,6 +677,7 @@ class DecisionsLayer(LocalisationLayer):
         Missions are never paid for, so ``cost``/``custom_cost_trigger`` are
         rejected. Other ``create_decision`` keywords pass through.
         """
+        kwargs: dict[str, Any] = dict(fields)
         if isinstance(days_mission_timeout, bool) or not isinstance(days_mission_timeout, int):
             raise TypeError("days_mission_timeout must be an int number of days")
         if days_mission_timeout <= 0:
@@ -713,7 +719,7 @@ class DecisionsLayer(LocalisationLayer):
         on_map_mode: str = "",
         loc_name: str = "",
         loc_desc: str = "",
-        **kwargs: Any,
+        **fields: Unpack[TargetedDecisionOptions],
     ) -> Decision:
         """Create a targeted decision with one instance per country or state.
 
@@ -722,6 +728,7 @@ class DecisionsLayer(LocalisationLayer):
         ``state_target=True`` targets states. At least one targeting field is
         required. Other ``create_decision`` keywords pass through.
         """
+        kwargs: dict[str, Any] = dict(fields)
         if not (target_trigger.strip() or targets or target_array or state_target):
             raise ValueError(
                 "A targeted decision needs target_trigger, targets, target_array, "

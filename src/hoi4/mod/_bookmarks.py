@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import BookmarkCountryFields, BookmarkFields
 from ..bookmarks import (
     DEFAULT_BOOKMARK_EFFECT,
     Bookmark,
@@ -114,7 +117,7 @@ class BookmarksLayer(CoreLayer):
         self._dirty.add("bookmarks")
         return bookmark
 
-    def update_bookmark(self, name: str, **kwargs) -> Bookmark:
+    def update_bookmark(self, name: str, **fields: Unpack[BookmarkFields]) -> Bookmark:
         """Patch fields of a bookmark; ``path=`` moves it to another file.
 
         Returns:
@@ -124,6 +127,7 @@ class BookmarksLayer(CoreLayer):
             NotFoundError: No bookmark is called ``name``.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         bookmark = self.get_bookmark(name)
         forbidden = {"raw_block", "source_index", "touched_fields"} & set(kwargs)
         if forbidden:
@@ -185,7 +189,7 @@ class BookmarksLayer(CoreLayer):
         tag: str,
         *,
         occurrence: int = 0,
-        **kwargs,
+        **fields: Unpack[BookmarkCountryFields],
     ) -> BookmarkCountry:
         """Patch one country entry of a bookmark (zero-based ``occurrence`` of ``tag``).
 
@@ -196,6 +200,7 @@ class BookmarksLayer(CoreLayer):
             NotFoundError: The bookmark, or that entry, does not exist.
             TypeError: A field name is unknown; nothing changed.
         """
+        kwargs: dict[str, Any] = dict(fields)
         bookmark = self.get_bookmark(bookmark_name)
         tag = require_bookmark_country_key(tag)
         matches = [country for country in bookmark.countries if country.tag == tag]

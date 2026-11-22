@@ -9,8 +9,9 @@ import warnings
 from pathlib import Path
 from collections.abc import Callable
 from functools import partial
-from typing import Any, Sequence, TypeVar
+from typing import Any, Sequence, TypeVar, Unpack
 
+from ..fields import CreateStateOptions
 from .._disk_cache import DiskAnalysis
 from ..map_editing import (
     BUILDINGS_FILE,
@@ -238,7 +239,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         state_id: int,
         provinces: Sequence[int],
         /,
-        **create_state_kwargs: Any,
+        **fields: Unpack[CreateStateOptions],
     ) -> State:
         """Create a new state from some of ``state_id``'s provinces and return it.
 
@@ -248,6 +249,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
             NotFoundError: The state does not exist.
             ValueError: A province does not belong to the state.
         """
+        create_state_kwargs: dict[str, Any] = dict(fields)
 
         province_list = self._normalize_province_ids(provinces)
         state = self.get_state(state_id)
