@@ -116,6 +116,10 @@ say what you got, no duplicate entry points, and the script builders moved to
   `ParseError`, `ExternalModificationError`, the image, Commons and Gemini
   errors, `OperationCancelled`, `MapRenderCancelled` and `GenerationCancelled`
   derive from `Hoi4Error` now.
+- `scripts/check_removed_api_names.py [paths...]` lists every call or
+  mention of a name the 0.7.0 cleanup removed or renamed, and every renamed
+  keyword argument, in Python files and Markdown. Run it on your own scripts
+  to find what the table above asks you to change.
 - A disk cache of what validation reads out of the game's own files (and
   base mods): references, division templates, sprites, characters, states,
   map data and localisation. A new process reads the stored results instead

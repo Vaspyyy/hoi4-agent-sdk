@@ -737,3 +737,16 @@ def test_validation_issue_is_a_record_and_the_old_name_is_gone() -> None:
     assert "ValidationIssue" in hoi4.__all__
     assert not hasattr(hoi4, "ValidationError")
     assert not issubclass(hoi4.ValidationIssue, BaseException)
+
+
+def test_no_removed_or_renamed_name_is_used_anywhere() -> None:
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, "scripts/check_removed_api_names.py"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stdout
