@@ -37,7 +37,7 @@ from ..types import (
 )
 from ..errors import AlreadyExistsError, NotFoundError, ReadOnlyError, not_found
 from ._countries import CountriesLayer
-from ._shared import MISSING, _D, _Missing
+from ._shared import MISSING, _D, _Missing, _check_model_lists
 from ._equipment import EquipmentLayer
 
 
@@ -273,6 +273,12 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 other OOBs.
         """
         name = require_script_id(name, label="OOB name")
+        _check_model_lists(
+            "create_oob",
+            OrderOfBattle,
+            {"templates": templates, "divisions": divisions, "fleets": fleets,
+             "air_wings": air_wings},
+        )
         country_tag = self._require_country_reference(tag)
         existing = self._oobs.get(name)
         if existing is not None and not overwrite:
@@ -398,6 +404,12 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 the kind does not match the content.
         """
         oob = self.get_oob(name)
+        _check_model_lists(
+            "update_oob",
+            OrderOfBattle,
+            {"templates": templates, "divisions": divisions, "fleets": fleets,
+             "air_wings": air_wings},
+        )
         existing_content_kind = _oob_content_kind(
             oob.templates,
             oob.divisions,

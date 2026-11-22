@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-from collections.abc import Callable, Iterable
+import types
+import typing
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any, TypeVar, cast
 from collections.abc import Sequence
@@ -97,6 +99,70 @@ def _check_fields(
     """
     valid = _settable_fields(obj, allow_path=allow_path, exclude=exclude) | set(extra)
     _check_field_names(method, kwargs, valid)
+    _check_model_lists(method, type(obj), kwargs)
+
+
+def _check_model_lists(method: str, model: type, values: Mapping[str, Any]) -> None:
+    """Raise ``TypeError`` when a list field of ``model`` is given items of another class."""
+    for name, classes in _model_list_fields(model).items():
+        if values.get(name) is not None:
+            _require_items(method, name, values[name], classes)
+
+
+_MODEL_LIST_FIELDS: dict[type, dict[str, tuple[type, ...]]] = {}
+
+
+def _model_list_fields(model: type) -> dict[str, tuple[type, ...]]:
+    """The fields of ``model`` that hold a list of other models, with the classes allowed in it.
+
+    ``Ideology.types`` is a ``list[SubIdeology]``: a string in that list would
+    only fail later, inside ``preview()`` or ``save()``.
+    """
+    known = _MODEL_LIST_FIELDS.get(model)
+    if known is not None:
+        return known
+    found: dict[str, tuple[type, ...]] = {}
+    _MODEL_LIST_FIELDS[model] = found
+    try:
+        hints = typing.get_type_hints(model)
+    except Exception:  # a hint that only resolves for the type checker
+        return found
+    for name, hint in hints.items():
+        if typing.get_origin(hint) is not list:
+            continue
+        arguments = typing.get_args(hint)
+        if len(arguments) != 1:
+            continue
+        item = arguments[0]
+        members = (
+            typing.get_args(item)
+            if typing.get_origin(item) in (typing.Union, types.UnionType)
+            else (item,)
+        )
+        if members and all(
+            isinstance(member, type) and dataclasses.is_dataclass(member) for member in members
+        ):
+            found[name] = tuple(members)
+    return found
+
+
+def _require_items(method: str, name: str, values: object, classes: tuple[type, ...]) -> None:
+    """Raise ``TypeError`` naming ``method`` unless ``values`` is a list of ``classes`` objects."""
+    wanted = " or ".join(cls.__name__ for cls in classes)
+    if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
+        raise TypeError(
+            f"{method}(): {name} must be a list of {wanted} objects, got {type(values).__name__}"
+        )
+    for item in values:
+        if not isinstance(item, classes):
+            raise TypeError(
+                f"{method}(): {name} must hold {wanted} objects, got {type(item).__name__}"
+            )
+
+
+def _typed_dict_keys(options: type) -> frozenset[str]:
+    """Every key of a ``TypedDict`` class (the keywords a method passes on)."""
+    return frozenset(options.__required_keys__ | options.__optional_keys__)  # type: ignore[attr-defined]
 
 
 def _check_field_names(method: str, kwargs: dict[str, Any], valid: Iterable[str]) -> None:

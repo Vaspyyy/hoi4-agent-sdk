@@ -128,10 +128,12 @@ field name) and `ValueError` (a value the call cannot use, such as an invalid
 tag) are raised as Python's own classes. So is `RuntimeError` when an
 optional extra is not installed (the map renderer needs the `map` extra).
 
-What is not visible to lookups: a focus tree, event, idea or on-action that
+What is not visible to lookups: a focus tree, event, idea, decision, decision
+category, bookmark, dynamic modifier or on-action that
 only the game or a base mod defines is not loaded, so `get_focus_tree()`,
-`get_event()` and the other lookups raise `NotFoundError` for it. Copy its file
-into the mod first with `mod.load_inherited_content(relative_path)`. Countries,
+`get_event()` and the other lookups raise `NotFoundError` for it. A focus,
+event, idea or on-action file can be copied into the mod first with
+`mod.load_inherited_content(relative_path)`. Countries,
 states, characters, OOBs, ideologies, localisation and definitions read the
 game's content directly.
 
@@ -192,7 +194,7 @@ history, characters, and localization.
 | `suggest_tags(name, *, count=5) -> list[str]` | Return available tag candidates |
 | `get_country(tag, *, default=...) -> Country` | Cached or reads from disk. Tries mod then vanilla install. A tag no one defines raises `NotFoundError` (or returns `default`); it is never invented. |
 | `create_country(tag, name, *, adjective="", color=(128, 128, 128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, overwrite_vanilla=False) -> Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. A tag the mod has, or a character `<TAG>_leader_1` the mod has, raises `AlreadyExistsError` unless `overwrite=True` (nothing is staged then); a tag the game uses raises `ValueError` unless `overwrite_vanilla=True`; an invalid tag raises `ValueError`. |
-| `update_country(tag, **fields) -> Country` | Update modeled country fields, including `color` and `color_ui`. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
+| `update_country(tag, **fields) -> Country` | Update modeled country fields, including `color`. `color_ui` can be set for a country in the colour table `colors.txt` (a game country); for a country the mod adds it raises `ValueError`, because its own file has no UI colour. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
 | `delete_country(tag) -> None` | Stage deletion of a mod-owned country and its generated localization. Raises `NotFoundError` for an unknown tag and `ReadOnlyError` for a game or base-mod country (that needs an explicit total-conversion strategy). |
 | `get_country_context(tag, *, copy_states=False, default=...) -> dict[str, Any]` | What the mod and the game hold for one country: basics, owned and core states, matching ideas, advisors, designers, localisation and focus trees. `copy_states=True` also queues overrides of its states. A tag no one defines raises `NotFoundError` (or returns `default`). |
 | `available_ruling_parties(*, include_vanilla=True) -> tuple[str, ...]` | The ideology groups of the mod and the game, custom groups included. |
@@ -259,7 +261,7 @@ ordering, and untouched variants.
 | `get_character(character_id, *, include_vanilla=True, default=...) -> Character` | Load a mod or vanilla character |
 | `create_character(tag, character, *, recruit=True, overwrite=False, path=None) -> Character` | Define a character, create localization, and normally add `recruit_character` to country history. `recruit=False` is for source-managed recruitment, never a runtime event effect. |
 | `update_character(character_id, **fields) -> Character` | Patch top-level `name` or `portraits` |
-| `delete_character(character_id, *, remove_recruitment=True) -> None` | Delete a loaded character and its generated localization/recruitment; raises `NotFoundError` when none is loaded |
+| `delete_character(character_id, *, remove_recruitment=True) -> None` | Delete a character and its generated localization/recruitment; a character of the game or a base mod is deleted by writing an override of its file |
 | `add_character_instance(character_id, instance) -> CharacterInstance` | Append a DLC/source variant |
 | `update_character_instance(character_id, occurrence, **fields) -> CharacterInstance` | Patch one selected repeated instance |
 | `delete_character_instance(character_id, occurrence) -> None` | Delete one selected repeated instance; raises `NotFoundError` for a missing character or instance |

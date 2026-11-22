@@ -27,6 +27,7 @@ from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
+    _require_items,
     _set_fields,
 )
 
@@ -117,6 +118,7 @@ class BookmarksLayer(CoreLayer):
             / "bookmarks"
             / f"{safe_file_stem(name, fallback='bookmark')}.txt"
         )
+        _require_items("create_bookmark", "countries", countries or [], (BookmarkCountry,))
         selected_countries = list(countries or [])
         for country in selected_countries:
             country.tag = require_bookmark_country_key(country.tag)

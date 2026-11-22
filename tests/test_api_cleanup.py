@@ -929,3 +929,206 @@ def test_add_coastal_bunker_takes_the_state_first() -> None:
     assert effects.add_coastal_bunker(115, 2) == effects.add_bunker(115, 2).replace(
         "bunker", "coastal_bunker"
     )
+
+
+# ── Round 1 of the review: fields that did nothing, typos that were ignored ──
+
+
+def test_update_idea_refuses_desc_instead_of_doing_nothing(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_idea("zz_i")
+    mod.save()
+    mod = Mod(tmp_path)
+    for call in (mod.update_idea, mod.ensure_idea):
+        with pytest.raises(TypeError, match=r"set_loc\('zz_i_desc', text\)"):
+            call("zz_i", desc="zz_i_desc")  # type: ignore[call-arg]
+    assert mod.get_idea("zz_i").desc == ""
+    assert mod.preview() == ""
+    assert "desc" not in hoi4.fields.IdeaFields.__annotations__
+
+
+def test_update_country_refuses_a_ui_colour_that_no_file_can_hold(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    mod.save()
+    mod = Mod(tmp_path)
+    before = mod.preview()
+    with pytest.raises(ValueError, match="color_ui of 'ABC' cannot be set"):
+        mod.update_country("ABC", color_ui=(4, 5, 6))
+    assert mod.preview() == before
+    assert mod.get_country("ABC").color_ui is None
+    # The map colour of the same country can be set, and it is written.
+    mod.update_country("ABC", color=(4, 5, 6))
+    assert "4 5 6" in mod.preview()
+
+
+def test_update_country_sets_the_ui_colour_of_a_game_country(tmp_path, state_game) -> None:
+    mod = Mod(tmp_path / "mod", hoi4_install=state_game)
+    mod.update_country("GER", color_ui=(4, 5, 6))
+    assert mod.get_country("GER").color_ui == (4, 5, 6)
+
+
+def test_a_decision_chain_refuses_a_misspelled_step_key(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    with pytest.raises(TypeError, match=r"create_decision_chain\(\) step 2\(\): Unknown fields: \['cots'\]"):
+        mod.create_decision_chain("zz_cat", [{"id": "zz_s1"}, {"id": "zz_s2", "cots": 7}])
+    assert mod.list_decisions() == []
+    assert mod.list_decision_categories() == []
+    assert mod.preview() == ""
+    chain = mod.create_decision_chain("zz_cat", [{"id": "zz_s1", "cost": 7, "flag": "zz_flag"}])
+    assert chain[0].cost == 7
+
+
+def test_the_wrappers_name_themselves_for_an_unknown_field(tmp_path, state_game) -> None:
+    mod = Mod(tmp_path / "mod", hoi4_install=state_game)
+    mod.create_decision_category("zz_cat")
+    with pytest.raises(TypeError, match=r"create_mission\(\): Unknown fields: \['bogus'\]\. Valid: "):
+        mod.create_mission("zz_cat", "zz_m", days_mission_timeout=10, bogus=1)  # type: ignore[call-arg]
+    with pytest.raises(
+        TypeError, match=r"create_targeted_decision\(\): Unknown fields: \['bogus'\]\. Valid: "
+    ):
+        mod.create_targeted_decision("zz_cat", "zz_t", target_trigger="always = yes", bogus=1)  # type: ignore[call-arg]
+    with pytest.raises(TypeError, match=r"split_state\(\): Unknown fields: \['bogus'\]\. Valid: "):
+        mod.split_state(1, [1], bogus=1)  # type: ignore[call-arg]
+    assert mod.list_decisions() == []
+    # The refusals of a mission keep their own message.
+    with pytest.raises(ValueError, match="Missions cannot have cost"):
+        mod.create_mission("zz_cat", "zz_m", days_mission_timeout=10, cost=5)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("bad", [["bad"], [{"name": "x"}], "bad", 7])
+def test_a_list_of_models_refuses_other_things_at_the_call(tmp_path, bad) -> None:
+    """Before, the wrong item only failed inside ``preview()`` or ``save()``."""
+    mod = Mod(tmp_path)
+    with pytest.raises(TypeError, match=r"create_ideology\(\): types must"):
+        mod.create_ideology("zz_ide", types=bad)
+    mod.create_ideology("zz_ide", types=[hoi4.SubIdeology("zz_sub")])
+    with pytest.raises(TypeError, match=r"update_ideology\(\): types must"):
+        mod.update_ideology("zz_ide", types=bad)
+    with pytest.raises(TypeError, match=r"create_event\(\): options must"):
+        mod.create_event("zz.1", options=bad)
+    mod.create_event("zz.1")
+    with pytest.raises(TypeError, match=r"update_event\(\): options must"):
+        mod.update_event("zz.1", options=bad)
+    with pytest.raises(TypeError, match=r"create_bookmark\(\): countries must"):
+        mod.create_bookmark("ZZ_START", countries=bad)
+    assert [sub.name for sub in mod.get_ideology("zz_ide").types] == ["zz_sub"]
+    assert [option.name for option in mod.get_event("zz.1").options] == ["zz.1.a"]
+    mod.create_country("ABC", "Abcland")
+    mod.create_character("ABC", hoi4.Character(id="ABC_x", name="X"))
+    with pytest.raises(TypeError, match=r"update_character\(\): portraits must"):
+        mod.update_character("ABC_x", portraits=bad)
+    with pytest.raises(TypeError, match=r"create_oob\(\): templates must"):
+        mod.create_oob("ABC_o", "ABC", templates=bad)
+    mod.create_oob("ABC_o", "ABC")
+    for field in ("templates", "divisions", "fleets", "air_wings"):
+        with pytest.raises(TypeError, match=rf"update_oob\(\): {field} must"):
+            mod.update_oob("ABC_o", **{field: bad})
+    mod.preview()  # renders: no wrong item got into a model
+
+
+# ── Round 1, from the probes of the two reviewers who were stopped ──
+
+
+def test_delete_character_finds_a_game_character_that_nothing_loaded_yet(tmp_path, game) -> None:
+    _write(
+        game,
+        "common/characters/GER.txt",
+        "characters = {\n\tGER_boss = { name = GER_boss }\n\tGER_other = { name = GER_other }\n}\n",
+    )
+    mod = Mod(tmp_path / "mod", hoi4_install=game)
+    mod.delete_character("GER_boss")  # no lookup before it
+    assert "GER_boss = {" not in mod.preview().replace("-\tGER_boss = {", "")
+    with pytest.raises(NotFoundError):
+        mod.delete_character("GER_nobody")
+
+
+def _game_with_a_decision_category(game):
+    _write(game, "common/decisions/categories/00_cats.txt", "game_cat = { icon = x }\n")
+    _write(game, "common/decisions/00_dec.txt", "game_cat = { game_dec = { cost = 5 } }\n")
+    return game
+
+
+def test_a_chain_and_a_recovery_decision_keep_the_games_category(tmp_path, game) -> None:
+    mod = Mod(tmp_path / "mod", hoi4_install=_game_with_a_decision_category(game))
+    mod.create_decision_chain("game_cat", ["zz_s1", "zz_s2"])
+    mod.create_recovery_decision("game_cat", "zz_fix", effect="add_stability = 0.01")
+    mod.save()
+    assert not (mod.mod_root / "common/decisions/categories").exists()
+    text = (mod.mod_root / "common/decisions/mod_decisions.txt").read_text(encoding="utf-8")
+    assert "zz_s1 = {" in text and "zz_fix = {" in text
+    # A category no one defines is still created, and an icon asks for a definition.
+    mod.create_decision_chain("zz_new_cat", ["zz_n1"])
+    mod.create_decision_chain("game_cat", ["zz_s3"], category_icon="GFX_zz")
+    preview = mod.preview()
+    assert "zz_new_cat = {" in preview
+    assert "icon = GFX_zz" in preview
+
+
+def test_a_chain_refuses_an_id_twice_before_anything_changes(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    with pytest.raises(hoi4.AlreadyExistsError, match="'d1' is in this call twice"):
+        mod.create_decision_chain("zz_cat", ["d1", "d1"])
+    assert mod.list_decisions() == []
+    assert mod.list_decision_categories() == []
+    assert mod.preview() == ""
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("popularities", 5, TypeError),
+        ("popularities", {7: 50}, TypeError),
+        ("ideas", [123], TypeError),
+        ("ideas", "one_idea", TypeError),
+        ("technologies", [1], TypeError),
+        ("color", (1, 2), ValueError),
+        ("color", "red", ValueError),
+        ("color", (1, 2, 300), ValueError),
+    ],
+)
+def test_a_country_value_of_the_wrong_shape_changes_nothing(tmp_path, field, value, error) -> None:
+    mod = Mod(tmp_path)
+    with pytest.raises(error, match=rf"create_country\(\): {field} must"):
+        mod.create_country("ABC", "Abcland", **{field: value})
+    assert mod.list_countries() == []
+    assert mod.preview() == ""
+    mod.create_country("ABC", "Abcland")
+    mod.save()
+    before = mod.preview()
+    with pytest.raises(error, match=rf"update_country\(\): {field} must"):
+        mod.update_country("ABC", name="Renamed", **{field: value})
+    assert mod.get_country("ABC").name == "Abcland"
+    assert mod.preview() == before
+
+
+def test_update_country_refuses_none_for_a_mapping(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    mod.save()
+    with pytest.raises(TypeError, match=r"update_country\(\): technologies must"):
+        mod.update_country("ABC", name="Renamed", technologies=None)  # type: ignore[arg-type]
+    assert mod.get_country("ABC").name == "Abcland"
+    assert mod.preview() == ""
+
+
+def test_an_empty_order_of_battle_is_still_a_file(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    mod.create_oob("ABC_x", "ABC")
+    mod.save()
+    assert (tmp_path / "history/units/ABC_x.txt").read_text(encoding="utf-8") == "units = {\n}\n"
+    fresh = Mod(tmp_path)
+    assert fresh.list_oobs() == ["ABC_x"]
+    assert fresh.get_oob("ABC_x").name == "ABC_x"
+
+
+def test_preview_lists_the_files_in_path_order(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_event("zz.1")
+    mod.create_idea("zz_idea")
+    mod.create_decision_category("zz_cat")
+    mod.set_loc("zz_key", "Text")
+    headers = [line[6:] for line in mod.preview().splitlines() if line.startswith("+++ b/")]
+    assert headers == sorted(headers)
+    assert len(headers) >= 4

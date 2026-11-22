@@ -28,6 +28,19 @@ from ._shared import (
 )
 
 
+def _refuse_desc(method: str, idea_id: str, kwargs: dict[str, Any]) -> None:
+    """Refuse ``desc``: the game reads an idea's description from localisation only.
+
+    The writer never puts ``desc`` into the idea, so setting it would change
+    nothing in the files while the returned object said it was set.
+    """
+    if "desc" in kwargs:
+        raise TypeError(
+            f"{method}(): 'desc' is not a field of an idea. The description is the "
+            f"localisation key '{idea_id}_desc': call set_loc('{idea_id}_desc', text)."
+        )
+
+
 class IdeasLayer(CountriesLayer):
     """Idea (national spirit) authoring."""
 
@@ -143,6 +156,7 @@ class IdeasLayer(CountriesLayer):
         kwargs: dict[str, Any] = dict(fields)
         existing = self.get_idea(idea_id, default=None)
         if existing is not None:
+            _refuse_desc("ensure_idea", idea_id, kwargs)
             _check_fields("ensure_idea", existing, kwargs, allow_path=True)
             return self.update_idea(idea_id, merge_modifier=merge_modifier, **kwargs)
         _check_field_names(
@@ -161,21 +175,16 @@ class IdeasLayer(CountriesLayer):
 
         Raises:
             NotFoundError: No idea has this id.
-            TypeError: A field name is unknown; nothing changed.
+            TypeError: A field name is unknown, or ``desc`` is passed (an
+                idea's description is localisation); nothing changed.
+            ValueError: ``id`` is passed (ids cannot change).
         """
         kwargs: dict[str, Any] = dict(fields)
         idea = self.get_idea(idea_id)
         if "id" in kwargs:
             raise ValueError("Idea IDs are immutable; create a new idea instead")
+        _refuse_desc("update_idea", idea_id, kwargs)
         _check_fields("update_idea", idea, kwargs, allow_path=True)
-        if "desc" in kwargs:
-            expected_desc = f"{idea_id}_desc"
-            desc = kwargs["desc"]
-            if desc and desc != expected_desc:
-                raise ValueError(
-                    "HOI4 idea descriptions use the fixed localization key "
-                    f"'{expected_desc}'; call set_loc('{expected_desc}', text) instead"
-                )
         if "icon" in kwargs:
             kwargs["icon"] = normalize_idea_icon(kwargs["icon"])
         touched_fields = set(kwargs) - {"path"}

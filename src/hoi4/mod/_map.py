@@ -71,7 +71,7 @@ from ..types import (
 )
 from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._catalogs import CatalogsLayer
-from ._shared import MISSING, _D, _Missing
+from ._shared import MISSING, _D, _Missing, _check_field_names, _typed_dict_keys
 from ._states import StatesLayer
 from ..textio import read_text
 
@@ -293,6 +293,9 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 ``state_id``).
         """
         create_state_kwargs: dict[str, Any] = dict(fields)
+        _check_field_names(
+            "split_state", create_state_kwargs, _typed_dict_keys(CreateStateOptions)
+        )
 
         province_list = self._normalize_province_ids(provinces)
         state = self.get_state(state_id)

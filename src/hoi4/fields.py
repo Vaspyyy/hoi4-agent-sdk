@@ -272,7 +272,6 @@ class IdeaFields(TypedDict, total=False):
     research_bonus: dict[str, str | int | float | bool]
     traits: list[str]
     ai_will_do: str
-    desc: str
     removal_cost: str | int | float | None
 
 

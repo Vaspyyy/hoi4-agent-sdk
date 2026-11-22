@@ -17,6 +17,7 @@ from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
+    _require_items,
     _set_fields,
 )
 
@@ -105,6 +106,7 @@ class IdeologiesLayer(CoreLayer):
                 outside the mod.
         """
         ideology_id = require_script_id(ideology_id, label="ideology ID")
+        _require_items("create_ideology", "types", types or [], (SubIdeology,))
         existing = self._ideologies.get(ideology_id)
         if existing is not None and not overwrite:
             raise AlreadyExistsError(

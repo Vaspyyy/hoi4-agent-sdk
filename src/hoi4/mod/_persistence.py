@@ -111,7 +111,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         diffs: list[str] = []
         rendered = self._render_dirty_files()
         self._assert_no_external_modifications(rendered)
-        for path, current in rendered.items():
+        # In path order, so the same edits always give the same text.
+        for path, current in sorted(rendered.items(), key=lambda item: item[0]):
             original = self._read_current_text(path)
             rel = str(path.relative_to(self.mod_root))
             if current is None:
