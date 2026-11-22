@@ -663,7 +663,7 @@ def test_matrix_modifier_cache_clears(layered_content, action: str) -> None:
     assert get("game").icon == "changed"
 
 
-@pytest.mark.parametrize("layered_content", ["on_action"], indirect=True)
+@pytest.mark.parametrize("layered_content", ["on_action", "on_action_occurrences"], indirect=True)
 @pytest.mark.parametrize("edit", ["update", "delete"])
 def test_matrix_on_action_edit_requires_own_hook(layered_content, edit: str) -> None:
     _kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
@@ -683,18 +683,20 @@ def test_matrix_on_action_edit_requires_own_hook(layered_content, edit: str) -> 
     assert (root / "common/on_actions/game.txt").exists()
 
 
-@pytest.mark.parametrize("layered_content", ["on_action"], indirect=True)
+@pytest.mark.parametrize("layered_content", ["on_action", "on_action_occurrences"], indirect=True)
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
 def test_matrix_on_action_cache_clears(layered_content, action: str) -> None:
     _kind, mod, game, _base, _root, _ids, get, _listing, put = layered_content
-    assert "game" in get("game").effect
+    current = get("game")
+    assert "game" in (current[0] if _kind == "on_action_occurrences" else current).effect
     put(game, "game", "game", "changed")
     if action == "save":
         with pytest.warns(RuntimeWarning):
             mod.save(require_changes=False)
     else:
         getattr(mod, action)()
-    assert "changed" in get("game").effect
+    current = get("game")
+    assert "changed" in (current[0] if _kind == "on_action_occurrences" else current).effect
 
 
 @pytest.mark.parametrize("layered_content", ["on_action"], indirect=True)
