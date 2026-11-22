@@ -119,8 +119,12 @@ Who notes a read:
 - An edit that names its target file, when the edit is made
   (`_output_path`, which every `path=` argument goes through). The file may
   be one that no loader reads: loaders read the files directly in their
-  folder, not in subfolders. `create_country` does the same for the files
-  of its tag, which may be on disk although no tag file registers them.
+  folder, not in subfolders.
+- An edit whose target follows from a name, when the edit is made
+  (`_note_country_files`): `create_country` for the files of its tag, which
+  may be on disk although no tag file registers them, and `update_country`
+  for the history file that a new name moves to (`TAG - Name.txt`; the
+  save and the note ask the same function, `country_history_target`).
 - Not the reads made while a save is rendered (`_read_current_text`). They
   happen a moment before the check below and must not become what that
   check compares with.
