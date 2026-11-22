@@ -5,7 +5,7 @@ Dataclass fields and semantics for SDK objects. Most agents should use the `Mod`
 ## Data Models
 
 ### Focus
-```python
+```text
 Focus(id: str,                          # Required. Unique within tree.
       icon: str = "GFX_goal_generic_construct_civilian",
       x: int = 0, y: int = 0,          # Grid position. Must be unique in tree.
@@ -47,7 +47,7 @@ focus can show, the plain `icon` first.
 blocks in a file can also be `shared_focus` or `joint_focus`.
 
 ### FocusTree
-```python
+```text
 FocusTree(id: str, country_tag: str = "",
           focuses: list[Focus] = [], path: Path | None = None,
           default: bool | None = None,
@@ -63,7 +63,7 @@ name without `.txt`. The game sees no tree with that ID. A file can hold real
 trees and one container.
 
 ### Country
-```python
+```text
 Country(tag: str, name: str = "", adjective: str = "",
         color: tuple[int,int,int] = (128,128,128),
         graphical_culture: str = "western_european_gfx",
@@ -97,7 +97,7 @@ value becomes `rgb`).
 blocks.
 
 ### Leader
-```python
+```text
 Leader(name: str, character_id: str = "",
        ideology: str = "liberalism", portrait_slug: str = "")
 ```
@@ -117,7 +117,7 @@ numeric stability and war-support values round-trip as numbers.
 
 ### Character and roles
 
-```python
+```text
 Character(id: str,
           country_tag: str = "",
           name: str = "",
@@ -141,7 +141,7 @@ Direct `roles` and repeated `instances` are both retained. An instance's
 are internal fidelity metadata; mutation methods select repeated instances and
 roles by zero-based occurrence.
 
-```python
+```text
 CountryLeaderRole(ideology="liberalism", expire="1965.1.1.1",
                   traits=[], id=-1)
 
@@ -164,7 +164,7 @@ appropriate HOI4 `slot`. One character may hold any number of roles.
 
 ### Land order of battle
 
-```python
+```text
 Battalion(unit_type: str, x: int, y: int)
 
 DivisionTemplate(name: str,
@@ -209,14 +209,22 @@ AirWing(location: int,
 OOBReference(name: str,
              kind: Literal["land", "naval", "air", "mixed"],
              required_dlc: tuple[str, ...] = (),
-             excluded_dlc: tuple[str, ...] = ())
+             excluded_dlc: tuple[str, ...] = (),
+             date: str = "")                    # dated history block, "" for none
 
 EquipmentVariant(name: str,
                  equipment_type: str,
                  name_group: str = "",
                  parent_version: int = 0,
+                 allow_without_tech: bool = False,
+                 obsolete: bool = False,
+                 mark_older_equipment_obsolete: bool = False,
+                 role_icon_index: int | str | None = None,
                  upgrades: dict[str, int] = {},
                  modules: dict[str, str] = {},
+                 model: str = "",
+                 icon: str = "",
+                 design_team: str = "",
                  required_dlc: tuple[str, ...] = (),
                  excluded_dlc: tuple[str, ...] = ())
 
@@ -265,7 +273,7 @@ variable arithmetic.
 
 ### CountryPackageReport and TerritoryComponent
 
-```python
+```text
 CountryPackageReport(tag: str,
                      findings: tuple[ValidationIssue, ...] = (),
                      lifecycle: str = "starting",
@@ -297,7 +305,7 @@ foreign land after threshold and allowlist filtering.
 
 ### ValidationIssue
 
-```python
+```text
 ValidationIssue(message: str,
                 severity: str = "error",
                 code: str = "",
@@ -325,7 +333,7 @@ severity is always the one `hoi4.VALIDATION_SEVERITIES` gives that code.
 object the finding is about, and `suppress=["code:ID"]` matches them.
 
 ### State
-```python
+```text
 State(id: int, name: str = "", owner: str = "",
       cores: list[str] = [],
       resources: dict[str, str|int|float] = {},
@@ -336,6 +344,7 @@ State(id: int, name: str = "", owner: str = "",
       victory_points: str = "",
       buildings_max_level_factor: str | int | float = "1.0",
       is_demilitarized_zone: bool = False,
+      impassable: bool = False,
       provinces: list[int] = [],
       history: str = "",
       path: Path | None = None)
@@ -349,7 +358,7 @@ A state is identified by the `id` directly inside its own top-level
 and neither does the file name.
 
 ### Decision
-```python
+```text
 Decision(id: str, category: str = "",
          icon: str = "",
          cost: int | None = None,
@@ -402,7 +411,7 @@ They are appended to the dataclass, so existing positional construction is
 unchanged; pass them by keyword.
 
 ### DecisionCategory
-```python
+```text
 DecisionCategory(id: str, icon: str = "",
                  allowed: str = "",
                  visible: str = "",
@@ -442,7 +451,7 @@ Decision and category strings are written with quotes only when they need
 them (`icon = "a b"`, but `icon = GFX_idea`), and are read without them.
 
 ### Event
-```python
+```text
 Event(id: str, title: str = "", description: str = "",
       event_type: str = "country_event",
       picture: str = "GFX_report_event_generic",
@@ -462,7 +471,7 @@ block that has a trigger is an entry of `conditional_titles` or
 whose trigger holds, then falls back to the plain key.
 
 ### EventText
-```python
+```text
 EventText(text: str, trigger: str = "")
 ```
 
@@ -471,7 +480,7 @@ One conditional key: `title = { text = KEY trigger = { tag = GER } }` reads as
 without the outer braces.
 
 ### EventOption
-```python
+```text
 EventOption(name: str = "", trigger: str = "", effect: str = "",
             ai_chance: str = "",
             conditional_names: list[EventText] = [])
@@ -484,7 +493,7 @@ Valid event types are `country_event`, `state_event`, `news_event`,
 `unit_leader_event`, and `operative_leader_event`.
 
 ### OnAction
-```python
+```text
 OnAction(id: str,
          effect: str = "",
          events: list[str] = [],
@@ -511,7 +520,7 @@ is never taken for a weight. Every `on_actions = { }` block of a file is
 loaded.
 
 ### Idea
-```python
+```text
 Idea(id: str, icon: str = "generic_political_support",
      modifier: dict[str, str|int|float|bool] = {},
      path: Path | None = None,
@@ -546,7 +555,7 @@ accepted and normalized; serialized `picture` values never include
 
 ### Ideology and SubIdeology
 
-```python
+```text
 SubIdeology(name: str, can_be_randomly_selected: bool = True)
 
 Ideology(id: str,
@@ -576,7 +585,7 @@ ideologies accept an RGB tuple.
 
 ### DynamicModifier
 
-```python
+```text
 DynamicModifier(id: str,
                 icon: str = "",
                 enable: str = "",
@@ -593,7 +602,7 @@ not HOI4 constructs.
 
 ### Bookmark and BookmarkCountry
 
-```python
+```text
 BookmarkCountry(tag: str, history: str = "", ideology: str = "",
                 available: str = "", required_dlc: list[str] = [],
                 ideas: list[str] = [], focuses: list[str] = [])

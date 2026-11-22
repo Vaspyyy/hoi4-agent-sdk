@@ -1,0 +1,6 @@
+ideologies = {
+	democratic = { types = { conservatism = { } liberalism = { } socialism = { } } color = { 0 0 255 } }
+	fascism = { types = { nazism = { } fascism_ideology = { } } color = { 150 75 0 } }
+	communism = { types = { marxism = { } leninism = { } stalinism = { } } color = { 255 0 0 } }
+	neutrality = { types = { despotism = { } oligarchism = { } } color = { 120 120 120 } }
+}

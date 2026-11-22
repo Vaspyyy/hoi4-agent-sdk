@@ -1,0 +1,10 @@
+focus_tree = {
+	id = my_focus
+	country = { factor = 0 }
+	focus = {
+		id = MY_start
+		x = 0
+		y = 0
+		cost = 5
+	}
+}

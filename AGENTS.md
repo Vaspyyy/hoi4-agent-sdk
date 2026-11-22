@@ -1,10 +1,11 @@
-# AGENTS.md — HOI4 Agent SDK Instructions
+# AGENTS.md: HOI4 Agent SDK Instructions
 
 Mandatory instructions for agents using the `hoi4` Python SDK to modify Hearts of Iron IV mods.
 
 ## Setup
 
-Requires Python 3.11 or newer.
+Requires Python 3.11 or newer. The package is not on PyPI; install it from a
+checkout of this repository:
 
 ```bash
 python -m venv venv && ./venv/bin/pip install -e .
@@ -14,7 +15,7 @@ Mod projects should contain a `.hoi4.json` file:
 
 ```json
 {
-  "mod_path": "/path/to/mod",
+  "mod_path": "/path/to/my_mod",
   "hoi4_install": "/path/to/Hearts of Iron IV"
 }
 ```
@@ -30,12 +31,16 @@ mod = Mod.from_config()
 
 ## Script Location
 
-For one-off automation, put scripts in `/tmp/hoi4-agent-scripts/` and run them from the mod project containing `.hoi4.json`. Do not place task-specific scripts inside `/home/ransom/Projekte/hoi4-agent-sdk` or any SDK repo directory. Reusable scripts belong in the mod project's `scripts/` or `tools/` directory.
+For one-off automation, put scripts in `/tmp/hoi4-agent-scripts/` and run them from the mod project containing `.hoi4.json`. Do not place task-specific scripts inside the SDK checkout or any other SDK directory. Reusable scripts belong in the mod project's `scripts/` or `tools/` directory.
+
+Run them with the Python of the environment you installed the SDK into
+(`$HOI4_SDK_PYTHON` below stands for its path, for example
+`<sdk checkout>/venv/bin/python`):
 
 ```bash
 mkdir -p /tmp/hoi4-agent-scripts
 cd /path/to/mod-project
-/home/ransom/Projekte/hoi4-agent-sdk/venv/bin/python /tmp/hoi4-agent-scripts/task.py
+"$HOI4_SDK_PYTHON" /tmp/hoi4-agent-scripts/task.py
 ```
 
 ## Required Workflow
@@ -43,15 +48,20 @@ cd /path/to/mod-project
 All mutations are in memory until `save()`.
 
 ```python
-from hoi4 import Mod
+from hoi4 import Focus, Mod
 
 mod = Mod.from_config()
 
-# Inspect existing data.
-tree = mod.get_focus_tree("german_focus")
+# Inspect existing data. A focus tree the game ships is not visible to the
+# lookups until its file is copied into the mod (this stages the copy).
+mod.load_inherited_content("common/national_focus/germany.txt")
+anchor = mod.get_focus("german_focus", "GER_anschluss")
 
 # Make changes.
-# ...
+mod.add_focus("german_focus", Focus(
+    id="GER_new_focus", x=anchor.x, y=anchor.y + 1, requires="GER_anschluss",
+))
+mod.set_focus_loc("GER_new_focus", "New Focus", "What it does.")
 
 # Validate.
 errors = mod.validate()
@@ -69,13 +79,28 @@ print(result)
 print(result.written_files)
 ```
 
-Use `mod.discard()` to throw away changes and reload from disk. Use a transaction for dry runs:
+Use `mod.discard()` to throw away every unsaved change; it also picks up files
+changed on disk. Use a transaction for dry runs:
 
 ```python
 with mod.transaction():
-    # Make temporary changes.
+    mod.set_loc("GER_new_focus", "A Trial Name")  # thrown away on exit
     print(mod.preview())
 ```
+
+Lookups and changes raise instead of returning `None` or `False`:
+
+- `get_x(id)` raises `NotFoundError` (a `KeyError`) for a missing id; its
+  message names close matches. Pass `default=None` to get `None` instead.
+- `create_x(id, ...)` raises `AlreadyExistsError` (a `ValueError`) for an id
+  that exists. Use `ensure_x()` when a script may run twice, or
+  `overwrite=True` to replace on purpose.
+- `update_x()`, `delete_x()` and `remove_x()` raise `NotFoundError` for a
+  missing target. Deleting game content raises `ReadOnlyError`: override it
+  instead.
+
+All four classes are importable from `hoi4` (`Hoi4Error` is their base). See
+[Errors](docs/api.md#errors).
 
 ## Hard Rules
 
@@ -98,9 +123,14 @@ with mod.transaction():
    Use state-scoped helpers:
 
    ```python
-   effects.add_state_core(state_id, tag)
-   effects.remove_state_core(state_id, tag)
+   from hoi4 import effects
+
+   effects.add_state_core(4, "GER")      # 4 = { add_core_of = GER }
+   effects.remove_state_core(4, "AUS")   # 4 = { remove_core_of = AUS }
    ```
+
+   The builders live in the `hoi4.effects` module, not on `Mod`. Each returns
+   the script text as a `str`.
 
 7. Prefer SDK helpers over manually assembled Paradox script: `effects.transfer_state_with_core(...)`, `effects.transfer_state(...)`, `effects.swap_idea(...)`, `effects.upgrade_idea_chain(...)`, `effects.add_political_power(...)`, `effects.add_war_support(...)`, `effects.add_manpower(...)`, `effects.add_army_experience(...)`, `effects.add_navy_experience(...)`, `effects.add_equipment(...)`, `effects.set_technology(...)`, `effects.set_politics(...)`, `effects.create_faction(...)`, `effects.add_target_to_faction(...)`, `effects.join_faction(...)`, `effects.white_peace(...)`, `effects.spawn_revolution(...)`, `effects.convert_existing_or_spawn_revolt(...)`, `effects.load_focus_tree(...)`, `effects.spawn_civil_war_with_focus_tree(...)`, `effects.release(...)`, `effects.release_puppet(...)`, `effects.end_puppet(...)`, `effects.set_autonomy(...)`, `effects.convert_puppet_to_ally(...)`, `effects.add_civilian_factory(...)`, `effects.add_bunker(...)`, `effects.add_tech_bonus(...)`, `effects.declare_war_from(...)`, `effects.scope_block(...)`.
 
@@ -143,7 +173,7 @@ with mod.transaction():
     Decision-category metadata belongs in `common/decisions/categories`, while
     decision definitions belong in `common/decisions`.
 
-16. `create_focus_tree()`, `create_decision_category()`, `create_decision()`, and `create_idea()` also raise on existing IDs unless `overwrite=True`.
+16. Every `create_*()` method (`create_focus_tree()`, `create_decision_category()`, `create_decision()`, `create_idea()`, ...) raises `AlreadyExistsError` on an existing ID unless `overwrite=True`. Use the matching `ensure_*()` for a step that may run twice.
 
 17. Use `Focus(..., requires="FOCUS_ID")` for a single prerequisite instead of manually writing `prerequisites=[["FOCUS_ID"]]`.
 

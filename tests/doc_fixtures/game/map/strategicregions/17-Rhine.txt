@@ -1,0 +1,10 @@
+strategic_region = {
+	id = 17
+	name = "STRATEGICREGION_17"
+	provinces = {
+		266 516 540 563 591 596 663 665 692 704 707 732 923 984 1009
+	}
+	weather = {
+		period = { between = { 0.0 30.11 } temperature = { -5.0 10.0 } no_phenomenon = 1.0 }
+	}
+}

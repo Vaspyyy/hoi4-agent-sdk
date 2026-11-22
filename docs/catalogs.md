@@ -14,8 +14,8 @@ from hoi4 import EFFECT_CATEGORIES
 # Structure: list[tuple[str, list[tuple[str, str]]]]
 # (category_name, [(display_name, paradox_script), ...])
 
-for cat_name, effects in EFFECT_CATEGORIES:
-    for display_name, script in effects:
+for cat_name, entries in EFFECT_CATEGORIES:
+    for display_name, script in entries:
         print(f"{display_name}: {script}")
 ```
 
@@ -32,15 +32,17 @@ Example entries:
 Do not use bare `add_core_of = TAG` or `remove_core_of = TAG` inside country-scope event effects or focus rewards. Scope them to a state:
 
 ```python
-effects.add_state_core(115, "SIC")      # 115 = { add_core_of = SIC }
-effects.remove_state_core(115, "SIC")   # 115 = { remove_core_of = SIC }
+from hoi4 import effects
+
+effects.add_state_core(115, "SCL")      # 115 = { add_core_of = SCL }
+effects.remove_state_core(115, "SCL")   # 115 = { remove_core_of = SCL }
 ```
 
 Use runtime state transfer effects in events, decisions, and focus rewards:
 
 ```python
-effects.transfer_state(115, "SIC")      # SIC = { transfer_state = 115 }
-effects.transfer_state_with_core(115, "SIC")
+effects.transfer_state(115, "SCL")      # SCL = { transfer_state = 115 }
+effects.transfer_state_with_core(115, "SCL")
 ```
 
 Do not use `set_owner = 115` in event/focus script. `set_owner` belongs in `history/states` files; it is not a runtime effect.
@@ -76,7 +78,7 @@ for cat_name, modifiers in MODIFIER_CATEGORIES:
         print(f"{key} = {value}  # {display_name}")
 ```
 
-**Categories:** Economy, Politics, Army, Navy, Air, Intelligence, Manpower & Occupation, Research — 61 total entries.
+**Categories:** Economy, Politics, Army, Navy, Air, Intelligence, Manpower & Occupation, Research: 61 entries in all.
 
 Example entries:
 ```python

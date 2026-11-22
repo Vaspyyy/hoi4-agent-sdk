@@ -25,22 +25,29 @@ There is one reader for script, a lossless syntax tree; see
 
 ## Installation
 
-```bash
-python -m pip install hoi4-agent-sdk
-```
-
-Optional image and map tooling is installed separately:
+The package is not on PyPI. Install it from the source repository. Python 3.11
+or newer is required.
 
 ```bash
-python -m pip install 'hoi4-agent-sdk[assets]'
-python -m pip install 'hoi4-agent-sdk[gemini]'
-python -m pip install 'hoi4-agent-sdk[map]'
+git clone https://github.com/Vaspyyy/hoi4-agent-sdk
+cd hoi4-agent-sdk
+python -m pip install -e .
 ```
 
-Python 3.11 or newer is required.
+Or install straight from GitHub without a checkout:
 
-For development from a source checkout, install the editable development and
-map extras with `python -m pip install -e '.[dev,map]'`.
+```bash
+python -m pip install git+https://github.com/Vaspyyy/hoi4-agent-sdk
+```
+
+Optional extras add image import (`assets`), Gemini image candidates
+(`gemini`), map rendering and generation (`map`), and the development tools
+(`dev`). Name them in brackets, for example from a checkout:
+
+```bash
+python -m pip install -e '.[assets,map]'
+python -m pip install -e '.[dev,map]'    # for work on the SDK itself
+```
 
 ## Quick start
 
@@ -50,15 +57,17 @@ from hoi4 import Focus, Mod
 mod = Mod("/path/to/my_mod", hoi4_install="/path/to/Hearts of Iron IV")
 
 with mod.transaction():
+    mod.create_focus_tree("ger_extra_focus", "GER")
     mod.add_focus(
-        "my_focus_tree",
+        "ger_extra_focus",
         Focus(
-            id="ABC_expand_industry",
+            id="GER_expand_industry",
             x=3,
             y=2,
             completion_reward="add_political_power = 50",
         ),
     )
+    mod.set_focus_loc("GER_expand_industry", "Expand Industry", "More factories.")
     print(mod.preview_summary())
     print(mod.preview())
     issues = mod.validate()
@@ -70,6 +79,11 @@ with mod.transaction():
 # This dry run discards its changes on exit. After reviewing the output,
 # rerun the block with mod.transaction(save=True) to apply and save the edits.
 ```
+
+`create_focus_tree()` raises `AlreadyExistsError` when the tree exists; use
+`ensure_focus_tree()` when the script may run twice. A focus tree the game
+ships is not visible to `get_focus_tree()` until you copy its file into the
+mod with `mod.load_inherited_content("common/national_focus/<file>.txt")`.
 
 ## Supported content
 
@@ -105,7 +119,7 @@ from pathlib import Path
 
 from hoi4.project import create_mod_structure, scan_mod_descriptors, write_mod_descriptors
 
-root = Path("/path/to/mods/my_mod")
+root = Path("/path/to/projects/new_mod")
 launcher_mod_dir = Path("/path/to/launcher/mod")
 create_mod_structure(root)
 write_mod_descriptors(root, launcher_mod_dir, "My Mod")
@@ -123,7 +137,7 @@ Flag and portrait helpers import Pillow only when used:
 ```python
 from hoi4 import Mod
 
-mod = Mod(root)
+mod = Mod(root)  # the project made above
 flag = mod.import_flag_to_mod("ABC", "flag.png")
 portrait = mod.import_portrait_to_mod("ABC", "alice", "alice.png")
 mod.write_portrait_gfx("ABC", "alice", portrait_path=portrait)
@@ -135,6 +149,7 @@ Prefer suitable existing images, then Wikimedia Commons for historical flags
 and portraits. Search needs no API key or extra dependency; downloads and image
 imports need the `assets` extra:
 
+<!-- doc-test: skip (needs the network) -->
 ```python
 from pathlib import Path
 from hoi4 import CommonsImageClient
@@ -163,6 +178,7 @@ or necessary generation with paid calls authorized. Failed web searches or an
 available key do not authorize paid fallback. It does not modify a mod; review
 the PNG before passing it to the existing import helpers:
 
+<!-- doc-test: skip (needs a paid Gemini key) -->
 ```python
 from pathlib import Path
 
@@ -278,6 +294,14 @@ against a real game install:
 HOI4_INSTALL_DIR="/path/to/Hearts of Iron IV" python -m pytest -m corpus -p no:cacheprovider -q
 ```
 
+`tests/test_doc_blocks.py` runs every Python block of this README, `AGENTS.md`
+and `docs/` against a small fixture mod and a small fake game. To run them
+against a real install instead (it is only read):
+
+```bash
+HOI4_DOC_TEST_GAME="/path/to/Hearts of Iron IV" python -m pytest tests/test_doc_blocks.py -q
+```
+
 See [docs/api.md](docs/api.md), [docs/models.md](docs/models.md), and
 [CONTRIBUTING.md](CONTRIBUTING.md) for the detailed API and release checks.
 The real-mod gate requires at least six completed domain probes by default and
@@ -287,7 +311,7 @@ requires exact technology-category equality, enables strict loading and asset
 validation, and writes text plus JSON reports:
 
 ```bash
-python scripts/audit_hoi4_install.py /path/to/mod --hoi4-install /path/to/hoi4 \
+python scripts/audit_hoi4_install.py /path/to/my_mod --hoi4-install "/path/to/Hearts of Iron IV" \
   --fingerprint-manifest /private/path/mod.sha256.json \
   --error-log "$HOME/.local/share/Paradox Interactive/Hearts of Iron IV/logs/error.log"
 ```
