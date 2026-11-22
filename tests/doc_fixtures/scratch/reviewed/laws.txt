@@ -1,0 +1,8 @@
+ideas = {
+	country = {
+		REV_reviewed_law = {
+			picture = generic_political_support
+			modifier = { stability_factor = 0.05 }
+		}
+	}
+}

@@ -21,13 +21,16 @@ exported from `hoi4`. Every finding has the severity of its code, also when
 a check such as `validate_event()` or `validate_oob()` is called on its own.
 
 ```python
+from hoi4 import Mod
+
+mod = Mod("/path/to/my_mod", hoi4_install="/path/to/Hearts of Iron IV")
 issues = mod.validate()                 # errors and warnings
 issues = mod.validate(advice=True)      # also the advice
 blocking = [i for i in issues if i.severity == "error"]
 ```
 
-The release gate (`run_release_gate`) and `mod.validate_country_package(tag)`
-work as before: advice never fails them. `mod.validate_effect(script)` checks
+Advice never fails the release gate (`run_release_gate`) or
+`mod.validate_country_package(tag)`. `mod.validate_effect(script)` checks
 one snippet and returns its advice together with errors and warnings; pass
 `advice=False` to leave the advice out.
 
@@ -87,7 +90,7 @@ mod.validate_effect("add_core_of = SCL", suppress=["country_scope_core_effect"])
 
 - Errors cannot be suppressed: an error code in `suppress=` raises `ValueError`.
 - An unknown code raises `ValueError`, so a typo does not silently hide
-  nothing. Suppressing by message text is no longer supported.
+  nothing. Suppressing by message text is not supported.
 - One mistake gives one finding: a core effect in a country scope is
   `country_scope_core_effect`, not also `unsupported_effect_scope`.
 

@@ -1,0 +1,2 @@
+graphical_culture = western_european_gfx
+color = { 100 100 100 }

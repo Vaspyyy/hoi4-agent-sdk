@@ -1,0 +1,2 @@
+[12:00:01][1936.01.01.12][effect.cpp:120]: Unknown effect-type: add_politcal_power, near line: 3 in file: "common/national_focus/my_focus.txt"
+[12:00:02][1936.01.01.12][effect.cpp:120]: Unknown effect-type: foo, near line: 9 in file: "common/national_focus/other_mod.txt"

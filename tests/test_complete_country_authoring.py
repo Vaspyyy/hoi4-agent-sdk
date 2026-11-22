@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 from pathlib import Path
 
@@ -26,11 +27,14 @@ from hoi4.oob import validate_oob
 Image = pytest.importorskip("PIL.Image")
 
 
+# Optional real data; the tests that need it are skipped when it is missing.
 GAME_ROOT = Path(
-    "/home/ransom/.local/share/Steam/steamapps/common/Hearts of Iron IV"
+    os.environ.get("HOI4_INSTALL_DIR")
+    or Path.home() / ".local/share/Steam/steamapps/common/Hearts of Iron IV"
 )
 EMPIRE_ROOT = Path(
-    "/home/ransom/.local/share/hoi4-agent-sdk/audit-corpus/Empire"
+    os.environ.get("HOI4_EMPIRE_MOD_DIR")
+    or Path.home() / ".local/share/hoi4-agent-sdk/audit-corpus/Empire"
 )
 
 
