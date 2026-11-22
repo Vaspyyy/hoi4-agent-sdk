@@ -568,8 +568,8 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 
 | Method | Description |
 |--------|-------------|
-| `list_events() -> list[str]` | All loaded events |
-| `get_event(event_id, *, default=...) -> Event` | Raises `NotFoundError` with close matches if not found |
+| `list_events(*, include_vanilla=False) -> list[str]` | All loaded events |
+| `get_event(event_id, *, include_vanilla=True, default=...) -> Event` | Raises `NotFoundError` with close matches if not found |
 | `create_event(event_id, *, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer the namespace: the text before the last dot. Conditional titles and descriptions are written before the plain fallback. |
 | `ensure_event(event_id, **fields) -> Event` | Idempotent create-or-update wrapper |
 | `update_event(event_id, **fields) -> Event` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
@@ -960,8 +960,8 @@ static checks do not establish the layout displayed by the game.
 
 | Method | Description |
 |--------|-------------|
-| `list_focus_trees() -> list[str]` | All loaded tree IDs |
-| `get_focus_tree(tree_id, *, default=...) -> FocusTree` | Raises `NotFoundError` if not found |
+| `list_focus_trees(*, include_vanilla=False) -> list[str]` | All loaded tree IDs |
+| `get_focus_tree(tree_id, *, include_vanilla=True, default=...) -> FocusTree` | Raises `NotFoundError` if not found |
 | `create_focus_tree(tree_id, tag, *, overwrite=False) -> FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
 | `ensure_focus_tree(tree_id, tag, **fields) -> FocusTree` | Idempotent create-or-update for tree-level fields; an existing tree of another country raises `ValueError` |
 | `update_focus_tree(tree_id, **fields) -> FocusTree` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
@@ -969,7 +969,7 @@ static checks do not establish the layout displayed by the game.
 | `add_focus(tree_id, focus) -> Focus` | Append focus to tree; an id the tree has raises `AlreadyExistsError` |
 | `ensure_focus(tree_id, focus) -> Focus` | Add a new focus or replace modeled fields on an existing focus |
 | `remove_focus(tree_id, focus_id) -> None` | Remove focus by ID; raises `NotFoundError` |
-| `get_focus(tree_id, focus_id, *, default=...) -> Focus` | Find focus in tree; a missing tree or focus raises `NotFoundError` (or returns `default`) |
+| `get_focus(tree_id, focus_id, *, include_vanilla=True, default=...) -> Focus` | Find focus in tree; a missing tree or focus raises `NotFoundError` (or returns `default`) |
 | `update_focus(tree_id, focus_id, **fields) -> Focus` | Update any Focus field |
 | `focus_tree_bounds(tree_id) -> dict[str, int]` | `min_x`, `max_x`, `min_y`, `max_y`, `width`, `height` |
 | `place_continuous_focus_below_tree(tree_id, *, padding=400, x=50) -> str` | Sets `continuous_focus_position` below the lowest focus row |
