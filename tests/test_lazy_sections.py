@@ -345,6 +345,50 @@ def test_a_change_after_the_section_loaded_stays_refused_on_a_second_read(mod_ro
         mod.save()
 
 
+@pytest.mark.parametrize("way_out", ["discard", "reload"])
+@pytest.mark.parametrize("same_time", [False, True], ids=["new time", "old time set back"])
+@pytest.mark.parametrize("kind", ["event", "scripted trigger"])
+def test_after_a_refused_save_discard_takes_the_changed_file(
+    mod_root: Path, kind: str, same_time: bool, way_out: str
+) -> None:
+    """The refusal saw the change in the text; ``stat`` alone may not show it to discard()."""
+
+    if kind == "event":
+        path = mod_root / "events/test.txt"
+        old, new = "test.1.d", "test.9.d"
+
+        def edit(mod: Mod) -> None:
+            mod.update_event("test.1", title="mine")
+    else:
+        path = _write(mod_root, "common/scripted_triggers/st.txt", "my_trig = { always = yes }\n")
+        old, new = "always = yes", "has_war = no"
+
+        def edit(mod: Mod) -> None:
+            mod.update_definition("scripted_trigger", "my_trig", "always = no")
+
+    _age(path)
+    mod = Mod(mod_root)
+    edit(mod)
+    before = path.stat()
+    path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+    if same_time:
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    with pytest.raises(ExternalModificationError):
+        mod.save()
+
+    getattr(mod, way_out)()
+    if kind == "event":
+        assert mod.get_event("test.1").description == "test.9.d"
+        edit(mod)
+        mod.save()
+        saved = path.read_text(encoding="utf-8")
+        assert "mine" in saved and "test.9.d" in saved
+    else:
+        edit(mod)
+        mod.save()
+        assert "always = no" in path.read_text(encoding="utf-8")
+
+
 def test_a_shallow_copy_keeps_its_own_account_of_what_is_loaded(mod_root: Path) -> None:
     mod = Mod(mod_root)
     clone = copy.copy(mod)

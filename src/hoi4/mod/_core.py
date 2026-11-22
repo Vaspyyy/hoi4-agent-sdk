@@ -548,6 +548,10 @@ class CoreLayer:
         # Digests the scan itself took of files that were fresh then (their
         # time proves nothing). Not a noted read: see ``_note_read``.
         self._scan_digests: dict[Path, bytes] = {}
+        # Files a refused save or preview found changed by comparing their
+        # text. ``stat`` may not show such a change (same size, time set
+        # back), so the next discard() is told about them.
+        self._seen_changed: set[Path] = set()
         # The same for the base mods' text files, so discard() can tell
         # whether the inherited content changed (the game is not watched).
         self._base_fingerprints: dict[Path, _Fingerprint] = {}
@@ -825,6 +829,7 @@ class CoreLayer:
 
         self._fingerprints, self._scan_digests = self._scan_fingerprints()
         self._read_digests = {}
+        self._seen_changed = set()
         self._base_fingerprints, self._base_digests = self._scan_fingerprints(self.base_mod_paths)
 
     def _base_mods_changed(self) -> bool:

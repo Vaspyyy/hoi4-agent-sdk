@@ -149,6 +149,11 @@ Two questions are asked of them, with different care:
 - After a save, the written files get new fingerprints and digests. A discard
   takes the fingerprints of the whole mod again, which is also how it finds
   files changed on disk.
+- A change that only the text shows (same size, time set back) is found by
+  the `save()` or `preview()` that refuses it, not by a fingerprint. Those
+  files are remembered (`_seen_changed`), and the next `discard()` treats
+  them as changed. So after a refusal, `discard()` always reads the changed
+  file again, and the edit can be made once more and saved.
 
 ## Threads
 

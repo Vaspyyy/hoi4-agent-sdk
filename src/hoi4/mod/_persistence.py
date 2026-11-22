@@ -471,6 +471,10 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             for path in rendered
             if self._changed_behind_our_back(path)
         ]
+        # discard() finds changed files by size and time. These were found by
+        # their text, so it is told: after a refused save, discard() reads
+        # them again whatever their size and time say.
+        self._seen_changed.update(conflicts)
         for path, baseline in self._pending_asset_baselines.items():
             current = path.read_bytes() if path.is_file() else None
             if current != baseline:
@@ -735,6 +739,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         fingerprints, digests = self._scan_fingerprints()
         known_digests = {**self._scan_digests, **self._read_digests}
         changed = _changed_files(self._fingerprints, known_digests, fingerprints, digests)
+        # Plus what a refused save or preview saw changed by its text.
+        changed = sorted({*changed, *self._seen_changed})
         names, mapped = self._sections_to_unload([*written, *staged, *changed])
         if not mapped or self._base_mods_changed():
             # A descriptor, a path outside the mod or a changed base mod
@@ -748,6 +754,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         self._fingerprints = fingerprints
         for path in changed:
             self._read_digests.pop(path, None)
+        self._seen_changed = set()
         self._scan_digests = {
             path: digest for path, digest in digests.items() if path not in self._read_digests
         }
