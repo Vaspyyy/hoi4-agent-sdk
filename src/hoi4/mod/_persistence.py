@@ -115,9 +115,15 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         for path, current in sorted(rendered.items(), key=lambda item: item[0]):
             original = self._read_current_text(path)
             rel = str(path.relative_to(self.mod_root))
+            is_deletion = current is None
             if current is None:
                 current = ""
             diff = unified_diff(original, current, rel)
+            if not diff and not original and not current:
+                if not is_deletion and not path.exists():
+                    diff = f"--- /dev/null\n+++ b/{rel}\n"
+                elif is_deletion and path.exists():
+                    diff = f"--- a/{rel}\n+++ /dev/null\n"
             if diff:
                 diffs.append(diff)
         for path, content in sorted(self._pending_asset_writes.items()):

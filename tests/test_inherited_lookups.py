@@ -359,11 +359,15 @@ def test_matrix_mod_precedence(layered_content) -> None:
     assert (origin.definition_path if kind == "decision_category" else origin.path).is_relative_to(root)
 
 
-def test_matrix_mod_only_and_default(layered_content) -> None:
+def test_matrix_mod_only(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     with pytest.raises(NotFoundError):
         get("game", include_vanilla=False)
     assert get("mod", include_vanilla=False) is not None
+
+
+def test_matrix_missing_default(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
     missing_args = ("missing", "missing_focus") if kind == "focus" else ("missing",)
     sentinel = object()
     assert getattr(mod, _MATRIX[kind][2])(*missing_args, default=sentinel) is sentinel
@@ -697,3 +701,116 @@ def test_inherited_on_action_occurrences_compose_layers(layered_content) -> None
     assert occurrences[0].path.is_relative_to(base)
     assert occurrences[1].path.is_relative_to(game)
     assert mod.get_on_action_occurrences(ids["both"], include_vanilla=False, default=None) is None
+
+
+_LEGACY_KINDS = ("country", "state", "character", "oob", "ideology", "localisation", "definition", "region")
+
+
+@pytest.fixture(params=_LEGACY_KINDS, ids=str)
+def existing_content(request, tmp_path: Path):
+    kind = request.param
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/country_tags/g.txt", 'GER = "countries/Germany.txt"')
+    write(game, "common/countries/Germany.txt", "color = { 1 2 3 }")
+    write(game, "history/countries/GER - Germany.txt", "capital = 1")
+    write(root, "common/country_tags/m.txt", 'ABC = "countries/ABC.txt"')
+    write(root, "common/countries/ABC.txt", "color = { 4 5 6 }")
+    write(root, "history/countries/ABC - Mod.txt", "capital = 2")
+    write(game, "history/states/1.txt", "state = { id = 1 name = STATE_1 history = { owner = GER } provinces = { 1 } }")
+    write(root, "history/states/2.txt", "state = { id = 2 name = STATE_2 history = { owner = ABC } provinces = { 2 } }")
+    write(game, "common/characters/GER.txt", "characters = { GER_leader = { name = GAME } }")
+    write(root, "common/characters/ABC.txt", "characters = { ABC_leader = { name = MOD } }")
+    write(game, "history/units/GER_1936.txt", 'division_template = { name = "Inf" regiments = { infantry = { x = 0 y = 0 } } }')
+    write(root, "history/units/ABC_1936.txt", 'division_template = { name = "Inf" regiments = { infantry = { x = 0 y = 0 } } }')
+    write(game, "common/ideologies/g.txt", "ideologies = { game_ideology = { color = { 1 2 3 } } }")
+    write(root, "common/ideologies/m.txt", "ideologies = { mod_ideology = { color = { 1 2 3 } } }")
+    write(game, "localisation/english/g_l_english.yml", 'l_english:\n game_key:0 "Game"\n')
+    write(root, "localisation/english/m_l_english.yml", 'l_english:\n mod_key:0 "Mod"\n')
+    write(game, "common/opinion_modifiers/g.txt", "opinion_modifiers = { game_value = { value = 1 } }")
+    write(root, "common/opinion_modifiers/m.txt", "opinion_modifiers = { mod_value = { value = 2 } }")
+    write(game, "map/strategicregions/1.txt", "strategic_region = { id = 1 name = X provinces = { 1 } }")
+    write(root, "map/strategicregions/2.txt", "strategic_region = { id = 2 name = Y provinces = { 2 3 } }")
+    write(game, "map/definition.csv", "province;red;green;blue;type;coastal;terrain;continent\n1;1;1;1;land;false;plains;1\n2;2;2;2;land;false;plains;1\n3;3;3;3;land;false;plains;1\n")
+    mod = Mod(root, hoi4_install=game)
+    calls = {
+        "country": (lambda **kw: mod.get_country("GER", **kw), lambda **kw: mod.get_country("ABC", **kw), mod.list_countries),
+        "state": (lambda **kw: mod.get_state(1, **kw), lambda **kw: mod.get_state(2, **kw), mod.list_states),
+        "character": (lambda **kw: mod.get_character("GER_leader", **kw), lambda **kw: mod.get_character("ABC_leader", **kw), mod.list_characters),
+        "oob": (lambda **kw: mod.get_oob("GER_1936", **kw), lambda **kw: mod.get_oob("ABC_1936", **kw), mod.list_oobs),
+        "ideology": (lambda **kw: mod.get_ideology("game_ideology", **kw), lambda **kw: mod.get_ideology("mod_ideology", **kw), mod.list_ideologies),
+        "localisation": (lambda **kw: mod.get_loc("game_key", **kw), lambda **kw: mod.get_loc("mod_key", **kw), lambda **kw: []),
+        "definition": (lambda **kw: mod.get_definition("opinion_modifier", "game_value", **kw), lambda **kw: mod.get_definition("opinion_modifier", "mod_value", **kw), lambda **kw: mod.list_definitions("opinion_modifier", **kw)),
+        "region": (lambda **kw: mod.get_strategic_region(1, **kw), lambda **kw: mod.get_strategic_region(2, **kw), lambda **kw: mod.list_strategic_regions()),
+    }
+    return kind, mod, game, root, *calls[kind]
+
+
+def test_existing_matrix_game_lookup(existing_content) -> None:
+    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    assert get_game() is not None
+
+
+def test_existing_matrix_mod_only(existing_content) -> None:
+    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    with pytest.raises(NotFoundError):
+        get_game(include_vanilla=False)
+    assert get_mod(include_vanilla=False) is not None
+
+
+def test_existing_matrix_list_scope(existing_content) -> None:
+    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    if kind == "localisation":
+        assert listing() == []
+    elif kind == "region":
+        assert listing() == [1, 2]
+    else:
+        own = listing()
+        all_ids = listing(include_vanilla=True)
+        assert len(own) == 1
+        assert len(all_ids) == 2
+        assert set(own) < set(all_ids)
+
+
+def test_existing_matrix_read_has_no_effect(existing_content) -> None:
+    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    before = (listing(), mod.preview(), mod.validate())
+    files = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    get_game()
+    assert (listing(), mod.preview(), mod.validate()) == before
+    with pytest.warns(RuntimeWarning):
+        assert not mod.save(require_changes=False).written_files
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == files
+
+
+def test_existing_matrix_copy_or_immutable(existing_content) -> None:
+    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    value = get_game()
+    if kind in {"localisation", "definition", "region"}:
+        with pytest.raises((AttributeError, TypeError)):
+            value.id = "changed"
+    else:
+        field = {"country": "tag", "state": "id", "character": "id", "oob": "name", "ideology": "id"}[kind]
+        old = getattr(value, field)
+        setattr(value, field, "changed")
+        assert getattr(get_game(), field) == old
+
+
+def test_existing_matrix_edit_stages_override(existing_content) -> None:
+    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    sources = {p.relative_to(game): p.read_bytes() for p in game.rglob("*") if p.is_file()}
+    edits = {
+        "country": lambda: mod.update_country("GER", capital=2),
+        "state": lambda: mod.set_state_owner(1, "ABC", add_core=False),
+        "character": lambda: mod.update_character("GER_leader", name="UPDATED"),
+        "oob": lambda: mod.update_oob("GER_1936", templates=[]),
+        "ideology": lambda: mod.update_ideology("game_ideology", color=(5, 6, 7)),
+        "localisation": lambda: mod.set_loc("game_key", "Updated"),
+        "definition": lambda: mod.update_definition("opinion_modifier", "game_value", "value = 9"),
+        "region": lambda: mod.move_provinces_to_strategic_region([2], 1),
+    }
+    edits[kind]()
+    assert mod.preview()
+    result = mod.save(require_changes=True)
+    assert result.written_files
+    assert {p.relative_to(game): p.read_bytes() for p in game.rglob("*") if p.is_file()} == sources
