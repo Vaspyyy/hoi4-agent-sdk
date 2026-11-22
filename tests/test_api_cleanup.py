@@ -770,7 +770,7 @@ def test_state_setters_that_change_nothing_stage_nothing(tmp_path, state_game) -
     mod = Mod(tmp_path / "mod", hoi4_install=state_game)
     assert mod.set_state_owner(1, "GER") is None  # owner and core are there already
     assert mod.set_state_owner([1, 2], "GER", add_core=False) is None
-    assert mod.update_state(1, owner="GER", manpower=1, cores=["GER", "POL"]) is mod.get_state(1)
+    assert mod.update_state(1, owner="GER", manpower=1, cores=["GER", "POL"]) == mod.get_state(1)
     assert mod.update_state(2, add_cores=["POL"]).cores == ["GER", "POL"]
     assert mod.preview() == ""
     # The same owner with a core still missing is a change.

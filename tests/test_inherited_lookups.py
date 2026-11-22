@@ -184,3 +184,15 @@ def test_country_state_and_character_reads_do_not_stage(tmp_path: Path) -> None:
     assert mod.list_states() == [1]
     mod.update_character("GER_leader", name="new")
     assert mod.list_characters() == ["GER_leader"]
+
+
+def test_inherited_oob_is_a_copy(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "history/units/GER_1936.txt", 'division_template = { name = "Inf" regiments = { infantry = { x = 0 y = 0 } } }\nunits = { }\n')
+    mod = Mod(root, hoi4_install=game)
+    oob = mod.get_oob("GER_1936")
+    oob.templates.clear()
+    assert len(mod.get_oob("GER_1936").templates) == 1
+    assert mod.list_oobs() == []
+    assert mod.list_oobs(include_vanilla=True) == ["GER_1936"]

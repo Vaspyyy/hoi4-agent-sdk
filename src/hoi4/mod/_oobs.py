@@ -205,6 +205,18 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         for path in candidates:
             if not path.is_file():
                 continue
+            if not path.resolve(strict=False).is_relative_to(self.mod_root):
+                inherited_oob = self._inherited_copy(
+                    "oob", name,
+                    lambda: load_oob_file(
+                        path, name=name, country_tag=country_tag,
+                        kind=reference.kind if reference is not None else None,
+                        required_dlc=reference.required_dlc if reference is not None else (),
+                        excluded_dlc=reference.excluded_dlc if reference is not None else (),
+                    ),
+                )
+                assert inherited_oob is not None
+                return inherited_oob
             oob = load_oob_file(
                 path,
                 name=name,
@@ -799,4 +811,5 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             # the mod's own copy is patched and written out well formed.
             oob.raw_text = repair(oob.raw_text)
         oob.path = target
+        self._oobs[oob.name] = oob
         self._dirty_oob_files.add(target)

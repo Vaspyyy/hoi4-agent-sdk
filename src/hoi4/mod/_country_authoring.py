@@ -124,6 +124,8 @@ class CountryAuthoringLayer(CharactersLayer):
                 f"Country tag '{tag}' is already used by vanilla HOI4. "
                 "Choose an unused tag or pass overwrite_vanilla=True intentionally."
             )
+        if existing is None and overwrite and overwrite_vanilla and tag in self._vanilla_tags:
+            existing = self.get_country(tag)
         leader_id = f"{tag}_leader_1"
         if not overwrite and leader_id in self._characters:
             # Checked here, not only in create_character() below, so a call
