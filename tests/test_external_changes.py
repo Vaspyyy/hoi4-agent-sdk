@@ -519,6 +519,6 @@ def test_an_edit_pointed_at_an_unread_file_refuses_a_change_since_the_edit(
     if same_time:
         os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
 
-    with pytest.raises(ExternalModificationError, match="extra.txt|XYZ|Newname"):
+    with pytest.raises(ExternalModificationError, match=r"extra\.txt|XYZ|Newname"):
         mod.save()
     assert path.read_text(encoding="utf-8") == changed

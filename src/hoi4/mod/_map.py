@@ -6,10 +6,12 @@ import math
 import re
 import textwrap
 import warnings
+from itertools import pairwise
 from pathlib import Path
 from collections.abc import Callable
 from functools import partial
-from typing import Any, Sequence, TypeVar, Unpack
+from typing import Any, TypeVar, Unpack
+from collections.abc import Sequence
 
 from ..fields import CreateStateOptions
 from .._disk_cache import DiskAnalysis
@@ -464,9 +466,9 @@ class MapLayer(StatesLayer, CatalogsLayer):
         return self.get_strategic_region(new_id)
 
     def list_supply_nodes(self) -> list[int]:
-        """Return the provinces with a supply node in the effective ``map/supply_nodes.txt``, in file order."""
+        """Return the sorted provinces with a supply node in the effective ``map/supply_nodes.txt``, each once."""
         text = self._map_text(SUPPLY_NODES_FILE)
-        return [] if text is None else [province for _, province in parse_supply_nodes(text)]
+        return [] if text is None else sorted({province for _, province in parse_supply_nodes(text)})
 
     def add_supply_node(self, province: int) -> int:
         """Queue a ``map/supply_nodes.txt`` entry for a land province.
@@ -546,7 +548,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         if check_adjacency:
             graph = self._optional_land_adjacency()
             if graph is not None:
-                for left, right in zip(route, route[1:]):
+                for left, right in pairwise(route):
                     if right not in graph.get(left, set()):
                         raise ValueError(f"Provinces {left} and {right} are not adjacent")
         text = append_line(self._map_text(RAILWAYS_FILE) or "", render_railway(level, route))

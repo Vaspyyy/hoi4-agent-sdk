@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import os
@@ -95,7 +96,7 @@ def test_strict_loading_loads_every_section_at_construction(mod_root: Path) -> N
 def test_strict_loading_still_fails_at_construction(mod_root: Path) -> None:
     _write(mod_root, "common/ideas/broken.txt", "ideas = { country = {\n")
 
-    with pytest.raises(RuntimeError, match="broken.txt"):
+    with pytest.raises(RuntimeError, match=r"broken\.txt"):
         Mod(mod_root, strict_loading=True)
 
 
@@ -284,7 +285,7 @@ def test_an_external_edit_is_refused(mod_root: Path) -> None:
     mod.update_event("test.1", title="new_title")
     path.write_text(EVENTS.replace("test.1.d", "other.d"), encoding="utf-8")
 
-    with pytest.raises(ExternalModificationError, match="events/test.txt"):
+    with pytest.raises(ExternalModificationError, match=r"events/test\.txt"):
         mod.save()
 
 
@@ -296,7 +297,7 @@ def test_a_same_size_rewrite_within_the_timestamp_tick_is_refused(mod_root: Path
     path.write_text(EVENTS.replace("test.1.d", "test.1.x"), encoding="utf-8")
     os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
 
-    with pytest.raises(ExternalModificationError, match="events/test.txt"):
+    with pytest.raises(ExternalModificationError, match=r"events/test\.txt"):
         mod.save()
 
 
@@ -313,9 +314,9 @@ def test_a_same_size_rewrite_with_its_old_time_set_back_is_refused(mod_root: Pat
     after = path.stat()
     assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
 
-    with pytest.raises(ExternalModificationError, match="events/test.txt"):
+    with pytest.raises(ExternalModificationError, match=r"events/test\.txt"):
         mod.preview()
-    with pytest.raises(ExternalModificationError, match="events/test.txt"):
+    with pytest.raises(ExternalModificationError, match=r"events/test\.txt"):
         mod.save()
     assert "test.1.x" in path.read_text(encoding="utf-8")
 
@@ -367,7 +368,7 @@ def test_a_change_after_the_section_loaded_stays_refused_on_a_second_read(mod_ro
     # section does the same).
     mod._read_source(path)
 
-    with pytest.raises(ExternalModificationError, match="events/test.txt"):
+    with pytest.raises(ExternalModificationError, match=r"events/test\.txt"):
         mod.save()
 
 
@@ -460,7 +461,7 @@ def test_the_baseline_keeps_no_file_contents(mod_root: Path) -> None:
         _age(path)
     mod = Mod(mod_root)
 
-    assert set(mod._fingerprints) == {path for path in mod_root.rglob("*.txt")}
+    assert set(mod._fingerprints) == set(mod_root.rglob("*.txt"))
     assert mod._read_digests == {}
     assert not hasattr(mod, "_source_baseline")
 
@@ -472,10 +473,9 @@ def test_rollback_unloads_a_section_first_loaded_inside(mod_root: Path) -> None:
     mod = Mod(mod_root)
     mod.list_states()
 
-    with pytest.raises(ValueError, match="stop"):
-        with mod.transaction():
-            mod.update_event("test.1", title="inside_title")
-            raise ValueError("stop")
+    with pytest.raises(ValueError, match="stop"), mod.transaction():
+        mod.update_event("test.1", title="inside_title")
+        raise ValueError("stop")
 
     assert mod._section_loaded == {"states"}
     assert mod.get_event("test.1").title == "test.1.t"
@@ -662,7 +662,7 @@ def test_a_section_that_failed_to_load_takes_the_repaired_file(mod_root: Path) -
         _age(file)
     mod = Mod(mod_root, strict_loading=True)
     path.write_text("ideas = { country = {\n", encoding="utf-8")
-    with pytest.raises(RuntimeError, match="test.txt"):
+    with pytest.raises(RuntimeError, match=r"test\.txt"):
         mod.discard()
     assert "ideas" not in mod._section_loaded
 
@@ -843,10 +843,8 @@ def test_only_the_outermost_edit_call_answers_for_a_failure(
         raise ValueError("no such field")
 
     def ensure_event(self: Mod, event_id: str, **fields: object) -> object:
-        try:
+        with contextlib.suppress(ValueError):
             self.update_event(event_id, **fields)
-        except ValueError:
-            pass
         return self._events[event_id]
 
     monkeypatch.setattr(EventsLayer, "update_event", _noting_failure(update_event))
@@ -871,9 +869,8 @@ def test_a_rollback_undoes_a_failed_edit_with_the_rest(mod_root: Path) -> None:
     mod = Mod(mod_root)
     mod.list_events()
 
-    with pytest.raises(TypeError):
-        with mod.transaction():
-            mod.update_event("test.1", no_such_field=1)
+    with pytest.raises(TypeError), mod.transaction():
+        mod.update_event("test.1", no_such_field=1)
 
     assert not mod._edit_failed
 

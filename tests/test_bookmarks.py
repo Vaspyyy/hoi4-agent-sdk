@@ -226,7 +226,7 @@ def test_lua_date_patch_appends_when_assignments_are_only_commented() -> None:
 
 @pytest.mark.parametrize("expression", ["get_date()", '"1936.1.1.12" .. suffix', "[=[1936.1.1.12]=]"])
 def test_lua_date_patch_rejects_computed_or_unsupported_rhs(expression: str) -> None:
-    with pytest.raises(ValueError, match="Unsupported Lua expression for NDefines.NGame.START_DATE"):
+    with pytest.raises(ValueError, match=r"Unsupported Lua expression for NDefines\.NGame\.START_DATE"):
         patch_bookmark_dates_defines(
             f"NDefines.NGame.START_DATE = {expression}\n",
             start_date="1940.1.1.12", end_date="1960.1.1.1",
@@ -238,7 +238,7 @@ def test_lua_date_patch_rejects_computed_or_unsupported_rhs(expression: str) -> 
     ["== false", "~= nil", "< other", ">= other", ".. suffix", "and other"],
 )
 def test_lua_date_patch_rejects_operator_continued_on_next_line(continuation: str) -> None:
-    with pytest.raises(ValueError, match="Unsupported Lua expression for NDefines.NGame.START_DATE"):
+    with pytest.raises(ValueError, match=r"Unsupported Lua expression for NDefines\.NGame\.START_DATE"):
         patch_bookmark_dates_defines(
             f'NDefines.NGame.START_DATE = "1936.1.1.12"\n    {continuation}\n',
             start_date="1940.1.1.12", end_date="1960.1.1.1",

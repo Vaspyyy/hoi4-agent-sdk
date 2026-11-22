@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from .errors import Hoi4Error
 from .patching import (
@@ -129,7 +129,7 @@ def import_flag_to_mod(
     selected_ideologies = (
         tuple(ideologies)
         if ideologies is not None
-        else ((None,) + VANILLA_FLAG_IDEOLOGIES if overwrite_vanilla else (None,))
+        else ((None, *VANILLA_FLAG_IDEOLOGIES) if overwrite_vanilla else (None,))
     )
     if not selected_ideologies:
         raise ValueError("At least one flag variant is required")
@@ -257,11 +257,8 @@ def import_portrait_to_mod(
 
     root = _require_mod_root(mod_root)
     image = _resize_image(_open_raster(src_image), size, resize_mode)
-    target = cast(
-        Path,
-        resolve_mod_output_path(
-            root, f"gfx/leaders/{normalized_tag}/{normalized_slug}.{output_format}"
-        ),
+    target = resolve_mod_output_path(
+        root, f"gfx/leaders/{normalized_tag}/{normalized_slug}.{output_format}"
     )
     pillow_format = output_format.upper()
     options: dict[str, object] = {}
@@ -299,12 +296,9 @@ def find_portrait_path(
         normalized_extension = str(extension).lower().lstrip(".")
         if normalized_extension not in {"dds", "tga", "png"}:
             raise ValueError(f"Unsupported portrait preference: {extension!r}")
-        candidate = cast(
-            Path,
-            resolve_mod_output_path(
-                root,
-                f"gfx/leaders/{normalized_tag}/{normalized_slug}.{normalized_extension}",
-            ),
+        candidate = resolve_mod_output_path(
+            root,
+            f"gfx/leaders/{normalized_tag}/{normalized_slug}.{normalized_extension}",
         )
         if candidate.is_file():
             return candidate
@@ -388,9 +382,8 @@ def write_portrait_gfx(
         label="portrait sprite name",
     )
     texture_path = selected_portrait.relative_to(root).as_posix()
-    output = cast(
-        Path,
-        resolve_mod_output_path(root, f"interface/{normalized_tag}_{normalized_slug}_portrait.gfx"),
+    output = resolve_mod_output_path(
+        root, f"interface/{normalized_tag}_{normalized_slug}_portrait.gfx"
     )
     content = (
         "spriteTypes = {\n"
@@ -445,16 +438,10 @@ def import_bookmark_picture_to_mod(
     if output_format not in {"dds", "tga"}:
         raise ValueError("Bookmark output_format must be 'dds' or 'tga'")
 
-    texture = cast(
-        Path,
-        resolve_mod_output_path(
-            root, f"gfx/interface/{normalized_key.lower()}.{output_format}"
-        ),
+    texture = resolve_mod_output_path(
+        root, f"gfx/interface/{normalized_key.lower()}.{output_format}"
     )
-    gfx = cast(
-        Path,
-        resolve_mod_output_path(root, f"interface/{normalized_key.lower()}_bookmark.gfx"),
-    )
+    gfx = resolve_mod_output_path(root, f"interface/{normalized_key.lower()}_bookmark.gfx")
     image = _resize_image(_open_raster(src_image), BOOKMARK_PICTURE_SIZE, resize_mode)
     pillow_format = output_format.upper()
     options: dict[str, object] = {}
@@ -726,14 +713,14 @@ def plan_icon_asset(
         raise ValueError("Only focus icons have shine sprites")
     sprite_name = require_script_id(f"{spec.sprite_prefix}{stem}", label="sprite name")
 
-    texture = cast(Path, resolve_mod_output_path(root, f"{spec.texture_dir}/{stem}.dds"))
+    texture = resolve_mod_output_path(root, f"{spec.texture_dir}/{stem}.dds")
     texture_path = texture.relative_to(root).as_posix()
     gfx_relative = Path(
         gfx_file if gfx_file is not None else default_icon_gfx_path(root, kind)
     )
     if gfx_relative.suffix.lower() != ".gfx":
         raise ValueError("Sprite declaration files must use the .gfx extension")
-    gfx = cast(Path, resolve_mod_output_path(root, gfx_relative))
+    gfx = resolve_mod_output_path(root, gfx_relative)
     if not gfx.is_relative_to(root / "interface"):
         raise ValueError("Sprite declaration files must live under interface/")
     declarations = [(gfx, sprite_name, render_sprite_type(sprite_name, texture_path))]
@@ -947,7 +934,7 @@ def _require_pillow() -> tuple[Any, Any, type[Exception]]:
     try:
         Image = import_module("PIL.Image")
         ImageOps = import_module("PIL.ImageOps")
-        UnidentifiedImageError = getattr(import_module("PIL"), "UnidentifiedImageError")
+        UnidentifiedImageError = import_module("PIL").UnidentifiedImageError
     except (ImportError, AttributeError) as exc:
         raise ImageBackendUnavailableError(
             "Image operations require the optional Pillow dependency. Install Pillow and retry."

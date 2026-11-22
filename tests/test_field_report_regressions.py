@@ -265,7 +265,7 @@ def test_numeric_and_date_keys_are_top_level_assignments() -> None:
 
 def test_all_reported_technology_categories_are_supported() -> None:
     assert TECHNOLOGY_CATEGORIES == CATALOG_CATEGORIES
-    assert NEW_TECHNOLOGY_CATEGORIES <= set(TECHNOLOGY_CATEGORIES)
+    assert set(TECHNOLOGY_CATEGORIES) >= NEW_TECHNOLOGY_CATEGORIES
     for category in NEW_TECHNOLOGY_CATEGORIES:
         assert f"category = {category}" in effects.add_tech_bonus(
             "test_bonus",

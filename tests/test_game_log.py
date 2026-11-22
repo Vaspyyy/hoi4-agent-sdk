@@ -343,16 +343,34 @@ def test_incremental_facade_and_cli(tmp_path: Path) -> None:
         sys.executable, str(Path(__file__).parents[1] / "scripts/parse_hoi4_log.py"),
         str(mod_root), "--log", str(log_path), "--json",
     ]
-    initial = subprocess.run(command + ["--incremental"], capture_output=True, text=True)
+    initial = subprocess.run([*command, "--incremental"], capture_output=True, text=True)
     assert initial.returncode == 1, initial.stderr
     data = json.loads(initial.stdout)
     assert data["owned_errors"] == 1
     assert data["next_offset"] == len(first)
-    resume = command + ["--start-offset", str(data["next_offset"])]
-    poll = subprocess.run(resume + ["--incremental"], capture_output=True, text=True)
+    resume = [*command, "--start-offset", str(data["next_offset"])]
+    poll = subprocess.run([*resume, "--incremental"], capture_output=True, text=True)
     assert poll.returncode == 0, poll.stderr
     assert json.loads(poll.stdout)["next_offset"] == len(first)
     final = subprocess.run(resume, capture_output=True, text=True)
     assert final.returncode == 1, final.stderr
     assert json.loads(final.stdout)["owned_errors"] == 1
     assert json.loads(final.stdout)["next_offset"] == len(first + last)
+
+
+def test_a_report_built_by_hand_may_hold_an_entry_without_a_file(tmp_path: Path) -> None:
+    from hoi4.game_log import GameLogEntry, GameLogReport
+
+    entry = GameLogEntry(None, "file.cpp:1", "Something broke", None, None, "unknown", "raw")
+    report = GameLogReport(
+        log_path=tmp_path / "error.log",
+        mod_root=tmp_path,
+        entries=(entry,),
+        ignored_entry_count=0,
+        unscoped_entry_count=0,
+        start_offset=0,
+        next_offset=0,
+        log_mtime=datetime(2026, 1, 1),
+    )
+    (issue,) = report.validation_errors
+    assert issue.code == "game_log_error" and issue.file_path is None

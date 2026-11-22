@@ -5,7 +5,8 @@ from __future__ import annotations
 import copy
 import dataclasses
 from pathlib import Path
-from typing import Any, Sequence, Unpack
+from typing import Any, Unpack
+from collections.abc import Sequence
 
 from ..fields import FocusFields, FocusTreeFields
 from ..focus import FOCUS_KINDS
@@ -598,19 +599,28 @@ class FocusLayer(ContextLayer):
             ValueError: ``tag`` is not a valid tag (when the tree is created).
         """
         tag = tag.upper()
-        tree = (
-            self.get_focus_tree(tree_id)
-            if tree_id in self._focus_trees
-            else self.create_focus_tree(tree_id, tag)
-        )
+        # Check everything before the first change, so a call that raises
+        # leaves nothing staged (no new tree, no localisation).
+        existing = self.get_focus_tree(tree_id) if tree_id in self._focus_trees else None
+        if anchor_focus_id:
+            if existing is None:
+                raise not_found(
+                    "focus",
+                    anchor_focus_id,
+                    (),
+                    where=f"focus tree '{tree_id}'",
+                    plural="focuses",
+                )
+            self._require_focus(existing, anchor_focus_id)
+        current = existing.focuses if existing is not None else []
         # Without a country (or a game install that defines it) there is no
         # capital to build in; state 1 stands in, as before.
         context = self.get_country_context(tag, default={})
         target_state = (
             state_id or context.get("capital") or (context.get("states") or [{}])[0].get("id") or 1
         )
-        y_base = max((focus.y for focus in tree.focuses), default=-1) + 1
-        x_base = 0 if not tree.focuses else max(focus.x for focus in tree.focuses) + 2
+        y_base = max((focus.y for focus in current), default=-1) + 1
+        x_base = 0 if not current else max(focus.x for focus in current) + 2
         prefix = tag
         focuses = [
             Focus(
@@ -682,6 +692,10 @@ class FocusLayer(ContextLayer):
                 "Small states must compete through skilled labor and precision tools rather than sheer scale.",
             ),
         }
+        if existing is not None:
+            _require_new_focus_ids(existing, focuses)
+        else:
+            self.create_focus_tree(tree_id, tag)
         for focus in focuses:
             name, desc = loc_text[focus.id]
             self.set_focus_loc(focus.id, name, desc)

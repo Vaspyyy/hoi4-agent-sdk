@@ -130,12 +130,12 @@ def test_http_error_and_api_error(monkeypatch):
     opener = Mock()
     opener.open.side_effect = HTTPError("url", 429, "rate", {}, None)
     monkeypatch.setattr("hoi4.commons_images.build_opener", Mock(return_value=opener))
-    with pytest.raises(CommonsImageError, match="429.*rate limited"):
+    with pytest.raises(CommonsImageError, match=r"429.*rate limited"):
         client._request("https://upload.wikimedia.org/example.png", media=True)
     monkeypatch.setattr(
         client, "_request", Mock(return_value=b'{"error":{"code":"maxlag","info":"busy"}}')
     )
-    with pytest.raises(CommonsImageError, match="maxlag.*busy"):
+    with pytest.raises(CommonsImageError, match=r"maxlag.*busy"):
         client.search("flag")
 
 
@@ -217,7 +217,7 @@ def test_search_is_dependency_free_and_download_explains_missing_pillow(monkeypa
     assert image.title == "File:Example.png"
     assert len(client.search("example")) == 1
     dependency.assert_not_called()
-    with pytest.raises(CommonsImageError, match="requires Pillow.*assets extra"):
+    with pytest.raises(CommonsImageError, match=r"requires Pillow.*assets extra"):
         client.download(image, tmp_path)
     assert list(tmp_path.iterdir()) == []
 

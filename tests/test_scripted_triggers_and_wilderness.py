@@ -1,5 +1,5 @@
 import pytest
-from hoi4 import Mod
+from hoi4 import Mod, ParseError
 from hoi4.states import read_state, serialize_state
 
 
@@ -27,7 +27,7 @@ def test_scripted_trigger_rejects_escape_and_malformed(tmp_path):
         m.create_definition("scripted_trigger", "bad id", "always = yes")
     with pytest.raises(ValueError):
         m.create_definition("scripted_trigger", "okay", "always = yes", path="../escape.txt")
-    with pytest.raises(Exception):
+    with pytest.raises(ParseError):
         m.create_definition("scripted_trigger", "okay", "AND = {")
     assert not m.preview()
 

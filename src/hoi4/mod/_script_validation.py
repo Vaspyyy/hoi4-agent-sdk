@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable, Literal, Sequence
+from typing import Literal
+from collections.abc import Callable, Sequence
 
 from ..localisation import (
     DEFAULT_LOCALISATION_LANGUAGE,

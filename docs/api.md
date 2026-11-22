@@ -49,7 +49,7 @@ the script builders.
 | Method | Description |
 |--------|-------------|
 | `from_config(start=None, *, strict_loading=False) -> Self` | Build a `Mod` from the first `.hoi4.json` found from `start` (default: the current directory) upward. Raises `FileNotFoundError` when there is none or it has no `mod_path`. |
-| `save(*, require_changes=False) -> SaveResult` | Write every queued edit atomically and return what was written. With nothing to write it warns and returns `no_changes=True`, or raises `RuntimeError` with `require_changes=True`. Raises `ExternalModificationError` when a target file changed on disk since it was read, `ParseError` when a change would give a script file a new syntax problem, and `RuntimeError` when it would rewrite a mod file that failed to load (or create a game-file override next to one). Nothing is written when it raises. |
+| `save(*, require_changes=False) -> SaveResult` | Write every queued edit atomically and return what was written. With nothing to write it warns and returns `no_changes=True`, or raises `SaveRefusedError` with `require_changes=True`. Raises `ExternalModificationError` when a target file changed on disk since it was read, `ParseError` when a change would give a script file a new syntax problem, and `SaveRefusedError` when it would rewrite a mod file that failed to load (or create a game-file override next to one). Nothing is written when it raises. |
 | `discard() -> None` | Drop every unsaved edit and pick up files changed on disk. Only content that had edits or whose files changed loads again; everything else stays in memory. When a base mod's file changed, everything loads again. |
 | `reload() -> None` | Drop every unsaved edit and read the whole mod again, not only what changed. Use it when a file changed on disk that `discard()` does not notice (one the SDK is not writing). |
 | `transaction(*, save=False) -> Iterator[Self]` | Context manager. On a normal exit the edits made inside are thrown away (a dry run) unless `save=True`, which saves them. On an exception the edits are thrown away and the exception goes on. |
@@ -66,7 +66,8 @@ files.
 Loader failures are available through `mod.load_diagnostics`; reading it loads
 every kind of content that is not loaded yet. Pass `strict_loading=True` to
 `Mod(...)` when malformed discovered files should abort construction instead of
-being skipped with a diagnostic: it loads everything at construction.
+being skipped with a diagnostic: it loads everything at construction and raises
+`LoadError` for the first file that fails.
 
 After `save()`, only the content whose files were written (and what is built
 from it) loads again on next use. `discard()` drops every unsaved edit and
@@ -94,7 +95,7 @@ edit replaces only the text of the statements that changed. See
 ## Errors
 
 Every error class of the SDK derives from `hoi4.Hoi4Error`, so
-`except Hoi4Error` catches them all. The three common cases have their own
+`except Hoi4Error` catches them all. The common cases have their own
 classes, all importable from `hoi4`:
 
 | Class | Also a | Raised when |
@@ -102,6 +103,8 @@ classes, all importable from `hoi4`:
 | `NotFoundError` | `KeyError` | An id, tag, state, file entry or occurrence does not exist |
 | `AlreadyExistsError` | `ValueError` | `create_x` or `add_x` meets an id that already exists |
 | `ReadOnlyError` | `ValueError` | The target is game content the call cannot change or delete |
+| `SaveRefusedError` | `RuntimeError` | `save()` or `preview()` refuses to write: nothing would change with `require_changes=True`, or writing would lose or break content (a file that failed to load, definitions skipped while loading, a new syntax problem, a partial `colors.txt`). Nothing is written |
+| `LoadError` | `RuntimeError` | With `strict_loading=True`, a mod file failed to load |
 
 `NotFoundError` carries `kind`, `id` and `suggestions` (up to five close
 matches). Its message names those matches and how many ids of that kind are
@@ -122,8 +125,8 @@ The other error classes (`ParseError`, `ExternalModificationError`, the image,
 Commons and Gemini errors, `OperationCancelled`, `MapRenderCancelled`,
 `GenerationCancelled`) derive from `Hoi4Error` too. `TypeError` (an unknown
 field name) and `ValueError` (a value the call cannot use, such as an invalid
-tag) are raised as Python's own classes, and so is the `RuntimeError` of a
-refused `save()`.
+tag) are raised as Python's own classes. So is `RuntimeError` when an
+optional extra is not installed (the map renderer needs the `map` extra).
 
 What is not visible to lookups: a focus tree, event, idea or on-action that
 only the game or a base mod defines is not loaded, so `get_focus_tree()`,
@@ -156,13 +159,18 @@ option of an event, an entry of a bookmark, a role or instance of a
 character), does not exist. An unknown field name raises `TypeError` that
 names the method and lists the valid fields, before anything changes.
 Bookkeeping fields (`touched`, `touched_fields`, `source_index`, `paths`,
-`is_vanilla` and names starting with `_`) are not accepted. Every
+`is_vanilla`, `raw_text` and names starting with `_`) are not accepted. Every
 `delete_x(id)` and `remove_x(...)` returns `None`, raises `NotFoundError` for
 a missing target and `ReadOnlyError` for game content that has to be
 overridden instead. `add_x(...)` returns what it added (`add_state_core()`
-returns the state) and raises `AlreadyExistsError` for a duplicate, except
-`add_state_core()`, which accepts a core the state already has. `set_x(...)`
-returns `None`.
+returns the state) and raises `AlreadyExistsError` for a duplicate (for
+`add_state_core()`, a core the state already has). `set_x(...)` returns
+`None`. A setter that would set a value to what it already is
+(`set_state_owner()` with the current owner, `update_state()` with the
+current values) stages nothing. The creators that make several things at
+once (`create_country()`, `create_industrial_branch()`, `insert_branch()`,
+`create_decision_chain()`, `create_recovery_decision()`) check everything
+first, so a call that raises stages nothing.
 
 The tables below give each method's signature (generated from the code by
 `scripts/api_signatures.py` and checked by `tests/test_doc_blocks.py`), what it
@@ -183,7 +191,7 @@ history, characters, and localization.
 | `country_tag_conflicts(tag) -> list[str]` | Returns conflict details such as `"mod: TAG (Name)"` or `"vanilla: TAG (Name)"` |
 | `suggest_tags(name, *, count=5) -> list[str]` | Return available tag candidates |
 | `get_country(tag, *, default=...) -> Country` | Cached or reads from disk. Tries mod then vanilla install. A tag no one defines raises `NotFoundError` (or returns `default`); it is never invented. |
-| `create_country(tag, name, *, adjective="", color=(128, 128, 128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, overwrite_vanilla=False) -> Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. A tag the mod has raises `AlreadyExistsError` unless `overwrite=True`; a tag the game uses raises `ValueError` unless `overwrite_vanilla=True`; an invalid tag raises `ValueError`. |
+| `create_country(tag, name, *, adjective="", color=(128, 128, 128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, overwrite_vanilla=False) -> Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. A tag the mod has, or a character `<TAG>_leader_1` the mod has, raises `AlreadyExistsError` unless `overwrite=True` (nothing is staged then); a tag the game uses raises `ValueError` unless `overwrite_vanilla=True`; an invalid tag raises `ValueError`. |
 | `update_country(tag, **fields) -> Country` | Update modeled country fields, including `color` and `color_ui`. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
 | `delete_country(tag) -> None` | Stage deletion of a mod-owned country and its generated localization. Raises `NotFoundError` for an unknown tag and `ReadOnlyError` for a game or base-mod country (that needs an explicit total-conversion strategy). |
 | `get_country_context(tag, *, copy_states=False, default=...) -> dict[str, Any]` | What the mod and the game hold for one country: basics, owned and core states, matching ideas, advisors, designers, localisation and focus trees. `copy_states=True` also queues overrides of its states. A tag no one defines raises `NotFoundError` (or returns `default`). |
@@ -462,7 +470,7 @@ states for copying, use `get_country_context(tag, copy_states=True)` or
 | `get_state(state_id, *, default=...) -> State` | Cached or reads from mod/vanilla without writing. Raises `NotFoundError`. |
 | `set_state_owner(state_ids, tag, *, add_core=True) -> None` | Change the owner of one state or several, optionally add a core. A missing state raises `NotFoundError` before anything changes. |
 | `update_state(state_id, *, add_cores=(), remove_cores=(), **fields) -> State` | Set any State field. List fields such as `cores` and `provinces` are replaced; `add_cores` / `remove_cores` change single cores (a core to remove that is not there raises `NotFoundError`). |
-| `add_state_core(state_id, tag) -> State` | Append a core without replacing existing cores; with a game install, an undefined tag raises `NotFoundError` |
+| `add_state_core(state_id, tag) -> State` | Append a core without replacing existing cores; a core the state has raises `AlreadyExistsError` and nothing is copied into the mod; with a game install, an undefined tag raises `NotFoundError` |
 | `remove_state_core(state_id, tag) -> None` | Remove a core; raises `NotFoundError` when `tag` is not a core (nothing is copied into the mod) |
 | `copy_country_states_to_mod(tag) -> list[State]` | Queue overrides of the game's files of every state `tag` owns or cores and return the states. Raises `NotFoundError` when no one defines `tag`. |
 
@@ -513,7 +521,7 @@ Province-list edits remove or append the affected IDs in place.
 | `get_strategic_region(region_id, *, default=...) -> StrategicRegion` | One region: `id`, `name`, `provinces`, `path`, `has_weather`. Raises `NotFoundError` (or returns `default`). |
 | `move_provinces_to_strategic_region(provinces, region_id) -> StrategicRegion` | Moves land or sea provinces; refuses to empty a region |
 | `create_strategic_region(name, provinces, *, region_id=None, weather=None, loc_path=None) -> StrategicRegion` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
-| `list_supply_nodes() -> list[int]` | Provinces with a supply node |
+| `list_supply_nodes() -> list[int]` | Provinces with a supply node, sorted, each once |
 | `add_supply_node(province) -> int` | Land provinces only. Returns the province. Raises `NotFoundError` for a province not in `definition.csv`, `AlreadyExistsError` for an existing node, `ValueError` for a sea province. |
 | `remove_supply_node(province) -> None` | Raises `NotFoundError` when the province has no node |
 | `list_railways() -> list[Railway]` | Every railway line |
@@ -746,10 +754,10 @@ patches those files separately.
 | `create_decision(category_id, decision_id, *, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, days_mission_timeout=None, activation="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", allowed="", days_re_enable=None, war_with_on_remove="", custom_cost_trigger="", custom_cost_text="", cancel_if_not_visible=None, modifier="", remove_trigger="", highlight_states="", priority=None) -> Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. A category the mod does not define is extended in the mod's decisions file without writing a category definition (that would replace the game's); with a game install, a category that no one defines raises `NotFoundError` (create it with `create_decision_category()` first). Also accepts every mission, targeted, and general field listed below by keyword. |
 | `ensure_decision_category(category_id, **fields) -> DecisionCategory` | Idempotent create-or-update wrapper |
 | `ensure_decision(category_id, decision_id, **fields) -> Decision` | Idempotent create-or-update wrapper; an existing decision in another category raises `ValueError` |
-| `create_decision_chain(category_id, steps, *, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Build staged decisions with generated completion flags, event calls, localization, and final event |
+| `create_decision_chain(category_id, steps, *, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Build staged decisions with generated completion flags, event calls, localization, and final event. Every step is checked first (an id, a decision of that id in another category raises `ValueError`), so a call that raises stages nothing. With `path`, an existing decision moves with its category and is updated in place |
 | `create_mission(category_id, decision_id, *, days_mission_timeout, activation="", available="", complete_effect="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, loc_name="", loc_desc="", **fields) -> Decision` | Create a mission: it starts when `activation` holds, completes with `complete_effect` once `available` holds, otherwise runs `timeout_effect` after the timeout. Rejects a positive `cost`/`custom_cost_trigger` and non-positive timeouts. |
 | `create_targeted_decision(category_id, decision_id, *, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", loc_name="", loc_desc="", **fields) -> Decision` | Create a decision with one instance per target country or state. Requires at least one of `target_trigger`, `targets`, `target_array`, or `state_target=True`. |
-| `create_recovery_decision(category_id, decision_id, *, effect, visible="", available="", hidden=False, icon="", cost=0, days_remove=None, fire_only_once=True, loc_name="", loc_desc="", path=None, overwrite=False) -> Decision` | Create a visible or hidden repair/migration decision for already-started saves |
+| `create_recovery_decision(category_id, decision_id, *, effect, visible="", available="", hidden=False, icon="", cost=0, days_remove=None, fire_only_once=True, loc_name="", loc_desc="", path=None, overwrite=False) -> Decision` | Create a visible or hidden repair/migration decision for already-started saves. An existing id raises `AlreadyExistsError` before the category is created |
 | `update_decision_category(category_id, **fields) -> DecisionCategory` | Update a decision category |
 | `update_decision(decision_id, **fields) -> Decision` | Update any modeled decision field, including the mission/targeted/general fields; edits patch the source in place |
 | `delete_decision(decision_id) -> None` | Remove a decision; raises `NotFoundError` |
@@ -972,7 +980,7 @@ static checks do not establish the layout displayed by the game.
 | `append_to_focus_reward(tree_id, focus_id, effect) -> Focus` | Append an effect to an existing focus reward; raises `NotFoundError` |
 | `set_focuses_mutually_exclusive(tree_id, focus_a_id, focus_b_id) -> None` | Add reciprocal simple mutual exclusion groups; raises `NotFoundError` |
 | `set_focus_loc(focus_id, name, description, *, path=None) -> None` | Set both focus name and description localization |
-| `create_industrial_branch(tree_id, tag, *, anchor_focus_id=None, state_id=None, grounded=True) -> list[Focus]` | Generate a small grounded industrial branch with localization |
+| `create_industrial_branch(tree_id, tag, *, anchor_focus_id=None, state_id=None, grounded=True) -> list[Focus]` | Generate a small grounded industrial branch with localization. A focus id the tree has (`AlreadyExistsError`) or a missing anchor (`NotFoundError`) raises before anything is staged: no tree, no localisation |
 | `suggest_focus_icons(query, *, count=5) -> list[str]` | Rank known `GFX_goal_` sprites for a search word |
 
 `update_focus_tree()` rejects `country_tag` with `TypeError` for existing trees,
@@ -1554,7 +1562,7 @@ sibling definitions. All non-reserved scalar assignments belong to the modeled
 
 | Method | Description |
 |--------|-------------|
-| `list_bookmarks() -> list[str]` | Lists loaded bookmarks in source order. |
+| `list_bookmarks() -> list[str]` | The names of the loaded bookmarks, sorted, each once. |
 | `get_bookmark(name, *, default=...) -> Bookmark` | Gets one bookmark by name. |
 | `create_bookmark(name, *, description="", date="1936.1.1.12", picture="GFX_select_date_1936", default_country="", default=None, filters="", effect="randomize_weather = 22345", countries=None, path=None, overwrite=False) -> Bookmark` | Creates a bookmark; its default effect randomizes weather. |
 | `update_bookmark(name, **fields) -> Bookmark` | Source-patches modeled bookmark fields. |

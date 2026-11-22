@@ -8,7 +8,8 @@ import textwrap
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Callable, Literal, Sequence, TypeVar
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, Protocol, TypeVar
 
 from .patching import (
     AssignmentSpan,
@@ -25,7 +26,14 @@ from .syntax import as_scalar, parse, require_entry, require_key
 from .textio import read_text
 from .types import ValidationIssue
 
-_T = TypeVar("_T")
+class _SourceBlock(Protocol):
+    """A model item that remembers the script block it was read from."""
+
+    source_index: int
+    raw_block: str
+
+
+_T = TypeVar("_T", bound=_SourceBlock)
 AssignedOOBKind = Literal["land", "naval", "air"]
 OOBKind = Literal["land", "naval", "air", "mixed"]
 _OOB_ASSIGNMENT_KEYS: dict[str, AssignedOOBKind] = {
@@ -1424,7 +1432,7 @@ def _source_owners(
 
     named: dict[int, list[_T]] = {}
     for item in items:
-        index: int = getattr(item, "source_index")
+        index: int = item.source_index
         if index >= 0:
             named.setdefault(index, []).append(item)
     owners: dict[int, _T] = {}
@@ -1435,7 +1443,7 @@ def _source_owners(
                 group,
                 key=lambda item: (
                     getattr(item, "_copy_depth", 0),
-                    _changed_lines(getattr(item, "raw_block"), patch, item),
+                    _changed_lines(item.raw_block, patch, item),
                 ),
             )
         owners[index] = owner

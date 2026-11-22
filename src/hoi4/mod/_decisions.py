@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast, Iterable, Mapping, Sequence, Unpack
+from typing import Any, cast, Unpack
+from collections.abc import Iterable, Mapping, Sequence
 
 from ..fields import DecisionCategoryFields, DecisionFields, EnsureDecisionCategoryFields, EnsureDecisionFields, MissionOptions, TargetedDecisionOptions
 from ..decisions import category_files
@@ -334,6 +335,18 @@ class DecisionsLayer(LocalisationLayer):
         self._dirty_decision_categories.add(category_id)
         return category
 
+    def _require_new_decision_id(self, decision_id: str, *, overwrite: bool) -> str:
+        """Return the checked ``decision_id``; raise when it exists and ``overwrite`` is false."""
+        decision_id = require_script_id(decision_id, label="decision ID")
+        if decision_id in self._decisions and not overwrite:
+            raise AlreadyExistsError(
+                f"Decision '{decision_id}' already exists. "
+                "Use overwrite=True to replace it or update_decision() to patch it.",
+                kind="decision",
+                id=decision_id,
+            )
+        return decision_id
+
     def create_decision(
         self,
         category_id: str,
@@ -407,16 +420,11 @@ class DecisionsLayer(LocalisationLayer):
                 outside the mod.
         """
         category_id = require_script_id(category_id, label="decision category ID")
-        decision_id = require_script_id(decision_id, label="decision ID")
+        decision_id = self._require_new_decision_id(decision_id, overwrite=overwrite)
         existing = self._decisions.get(decision_id)
-        if existing is not None and not overwrite:
-            raise AlreadyExistsError(
-                f"Decision '{decision_id}' already exists. "
-                "Use overwrite=True to replace it or update_decision() to patch it."
-            )
-        if existing is not None and existing.path is not None:
-            # The file that held the replaced decision loses it.
-            self._dirty_decision_files.add(existing.path)
+        # Check every value before the first change: a call that raises
+        # leaves nothing staged.
+        target_list = _decision_targets(targets)
         category = self._decision_categories.get(category_id)
         if category is None:
             category = self._extend_inherited_decision_category(category_id, path)
@@ -424,6 +432,9 @@ class DecisionsLayer(LocalisationLayer):
             self._point_decision_category_at(
                 category, self._output_path(path)
             )
+        if existing is not None and existing.path is not None:
+            # The file that held the replaced decision loses it.
+            self._dirty_decision_files.add(existing.path)
         if existing is not None:
             old_category = self._decision_categories.get(existing.category)
             if old_category is not None:
@@ -453,7 +464,7 @@ class DecisionsLayer(LocalisationLayer):
             is_good=is_good,
             selectable_mission=selectable_mission,
             target_trigger=target_trigger,
-            targets=_decision_targets(targets),
+            targets=target_list,
             target_array=target_array,
             target_root_trigger=target_root_trigger,
             state_target=state_target,
@@ -592,9 +603,8 @@ class DecisionsLayer(LocalisationLayer):
             # in the file that holds it.
             self._dirty_decision_files.add(decision.path)
         category = self._decision_categories.get(decision.category)
-        if category is not None:
-            if category.path is not None:
-                self._dirty_decision_files.add(category.path)
+        if category is not None and category.path is not None:
+            self._dirty_decision_files.add(category.path)
         return decision
 
     def delete_decision(self, decision_id: str) -> None:
@@ -660,19 +670,22 @@ class DecisionsLayer(LocalisationLayer):
         if not steps:
             raise ValueError("create_decision_chain() requires at least one step")
 
-        category_kwargs: EnsureDecisionCategoryFields = {}
-        if category_icon:
-            category_kwargs["icon"] = category_icon
-        if path is not None:
-            category_kwargs["path"] = path
-        self.ensure_decision_category(category_id, **category_kwargs)
-        decisions: list[Decision] = []
+        # Work out and check every step before the first change, so a call
+        # that raises leaves nothing staged.
+        planned: list[tuple[str, dict[str, Any], Mapping[str, Any]]] = []
         previous_flag = ""
         for index, raw_step in enumerate(steps, start=1):
             step = {"id": raw_step} if isinstance(raw_step, str) else dict(raw_step)
             decision_id = str(step.get("id") or (f"{prefix}_{index}" if prefix else ""))
             if not decision_id:
                 raise ValueError("Decision chain steps need an id or a prefix")
+            decision_id = require_script_id(decision_id, label="decision ID")
+            existing = self.get_decision(decision_id, default=None)
+            if existing is not None and not overwrite and existing.category != category_id:
+                raise ValueError(
+                    f"Decision '{decision_id}' is in category '{existing.category}', "
+                    f"not '{category_id}'; recreate it to move it."
+                )
             flag = quote(str(step.get("flag") or f"{decision_id}_done"))
             visible = _join_script_parts(
                 [
@@ -712,19 +725,31 @@ class DecisionsLayer(LocalisationLayer):
                 "ai_will_do": str(step.get("ai_will_do") or ""),
                 "overwrite": overwrite,
             }
-            if path is not None:
+            if path is not None and (overwrite or existing is None):
+                # An existing decision is updated in place; ``path`` moves it
+                # with its category (``ensure_decision_category`` below).
                 create_kwargs["path"] = path
+            planned.append((decision_id, create_kwargs, step))
+            previous_flag = flag
+
+        category_kwargs: EnsureDecisionCategoryFields = {}
+        if category_icon:
+            category_kwargs["icon"] = category_icon
+        if path is not None:
+            category_kwargs["path"] = path
+        self.ensure_decision_category(category_id, **category_kwargs)
+        decisions: list[Decision] = []
+        for decision_id, create_kwargs, planned_step in planned:
             if overwrite:
                 decision = self.create_decision(category_id, decision_id, **create_kwargs)
             else:
                 create_kwargs.pop("overwrite")
                 decision = self.ensure_decision(category_id, decision_id, **create_kwargs)
-            if step.get("loc_name"):
-                self.set_loc(decision_id, str(step["loc_name"]))
-            if step.get("loc_desc"):
-                self.set_loc(f"{decision_id}_desc", str(step["loc_desc"]))
+            if planned_step.get("loc_name"):
+                self.set_loc(decision_id, str(planned_step["loc_name"]))
+            if planned_step.get("loc_desc"):
+                self.set_loc(f"{decision_id}_desc", str(planned_step["loc_desc"]))
             decisions.append(decision)
-            previous_flag = flag
         return decisions
 
     def create_mission(
@@ -882,6 +907,9 @@ class DecisionsLayer(LocalisationLayer):
             AlreadyExistsError: The decision exists and ``overwrite`` is false.
             ValueError: An id is not valid, or ``path`` is outside the mod.
         """
+        # The decision is checked before the category changes, so a call
+        # that raises leaves nothing staged.
+        self._require_new_decision_id(decision_id, overwrite=overwrite)
         if path is not None:
             self.ensure_decision_category(category_id, path=path)
         elif category_id not in self._decision_categories:

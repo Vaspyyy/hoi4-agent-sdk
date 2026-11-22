@@ -66,7 +66,7 @@ class TestReadIdeasFile:
         assert container == "ideas"
 
     def test_reads_from_ideas_dir(self):
-        ideas, container = read_ideas_file(FIXTURES / "common" / "national_ideas" / "ger_ideas.txt")
+        _ideas, container = read_ideas_file(FIXTURES / "common" / "national_ideas" / "ger_ideas.txt")
         assert container == "country_ideas"
 
     def test_reads_nested_designer_category(self, tmp_path):

@@ -322,7 +322,6 @@ class StateFields(TypedDict, total=False):
     is_demilitarized_zone: bool
     provinces: list[int]
     history: str
-    raw_text: str
     impassable: bool
 
 

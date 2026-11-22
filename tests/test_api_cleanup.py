@@ -409,7 +409,7 @@ def test_event_options_and_namespaces(full_mod: Mod) -> None:
     mod = full_mod
     added = mod.add_event_option("zz.1", EventOption(name="zz.1.b"))
     assert isinstance(added, EventOption) and added.name == "zz.1.b"
-    with pytest.raises(AlreadyExistsError, match="Event option 'zz.1.b' already exists"):
+    with pytest.raises(AlreadyExistsError, match=r"Event option 'zz\.1\.b' already exists"):
         mod.add_event_option("zz.1", EventOption(name="zz.1.b"))
     with pytest.raises(NotFoundError):
         mod.add_event_option("zz.9", EventOption(name="zz.9.a"))
@@ -749,3 +749,183 @@ def test_no_removed_or_renamed_name_is_used_anywhere() -> None:
         cwd=root, capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0, result.stdout
+
+
+# ── Leftovers closed after the cleanup (part 4) ───────────────────────
+
+
+def test_add_state_core_raises_for_a_core_the_state_has_and_stages_nothing(
+    tmp_path, state_game
+) -> None:
+    from hoi4 import AlreadyExistsError
+
+    mod = Mod(tmp_path / "mod", hoi4_install=state_game)
+    with pytest.raises(AlreadyExistsError, match="Core 'POL' already exists"):
+        mod.add_state_core(1, "POL")
+    assert mod.preview() == ""  # nothing was copied into the mod
+    assert mod.add_state_core(1, "SOV").cores == ["GER", "POL", "SOV"]
+
+
+def test_state_setters_that_change_nothing_stage_nothing(tmp_path, state_game) -> None:
+    mod = Mod(tmp_path / "mod", hoi4_install=state_game)
+    assert mod.set_state_owner(1, "GER") is None  # owner and core are there already
+    assert mod.set_state_owner([1, 2], "GER", add_core=False) is None
+    assert mod.update_state(1, owner="GER", manpower=1, cores=["GER", "POL"]) is mod.get_state(1)
+    assert mod.update_state(2, add_cores=["POL"]).cores == ["GER", "POL"]
+    assert mod.preview() == ""
+    # The same owner with a core still missing is a change.
+    mod.update_state(1, cores=["POL"])
+    mod.set_state_owner(1, "GER")
+    assert mod.get_state(1).cores == ["POL", "GER"]
+    assert "1-S.txt" in mod.preview()
+
+
+def test_update_state_refuses_raw_text_and_keeps_history(tmp_path, state_game) -> None:
+    mod = Mod(tmp_path / "mod", hoi4_install=state_game)
+    with pytest.raises(TypeError, match=r"update_state\(\): Unknown fields: \['raw_text'\]"):
+        mod.update_state(1, raw_text="state = { id = 1 }")  # type: ignore[call-arg]
+    assert mod.preview() == ""
+    # ``history`` is the script of the history block: a caller may set it.
+    history = "owner = GER\nadd_core_of = GER\nadd_core_of = POL\n1939.9.1 = { owner = SOV }"
+    assert mod.update_state(1, history=history).history == history
+    assert "1939.9.1 = {" in mod.preview()
+
+
+def test_list_bookmarks_and_supply_nodes_return_sorted_ids_once(tmp_path) -> None:
+    _write(
+        tmp_path,
+        "common/bookmarks/b.txt",
+        "bookmarks = {\n"
+        "    bookmark = { name = ZETA date = 1936.1.1.12 }\n"
+        "    bookmark = { name = ALPHA date = 1939.8.14.12 }\n"
+        "}\n",
+    )
+    _write(tmp_path, "common/bookmarks/c.txt", "bookmarks = { bookmark = { name = ZETA } }\n")
+    _write(tmp_path, "map/supply_nodes.txt", "1 7\n1 4\n1 7\n")
+    mod = Mod(tmp_path)
+    assert mod.list_bookmarks() == ["ALPHA", "ZETA"]
+    assert mod.list_supply_nodes() == [4, 7]
+
+
+def test_create_industrial_branch_stages_nothing_when_it_raises(tmp_path) -> None:
+    from hoi4 import AlreadyExistsError, Focus
+
+    mod = Mod(tmp_path)
+    mod.create_focus_tree("abc_tree", "ABC")
+    mod.add_focus("abc_tree", Focus(id="ABC_root", x=0, y=0))
+    mod.add_focus("abc_tree", Focus(id="ABC_support_domestic_steel", x=1, y=0))
+    before = mod.preview()
+    with pytest.raises(AlreadyExistsError, match="ABC_support_domestic_steel"):
+        mod.create_industrial_branch("abc_tree", "ABC")
+    with pytest.raises(AlreadyExistsError, match="ABC_support_domestic_steel"):
+        mod.create_industrial_branch("abc_tree", "ABC", anchor_focus_id="ABC_root")
+    with pytest.raises(NotFoundError, match="Focus 'ABC_nope' not found"):
+        mod.create_industrial_branch("abc_tree", "ABC", anchor_focus_id="ABC_nope")
+    assert mod.preview() == before
+    assert mod.get_loc("ABC_map_domestic_industry", default=None) is None
+    # A tree that does not exist yet is not created for a missing anchor.
+    with pytest.raises(NotFoundError, match="Focus 'ABC_root' not found in focus tree 'new_tree'"):
+        mod.create_industrial_branch("new_tree", "ABC", anchor_focus_id="ABC_root")
+    assert "new_tree" not in mod.list_focus_trees()
+    assert mod.preview() == before
+
+
+def test_decision_creators_stage_nothing_when_they_raise(tmp_path) -> None:
+    from hoi4 import AlreadyExistsError
+
+    mod = Mod(tmp_path)
+    mod.create_decision_category("cat")
+    mod.create_decision("cat", "taken")
+    mod.create_decision_category("other")
+    mod.create_decision("other", "elsewhere")
+    before = mod.preview()
+    with pytest.raises(AlreadyExistsError, match="Decision 'taken' already exists"):
+        mod.create_recovery_decision("new_cat", "taken", effect="add_stability = 0.1")
+    assert "new_cat" not in mod.list_decision_categories()
+    with pytest.raises(ValueError, match="Invalid decision target"):
+        mod.create_targeted_decision("cat", "aimed", targets=["GER {"], path="common/decisions/x.txt")
+    with pytest.raises(ValueError, match="Decision chain steps need an id"):
+        mod.create_decision_chain("chain_cat", ["chain_1", {"cost": 5}])
+    with pytest.raises(ValueError, match="is in category 'other'"):
+        mod.create_decision_chain("chain_cat", ["chain_1", "elsewhere"])
+    assert mod.preview() == before
+    assert "chain_cat" not in mod.list_decision_categories()
+    assert mod.get_decision("chain_1", default=None) is None
+
+
+def test_create_decision_chain_with_a_path_updates_an_existing_step_in_place(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_decision_category("cat")
+    mod.create_decision("cat", "step_1", cost=9)
+    decisions = mod.create_decision_chain(
+        "cat", ["step_1", "step_2"], path="common/decisions/chain.txt"
+    )
+    assert [decision.id for decision in decisions] == ["step_1", "step_2"]
+    assert decisions[0].cost == 0
+    assert {decision.path for decision in decisions} == {
+        (tmp_path / "common/decisions/chain.txt").resolve()
+    }
+
+
+def test_create_country_stages_nothing_when_its_leader_id_is_taken(tmp_path) -> None:
+    from hoi4 import AlreadyExistsError, Character
+
+    mod = Mod(tmp_path)
+    mod.create_character("ABC", Character(id="ABC_leader_1", name="Someone"), recruit=False)
+    before = mod.preview()
+    with pytest.raises(AlreadyExistsError, match="Character 'ABC_leader_1' already exists"):
+        mod.create_country("ABC", "Abcland")
+    assert mod.preview() == before
+    assert "ABC" not in mod.list_countries()
+
+
+def test_the_release_gate_uses_the_new_returns() -> None:
+    import inspect
+
+    from hoi4 import release_gate
+
+    source = inspect.getsource(release_gate)
+    assert "if not mod." not in source
+    assert "Could not update" not in source
+
+
+def test_a_refused_save_raises_save_refused_error(tmp_path) -> None:
+    from hoi4 import Hoi4Error, SaveRefusedError
+
+    assert issubclass(SaveRefusedError, Hoi4Error) and issubclass(SaveRefusedError, RuntimeError)
+    mod = Mod(tmp_path)
+    with pytest.warns(RuntimeWarning), pytest.raises(SaveRefusedError, match="No changes written"):
+        mod.save(require_changes=True)
+
+
+def test_a_strict_load_failure_raises_load_error(tmp_path) -> None:
+    from hoi4 import Hoi4Error, LoadError
+
+    assert issubclass(LoadError, Hoi4Error) and issubclass(LoadError, RuntimeError)
+    _write(tmp_path, "events/broken.txt", "add_namespace = demo\ncountry_event = { id = demo.1 \n")
+    with pytest.raises(LoadError, match="Failed to load event file"):
+        Mod(tmp_path, strict_loading=True)
+
+
+def test_the_module_docstrings_show_the_readme_quick_start() -> None:
+    import re
+    import textwrap
+    from pathlib import Path
+
+    import hoi4.mod
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    quick_start = re.search(r"## Quick start\n\n```python\n(.*?)```", readme, re.S)
+    assert quick_start is not None
+    example = textwrap.indent(quick_start.group(1), "    ")
+    for module in (hoi4, hoi4.mod):
+        doc = module.__doc__ or ""
+        assert "german_focus" not in doc and "/opt/steam" not in doc
+        assert example in doc
+
+
+def test_add_coastal_bunker_takes_the_state_first() -> None:
+    # It kept a stray ``cls`` parameter from its time as a ``Mod`` method.
+    assert effects.add_coastal_bunker(115, 2) == effects.add_bunker(115, 2).replace(
+        "bunker", "coastal_bunker"
+    )

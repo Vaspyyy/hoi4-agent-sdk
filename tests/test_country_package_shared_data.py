@@ -65,12 +65,15 @@ def reference_evidence(
             cored_states.add(nested_state_scope)
         if node.key in {"release", "release_puppet", "puppet"} and node.value == tag:
             activators.add(node.key)
-        if node.key == "create_subject" and node.is_block():
-            if any(
+        if (
+            node.key == "create_subject"
+            and node.is_block()
+            and any(
                 child.key in {"subject", "target"} and child.value == tag
                 for child in node.children
-            ):
-                activators.add("create_subject")
+            )
+        ):
+            activators.add("create_subject")
         for child in node.children:
             walk(child, in_country_scope=country_scope, state_scope=nested_state_scope)
 

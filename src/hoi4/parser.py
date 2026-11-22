@@ -14,7 +14,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional
 
 from ._scalar import needs_quotes
 from .syntax import (
@@ -137,15 +136,15 @@ class PdxNode:
     * a comment: ``is_comment`` is true and ``value`` is its text.
     """
 
-    key: Optional[str] = None
-    value: Optional[str] = None
-    children: list["PdxNode"] = field(default_factory=list)
+    key: str | None = None
+    value: str | None = None
+    children: list[PdxNode] = field(default_factory=list)
     operator: str = "="
     is_comment: bool = False
     block: bool = False
     quoted: bool = False
     key_quoted: bool = False
-    tag: Optional[str] = None
+    tag: str | None = None
 
     def is_block(self) -> bool:
         """Whether the node is a ``key = { ... }`` block (also an empty one)."""
@@ -159,14 +158,14 @@ class PdxNode:
         """Whether the node is a value without a key, as in a list ``{ A B C }``."""
         return self.key is None and self.value is not None
 
-    def find(self, key: str) -> Optional["PdxNode"]:
+    def find(self, key: str) -> PdxNode | None:
         """Return the first child with ``key``, or ``None``."""
         for child in self.children:
             if child.key == key:
                 return child
         return None
 
-    def find_all(self, key: str) -> list["PdxNode"]:
+    def find_all(self, key: str) -> list[PdxNode]:
         """Return every child with ``key``, in order."""
         return [c for c in self.children if c.key == key]
 
@@ -193,7 +192,7 @@ class PdxNode:
         except ValueError:
             return default
 
-    def get_block(self, key: str) -> Optional["PdxNode"]:
+    def get_block(self, key: str) -> PdxNode | None:
         """Return the first child with ``key`` if it is a block, else ``None``."""
         node = self.find(key)
         if node and node.is_block():
@@ -218,7 +217,7 @@ class PdxNode:
         """Remove every child with ``key``."""
         self.children = [c for c in self.children if c.key != key]
 
-    def add_child(self, node: "PdxNode") -> None:
+    def add_child(self, node: PdxNode) -> None:
         """Append ``node`` as the last child."""
         self.children.append(node)
 

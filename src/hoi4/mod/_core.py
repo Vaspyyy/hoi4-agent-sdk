@@ -12,7 +12,8 @@ import time
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Self, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
+from collections.abc import Sequence
 
 from .._disk_cache import DiskAnalysis
 from .._file_cache import cached_file_result
@@ -507,8 +508,8 @@ class CoreLayer:
     _inherited_state_source_paths: dict[int, Path] | None
     _focus_trees: dict[str, FocusTree]
     _events: dict[str, Event]
-    _event_namespaces: dict[str, Optional[str]]
-    _event_file_namespaces: dict[Path, Optional[str]]
+    _event_namespaces: dict[str, str | None]
+    _event_file_namespaces: dict[Path, str | None]
     _on_actions: dict[str, OnAction]
     _on_action_occurrences: dict[str, list[OnAction]]
     _decisions: dict[str, Decision]
@@ -637,9 +638,9 @@ class CoreLayer:
         self._sprite_text_parse_cache: dict[str, dict[str, str]] = {}
         self._runtime_activation_parse_cache: dict[str, PdxNode | None] = {}
         self._script_trigger_index_cache: dict[str, dict[str, PdxNode]] = {}
-        self._state_index_cache: dict[bool, list[dict]] = {}
+        self._state_index_cache: dict[bool, list[dict[str, Any]]] = {}
         self._vanilla_state_loc_entries: dict[str, str] | None = None
-        self._country_context_cache: dict[str, dict] = {}
+        self._country_context_cache: dict[str, dict[str, Any]] = {}
 
     # ── Sections ─────────────────────────────────────────────────
 

@@ -80,7 +80,7 @@ def _write(tmp_path: Path, text: str | bytes, name: str = "TST_focus.txt") -> Pa
 def _changed_lines(before: str, after: str) -> list[tuple[str, str]]:
     old, new = before.split("\n"), after.split("\n")
     assert len(old) == len(new), "lines were added or removed"
-    return [(a, b) for a, b in zip(old, new) if a != b]
+    return [(a, b) for a, b in zip(old, new, strict=True) if a != b]
 
 
 # ── bug 1: one field edit leaves everything else alone ───────────

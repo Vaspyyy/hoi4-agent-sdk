@@ -105,7 +105,7 @@ class TestSerializeFocusTree:
         result = serialize_focus_tree(tree)
         tree2 = load_focus_tree_from_string(result)
         assert len(tree2.focuses) == len(tree.focuses)
-        for f1, f2 in zip(tree.focuses, tree2.focuses):
+        for f1, f2 in zip(tree.focuses, tree2.focuses, strict=True):
             assert f1.id == f2.id
             assert f1.x == f2.x
             assert f1.y == f2.y

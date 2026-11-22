@@ -7,7 +7,7 @@ import os
 import tempfile
 import warnings
 from collections.abc import Collection, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import Self
 from pathlib import Path
 
@@ -30,6 +30,7 @@ from ..decisions import (
     serialize_decisions_file,
 )
 from ..diff import unified_diff
+from ..errors import SaveRefusedError
 from ..dynamic_modifiers import (
     serialize_dynamic_modifiers_file,
 )
@@ -143,15 +144,17 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         Raises:
             ExternalModificationError: A file it would rewrite changed on disk
                 after the mod read it; call ``discard()`` and redo the edit.
-            RuntimeError: ``require_changes`` is true and no file changes, or
-                a file it would rewrite failed to load.
+            SaveRefusedError: ``require_changes`` is true and no file
+                changes, or writing would lose or break content (a file it
+                would rewrite failed to load, a new syntax problem). It is
+                also a ``RuntimeError``.
             OSError: Writing a file failed.
         """
         if not self._dirty:
             message = "No changes written: save() was called with no dirty changes"
             warnings.warn(message, RuntimeWarning, stacklevel=2)
             if require_changes:
-                raise RuntimeError(message)
+                raise SaveRefusedError(message)
             return SaveResult(written_files=[], dirty_sections=[], no_changes=True, message=message)
 
         dirty_sections = sorted(self._dirty)
@@ -171,19 +174,18 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         if not changed and not changed_assets:
             message = "No files written after processing dirty sections"
             if require_changes:
-                raise RuntimeError(message)
+                raise SaveRefusedError(message)
             return SaveResult(dirty_sections=dirty_sections, no_changes=True, message=message)
         self._commit_rendered_files(changed, changed_assets)
         written_files = sorted((*changed, *changed_assets))
         self._note_written(written_files)
         self._discard_changes(written_files)
-        result = SaveResult(
+        return SaveResult(
             written_files=written_files,
             dirty_sections=dirty_sections,
             no_changes=False,
             message=f"Saved {len(written_files)} file(s)",
         )
-        return result
 
     def _render_dirty_files(self) -> dict[Path, str | None]:
         rendered: dict[Path, str | None] = dict(self._script_file_updates)
@@ -268,7 +270,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                         read_text(vanilla_colors_path),
                     )
                 elif set(color_updates) & self._vanilla_tags:
-                    raise RuntimeError(
+                    raise SaveRefusedError(
                         "Cannot safely override a vanilla country color because "
                         f"{vanilla_colors_path} is missing. HOI4 replaces colors.txt "
                         "wholesale, so writing a partial table would remove other "
@@ -582,7 +584,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 continue
             problem = document.problems[0]
             line, column = document.line_col(problem.offset)
-            raise RuntimeError(
+            raise SaveRefusedError(
                 f"Refusing to write {path}: it would get a syntax problem it does not have "
                 f"now ({problem.message}, line {line}, column {column}). Check the script "
                 "text passed to the last edits; nothing was written."
@@ -611,7 +613,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             resolved = path.resolve(strict=False)
             neighbour = failed_folders.get(resolved.parent)
             if content is not None and neighbour is not None and self._shadows_inherited(path):
-                raise RuntimeError(
+                raise SaveRefusedError(
                     f"Refusing to create {path}: it would override an inherited file, but "
                     f"{neighbour.path} in the same folder failed to load "
                     f"({neighbour.error_type}: {neighbour.message}) and may already hold the "
@@ -622,7 +624,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 continue
             if content is not None and content == self._read_current_text(path):
                 continue
-            raise RuntimeError(
+            raise SaveRefusedError(
                 f"Refusing to rewrite {path}: it failed to load "
                 f"({diagnostic.error_type}: {diagnostic.message}). Fix the file "
                 "and call discard() before editing it."
@@ -961,10 +963,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             value = live[key] if isinstance(live, dict) else None
             if value is not None and not _comes_from(value, self.mod_root):
                 continue
-            try:
+            with suppress(KeyError):
                 getattr(fresh, lookup)(key)
-            except KeyError:
-                pass
 
 
 def _comes_from(value: object, root: Path) -> bool:
@@ -1018,7 +1018,7 @@ def _first_difference(live: object, fresh: object, root: Path, where: str = "") 
             return None
         if isinstance(left, (list, tuple)):
             assert isinstance(right, (list, tuple))
-            for index, (a, b) in enumerate(zip(left, right)):
+            for index, (a, b) in enumerate(zip(left, right, strict=False)):
                 found = walk(a, b, f"{where}[{index}]")
                 if found is not None:
                     return found

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from typing import Literal, Sequence, cast
+from typing import Literal, cast
+from collections.abc import Sequence
 
 from .._disk_cache import PAIRS_ON_DISK
 from ..oob import (

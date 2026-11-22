@@ -459,8 +459,9 @@ def scan_mod_descriptors(
     if max_descriptor_bytes <= 0:
         raise ValueError("max_descriptor_bytes must be positive")
 
-    permitted_roots = (root,) + tuple(
-        Path(path).expanduser().resolve(strict=False) for path in allowed_roots
+    permitted_roots = (
+        root,
+        *(Path(path).expanduser().resolve(strict=False) for path in allowed_roots),
     )
     mods: list[DiscoveredMod] = []
     issues: list[ModDiscoveryIssue] = []

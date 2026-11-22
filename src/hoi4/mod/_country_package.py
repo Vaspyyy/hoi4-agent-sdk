@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal
+from collections.abc import Sequence
 
 from ..characters import (
     AdvisorRole,

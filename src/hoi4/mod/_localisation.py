@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 from .._disk_cache import NAMES_ON_DISK
 from ..characters import (

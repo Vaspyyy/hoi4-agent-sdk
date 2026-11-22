@@ -26,13 +26,13 @@ from .territory_generator import GenerationResult, generate_territories
 
 __all__ = [
     "BOUNDARY_COLOR",
+    "LAKE_COLOR",
+    "OCEAN_COLOR",
     "CancelCallback",
     "GeneratedMap",
     "GenerationCancelled",
     "GenerationResult",
-    "LAKE_COLOR",
     "MapGenerationConfig",
-    "OCEAN_COLOR",
     "ProgressCallback",
     "TotalConversionProfile",
     "compute_adjacencies",

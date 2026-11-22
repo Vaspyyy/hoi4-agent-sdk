@@ -5,8 +5,9 @@ Candidates remain external assets until explicitly imported through :class:`hoi4
 
 from __future__ import annotations
 
+import functools
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from hashlib import sha256
 from html.parser import HTMLParser
 from importlib import import_module
@@ -89,6 +90,11 @@ def _plain(value: str) -> str:
     return " ".join(" ".join(parser.parts).split())
 
 
+def _metadata_field(meta: dict[str, Any], key: str) -> str:
+    """The plain text of one ``extmetadata`` entry of a Commons answer."""
+    return _plain(str(meta.get(key, {}).get("value", "")))
+
+
 def _check_url(url: str, hosts: frozenset[str]) -> None:
     try:
         parsed = urlsplit(url)
@@ -146,9 +152,9 @@ class CommonsImageClient:
         start = time.monotonic()
         try:
             opener = build_opener(_Redirects(hosts))
-            with opener.open(
-                Request(url, headers={"User-Agent": self.user_agent}), timeout=self.timeout
-            ) as response:
+            # _check_url() above allows only https URLs of the Commons hosts.
+            request = Request(url, headers={"User-Agent": self.user_agent})  # noqa: S310
+            with opener.open(request, timeout=self.timeout) as response:
                 _check_url(response.geturl(), hosts)
                 content_length = response.headers.get("Content-Length")
                 if content_length is not None and int(content_length) > limit:
@@ -195,10 +201,7 @@ class CommonsImageClient:
                     continue
                 info = page["imageinfo"][0]
                 meta = info.get("extmetadata", {})
-
-                def field(key: str) -> str:
-                    return _plain(str(meta.get(key, {}).get("value", "")))
-
+                field = functools.partial(_metadata_field, meta)
                 original = info["url"]
                 download = info.get("thumburl", original)
                 _check_url(original, _MEDIA_HOSTS)
@@ -259,7 +262,7 @@ class CommonsImageClient:
         if not query.strip() or not 1 <= limit <= 50:
             raise ValueError("Require a nonempty query and limit between 1 and 50")
         return self._query(
-            dict(generator="search", gsrnamespace=6, gsrsearch=query, gsrlimit=limit),
+            {"generator": "search", "gsrnamespace": 6, "gsrsearch": query, "gsrlimit": limit},
             thumbnail_width,
         )
 
@@ -356,7 +359,7 @@ class CommonsImageClient:
             "schema_version": 1,
             "file": path.name,
             "sha256": digest,
-            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            "retrieved_at": datetime.now(UTC).isoformat(),
             "source": source,
             "downloaded_width": dimensions[0],
             "downloaded_height": dimensions[1],

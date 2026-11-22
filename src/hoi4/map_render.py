@@ -12,7 +12,8 @@ import re
 from colorsys import hsv_to_rgb
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from .errors import Hoi4Error
 from .countries import read_color

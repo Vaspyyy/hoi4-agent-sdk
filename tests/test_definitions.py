@@ -118,7 +118,7 @@ def test_facade_creates_typed_definitions_transactionally(tmp_path: Path) -> Non
 def test_identifiers_are_unique_and_overwrite_patches_in_place(tmp_path: Path) -> None:
     _write(tmp_path, "common/technologies/infantry.txt", TECH_SOURCE)
     mod = Mod(tmp_path)
-    with pytest.raises(AlreadyExistsError, match="already exists. It is in common/technologies/infantry.txt"):
+    with pytest.raises(AlreadyExistsError, match=r"already exists\. It is in common/technologies/infantry\.txt"):
         mod.create_definition("technology", "base_tech", "research_cost = 5")
     with pytest.raises(ValueError, match="update it there"):
         mod.create_definition("technology", "base_tech", "research_cost = 5", overwrite=True,

@@ -5,7 +5,7 @@ Country Tag Management
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from .layers import ContentView, as_view
 from .patching import replace_assignment, top_level_assignments
@@ -78,7 +78,7 @@ def tag_file_mapping(root: Path | ContentView) -> dict[str, str]:
 
 def resolve_country_filename(
     base: Path | ContentView, tag: str, mapping: dict[str, str] | None = None
-) -> Optional[Path]:
+) -> Path | None:
     view = as_view(base)
     assert view is not None
     mapping = mapping if mapping is not None else tag_file_mapping(view)

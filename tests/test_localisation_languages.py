@@ -25,7 +25,7 @@ BOM = b"\xef\xbb\xbf"
 def write_loc(root: Path, language: str, name: str, body: str, *, header: str | None = None) -> Path:
     path = root / "localisation" / language / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(BOM + f"l_{header or language}:\n{body}".encode("utf-8"))
+    path.write_bytes(BOM + f"l_{header or language}:\n{body}".encode())
     return path
 
 
@@ -104,7 +104,7 @@ def test_set_loc_other_language_writes_its_own_file(tmp_path: Path) -> None:
     assert "localization (german): 1 key(s)" in mod.preview_summary()
     mod.save()
     german = tmp_path / "localisation" / "german" / "mod_l_german.yml"
-    assert german.read_bytes() == BOM + 'l_german:\n KEY:0 "Deutsch"\n'.encode()
+    assert german.read_bytes() == BOM + b'l_german:\n KEY:0 "Deutsch"\n'
     polish = tmp_path / "localisation" / "polish" / "mod_l_polish.yml"
     assert polish.read_bytes().startswith(BOM + b"l_polish:\n")
 

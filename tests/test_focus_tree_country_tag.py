@@ -54,7 +54,7 @@ def test_rejected_country_tag_preserves_pending_work(
     } if mixed_fields else {}
     fields["country_tag"] = country_tag
 
-    with pytest.raises(TypeError, match="Remove country_tag.*selector reassignment.*not supported"):
+    with pytest.raises(TypeError, match=r"Remove country_tag.*selector reassignment.*not supported"):
         mod.update_focus_tree("german_focus", **fields)
 
     assert mod._snapshot() == before

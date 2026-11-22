@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 from ..countries import (
     country_file_paths,

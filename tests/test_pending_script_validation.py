@@ -110,7 +110,7 @@ focus_tree = {
 
     # Retrying must reject again, rather than treating a failed import as loaded.
     for _ in range(2):
-        with pytest.raises(ValueError, match="Duplicate focus ID 'shared_focus'.*'duplicate_tree'"):
+        with pytest.raises(ValueError, match=r"Duplicate focus ID 'shared_focus'.*'duplicate_tree'"):
             mod.load_inherited_content(relative)
         assert mod.list_focus_trees() == []
         assert mod.preview() == ""

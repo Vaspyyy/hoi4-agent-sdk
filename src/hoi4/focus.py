@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Optional
 
 from .patching import (
     AssignmentSpan,
@@ -56,7 +55,7 @@ _BLOCK_FIELDS = (
 
 def load_focus_tree(
     path: Path, text: str | None = None, *, tree_id: str | None = None
-) -> Optional[FocusTree]:
+) -> FocusTree | None:
     """Return the first tree of a file, or the one with ``tree_id``."""
 
     trees = load_focus_trees(path, text=text)
@@ -545,8 +544,7 @@ def _patch_focus_span(
         body = text[span.body_start : span.body_end]
         text = replace_assignment_body(text, span, _patch_focus_body(focus, body, constants))
     else:
-        text = replace_assignment(text, span, _render_focus(focus, key))
-        return text
+        return replace_assignment(text, span, _render_focus(focus, key))
     if span.key != key:
         # ``shared_focus = {`` became ``joint_focus = {``: only the key changes.
         text = text[: span.start] + key + text[span.start + len(span.key) :]

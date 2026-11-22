@@ -1,15 +1,36 @@
-"""
-Mod facade - the primary entry point for AI agents.
+"""The ``Mod`` class: the main entry point for AI agents.
 
-Usage:
-    from hoi4 import Mod
+Usage (the quick start of ``README.md``)::
 
-    mod = Mod("/path/to/my_mod", hoi4_install="/opt/steam/hoi4")
-    tree = mod.get_focus_tree("german_focus")
-    mod.add_focus("german_focus", Focus(id="GER_new", x=5, y=3))
-    errors = mod.validate()
-    diff = mod.preview()
-    mod.save()
+    from hoi4 import Focus, Mod
+
+    mod = Mod("/path/to/my_mod", hoi4_install="/path/to/Hearts of Iron IV")
+
+    with mod.transaction():
+        mod.create_focus_tree("ger_extra_focus", "GER")
+        mod.add_focus(
+            "ger_extra_focus",
+            Focus(
+                id="GER_expand_industry",
+                x=3,
+                y=2,
+                completion_reward="add_political_power = 50",
+            ),
+        )
+        mod.set_focus_loc("GER_expand_industry", "Expand Industry", "More factories.")
+        print(mod.preview_summary())
+        print(mod.preview())
+        issues = mod.validate()
+        for issue in issues:
+            print(f"[{issue.severity}] {issue.message}")
+        if any(issue.severity == "error" for issue in issues):
+            raise RuntimeError("Validation failed")
+
+    # This dry run discards its changes on exit. After reviewing the output,
+    # rerun the block with mod.transaction(save=True) to apply and save the edits.
+
+A focus tree the game ships is not visible to ``get_focus_tree()`` until its
+file is copied into the mod with ``mod.load_inherited_content(path)``.
 
 The class is assembled from layers, one module per content type. Each layer
 class subclasses only the layers whose methods it calls, so its class header

@@ -49,7 +49,7 @@ def _normalize_event_option(option: EventOption) -> EventOption:
 _EVENT_TEXT_LISTS = ("conditional_titles", "conditional_descriptions")
 
 
-def _normalize_conditional_texts(kwargs: dict, lists: tuple[str, ...]) -> None:
+def _normalize_conditional_texts(kwargs: dict[str, Any], lists: tuple[str, ...]) -> None:
     """Turn the entries of a conditional text list into ``EventText`` objects."""
 
     for conditional in lists:
@@ -57,7 +57,7 @@ def _normalize_conditional_texts(kwargs: dict, lists: tuple[str, ...]) -> None:
             kwargs[conditional] = [_event_text(entry) for entry in kwargs[conditional] or ()]
 
 
-def _event_text(entry: EventText | tuple[str, str] | dict) -> EventText:
+def _event_text(entry: EventText | tuple[str, str] | dict[str, str]) -> EventText:
     if isinstance(entry, EventText):
         return EventText(entry.text, normalize_block_body(entry.trigger))
     if isinstance(entry, dict):

@@ -34,7 +34,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterable, Iterator, Literal, Mapping, Sequence, cast
+from typing import Any, Literal, cast
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 
 from ._disk_cache import cache_root, disk_cache_enabled
 from ._script_corpus import script_blocks
@@ -291,11 +292,11 @@ class GameScriptVocabulary:
 
         return GameScriptVocabulary(
             hoi4_install=self.hoi4_install,
-            effects=merged("effect", {name: ((), "mod scripted_effects") for name in effects}),
+            effects=merged("effect", dict.fromkeys(effects, ((), "mod scripted_effects"))),
             triggers=merged(
                 "trigger",
                 {
-                    **{name: ((), "mod scripted_triggers") for name in triggers},
+                    **dict.fromkeys(triggers, ((), "mod scripted_triggers")),
                     **family_triggers,
                 },
             ),
@@ -444,7 +445,7 @@ def _cache_key(root: Path) -> str:
     return digest.hexdigest()[:32]
 
 
-def _cached_install_data(root: Path) -> dict | None:
+def _cached_install_data(root: Path) -> dict[str, Any] | None:
     try:
         path = _cache_dir() / f"{_cache_key(root)}.json"
         with path.open(encoding="utf-8") as handle:
@@ -457,7 +458,7 @@ def _cached_install_data(root: Path) -> dict | None:
     return data
 
 
-def _store_install_data(root: Path, data: dict) -> None:
+def _store_install_data(root: Path, data: dict[str, Any]) -> None:
     directory = _cache_dir()
     try:
         directory.mkdir(parents=True, exist_ok=True)
@@ -475,7 +476,7 @@ def _store_install_data(root: Path, data: dict) -> None:
         return
 
 
-def _install_data(root: Path) -> dict:
+def _install_data(root: Path) -> dict[str, Any]:
     """Everything the vocabulary needs from an install, as plain JSON data."""
 
     documentation = root / "documentation"
@@ -509,14 +510,14 @@ def _install_data(root: Path) -> dict:
     }
 
 
-def _vocabulary_from_data(root: Path, data: dict) -> GameScriptVocabulary:
-    usage: dict[str, list] = data.get("usage", {})
+def _vocabulary_from_data(root: Path, data: dict[str, Any]) -> GameScriptVocabulary:
+    usage: dict[str, list[Any]] = data.get("usage", {})
     templates = tuple(
         ModifierTemplate(
             pattern=str(pattern),
             placeholder=str(placeholder),
-            documented_members=tuple(cast(list, members)),
-            categories=tuple(cast(list, categories)),
+            documented_members=tuple(cast(list[str], members)),
+            categories=tuple(cast(list[str], categories)),
         )
         for pattern, placeholder, members, categories in data.get("templates", [])
     )
@@ -835,9 +836,12 @@ def _read_definitions(
 def _family_members(block: Block, how: str, key: str | None) -> Iterator[str]:
     if how == "top":
         for item in block.assignments():
-            if item.block is not None and not item.name.startswith("@"):
-                if item.name != "phases":
-                    yield item.name
+            if (
+                item.block is not None
+                and not item.name.startswith("@")
+                and item.name != "phases"
+            ):
+                yield item.name
         return
     if how == "children":
         for container in block.assignments(key):
@@ -1019,7 +1023,7 @@ def check_statement(
     allowlist patterns (``effect:my_effect``).
     """
 
-    kind = cast(ScriptTokenKind, statement.kind)
+    kind = statement.kind
     name = statement.name
     folded = name.lower()
     if not vocabulary.tokens(kind):
@@ -1169,8 +1173,8 @@ __all__ = [
     "ScriptSource",
     "ScriptTokenInfo",
     "ScriptTokenKind",
+    "check_statement",
     "load_game_script_vocabulary",
     "script_sources",
-    "check_statement",
     "validate_script_sources",
 ]

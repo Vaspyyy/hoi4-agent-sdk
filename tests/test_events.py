@@ -8,7 +8,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 class TestLoadEventsFile:
     def test_reads_namespace(self):
-        ns, events = load_events_file(FIXTURES / "events" / "mymod_events.txt")
+        ns, _events = load_events_file(FIXTURES / "events" / "mymod_events.txt")
         assert ns == "mymod.1"
 
     def test_reads_all_events(self):

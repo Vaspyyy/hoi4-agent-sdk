@@ -37,7 +37,7 @@ class TestFlags:
 
         assert len(result) == 1
         assert result[0].tag == "ABC"
-        for size_name, path in zip(("large", "medium", "small"), result[0].paths):
+        for size_name, path in zip(("large", "medium", "small"), result[0].paths, strict=True):
             assert path.is_file()
             with Image.open(path) as image:
                 assert image.size == FLAG_SIZES[size_name]

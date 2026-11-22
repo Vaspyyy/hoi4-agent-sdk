@@ -113,7 +113,7 @@ def cached_files_result(
     assert first is not None
     others = "\0".join(
         f"{os.fspath(path)}:{identity[1]}:{identity[2]}"
-        for path, identity in zip(paths[1:], identities[1:])
+        for path, identity in zip(paths[1:], identities[1:], strict=True)
         if identity is not None
     )
     key = f"{os.fspath(paths[0])}\0{purpose}\0{others}"

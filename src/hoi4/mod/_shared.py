@@ -6,7 +6,8 @@ import dataclasses
 import enum
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Sequence, TypeVar, cast
+from typing import Any, TypeVar, cast
+from collections.abc import Sequence
 
 from ..errors import Hoi4Error
 from ..paths import (
@@ -60,6 +61,7 @@ _INTERNAL_FIELDS = frozenset(
         "source_index",
         "paths",
         "is_vanilla",
+        "raw_text",
     }
 )
 
