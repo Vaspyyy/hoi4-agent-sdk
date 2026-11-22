@@ -166,7 +166,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             path: content
             for path, content in rendered.items()
             if (content is None and path.exists())
-            or (content is not None and self._read_current_text(path) != content)
+            or (content is not None and (not path.exists() or self._read_current_text(path) != content))
         }
         changed_assets = {
             path: content

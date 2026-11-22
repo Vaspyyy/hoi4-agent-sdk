@@ -282,3 +282,125 @@ def test_delete_and_update_inherited_characters_preserves_file(tmp_path: Path) -
     assert reloaded.get_character("GER_two", include_vanilla=False).name == "UPDATED"
     assert reloaded.get_character("GER_three", include_vanilla=False).name == "THREE"
     assert (game / "common/characters/GER.txt").read_text() == source
+
+
+# The same layered lookup checks run for each supported kind.
+_MATRIX = {
+    "event": ("events", "country_event = {{ id = {id} title = {marker} }}", "get_event", "list_events"),
+}
+
+
+@pytest.fixture(params=sorted(_MATRIX), ids=lambda kind: kind)
+def layered_content(request, tmp_path: Path):
+    kind = request.param
+    folder, template, getter, lister = _MATRIX[kind]
+    game, base, root = tmp_path / "game", tmp_path / "base", tmp_path / "mod"
+    root.mkdir()
+    ids = {"game": "game.1" if kind == "event" else "game_id", "base": "base.1" if kind == "event" else "base_id", "both": "both.1" if kind == "event" else "both_id", "mod": "mod.1" if kind == "event" else "mod_id"}
+    def put(layer, filename, key, marker):
+        write(layer, f"{folder}/{filename}.txt", template.format(id=ids[key], marker=marker))
+    put(game, "game", "game", "game")
+    put(game, "game_both", "both", "game")
+    put(base, "base", "base", "base")
+    put(base, "base_both", "both", "base")
+    put(root, "mod", "mod", "mod")
+    mod = Mod(root, hoi4_install=game, base_mod_paths=[base])
+    def get(key, **kwargs):
+        args = (ids[key], ids[key] + "_focus") if kind == "focus" else (ids[key],)
+        return getattr(mod, getter)(*args, **kwargs)
+    return kind, mod, game, base, root, ids, get, getattr(mod, lister), put
+
+
+def test_matrix_game_only(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert get("game").path.is_relative_to(game)
+
+
+def test_matrix_base_only(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert get("base").path.is_relative_to(base)
+
+
+def test_matrix_base_precedence(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert get("both").path.is_relative_to(base)
+
+
+def test_matrix_mod_precedence(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    put(root, "mod_both", "both", "mod")
+    new = Mod(root, hoi4_install=game, base_mod_paths=[base])
+    args = (ids["both"], ids["both"] + "_focus") if kind == "focus" else (ids["both"],)
+    assert getattr(new, _MATRIX[kind][2])(*args).path.is_relative_to(root)
+
+
+def test_matrix_mod_only_and_default(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    with pytest.raises(NotFoundError):
+        get("game", include_vanilla=False)
+    assert get("mod", include_vanilla=False) is not None
+    missing_args = ("missing", "missing_focus") if kind == "focus" else ("missing",)
+    sentinel = object()
+    assert getattr(mod, _MATRIX[kind][2])(*missing_args, default=sentinel) is sentinel
+
+
+def test_matrix_lists_are_sorted_and_mod_only(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert listing() == [ids["mod"]]
+    assert listing(include_vanilla=True) == sorted(ids.values())
+
+
+def test_matrix_lookup_does_not_stage(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    before = (listing(), mod.preview(), mod.validate())
+    files = sorted(p.relative_to(root) for p in root.rglob("*") if p.is_file())
+    get("game")
+    assert (listing(), mod.preview(), mod.validate()) == before
+    with pytest.warns(RuntimeWarning):
+        result = mod.save(require_changes=False)
+    assert not result.written_files
+    assert sorted(p.relative_to(root) for p in root.rglob("*") if p.is_file()) == files
+
+
+def test_matrix_inherited_object_is_a_copy(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    obj = get("game")
+    old = obj.path
+    obj.path = root / "changed"
+    assert get("game").path == old
+
+
+@pytest.mark.parametrize("edit", ["update", "delete", "add_option"])
+def test_matrix_event_edit_requires_staged_file(layered_content, edit: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    if kind != "event":
+        pytest.skip("event edit applies to events")
+    operations = {
+        "update": lambda: mod.update_event(ids["game"], title="changed"),
+        "delete": lambda: mod.delete_event(ids["game"]),
+        "add_option": lambda: mod.add_event_option(ids["game"], EventOption(name="choice")),
+    }
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError) as error:
+        operations[edit]()
+    assert 'mod.load_inherited_content("events/game.txt")' in str(error.value)
+    assert mod.preview() == before
+    mod.load_inherited_content("events/game.txt")
+    operations[edit]()
+    assert mod.save(require_changes=True).written_files
+    assert (root / "events/game.txt").exists()
+
+
+@pytest.mark.parametrize("action", ["discard", "save", "reload"])
+def test_matrix_event_cache_clears(layered_content, action: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    if kind != "event":
+        pytest.skip("event cache uses event title")
+    assert get("game").title == "game"
+    put(game, "game", "game", "changed")
+    if action == "save":
+        with pytest.warns(RuntimeWarning):
+            mod.save(require_changes=False)
+    else:
+        getattr(mod, action)()
+    assert get("game").title == "changed"
