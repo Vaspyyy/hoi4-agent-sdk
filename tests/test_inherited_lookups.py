@@ -265,3 +265,20 @@ def test_edit_inherited_character_preserves_other_file_entries(tmp_path: Path, d
         assert reloaded.get_character("GER_one", include_vanilla=False, default=None) is None
     else:
         assert reloaded.get_character("GER_one", include_vanilla=False).name == "NEW"
+
+
+def test_delete_and_update_inherited_characters_preserves_file(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    source = "characters = { GER_one = { name = ONE } GER_two = { name = TWO } GER_three = { name = THREE } }\n"
+    write(game, "common/characters/GER.txt", source)
+    mod = Mod(root, hoi4_install=game)
+    mod.delete_character("GER_one", remove_recruitment=False)
+    mod.update_character("GER_two", name="UPDATED")
+    result = mod.save(require_changes=True)
+    assert result.written_files
+    reloaded = Mod(root, hoi4_install=game)
+    assert reloaded.list_characters() == ["GER_three", "GER_two"]
+    assert reloaded.get_character("GER_two", include_vanilla=False).name == "UPDATED"
+    assert reloaded.get_character("GER_three", include_vanilla=False).name == "THREE"
+    assert (game / "common/characters/GER.txt").read_text() == source
