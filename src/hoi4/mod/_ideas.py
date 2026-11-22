@@ -121,6 +121,8 @@ class IdeasLayer(CountriesLayer):
                 idea.path = self.mod_root / "common" / "ideas" / "mod_ideas.txt"
         if idea.path is not None and idea.path.parent.name == "ideas":
             self._idea_file_containers.setdefault(idea.path, "ideas")
+        if idea.path is not None:
+            self._note_target(idea.path)
         self._ideas[idea_id] = idea
         self._dirty.add("ideas")
         self._dirty_ideas.add(idea_id)

@@ -116,6 +116,9 @@ class FocusLayer(ContextLayer):
         )
         tree = FocusTree(id=tree_id, country_tag=tag, path=path, touched=True)
         self._focus_trees[tree_id] = tree
+        # The loader has read this file if it is there; noted all the same,
+        # like every target an edit names.
+        self._note_target(path)
         self._original_files.setdefault(path, "")
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)

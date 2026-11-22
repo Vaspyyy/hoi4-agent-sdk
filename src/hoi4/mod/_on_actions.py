@@ -208,6 +208,7 @@ class OnActionsLayer(CoreLayer):
         replaced = target_existing[0] if target_existing else None
         if replaced is not None and replaced.path is not None:
             self._dirty_on_action_files.add(replaced.path)
+        self._note_target(target)
         action = OnAction(
             id=action_id,
             effect=normalize_block_body(effect),

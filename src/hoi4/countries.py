@@ -753,12 +753,7 @@ def write_country_definition(mod_root: Path, country: Country) -> None:
 
 def write_country_history(mod_root: Path, country: Country) -> None:
     tag = country.tag
-    safe_name = safe_file_stem(country.name or tag, fallback=tag)
-    p = (
-        mod_root / f"history/countries/{tag} - {safe_name}.txt"
-        if {"*", "name"} & country.touched_fields or country.history_path is None
-        else country.history_path
-    )
+    p = country_history_target(mod_root, country)
     p.parent.mkdir(parents=True, exist_ok=True)
 
     for old in p.parent.glob(f"{tag} - *.txt"):
@@ -798,12 +793,7 @@ def write_all_country_files(mod_root: Path, country: Country) -> list[Path]:
     write_country_definition(mod_root, country)
     written.append(country.definition_path or mod_root / f"common/countries/{country.tag}.txt")
     write_country_history(mod_root, country)
-    safe_name = safe_file_stem(country.name or country.tag, fallback=country.tag)
-    written.append(
-        mod_root / f"history/countries/{country.tag} - {safe_name}.txt"
-        if {"*", "name"} & country.touched_fields or country.history_path is None
-        else country.history_path
-    )
+    written.append(country_history_target(mod_root, country))
     write_character_file(mod_root, country)
     if country.leader:
         written.append(

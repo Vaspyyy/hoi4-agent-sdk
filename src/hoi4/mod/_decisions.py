@@ -224,6 +224,8 @@ class DecisionsLayer(LocalisationLayer):
             raise ValueError(
                 "Decision category_path must point inside common/decisions/categories"
             )
+        for noted in (target, definition_target):
+            self._note_target(noted)
         if existing is not None:
             self._dirty_decision_files.update(category_files(existing))
             if existing.definition_path is not None:
