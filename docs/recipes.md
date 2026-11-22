@@ -474,7 +474,7 @@ foreign_b = Focus(id="TAG_stay_independent", x=6, y=2, cost=10,
                   completion_reward=Mod.effect_add_war_support(0.05))
 
 for focus in [root, industry, army, foreign_a, foreign_b]:
-    mod.upsert_focus("tag_focus", focus)
+    mod.ensure_focus("tag_focus", focus)
 
 mod.set_focuses_mutually_exclusive("tag_focus", "TAG_seek_neighbor_support", "TAG_stay_independent")
 mod.place_continuous_focus_below_tree("tag_focus", padding=400)

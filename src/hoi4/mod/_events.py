@@ -21,7 +21,9 @@ from ..errors import NotFoundError, already_exists, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
+    _check_field_names,
     _check_fields,
+    _create_arguments,
     _set_fields,
 )
 
@@ -150,10 +152,21 @@ class EventsLayer(CoreLayer):
         return event
 
     def ensure_event(self, event_id: str, **kwargs) -> Event:
-        """Create an event if missing, otherwise patch the existing event."""
-        if event_id in self._events:
-            self.update_event(event_id, **kwargs)
-            return self._events[event_id]
+        """Create an event if missing, otherwise patch the existing event.
+
+        Returns:
+            The created or updated event.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+        """
+        existing = self.get_event(event_id, default=None)
+        if existing is not None:
+            _check_fields("ensure_event", existing, kwargs, allow_path=True)
+            return self.update_event(event_id, **kwargs)
+        _check_field_names(
+            "ensure_event", kwargs, _create_arguments(self.create_event, skip={"event_id"})
+        )
         return self.create_event(event_id, **kwargs)
 
     def update_event(self, event_id: str, **kwargs) -> Event:

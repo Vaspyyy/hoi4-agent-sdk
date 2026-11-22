@@ -400,7 +400,7 @@ def test_container_kind_rules(tmp_path: Path) -> None:
 def test_upsert_keeps_the_block_kind(tmp_path: Path) -> None:
     _write(tmp_path, MIXED)
     mod = Mod(tmp_path)
-    mod.upsert_focus("TST_focus", Focus(id="SH_root", x=7))
+    mod.ensure_focus("TST_focus", Focus(id="SH_root", x=7))
     focus = mod.get_focus("TST_focus", "SH_root")
     assert focus is not None and focus.kind == "shared_focus" and focus.x == 7
 

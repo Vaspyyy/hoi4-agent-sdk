@@ -103,6 +103,12 @@ and derive from `Hoi4Error` too.
 
 ### Return values and field checks
 
+Every `ensure_x(id, ...)` creates the object when it is missing and patches
+it otherwise, returns it on both paths, checks every field name before
+anything changes (the `TypeError` names the `ensure_x` method), and raises
+`ValueError` when the existing object has a different parent (another
+country's focus tree, another category's decision).
+
 Every `get_x(id)` returns the object or raises `NotFoundError`. Pass
 `default=` (keyword only) to get that value instead, as with `dict.get`:
 `mod.get_focus("TAG_focus", "TAG_x", default=None)`. A lookup never creates
@@ -663,7 +669,7 @@ patches those files separately.
 | `create_decision_category(category_id, icon="", allowed="", visible="", path=None, category_path=None, overwrite=False) -> DecisionCategory` | `DecisionCategory` | Create or route a category. `path` targets decision content; optional `category_path` must be under `common/decisions/categories`. Raises if it exists unless `overwrite=True`. |
 | `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, **fields) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. A category the mod does not define is extended in the mod's decisions file without writing a category definition (that would replace the game's); with a game install, a category that no one defines raises `NotFoundError` (create it with `create_decision_category()` first). Also accepts every mission, targeted, and general field listed below by keyword. |
 | `ensure_decision_category(category_id, **kwargs) -> DecisionCategory` | `DecisionCategory` | Idempotent create-or-update wrapper |
-| `ensure_decision(category_id, decision_id, **kwargs) -> Decision` | `Decision` | Idempotent create-or-update wrapper |
+| `ensure_decision(category_id, decision_id, **kwargs) -> Decision` | `Decision` | Idempotent create-or-update wrapper; an existing decision in another category raises `ValueError` |
 | `create_decision_chain(category_id, steps, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Decisions | Build staged decisions with generated completion flags, event calls, localization, and final event |
 | `create_mission(category_id, decision_id, *, days_mission_timeout, activation="", available="", complete_effect="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a mission: it starts when `activation` holds, completes with `complete_effect` once `available` holds, otherwise runs `timeout_effect` after the timeout. Rejects a positive `cost`/`custom_cost_trigger` and non-positive timeouts. |
 | `create_targeted_decision(category_id, decision_id, *, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a decision with one instance per target country or state. Requires at least one of `target_trigger`, `targets`, `target_array`, or `state_target=True`. |
@@ -863,11 +869,11 @@ static checks do not establish the layout displayed by the game.
 | `list_focus_trees() -> list[str]` | Sorted tree IDs | All loaded tree IDs |
 | `get_focus_tree(tree_id: str, *, default=...) -> FocusTree` | `FocusTree` | Raises `NotFoundError` if not found |
 | `create_focus_tree(tree_id: str, country_tag: str, overwrite=False) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
-| `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields; `country_tag` is used only at creation |
+| `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields; an existing tree of another country raises `ValueError` |
 | `update_focus_tree(tree_id: str, **kwargs) -> FocusTree` | `FocusTree` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id: str) -> None` | `None` | Remove tree; raises `NotFoundError` |
 | `add_focus(tree_id: str, focus: Focus) -> Focus` | `Focus` | Append focus to tree; an id the tree has raises `AlreadyExistsError` |
-| `upsert_focus(tree_id: str, focus: Focus) -> Focus` | `Focus` | Add a new focus or replace modeled fields on an existing focus |
+| `ensure_focus(tree_id: str, focus: Focus) -> Focus` | `Focus` | Add a new focus or replace modeled fields on an existing focus |
 | `remove_focus(tree_id: str, focus_id: str) -> None` | `None` | Remove focus by ID; raises `NotFoundError` |
 | `get_focus(tree_id: str, focus_id: str, *, default=...) -> Focus` | `Focus` | Find focus in tree; a missing tree or focus raises `NotFoundError` (or returns `default`) |
 | `update_focus(tree_id: str, focus_id: str, **kwargs) -> Focus` | `Focus` | Update any Focus field |
@@ -1098,7 +1104,7 @@ Use layout helpers before saving generated trees:
 ```python
 branch = mod.auto_layout_branch("west_focus", [Focus(id="WST_a"), Focus(id="WST_b")], anchor_focus_id="WST_independence")
 for focus in branch:
-    mod.upsert_focus("west_focus", focus)
+    mod.ensure_focus("west_focus", focus)
 mod.place_continuous_focus_below_tree("west_focus", padding=400)
 mod.assert_no_visual_overlap("west_focus")
 ```

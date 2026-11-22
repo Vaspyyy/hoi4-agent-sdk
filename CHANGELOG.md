@@ -72,6 +72,10 @@ say what you got, no duplicate entry points, and the script builders moved to
 | every `get_x(id)` | takes a keyword-only `default=`; `get_x(id, default=None)` returns `None` instead of raising | The `dict.get` convention keeps the "or None" use |
 | `mod.create_oob(name, tag)` (it assigns by default) for a country no one defines, inventing that country | raises `NotFoundError`; pass `assign=False` to create the file only | No silent invention |
 | `mod.delete_character(id)` of a character whose country no one defines, inventing that country to drop the recruitment | deletes the character; there is no recruitment list to change | No silent invention |
+| `mod.upsert_focus(tree, focus)` | `mod.ensure_focus(tree, focus)` | Same idea as every other `ensure_*` |
+| `mod.ensure_focus_tree(id, other_tag)`, `mod.ensure_decision(other_category, id)` on an existing object silently ignoring the different parent | raise `ValueError` naming both | No silent no-op |
+| `mod.ensure_focus_tree(id, tag, bad_field=1)` creating the tree before raising | raises `TypeError` before anything changes | Atomic |
+| `mod.ensure_event/idea/decision/decision_category/on_action(new_id, bad_field=1)` raising `TypeError: EventsLayer.create_event() got an unexpected keyword argument` | `TypeError("ensure_event(): Unknown fields: [...]. Valid: [...]")` on both the create and the update path | The message names the method that was called |
 | `hoi4.bookmarks.load_bookmarks`, `hoi4.decisions.write_decisions_file`, `hoi4.focus.write_focus_tree`, `hoi4.ideologies.load_ideologies`, `hoi4.localisation.delete_localization_keys`, `hoi4.on_actions.write_on_actions_file`, `hoi4.states.ensure_state_in_mod`, `hoi4.states.patch_state_history_owner_cores`, `hoi4.tags.load_all_tags`, `hoi4.validation.collect_character_ids` | the matching `Mod` method (`mod.list_bookmarks()`, `mod.save()`, ...) | Unused module functions that bypassed the `Mod` staging |
 
 ### Added

@@ -127,7 +127,7 @@ with mod.transaction():
     Every finding has a severity: `error`, `warning` or `info` (advice). `validate()` hides advice unless you pass `advice=True`; `validate_effect()` shows it unless `advice=False`.
     Every code and its severity is listed in [`docs/validation.md`](docs/validation.md).
 
-11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `upsert_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
+11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `ensure_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
 
 12. Use `get_country_context(tag)` before generating country-specific content. Pass `copy_states=True` before directly modifying vanilla states.
 

@@ -18,7 +18,9 @@ from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
+    _check_field_names,
     _check_fields,
+    _create_arguments,
     _set_fields,
 )
 
@@ -206,12 +208,27 @@ class OnActionsLayer(CoreLayer):
         return action
 
     def ensure_on_action(self, action_id: str, **kwargs) -> OnAction:
-        """Ensure one occurrence, using the requested/default file as its identity."""
+        """Ensure one occurrence, using the requested/default file as its identity.
+
+        Returns:
+            The created or updated occurrence.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: The hook occurs several times in the chosen file.
+        """
 
         occurrences = self._on_action_occurrences.get(action_id, [])
+        if occurrences:
+            _check_fields("ensure_on_action", occurrences[0], kwargs, allow_path=True)
+        else:
+            _check_field_names(
+                "ensure_on_action",
+                kwargs,
+                _create_arguments(self.create_on_action, skip={"action_id"}),
+            )
         if len(occurrences) == 1:
-            self.update_on_action(action_id, occurrence=0, **kwargs)
-            return occurrences[0]
+            return self.update_on_action(action_id, occurrence=0, **kwargs)
         if occurrences:
             path_arg = kwargs.get("path")
             target = (
@@ -229,8 +246,7 @@ class OnActionsLayer(CoreLayer):
                 == target
             ]
             if len(matching) == 1:
-                self.update_on_action(action_id, occurrence=matching[0], **kwargs)
-                return occurrences[matching[0]]
+                return self.update_on_action(action_id, occurrence=matching[0], **kwargs)
             if len(matching) > 1:
                 raise ValueError(
                     f"On-action '{action_id}' occurs multiple times in {target}; "

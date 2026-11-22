@@ -22,7 +22,9 @@ from ._shared import MISSING, _D, _Missing
 from ._localisation import LocalisationLayer
 from ._shared import (
     _decision_category_definition_path,
+    _check_field_names,
     _check_fields,
+    _create_arguments,
     _join_script_parts,
     _set_fields,
 )
@@ -216,9 +218,25 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         return category
 
     def ensure_decision_category(self, category_id: str, **kwargs) -> DecisionCategory:
-        if category_id in self._decision_categories:
-            self.update_decision_category(category_id, **kwargs)
-            return self._decision_categories[category_id]
+        """Create a decision category if missing, otherwise patch the existing one.
+
+        Returns:
+            The created or updated category.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+        """
+        existing = self.get_decision_category(category_id, default=None)
+        if existing is not None:
+            _check_fields(
+                "ensure_decision_category", existing, kwargs, extra={"path", "category_path"}
+            )
+            return self.update_decision_category(category_id, **kwargs)
+        _check_field_names(
+            "ensure_decision_category",
+            kwargs,
+            _create_arguments(self.create_decision_category, skip={"category_id"}),
+        )
         return self.create_decision_category(category_id, **kwargs)
 
     def update_decision_category(self, category_id: str, **kwargs) -> DecisionCategory:
@@ -468,9 +486,29 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         return category
 
     def ensure_decision(self, category_id: str, decision_id: str, **kwargs) -> Decision:
-        if decision_id in self._decisions:
-            self.update_decision(decision_id, **kwargs)
-            return self._decisions[decision_id]
+        """Create a decision if missing, otherwise patch the existing one.
+
+        Returns:
+            The created or updated decision.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: The decision exists in another category.
+        """
+        existing = self.get_decision(decision_id, default=None)
+        if existing is not None:
+            if existing.category != category_id:
+                raise ValueError(
+                    f"Decision '{decision_id}' is in category '{existing.category}', "
+                    f"not '{category_id}'; recreate it to move it."
+                )
+            _check_fields("ensure_decision", existing, kwargs)
+            return self.update_decision(decision_id, **kwargs)
+        _check_field_names(
+            "ensure_decision",
+            kwargs,
+            _create_arguments(self.create_decision, skip={"category_id", "decision_id"}),
+        )
         return self.create_decision(category_id, decision_id, **kwargs)
 
     def update_decision(self, decision_id: str, **kwargs) -> Decision:

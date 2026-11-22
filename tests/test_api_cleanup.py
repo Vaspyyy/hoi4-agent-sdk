@@ -530,3 +530,61 @@ def test_get_country_reads_a_game_country(tmp_path, game) -> None:
     mod = Mod(tmp_path / "mod", hoi4_install=game)
     assert mod.get_country("GER").tag == "GER"
     assert mod.get_country_context("GER")["tag"] == "GER"
+
+
+# ── ensure_* ────────────────────────────────────────────────────────
+
+
+def test_ensure_methods_return_the_object_on_both_paths(full_mod: Mod) -> None:
+    from hoi4 import Decision, DecisionCategory, Event, Focus, FocusTree, Idea, OnAction
+
+    mod = full_mod
+    for result, expected in [
+        (mod.ensure_event("zz.1", title="zz.1.t"), Event),
+        (mod.ensure_event("zz.2", title="zz.2.t"), Event),
+        (mod.ensure_idea("zz_idea", removal_cost=2), Idea),
+        (mod.ensure_idea("zz_idea2", removal_cost=2), Idea),
+        (mod.ensure_decision("zz_cat", "zz_dec", cost=3), Decision),
+        (mod.ensure_decision("zz_cat", "zz_dec2", cost=3), Decision),
+        (mod.ensure_decision_category("zz_cat", icon="x"), DecisionCategory),
+        (mod.ensure_decision_category("zz_cat2", icon="x"), DecisionCategory),
+        (mod.ensure_on_action("on_startup", effect="add_stability = 0.1"), OnAction),
+        (mod.ensure_on_action("on_daily", effect="add_stability = 0.1"), OnAction),
+        (mod.ensure_focus_tree("zz_tree", "ABC", default=True), FocusTree),
+        (mod.ensure_focus_tree("zz_tree2", "ABC", default=False), FocusTree),
+        (mod.ensure_focus("zz_tree", Focus(id="ABC_f", cost=3)), Focus),
+        (mod.ensure_focus("zz_tree", Focus(id="ABC_new")), Focus),
+    ]:
+        assert isinstance(result, expected), (result, expected)
+    assert mod.get_focus("zz_tree", "ABC_f").cost == 3
+    assert not hasattr(mod, "upsert_focus")
+
+
+@pytest.mark.parametrize(
+    ("method", "call"),
+    [
+        ("ensure_event", lambda mod, new: mod.ensure_event("zz.9" if new else "zz.1", zz_bogus=1)),
+        ("ensure_idea", lambda mod, new: mod.ensure_idea("zz_new" if new else "zz_idea", zz_bogus=1)),
+        ("ensure_decision", lambda mod, new: mod.ensure_decision("zz_cat", "zz_new" if new else "zz_dec", zz_bogus=1)),
+        ("ensure_decision_category", lambda mod, new: mod.ensure_decision_category("zz_new" if new else "zz_cat", zz_bogus=1)),
+        ("ensure_on_action", lambda mod, new: mod.ensure_on_action("on_daily" if new else "on_startup", zz_bogus=1)),
+        ("ensure_focus_tree", lambda mod, new: mod.ensure_focus_tree("zz_new" if new else "zz_tree", "ABC", zz_bogus=1)),
+    ],
+)
+@pytest.mark.parametrize("new", [True, False])
+def test_ensure_names_itself_for_an_unknown_field_and_changes_nothing(
+    full_mod: Mod, method: str, call, new: bool
+) -> None:
+    before = full_mod.preview()
+    with pytest.raises(TypeError, match=rf"^{method}\(\): Unknown fields: \['zz_bogus'\]\. Valid: "):
+        call(full_mod, new)
+    assert full_mod.preview() == before
+
+
+def test_ensure_refuses_a_different_parent(full_mod: Mod) -> None:
+    full_mod.create_country("DEF", "Defland")
+    with pytest.raises(ValueError, match="belongs to 'ABC', not 'DEF'"):
+        full_mod.ensure_focus_tree("zz_tree", "DEF")
+    full_mod.create_decision_category("zz_other")
+    with pytest.raises(ValueError, match="is in category 'zz_cat', not 'zz_other'"):
+        full_mod.ensure_decision("zz_other", "zz_dec", cost=1)

@@ -104,6 +104,19 @@ def _check_field_names(method: str, kwargs: dict[str, Any], valid: Iterable[str]
         )
 
 
+def _create_arguments(create: Callable[..., Any], *, skip: Iterable[str] = ()) -> set[str]:
+    """The keyword arguments a ``create_x`` method takes, minus ``skip`` and ``overwrite``."""
+    import inspect
+
+    excluded = set(skip) | {"self", "overwrite"}
+    return {
+        name
+        for name, parameter in inspect.signature(create).parameters.items()
+        if name not in excluded
+        and parameter.kind in (parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY)
+    }
+
+
 def _set_fields(
     obj: object,
     kwargs: dict[str, Any],

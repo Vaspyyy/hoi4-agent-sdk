@@ -20,7 +20,9 @@ from ..errors import not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
+    _check_field_names,
     _check_fields,
+    _create_arguments,
     _set_fields,
 )
 
@@ -100,10 +102,20 @@ class IdeasLayer(CoreLayer):
 
         Existing modifiers are replaced by default. Pass
         ``merge_modifier=True`` to merge supplied keys instead.
+
+        Returns:
+            The created or updated idea.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
         """
-        if idea_id in self._ideas:
-            self.update_idea(idea_id, merge_modifier=merge_modifier, **kwargs)
-            return self._ideas[idea_id]
+        existing = self.get_idea(idea_id, default=None)
+        if existing is not None:
+            _check_fields("ensure_idea", existing, kwargs, allow_path=True)
+            return self.update_idea(idea_id, merge_modifier=merge_modifier, **kwargs)
+        _check_field_names(
+            "ensure_idea", kwargs, _create_arguments(self.create_idea, skip={"idea_id"})
+        )
         return self.create_idea(idea_id, **kwargs)
 
     def update_idea(self, idea_id: str, *, merge_modifier: bool = False, **kwargs) -> Idea:

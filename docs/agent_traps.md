@@ -386,7 +386,7 @@ After adding generated branches:
 ```python
 branch = mod.auto_layout_branch("TAG_focus", focuses, anchor_focus_id="TAG_anchor")
 for focus in branch:
-    mod.upsert_focus("TAG_focus", focus)
+    mod.ensure_focus("TAG_focus", focus)
 mod.place_continuous_focus_below_tree("TAG_focus", padding=400)
 mod.assert_no_visual_overlap("TAG_focus")
 ```

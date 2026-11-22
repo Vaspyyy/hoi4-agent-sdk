@@ -873,11 +873,11 @@ class TestAgentFacingApis:
         assert tree.id == "scl_focus"
         assert mod.ensure_focus_tree("scl_focus", "SCL") is tree
 
-        focus = mod.upsert_focus(
+        focus = mod.ensure_focus(
             "scl_focus", Focus(id="SCL_start", x=1, y=1, completion_reward="add_stability = 0.05")
         )
         assert focus.id == "SCL_start"
-        mod.upsert_focus(
+        mod.ensure_focus(
             "scl_focus", Focus(id="SCL_start", x=2, y=3, completion_reward="add_war_support = 0.05")
         )
         assert mod.get_focus("scl_focus", "SCL_start").x == 2

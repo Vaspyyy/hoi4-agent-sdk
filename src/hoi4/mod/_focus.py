@@ -10,6 +10,7 @@ from typing import Sequence
 from ..focus import FOCUS_KINDS
 from ..focus_layout import resolve_focus_positions, visual_overlap_issues
 from ..paths import (
+    require_country_tag,
     require_script_id,
     resolve_mod_output_path,
 )
@@ -105,15 +106,33 @@ class FocusLayer(ContextLayer, EffectsLayer):
         return tree
 
     def ensure_focus_tree(self, tree_id: str, country_tag: str, **kwargs) -> FocusTree:
-        """Create a focus tree if missing, otherwise patch tree-level fields."""
-        if tree_id in self._focus_trees:
-            if kwargs:
-                self.update_focus_tree(tree_id, **kwargs)
-            return self._focus_trees[tree_id]
-        tree = self.create_focus_tree(tree_id, country_tag)
-        if kwargs:
-            self.update_focus_tree(tree_id, **kwargs)
-        return tree
+        """Create a focus tree if missing, otherwise patch tree-level fields.
+
+        Returns:
+            The created or updated tree.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: The tree exists for another country.
+        """
+        existing = self.get_focus_tree(tree_id, default=None)
+        tag = require_country_tag(country_tag)
+        _check_fields(
+            "ensure_focus_tree",
+            existing or FocusTree(id=tree_id),
+            kwargs,
+            allow_path=True,
+            exclude={"country_tag", "kind"},
+        )
+        if existing is not None:
+            if existing.country_tag and existing.country_tag != tag:
+                raise ValueError(
+                    f"Focus tree '{tree_id}' belongs to '{existing.country_tag}', not '{tag}'; "
+                    "create a new tree instead."
+                )
+            return self.update_focus_tree(tree_id, **kwargs) if kwargs else existing
+        tree = self.create_focus_tree(tree_id, tag)
+        return self.update_focus_tree(tree_id, **kwargs) if kwargs else tree
 
     def delete_focus_tree(self, tree_id: str) -> None:
         """Stage the deletion of a focus tree.
@@ -247,6 +266,10 @@ class FocusLayer(ContextLayer, EffectsLayer):
         return focus
 
     @staticmethod
+    def _require_focus_or_none(tree: FocusTree, focus_id: str) -> Focus | None:
+        return next((focus for focus in tree.focuses if focus.id == focus_id), None)
+
+    @staticmethod
     def _require_focus(tree: FocusTree, focus_id: str) -> Focus:
         """Return the focus ``focus_id`` of ``tree`` or raise ``NotFoundError``."""
         for focus in tree.focuses:
@@ -260,12 +283,18 @@ class FocusLayer(ContextLayer, EffectsLayer):
             plural="focuses",
         )
 
-    def upsert_focus(self, tree_id: str, focus: Focus) -> Focus:
-        """Add a focus if missing, otherwise replace its modeled fields."""
-        existing = self.get_focus(tree_id, focus.id, default=None)
+    def ensure_focus(self, tree_id: str, focus: Focus) -> Focus:
+        """Add ``focus`` if the tree lacks its id, otherwise replace the modeled fields.
+
+        Returns:
+            The added focus, or the existing focus with the new fields.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+        """
+        existing = self._require_focus_or_none(self.get_focus_tree(tree_id), focus.id)
         if existing is None:
-            self.add_focus(tree_id, focus)
-            return focus
+            return self.add_focus(tree_id, focus)
         updates = {
             field.name: copy.deepcopy(getattr(focus, field.name))
             for field in dataclasses.fields(Focus)
