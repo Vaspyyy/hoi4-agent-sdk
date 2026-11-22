@@ -289,6 +289,7 @@ _MATRIX = {
     "event": ("events", "country_event = {{ id = {id} title = {marker} }}", "get_event", "list_events"),
     "focus_tree": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} }}", "get_focus_tree", "list_focus_trees"),
     "focus": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} }}", "get_focus", "list_focus_trees"),
+    "idea": ("common/ideas", "ideas = {{ country = {{ {id} = {{ picture = {marker} }} }} }}", "get_idea", "list_ideas"),
 }
 
 
@@ -455,3 +456,36 @@ def test_matrix_focus_cache_clears(layered_content, action: str) -> None:
         getattr(mod, action)()
     focus = get("game") if kind == "focus" else get("game").focuses[0]
     assert focus.x == 7
+
+
+@pytest.mark.parametrize("layered_content", ["idea"], indirect=True)
+@pytest.mark.parametrize("edit", ["update", "delete"])
+def test_matrix_idea_edit_requires_staged_file(layered_content, edit: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    operations = {
+        "update": lambda: mod.update_idea(ids["game"], icon="changed"),
+        "delete": lambda: mod.delete_idea(ids["game"]),
+    }
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError) as error:
+        operations[edit]()
+    assert 'mod.load_inherited_content("common/ideas/game.txt")' in str(error.value)
+    assert mod.preview() == before
+    mod.load_inherited_content("common/ideas/game.txt")
+    operations[edit]()
+    assert mod.save(require_changes=True).written_files
+    assert (root / "common/ideas/game.txt").exists()
+
+
+@pytest.mark.parametrize("layered_content", ["idea"], indirect=True)
+@pytest.mark.parametrize("action", ["discard", "save", "reload"])
+def test_matrix_idea_cache_clears(layered_content, action: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert get("game").icon == "game"
+    put(game, "game", "game", "changed")
+    if action == "save":
+        with pytest.warns(RuntimeWarning):
+            mod.save(require_changes=False)
+    else:
+        getattr(mod, action)()
+    assert get("game").icon == "changed"
