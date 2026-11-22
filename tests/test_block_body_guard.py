@@ -76,6 +76,7 @@ from hoi4 import (
 from hoi4.definitions import DEFINITION_KINDS
 from hoi4.syntax import Assignment, Block, Scalar, Tagged, parse
 from hoi4.textio import read_text
+from hoi4 import effects
 
 MARKER = "zz_marker = 1"
 PAYLOADS = {
@@ -641,10 +642,10 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "wargoal effect",
-        _parameters(Mod.effect_create_wargoal, frozenset()),
+        _parameters(effects.create_wargoal, frozenset()),
         create_with=lambda mod, field, value: mod.create_event(
             "zz.1", title="zz.1.t",
-            immediate=mod.effect_create_wargoal(**{"target": "GER", "war_goal_type": "annex_everything", field: value}),
+            immediate=effects.create_wargoal(**{"target": "GER", "war_goal_type": "annex_everything", field: value}),
         ),
     ),
 ]

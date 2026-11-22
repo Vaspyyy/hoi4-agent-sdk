@@ -609,7 +609,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                             f"'{ref.scope_key}' runs once for every matched country, and "
                             "each of them adds the target to its own faction. Scope to the "
                             "faction leader instead, for example with "
-                            "Mod.effect_add_target_to_faction(leader, target).",
+                            "effects.add_target_to_faction(leader, target).",
                             "faction_scope_footgun", owner, file_path, ref, severity="info",
                         )
                 elif ref.kind == "civil_war":
@@ -618,7 +618,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                         report_reference(
                             f"{kind} '{obj_id}': 'start_civil_war' names neither a capital "
                             "nor states, so the game picks the revolt's territory; "
-                            "consider Mod.effect_spawn_revolution(...) for an explicit setup.",
+                            "consider effects.spawn_revolution(...) for an explicit setup.",
                             "civil_war_scope_footgun", owner, file_path, ref, severity="info",
                         )
                     if not has_tree_load:
@@ -656,7 +656,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             findings.append(
                 self._script_ref_error(
                     f"{owner.kind} '{owner.id}' removes {len(removals)} ideas and adds "
-                    f"{added[root]} in one effect; consider Mod.effect_swap_idea() or "
+                    f"{added[root]} in one effect; consider effects.swap_idea() or "
                     "hidden effects for cleaner tooltips",
                     "bad_idea_tooltip_pattern", owner.kind, owner.id, file_path,
                     severity="info", line=removals[0].line, column=removals[0].column,

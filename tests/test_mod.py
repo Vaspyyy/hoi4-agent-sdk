@@ -15,7 +15,7 @@ from hoi4 import (
     VALIDATION_WARNING_CODES,
     ExternalModificationError,
 )
-from hoi4 import TECHNOLOGY_CATEGORIES, effect_block, scope_block
+from hoi4 import TECHNOLOGY_CATEGORIES
 from hoi4.config import Config, find_config
 from hoi4.validation import (
     validate_focus_tree,
@@ -26,6 +26,7 @@ from hoi4.validation import (
 )
 from hoi4.types import FocusTree
 from hoi4.errors import NotFoundError
+from hoi4 import effects
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -329,9 +330,9 @@ class TestCatalogs:
     def test_effect_categories_have_name_and_effects(self):
         from hoi4 import EFFECT_CATEGORIES
 
-        for cat_name, effects in EFFECT_CATEGORIES:
+        for cat_name, entries in EFFECT_CATEGORIES:
             assert isinstance(cat_name, str)
-            for effect_name, effect_desc in effects:
+            for effect_name, effect_desc in entries:
                 assert isinstance(effect_name, str)
 
     def test_modifier_categories_have_name_and_modifiers(self):
@@ -667,23 +668,23 @@ class TestAgentFacingApis:
 
     def test_war_effect_helpers(self):
         assert (
-            Mod.effect_create_wargoal("fra")
+            effects.create_wargoal("fra")
             == "create_wargoal = { type = annex_everything target = FRA }"
         )
         assert (
-            Mod.effect_declare_war("ger")
+            effects.declare_war("ger")
             == "declare_war_on = { type = annex_everything target = GER }"
         )
         assert (
-            Mod.effect_declare_war_from("scl", "ita")
+            effects.declare_war_from("scl", "ita")
             == "SCL = { declare_war_on = { type = annex_everything target = ITA } }"
         )
-        assert "start_civil_war" in Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
-        assert Mod.effect_load_focus_tree("FB_AUS_focus") == (
+        assert "start_civil_war" in effects.start_civil_war("fascism", size=0.4, capital=8)
+        assert effects.load_focus_tree("FB_AUS_focus") == (
             "load_focus_tree = { tree = FB_AUS_focus keep_completed = no }\n"
             "mark_focus_tree_layout_dirty = yes"
         )
-        civil_war_tree = Mod.effect_spawn_civil_war_with_focus_tree(
+        civil_war_tree = effects.spawn_civil_war_with_focus_tree(
             "communism",
             "FB_AUS_focus",
             size=0.4,
@@ -699,97 +700,97 @@ class TestAgentFacingApis:
         )
         assert "mark_focus_tree_layout_dirty = yes" in civil_war_tree
         assert "D01 = {" not in civil_war_tree
-        assert Mod.effect_add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
-        assert Mod.effect_remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
-        assert Mod.effect_transfer_state(115, "scl") == "SCL = { transfer_state = 115 }"
-        assert Mod.effect_transfer_state_with_core(115, "scl") == (
+        assert effects.add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
+        assert effects.remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
+        assert effects.transfer_state(115, "scl") == "SCL = { transfer_state = 115 }"
+        assert effects.transfer_state_with_core(115, "scl") == (
             "SCL = { transfer_state = 115 }\n115 = { add_core_of = SCL }"
         )
-        assert "type = bunker" in Mod.effect_add_bunker(115, level=3)
-        assert scope_block(
-            "SCL", effect_block("declare_war_on", {"type": "annex_everything", "target": "ITA"})
+        assert "type = bunker" in effects.add_bunker(115, level=3)
+        assert effects.scope_block(
+            "SCL", effects.block("declare_war_on", {"type": "annex_everything", "target": "ITA"})
         ) == ("SCL = { declare_war_on = { type = annex_everything target = ITA } }")
 
     def test_equipment_and_technology_effect_helpers(self):
-        assert Mod.effect_add_political_power(100) == "add_political_power = 100"
-        assert Mod.effect_add_war_support(0.1) == "add_war_support = 0.1"
-        assert Mod.effect_add_stability(0.05) == "add_stability = 0.05"
-        assert Mod.effect_add_manpower(15000) == "add_manpower = 15000"
-        assert Mod.effect_schedule_country_event("sic.1", days=58, target="scl") == (
+        assert effects.add_political_power(100) == "add_political_power = 100"
+        assert effects.add_war_support(0.1) == "add_war_support = 0.1"
+        assert effects.add_stability(0.05) == "add_stability = 0.05"
+        assert effects.add_manpower(15000) == "add_manpower = 15000"
+        assert effects.schedule_country_event("sic.1", days=58, target="scl") == (
             "SCL = { country_event = { id = sic.1 days = 58 } }"
         )
-        assert 'division_template = { name = "Militia"' in Mod.effect_division_template(
+        assert 'division_template = { name = "Militia"' in effects.division_template(
             "Militia",
             "infantry = { x = 0 y = 0 }",
         )
         assert (
-            Mod.effect_create_unit("Militia", owner="scl")
+            effects.create_unit("Militia", owner="scl")
             == 'create_unit = { division = "Militia" owner = SCL }'
         )
-        equipment = Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="ger")
+        equipment = effects.add_equipment("infantry_equipment_0", 1000, producer="ger")
         assert (
             equipment
             == "add_equipment_to_stockpile = { type = infantry_equipment_0 amount = 1000 producer = GER }"
         )
-        variant_equipment = Mod.effect_add_equipment(
+        variant_equipment = effects.add_equipment(
             "light_tank_chassis_2", 100, "GER", "Panzer II Ausf. a"
         )
         assert 'variant_name = "Panzer II Ausf. a"' in variant_equipment
         assert (
-            Mod.effect_set_technology("infantry_weapons", 1)
+            effects.set_technology("infantry_weapons", 1)
             == "set_technology = { infantry_weapons = 1 }"
         )
-        assert Mod.effect_set_technology("infantry_weapons", 1, popup=False) == (
+        assert effects.set_technology("infantry_weapons", 1, popup=False) == (
             "set_technology = { infantry_weapons = 1 popup = no }"
         )
-        assert Mod.effect_set_technologies({"infantry_weapons": 1, "tech_support": 1}) == (
+        assert effects.set_technologies({"infantry_weapons": 1, "tech_support": 1}) == (
             "set_technology = { infantry_weapons = 1 tech_support = 1 }"
         )
-        assert Mod.effect_add_army_experience(25) == "army_experience = 25"
-        assert Mod.effect_add_navy_experience(25) == "navy_experience = 25"
-        assert Mod.effect_add_air_experience(25) == "air_experience = 25"
-        assert Mod.effect_set_politics("democratic", elections_allowed=True) == (
+        assert effects.add_army_experience(25) == "army_experience = 25"
+        assert effects.add_navy_experience(25) == "navy_experience = 25"
+        assert effects.add_air_experience(25) == "air_experience = 25"
+        assert effects.set_politics("democratic", elections_allowed=True) == (
             "set_politics = { ruling_party = democratic elections_allowed = yes }"
         )
         # HOI4's set_politics has no elections_frequency field.
         with pytest.raises(TypeError, match="elections_frequency"):
-            Mod.effect_set_politics("democratic", elections_frequency=48)
+            effects.set_politics("democratic", elections_frequency=48)
         assert (
-            Mod.effect_create_faction("Mediterranean League")
+            effects.create_faction("Mediterranean League")
             == 'create_faction = "Mediterranean League"'
         )
-        assert Mod.effect_add_to_faction("ita") == "add_to_faction = ITA"
-        assert Mod.effect_add_target_to_faction("aus", "bay") == "AUS = { add_to_faction = BAY }"
-        assert Mod.effect_join_faction("bay", "aus") == "AUS = { add_to_faction = BAY }"
-        assert Mod.effect_release("slv") == "release = SLV"
-        assert Mod.effect_release_puppet("slv") == "release_puppet = SLV"
-        assert Mod.effect_end_puppet("slv", "yug") == "YUG = { end_puppet = SLV }"
-        assert Mod.effect_set_autonomy("slv", "autonomy_free", freedom_level=1.0) == (
+        assert effects.add_to_faction("ita") == "add_to_faction = ITA"
+        assert effects.add_target_to_faction("aus", "bay") == "AUS = { add_to_faction = BAY }"
+        assert effects.join_faction("bay", "aus") == "AUS = { add_to_faction = BAY }"
+        assert effects.release("slv") == "release = SLV"
+        assert effects.release_puppet("slv") == "release_puppet = SLV"
+        assert effects.end_puppet("slv", "yug") == "YUG = { end_puppet = SLV }"
+        assert effects.set_autonomy("slv", "autonomy_free", freedom_level=1.0) == (
             "set_autonomy = { target = SLV autonomy_state = autonomy_free freedom_level = 1.0 }"
         )
-        assert Mod.effect_convert_puppet_to_ally("slv", "yug", faction_leader="aus") == (
+        assert effects.convert_puppet_to_ally("slv", "yug", faction_leader="aus") == (
             "YUG = { end_puppet = SLV }\nAUS = { add_to_faction = SLV }"
         )
-        assert Mod.effect_white_peace("fra") == "white_peace = FRA"
+        assert effects.white_peace("fra") == "white_peace = FRA"
         assert (
-            Mod.effect_set_rule("can_create_factions", True)
+            effects.set_rule("can_create_factions", True)
             == "set_rule = { can_create_factions = yes }"
         )
-        assert Mod.effect_swap_idea("old_spirit", "new_spirit", target="ita") == (
+        assert effects.swap_idea("old_spirit", "new_spirit", target="ita") == (
             "ITA = { swap_ideas = { remove_idea = old_spirit add_idea = new_spirit } }"
         )
-        chain = Mod.effect_upgrade_idea_chain(["spirit_1", "spirit_2", "spirit_3"], target="ita")
+        chain = effects.upgrade_idea_chain(["spirit_1", "spirit_2", "spirit_3"], target="ita")
         assert "ITA = {" in chain
         assert "has_idea = spirit_2" in chain
         assert "remove_idea = spirit_2 add_idea = spirit_3" in chain
-        revolution = Mod.effect_spawn_revolution(
+        revolution = effects.spawn_revolution(
             "bay",
             [52],
             overlord="aus",
             manpower=15000,
             equipment={"infantry_equipment_0": 500},
             technologies={"infantry_weapons": 1},
-            division_template=Mod.effect_division_template("Militia", "infantry = { x = 0 y = 0 }"),
+            division_template=effects.division_template("Militia", "infantry = { x = 0 y = 0 }"),
             units=["Militia"],
             faction_leader="ger",
         )
@@ -797,7 +798,7 @@ class TestAgentFacingApis:
         assert "52 = { add_core_of = BAY }" in revolution
         assert "GER = { add_to_faction = BAY }" in revolution
         assert "BAY = { declare_war_on = { type = annex_everything target = AUS } }" in revolution
-        revolt = Mod.effect_convert_existing_or_spawn_revolt(
+        revolt = effects.convert_existing_or_spawn_revolt(
             "slv",
             [102],
             overlord="yug",
@@ -812,7 +813,7 @@ class TestAgentFacingApis:
 
     def test_revolution_helper_warns_without_playable_baseline(self):
         with pytest.warns(RuntimeWarning, match="unplayable shell"):
-            assert "BAY = { transfer_state = 52 }" in Mod.effect_spawn_revolution("bay", [52])
+            assert "BAY = { transfer_state = 52 }" in effects.spawn_revolution("bay", [52])
 
     def test_decision_chain_and_recovery_helpers(self, tmp_mod):
         mod = tmp_mod.mod
@@ -828,7 +829,7 @@ class TestAgentFacingApis:
                 },
                 {
                     "id": "SLO_launch_revolt",
-                    "complete_effect": Mod.effect_convert_existing_or_spawn_revolt(
+                    "complete_effect": effects.convert_existing_or_spawn_revolt(
                         "slv", [102], overlord="yug", manpower=1
                     ),
                 },
@@ -845,7 +846,7 @@ class TestAgentFacingApis:
         repair = mod.create_recovery_decision(
             "SLO_revolt_decisions",
             "SLO_repair_live_save",
-            effect=Mod.effect_load_focus_tree("SLO_focus"),
+            effect=effects.load_focus_tree("SLO_focus"),
             hidden=True,
             loc_name="Repair Slovenia Revolt",
         )
@@ -856,11 +857,11 @@ class TestAgentFacingApis:
     def test_tech_bonus_helper_validates_categories(self):
         assert "infantry_weapons" in TECHNOLOGY_CATEGORIES
         assert "infantry" not in TECHNOLOGY_CATEGORIES
-        assert "category = infantry_weapons" in Mod.effect_add_tech_bonus(
+        assert "category = infantry_weapons" in effects.add_tech_bonus(
             "rifle_bonus", category="infantry_weapons"
         )
         with pytest.raises(ValueError):
-            Mod.effect_add_tech_bonus("bad_bonus", category="infantry")
+            effects.add_tech_bonus("bad_bonus", category="infantry")
 
     def test_update_focus_tree(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
@@ -942,7 +943,7 @@ class TestAgentFacingApis:
         assert not any(error.code == "faction_scope_footgun" for error in bare_errors)
         iterated_errors = mod.validate_effect("every_country = { add_to_faction = ROOT }")
         assert [error.severity for error in iterated_errors if error.code == "faction_scope_footgun"] == ["info"]
-        scoped_errors = mod.validate_effect(Mod.effect_add_target_to_faction("AUS", "BAY"))
+        scoped_errors = mod.validate_effect(effects.add_target_to_faction("AUS", "BAY"))
         assert not any(error.code == "faction_scope_footgun" for error in scoped_errors)
         multiline_scoped_errors = mod.validate_effect("AUS = {\n\tadd_to_faction = BAY\n}")
         assert not any(error.code == "faction_scope_footgun" for error in multiline_scoped_errors)
@@ -985,16 +986,16 @@ class TestAgentFacingApis:
         mod.create_focus_tree("FB_AUS_focus", "AUS")
 
         missing_tree_errors = mod.validate_effect(
-            Mod.effect_start_civil_war("communism", capital=102)
+            effects.start_civil_war("communism", capital=102)
         )
         assert any(error.code == "civil_war_focus_tree_missing" for error in missing_tree_errors)
 
-        load_errors = mod.validate_effect(Mod.effect_load_focus_tree("MISSING_focus"))
+        load_errors = mod.validate_effect(effects.load_focus_tree("MISSING_focus"))
         assert any(error.code == "unknown_focus_tree_reference" for error in load_errors)
-        known_load_errors = mod.validate_effect(Mod.effect_load_focus_tree("FB_AUS_focus"))
+        known_load_errors = mod.validate_effect(effects.load_focus_tree("FB_AUS_focus"))
         assert not any(error.code == "unknown_focus_tree_reference" for error in known_load_errors)
         civil_war_with_tree_errors = mod.validate_effect(
-            Mod.effect_spawn_civil_war_with_focus_tree(
+            effects.spawn_civil_war_with_focus_tree(
                 "communism", "FB_AUS_focus", capital=102
             )
         )
@@ -1075,7 +1076,7 @@ class TestAgentFacingApis:
                         "add_ideas = missing_spirit",
                         "country_event = { id = missing.1 }",
                         "set_technology = { missing_tech = 1 }",
-                        Mod.effect_add_equipment("missing_equipment", 10),
+                        effects.add_equipment("missing_equipment", 10),
                     ]
                 ),
             ),
@@ -1187,10 +1188,10 @@ class TestAgentFacingApis:
             y=2,
             completion_reward="\n".join(
                 [
-                    Mod.effect_load_focus_tree("FB_AUS_focus"),
-                    Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS"),
-                    Mod.effect_transfer_state_with_core(102, "SLV"),
-                    Mod.effect_declare_war_from("SLV", "YUG"),
+                    effects.load_focus_tree("FB_AUS_focus"),
+                    effects.convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS"),
+                    effects.transfer_state_with_core(102, "SLV"),
+                    effects.declare_war_from("SLV", "YUG"),
                 ]
             ),
         )
@@ -1731,7 +1732,7 @@ class TestModEvents:
         mod2.create_event(
             "sic.1",
             title="sic.1.t",
-            options=[EventOption(name="sic.1.a", effect=Mod.effect_transfer_state(115, "SCL"))],
+            options=[EventOption(name="sic.1.a", effect=effects.transfer_state(115, "SCL"))],
             overwrite=True,
         )
         mod2.save()
@@ -1822,7 +1823,7 @@ class TestModEvents:
         errors = mod.validate_effect("SCL = { declare_war_on = { target = ITA } }")
         assert any("missing required type" in error.message for error in errors)
         assert not any("unknown country tag 'SCL'" in error.message for error in errors)
-        assert mod.validate_effect(Mod.effect_declare_war_from("SCL", "ITA")) == []
+        assert mod.validate_effect(effects.declare_war_from("SCL", "ITA")) == []
         brace_errors = mod.validate_effect("SCL = { declare_war_on = { target = ITA }")
         assert any("Script syntax issue" in error.message for error in brace_errors)
 
@@ -1835,7 +1836,7 @@ class TestModEvents:
         )
         action = mod.create_on_action(
             "on_startup",
-            effect=Mod.effect_schedule_country_event("sic.1", days=58, target="SCL"),
+            effect=effects.schedule_country_event("sic.1", days=58, target="SCL"),
         )
         assert action.id == "on_startup"
         assert "country_event" in action.effect
@@ -1880,7 +1881,7 @@ class TestModEvents:
             ],
         )
 
-        mod.update_event_option("sic.1", 0, effect=Mod.effect_transfer_state(115, "SCL"))
+        mod.update_event_option("sic.1", 0, effect=effects.transfer_state(115, "SCL"))
         mod.update_event_option(
             "sic.1", "sic.1.b", trigger="{ has_war = no }", effect="add_stability = 0.05"
         )

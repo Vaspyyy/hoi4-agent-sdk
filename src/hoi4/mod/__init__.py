@@ -19,7 +19,6 @@ state is declared in ``_core``.
 "Uses" below lists every layer a module calls into. Its class header names
 only the ones it does not already reach through another base.
 
-* ``_effects``: Builders that return ready-made effect script. Uses only ``_core``.
 * ``_localisation``: Localisation tables: loading, lookup, edits and language mirroring.
   Uses only ``_core``.
 * ``_sources``: Per-file grouping of loaded models and the effective script texts. Uses
@@ -41,16 +40,15 @@ only the ones it does not already reach through another base.
   Uses ``_localisation``, ``_catalogs``, ``_states``.
 * ``_events``: Event authoring. Uses only ``_core``.
 * ``_on_actions``: On-action authoring. Uses only ``_core``.
-* ``_decisions``: Decision and decision-category authoring. Uses ``_effects``,
-  ``_localisation``.
+* ``_decisions``: Decision and decision-category authoring. Uses ``_localisation``.
 * ``_ideas``: Idea (national spirit) authoring. Uses ``_countries``.
 * ``_ideologies``: Ideology authoring. Uses only ``_core``.
 * ``_dynamic_modifiers``: Dynamic modifier authoring. Uses only ``_core``.
 * ``_bookmarks``: Bookmark authoring. Uses only ``_core``.
 * ``_context``: Country context reports, icon suggestions and territory checks. Uses
   ``_catalogs``, ``_countries``, ``_states``.
-* ``_focus``: Focus tree authoring and layout. Uses ``_effects``, ``_localisation``,
-  ``_context``, ``_catalogs``, ``_countries``.
+* ``_focus``: Focus tree authoring and layout. Uses ``_localisation``, ``_context``,
+  ``_catalogs``, ``_countries``.
 * ``_definitions``: Script imports and the keyed ``common/`` definition API. Uses only
   ``_core``.
 * ``_assets``: Flag, portrait, icon and picture imports. Uses only ``_core``.

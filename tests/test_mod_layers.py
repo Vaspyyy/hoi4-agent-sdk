@@ -20,7 +20,7 @@ def _layer(module: str) -> type:
 
 
 def test_every_layer_module_defines_exactly_its_own_layer_class() -> None:
-    assert len(LAYER_MODULES) == 30
+    assert len(LAYER_MODULES) == 29
     for module in LAYER_MODULES:
         tree = ast.parse((PACKAGE / f"{module}.py").read_text(encoding="utf-8"))
         classes = [

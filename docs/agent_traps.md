@@ -15,8 +15,8 @@ effect = "add_to_faction = BAY"
 Good:
 
 ```python
-Mod.effect_add_target_to_faction("AUS", "BAY")  # AUS = { add_to_faction = BAY }
-Mod.effect_join_faction("BAY", "AUS")           # Same output, named by intent.
+effects.add_target_to_faction("AUS", "BAY")  # AUS = { add_to_faction = BAY }
+effects.join_faction("BAY", "AUS")           # Same output, named by intent.
 ```
 
 Validation advice (`info`, shown with `validate(advice=True)`): `faction_scope_footgun` for `add_to_faction` inside a country iterator (`every_country`, `random_country`, ...), where every matched country adds the target to its own faction.
@@ -33,7 +33,7 @@ add_core_of = BAY
 Good runtime effect:
 
 ```python
-Mod.effect_transfer_state_with_core(52, "BAY")
+effects.transfer_state_with_core(52, "BAY")
 ```
 
 Good pre-game history edit:
@@ -63,8 +63,8 @@ add_ideas = crisis_4
 Good:
 
 ```python
-Mod.effect_swap_idea("crisis_3", "crisis_4", target="ITA")
-Mod.effect_upgrade_idea_chain(["crisis_1", "crisis_2", "crisis_3", "crisis_4"], target="ITA")
+effects.swap_idea("crisis_3", "crisis_4", target="ITA")
+effects.upgrade_idea_chain(["crisis_1", "crisis_2", "crisis_3", "crisis_4"], target="ITA")
 ```
 
 Validation advice (`info`): `bad_idea_tooltip_pattern`.
@@ -286,14 +286,14 @@ This can create a country with no units, equipment, techs, or manpower.
 Good:
 
 ```python
-Mod.effect_spawn_revolution(
+effects.spawn_revolution(
     "BAY",
     [52],
     overlord="AUS",
     manpower=15000,
     equipment={"infantry_equipment_0": 500},
     technologies={"infantry_weapons": 1},
-    division_template=Mod.effect_division_template("Militia", "infantry = { x = 0 y = 0 }"),
+    division_template=effects.division_template("Militia", "infantry = { x = 0 y = 0 }"),
     units=["Militia"],
 )
 ```
@@ -307,13 +307,13 @@ Focus tree selectors such as `original_tag = AUS` are not enough for many dynami
 Bad:
 
 ```python
-Mod.effect_start_civil_war("communism", size=0.4, capital=4)
+effects.start_civil_war("communism", size=0.4, capital=4)
 ```
 
 Good:
 
 ```python
-Mod.effect_spawn_civil_war_with_focus_tree(
+effects.spawn_civil_war_with_focus_tree(
     "communism",
     "FB_AUS_focus",
     size=0.4,
@@ -335,7 +335,7 @@ Do not assume a tag is unreleased. Vanilla paths may release a tag as a puppet o
 Good:
 
 ```python
-Mod.effect_convert_existing_or_spawn_revolt(
+effects.convert_existing_or_spawn_revolt(
     "SLV",
     [102, 103],
     overlord="YUG",
@@ -347,7 +347,7 @@ Mod.effect_convert_existing_or_spawn_revolt(
 For non-war conversions:
 
 ```python
-Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
+effects.convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
 ```
 
 Validation advice (`info`): `revolt_state_already_owned` when a transfer effect gives a state to the country that already owns it in loaded history.

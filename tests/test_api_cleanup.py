@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from hoi4 import Mod, NotFoundError, ReadOnlyError
+import hoi4
+from hoi4 import Mod, NotFoundError, ReadOnlyError, effects
 
 # Removed in 0.7.0; CHANGELOG.md names the replacement of each one.
 REMOVED_MOD_NAMES = [
@@ -35,6 +36,34 @@ def test_removed_mod_names_are_gone(name: str) -> None:
     assert not hasattr(Mod, name)
 
 
+def test_mod_has_no_effect_builders_left() -> None:
+    assert [name for name in dir(Mod) if name.startswith("effect_")] == []
+
+
+def test_the_builders_live_in_hoi4_effects() -> None:
+    assert "effects" in hoi4.__all__
+    assert not hasattr(hoi4, "effect_block") and not hasattr(hoi4, "scope_block")
+    from hoi4 import script
+
+    assert not hasattr(script, "effect_block") and not hasattr(script, "scope_block")
+    assert len(effects.__all__) == 54  # 52 builders plus block and scope_block
+    assert all(callable(getattr(effects, name)) for name in effects.__all__)
+    assert not any(name.startswith("effect_") for name in effects.__all__)
+    assert effects.add_political_power(50) == "add_political_power = 50"
+    assert effects.transfer_state(115, "SCL") == "SCL = { transfer_state = 115 }"
+    assert effects.block("set_rule", {"can_create_factions": True}) == (
+        "set_rule = { can_create_factions = yes }"
+    )
+    assert effects.scope_block("GER", "add_stability = 0.1") == "GER = { add_stability = 0.1 }"
+
+
+def test_builder_errors_name_the_new_function() -> None:
+    with pytest.raises(ValueError, match=r"effects\.upgrade_idea_chain\(\)"):
+        effects.upgrade_idea_chain(["only_one"])
+    with pytest.raises(ValueError, match=r"effects\.spawn_revolution\(\)"):
+        effects.spawn_revolution("ABC", [])
+
+
 def test_removed_module_functions_are_gone() -> None:
     from hoi4 import bookmarks, decisions, focus, ideologies, localisation, on_actions
     from hoi4 import states, tags, validation
@@ -59,7 +88,7 @@ def test_create_idea_and_set_politics_lost_their_legacy_arguments(tmp_path) -> N
     with pytest.raises(TypeError):
         mod.create_idea("ABC_spirit", desc="ABC_spirit_desc")
     with pytest.raises(TypeError):
-        Mod.effect_set_politics("democratic", elections_frequency=48)
+        effects.set_politics("democratic", elections_frequency=48)  # type: ignore[call-arg]
 
 
 def test_an_unknown_ruling_party_still_gets_a_default_leader_ideology(tmp_path) -> None:

@@ -102,12 +102,11 @@ from .project import (
     scan_mod_descriptors,
     write_mod_descriptors,
 )
+from . import effects
 from .script import (
-    effect_block,
     normalize_block_body,
     pdx_string,
     pdx_value,
-    scope_block,
     validate_script_syntax,
 )
 from .script_vocabulary import (
@@ -153,6 +152,7 @@ except _metadata.PackageNotFoundError:  # pragma: no cover - source tree without
 
 __all__ = [
     "Mod",
+    "effects",
     "Hoi4Error",
     "NotFoundError",
     "AlreadyExistsError",
@@ -261,11 +261,9 @@ __all__ = [
     "ParseError",
     "parse_pdx",
     "serialize_pdx",
-    "effect_block",
     "normalize_block_body",
     "pdx_value",
     "pdx_string",
-    "scope_block",
     "validate_script_syntax",
     "COUNTRY_PACKAGE_REQUIREMENT_CODES",
     "VALIDATION_CODES",

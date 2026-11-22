@@ -17,7 +17,7 @@ from ..types import (
     DecisionCategory,
 )
 from ..errors import AlreadyExistsError, not_found
-from ._effects import EffectsLayer
+from .. import effects
 from ._shared import MISSING, _D, _Missing
 from ._localisation import LocalisationLayer
 from ._shared import (
@@ -61,7 +61,7 @@ def _insert_in_file_order(category: DecisionCategory, decision: Decision) -> Non
     category.decisions.append(decision)
 
 
-class DecisionsLayer(LocalisationLayer, EffectsLayer):
+class DecisionsLayer(LocalisationLayer):
     """Decision and decision-category authoring."""
 
     def _point_decision_category_at(self, category: DecisionCategory, target: Path) -> None:
@@ -615,10 +615,10 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             event_id = step.get("event")
             effect_parts = [
                 str(step.get("complete_effect") or ""),
-                self.effect_schedule_country_event(str(event_id), int(step.get("event_days") or 0))
+                effects.schedule_country_event(str(event_id), int(step.get("event_days") or 0))
                 if event_id
                 else "",
-                self.effect_schedule_country_event(final_event)
+                effects.schedule_country_event(final_event)
                 if final_event and index == len(steps)
                 else "",
                 f"set_country_flag = {flag}",

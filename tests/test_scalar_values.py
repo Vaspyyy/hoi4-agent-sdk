@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from hoi4 import Character, CharacterPortrait, Mod, effect_block, scope_block
+from hoi4 import Character, CharacterPortrait, Mod, effects
 from hoi4.syntax import ParseError
 
 STATE = (
@@ -363,11 +363,11 @@ def test_an_event_namespace_that_is_not_one_word_stays_one_value() -> None:
 
 def test_effect_builders_and_decision_chains_quote_their_names(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
-    assert _names(mod.effect_add_building(1, "bunker zz_breakout = 1")).count("zz_breakout") == 0
-    assert "type = bunker level" in mod.effect_add_building(1, "bunker")
-    bonus = mod.effect_add_tech_bonus("my bonus } zz_breakout = 1 {", category="industry")
+    assert _names(effects.add_building(1, "bunker zz_breakout = 1")).count("zz_breakout") == 0
+    assert "type = bunker level" in effects.add_building(1, "bunker")
+    bonus = effects.add_tech_bonus("my bonus } zz_breakout = 1 {", category="industry")
     assert "zz_breakout" not in _names(bonus)
-    assert mod.effect_add_tech_bonus("zz_bonus") == (
+    assert effects.add_tech_bonus("zz_bonus") == (
         "add_tech_bonus = { name = zz_bonus bonus = 0.5 uses = 1 category = industry }"
     )
 
@@ -443,7 +443,7 @@ def test_a_byte_order_mark_inside_a_value_does_not_split_it(tmp_path: Path) -> N
     from hoi4.types import State
 
     mod = Mod(tmp_path)
-    assert mod.effect_add_building(1, "bunker﻿zz_loose") == (
+    assert effects.add_building(1, "bunker﻿zz_loose") == (
         '1 = { add_extra_state_shared_building_slots = 1 add_building_construction = '
         '{ type = "bunker﻿zz_loose" level = 1 instant_build = yes } }'
     )
@@ -457,47 +457,46 @@ def test_a_byte_order_mark_inside_a_value_does_not_split_it(tmp_path: Path) -> N
     assert 'clr_country_flag = "old﻿yes"' in decisions[0].complete_effect
 
 
-def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Path) -> None:
-    mod = Mod(tmp_path)
+def test_script_builders_keep_names_and_effects_inside_their_block() -> None:
     # What they always built is built as before.
-    assert effect_block("set_politics", {"ruling_party": "fascism", "elections_allowed": False}) == (
+    assert effects.block("set_politics", {"ruling_party": "fascism", "elections_allowed": False}) == (
         "set_politics = { ruling_party = fascism elections_allowed = no }"
     )
-    assert scope_block("GER", "add_political_power = 1", "add_stability = 0.1") == (
+    assert effects.scope_block("GER", "add_political_power = 1", "add_stability = 0.1") == (
         "GER = { add_political_power = 1 add_stability = 0.1 }"
     )
-    assert scope_block(42, "add_manpower = 1") == "42 = { add_manpower = 1 }"
+    assert effects.scope_block(42, "add_manpower = 1") == "42 = { add_manpower = 1 }"
 
     with pytest.raises(ParseError, match="one word as a key"):
-        effect_block("foo", {"a = 1 } zz_breakout = 1 foo2 = { b": 1})
+        effects.block("foo", {"a = 1 } zz_breakout = 1 foo2 = { b": 1})
     with pytest.raises(ParseError, match="one word as a key"):
-        effect_block("foo = { } zz_breakout = 1 foo2", {"a": 1})
+        effects.block("foo = { } zz_breakout = 1 foo2", {"a": 1})
     with pytest.raises(ParseError, match="one word as a key"):
-        scope_block("GER = { } zz_breakout = 1 GER", "add_political_power = 1")
+        effects.scope_block("GER = { } zz_breakout = 1 GER", "add_political_power = 1")
     with pytest.raises(ParseError):
-        scope_block("GER", "} zz_breakout = 1 GER = {")
+        effects.scope_block("GER", "} zz_breakout = 1 GER = {")
     with pytest.raises(ParseError):
-        mod.effect_start_civil_war("fascism", effects=["} zz_breakout = 1 x = {"])
+        effects.start_civil_war("fascism", effects=["} zz_breakout = 1 x = {"])
     with pytest.raises(ParseError):
-        mod.effect_division_template("Infantry", "infantry = { x = 0 y = 0 } } zz_breakout = 1 x = {")
+        effects.division_template("Infantry", "infantry = { x = 0 y = 0 } } zz_breakout = 1 x = {")
 
     # A comment in an effect swallows neither the closing brace nor the next effect.
-    commented = scope_block("GER", "add_political_power = 1 # a gift", "add_stability = 0.1")
+    commented = effects.scope_block("GER", "add_political_power = 1 # a gift", "add_stability = 0.1")
     assert commented == "GER = { add_political_power = 1 # a gift\nadd_stability = 0.1 }"
     assert _names(commented) == ["GER", "add_political_power", "add_stability"]
-    commented = scope_block("GER", "add_political_power = 1 # a gift")
+    commented = effects.scope_block("GER", "add_political_power = 1 # a gift")
     assert commented == "GER = { add_political_power = 1 # a gift\n}"
     assert _names(commented) == ["GER", "add_political_power"]
     # A comment that does not end the text changes nothing about the layout.
-    assert scope_block("GER", "# note\nadd_political_power = 1") == (
+    assert effects.scope_block("GER", "# note\nadd_political_power = 1") == (
         "GER = { # note\nadd_political_power = 1 }"
     )
-    assert scope_block("GER", 'set_country_flag = "a # b"', "add_stability = 0.1") == (
+    assert effects.scope_block("GER", 'set_country_flag = "a # b"', "add_stability = 0.1") == (
         'GER = { set_country_flag = "a # b" add_stability = 0.1 }'
     )
-    assert scope_block(" GER ", "add_stability = 0.1") == "GER = { add_stability = 0.1 }"
-    assert scope_block("GER") == "GER = {  }"
-    nested = scope_block(
+    assert effects.scope_block(" GER ", "add_stability = 0.1") == "GER = { add_stability = 0.1 }"
+    assert effects.scope_block("GER") == "GER = {  }"
+    nested = effects.scope_block(
         "GER",
         "add_political_power = 1 # gift",
         "if = {\n\tlimit = { always = yes }\n\tadd_war_support = 0.1\n}\nadd_stability = 0.1",
@@ -511,7 +510,7 @@ def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Pat
     ]
 
     # A division template keeps comments, in the middle and at the end.
-    template = mod.effect_division_template(
+    template = effects.division_template(
         "Test",
         regiments="infantry = { x = 0 y = 0 } # first\nartillery = { x = 1 y = 0 }",
     )
@@ -519,13 +518,13 @@ def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Pat
         'division_template = { name = "Test" regiments = { infantry = { x = 0 y = 0 } # first\n'
         "artillery = { x = 1 y = 0 } } }"
     )
-    assert mod.effect_division_template("Test", "# frontline\ninfantry = { x = 0 y = 0 }") == (
+    assert effects.division_template("Test", "# frontline\ninfantry = { x = 0 y = 0 }") == (
         'division_template = { name = "Test" regiments = { # frontline\ninfantry = { x = 0 y = 0 } } }'
     )
     assert _names(template) == [
         "division_template", "name", "regiments", "infantry", "x", "y", "artillery", "x", "y",
     ]
-    template = mod.effect_division_template(
+    template = effects.division_template(
         "Test",
         regiments="infantry = { x = 0 y = 0 } # only",
         support="engineer = { x = 0 y = 0 } # last",
@@ -535,13 +534,14 @@ def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Pat
         "division_template", "name", "regiments", "infantry", "x", "y",
         "support", "engineer", "x", "y", "division_names_group",
     ]
-    assert mod.effect_division_template("Test", "infantry = { x = 0 y = 0 }") == (
+    assert effects.division_template("Test", "infantry = { x = 0 y = 0 }") == (
         'division_template = { name = "Test" regiments = { infantry = { x = 0 y = 0 } } }'
     )
 
 
 def test_scope_block_reads_each_effect_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    from hoi4 import script, syntax
+    from hoi4 import effects as builders
+    from hoi4 import syntax
 
     effects = ["add_stability = 0.1 # why", "add_war_support = 0.1"] * 300
     read: list[int] = []
@@ -552,8 +552,7 @@ def test_scope_block_reads_each_effect_once(monkeypatch: pytest.MonkeyPatch) -> 
         return real_parse(text)
 
     monkeypatch.setattr(syntax, "parse", counting_parse)
-    monkeypatch.setattr(script, "parse", counting_parse)
-    result = script.scope_block("GER", *effects)
+    result = builders.scope_block("GER", *effects)
     monkeypatch.undo()
 
     # One read per effect (and one for the scope): the cost does not grow

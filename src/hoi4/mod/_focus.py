@@ -21,7 +21,7 @@ from ..types import (
 from ..errors import NotFoundError, already_exists, not_found
 from ._context import ContextLayer
 from ._shared import MISSING, _D, _Missing
-from ._effects import EffectsLayer
+from .. import effects
 from ._shared import (
     _check_fields,
     _set_fields,
@@ -56,7 +56,7 @@ def _require_new_focus_ids(tree: FocusTree, focuses: Sequence[Focus]) -> None:
         taken.add(focus.id)
 
 
-class FocusLayer(ContextLayer, EffectsLayer):
+class FocusLayer(ContextLayer):
     """Focus tree authoring and layout."""
 
     # ── Focus Trees ──────────────────────────────────────────────
@@ -581,7 +581,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 y=1,
                 cost=10,
                 search_filters=["FOCUS_FILTER_INDUSTRY"],
-                completion_reward=self.effect_add_infrastructure(int(target_state), 1),
+                completion_reward=effects.add_infrastructure(int(target_state), 1),
             ),
             Focus(
                 id=f"{prefix}_support_domestic_steel",
@@ -592,8 +592,8 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 search_filters=["FOCUS_FILTER_INDUSTRY"],
                 completion_reward="\n".join(
                     [
-                        self.effect_add_civilian_factory(int(target_state), 1),
-                        self.effect_add_industry_bonus(
+                        effects.add_civilian_factory(int(target_state), 1),
+                        effects.add_industry_bonus(
                             f"{prefix}_steel_industry_bonus", uses=1, bonus=0.5
                         ),
                     ]
@@ -608,8 +608,8 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 search_filters=["FOCUS_FILTER_INDUSTRY", "FOCUS_FILTER_RESEARCH"],
                 completion_reward="\n".join(
                     [
-                        self.effect_add_military_factory(int(target_state), 1),
-                        self.effect_add_industry_bonus(
+                        effects.add_military_factory(int(target_state), 1),
+                        effects.add_industry_bonus(
                             f"{prefix}_precision_tools_bonus", uses=1, bonus=0.5
                         ),
                     ]

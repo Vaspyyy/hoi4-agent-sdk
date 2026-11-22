@@ -13,6 +13,7 @@ from hoi4 import (
 from hoi4.effects_catalog import TECHNOLOGY_CATEGORIES as CATALOG_CATEGORIES
 from hoi4.modifiers_catalog import MODIFIER_CATEGORIES
 from hoi4.patching import top_level_assignments
+from hoi4 import effects
 
 
 NEW_TECHNOLOGY_CATEGORIES = {
@@ -266,7 +267,7 @@ def test_all_reported_technology_categories_are_supported() -> None:
     assert TECHNOLOGY_CATEGORIES == CATALOG_CATEGORIES
     assert NEW_TECHNOLOGY_CATEGORIES <= set(TECHNOLOGY_CATEGORIES)
     for category in NEW_TECHNOLOGY_CATEGORIES:
-        assert f"category = {category}" in Mod.effect_add_tech_bonus(
+        assert f"category = {category}" in effects.add_tech_bonus(
             "test_bonus",
             category=category,
         )

@@ -10,6 +10,7 @@ from hoi4.focus import load_focus_trees, serialize_focus_file
 from hoi4.localisation import parse_localization_file, serialize_localization_file
 from hoi4.script import pdx_string, validate_script_syntax
 from hoi4.errors import NotFoundError
+from hoi4 import effects
 
 
 def test_output_paths_and_script_identifiers_reject_injection(tmp_path: Path) -> None:
@@ -19,9 +20,9 @@ def test_output_paths_and_script_identifiers_reject_injection(tmp_path: Path) ->
     with pytest.raises(ValueError, match="Invalid event ID"):
         mod.create_event("bad.1 } add_political_power = 999")
     with pytest.raises(ValueError, match="Invalid country tag"):
-        mod.effect_transfer_state(1, "GER } add_political_power = 999")
+        effects.transfer_state(1, "GER } add_political_power = 999")
     with pytest.raises(ValueError, match="Invalid war goal type"):
-        mod.effect_declare_war("GER", "annex_everything } bad = yes")
+        effects.declare_war("GER", "annex_everything } bad = yes")
     assert not (tmp_path.parent / "outside.txt").exists()
 
 
@@ -362,13 +363,13 @@ def test_loader_diagnostics_are_visible_and_strict_mode_raises(tmp_path: Path) -
 
 
 def test_effect_helpers_validate_tags_and_quote_faction_names() -> None:
-    assert Mod.effect_create_faction('A "New" League') == 'create_faction = "A \\"New\\" League"'
-    assert Mod.effect_add_target_to_faction("GER", "FRA") == "GER = { add_to_faction = FRA }"
+    assert effects.create_faction('A "New" League') == 'create_faction = "A \\"New\\" League"'
+    assert effects.add_target_to_faction("GER", "FRA") == "GER = { add_to_faction = FRA }"
     for helper in (
-        lambda: Mod.effect_release("BAD TAG"),
-        lambda: Mod.effect_schedule_country_event("bad event"),
-        lambda: Mod.effect_set_rule("bad rule", True),
-        lambda: Mod.effect_set_technology("bad technology"),
+        lambda: effects.release("BAD TAG"),
+        lambda: effects.schedule_country_event("bad event"),
+        lambda: effects.set_rule("bad rule", True),
+        lambda: effects.set_technology("bad technology"),
     ):
         with pytest.raises(ValueError):
             helper()

@@ -383,12 +383,12 @@ Prefer patch-style helpers over manual tree rewrites when modifying existing van
 branch = [
     Focus(id="LUX_modernize_transport_links", x=0, y=1,
           icon="GFX_goal_generic_construct_infrastructure",
-          completion_reward=Mod.effect_add_infrastructure(8, 1)),
+          completion_reward=effects.add_infrastructure(8, 1)),
     Focus(id="LUX_support_domestic_steel", x=0, y=1,
           icon="GFX_goal_generic_production",
           completion_reward="\n".join([
-              Mod.effect_add_civilian_factory(8, 1),
-              Mod.effect_add_industry_bonus("LUX_steel_bonus", uses=1),
+              effects.add_civilian_factory(8, 1),
+              effects.add_industry_bonus("LUX_steel_bonus", uses=1),
           ])),
 ]
 
@@ -408,42 +408,42 @@ Use `get_country_context("LUX")` before generating content. It returns country b
 Effect builders:
 
 ```python
-Mod.effect_add_civilian_factory(8, 1)
-Mod.effect_add_military_factory(8, 1)
-Mod.effect_add_infrastructure(8, 1)
-Mod.effect_add_bunker(8, 3)
-Mod.effect_add_state_building(8, "bunker", level=3, province=1234)
-Mod.effect_transfer_state_with_core(8, "LUX")
-Mod.effect_transfer_state(8, "LUX")
-Mod.effect_add_state_core(8, "LUX")
-Mod.effect_remove_state_core(8, "GER")
-Mod.effect_add_political_power(100)
-Mod.effect_add_war_support(0.1)
-Mod.effect_add_stability(0.05)
-Mod.effect_add_manpower(15000)
-Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="GER")
-Mod.effect_set_technology("infantry_weapons", 1, popup=False)
-Mod.effect_add_industry_bonus("LUX_industry_bonus", uses=1, bonus=0.5)
-Mod.effect_add_tech_bonus("LUX_rifle_bonus", category="infantry_weapons", uses=1, bonus=0.5)
-Mod.effect_add_timed_idea("LUX_recovery_spirit", days=365)
-Mod.effect_create_wargoal("GER")
-Mod.effect_declare_war("GER")
-Mod.effect_declare_war_from("LUX", "GER")
-Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
-Mod.effect_load_focus_tree("TAG_focus")
-Mod.effect_spawn_civil_war_with_focus_tree("communism", "TAG_rebel_focus", capital=8)
-Mod.effect_release("SLV")
-Mod.effect_release_puppet("SLV")
-Mod.effect_end_puppet("SLV", "YUG")
-Mod.effect_set_autonomy("SLV", "autonomy_free")
-Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
-Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)
-hoi4.scope_block("LUX", Mod.effect_declare_war("GER"))
-hoi4.effect_block("declare_war_on", {"type": "annex_everything", "target": "GER"})
+effects.add_civilian_factory(8, 1)
+effects.add_military_factory(8, 1)
+effects.add_infrastructure(8, 1)
+effects.add_bunker(8, 3)
+effects.add_state_building(8, "bunker", level=3, province=1234)
+effects.transfer_state_with_core(8, "LUX")
+effects.transfer_state(8, "LUX")
+effects.add_state_core(8, "LUX")
+effects.remove_state_core(8, "GER")
+effects.add_political_power(100)
+effects.add_war_support(0.1)
+effects.add_stability(0.05)
+effects.add_manpower(15000)
+effects.add_equipment("infantry_equipment_0", 1000, producer="GER")
+effects.set_technology("infantry_weapons", 1, popup=False)
+effects.add_industry_bonus("LUX_industry_bonus", uses=1, bonus=0.5)
+effects.add_tech_bonus("LUX_rifle_bonus", category="infantry_weapons", uses=1, bonus=0.5)
+effects.add_timed_idea("LUX_recovery_spirit", days=365)
+effects.create_wargoal("GER")
+effects.declare_war("GER")
+effects.declare_war_from("LUX", "GER")
+effects.start_civil_war("fascism", size=0.4, capital=8)
+effects.load_focus_tree("TAG_focus")
+effects.spawn_civil_war_with_focus_tree("communism", "TAG_rebel_focus", capital=8)
+effects.release("SLV")
+effects.release_puppet("SLV")
+effects.end_puppet("SLV", "YUG")
+effects.set_autonomy("SLV", "autonomy_free")
+effects.convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
+effects.convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)
+effects.scope_block("LUX", effects.declare_war("GER"))
+effects.block("declare_war_on", {"type": "annex_everything", "target": "GER"})
 mod.validate_effect("LUX = { declare_war_on = { target = GER } }")
 ```
 
-`set_state_owner()` modifies state history files before game start. In event, decision, and focus effects, use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`; `set_owner = ...` is not a runtime effect.
+`set_state_owner()` modifies state history files before game start. In event, decision, and focus effects, use `transfer_state`, preferably through `effects.transfer_state(...)`; `set_owner = ...` is not a runtime effect.
 
 ### Small Country Focus Tree Template
 
@@ -454,24 +454,24 @@ tree = mod.ensure_focus_tree("tag_focus", "TAG")
 
 root = Focus(id="TAG_assess_the_state", x=5, y=0, cost=5,
              icon="GFX_goal_generic_political_pressure",
-             completion_reward=Mod.effect_add_political_power(50))
+             completion_reward=effects.add_political_power(50))
 industry = Focus(id="TAG_expand_workshops", x=3, y=1, cost=5,
                  requires="TAG_assess_the_state",
                  icon="GFX_goal_generic_construct_civ_factory",
-                 completion_reward=Mod.effect_add_civilian_factory(123, 1))
+                 completion_reward=effects.add_civilian_factory(123, 1))
 army = Focus(id="TAG_arm_the_militia", x=7, y=1, cost=5,
              requires="TAG_assess_the_state",
              icon="GFX_goal_generic_small_arms",
              completion_reward="\n".join([
-                 Mod.effect_add_army_experience(15),
-                 Mod.effect_add_equipment("infantry_equipment_0", 500),
+                 effects.add_army_experience(15),
+                 effects.add_equipment("infantry_equipment_0", 500),
              ]))
 foreign_a = Focus(id="TAG_seek_neighbor_support", x=4, y=2, cost=10,
                   requires="TAG_expand_workshops",
-                  completion_reward=Mod.effect_add_target_to_faction("ALLY", "TAG"))
+                  completion_reward=effects.add_target_to_faction("ALLY", "TAG"))
 foreign_b = Focus(id="TAG_stay_independent", x=6, y=2, cost=10,
                   requires="TAG_arm_the_militia",
-                  completion_reward=Mod.effect_add_war_support(0.05))
+                  completion_reward=effects.add_war_support(0.05))
 
 for focus in [root, industry, army, foreign_a, foreign_b]:
     mod.ensure_focus("tag_focus", focus)
@@ -488,7 +488,7 @@ Use varied icons, 35-day setup focuses (`cost=5`), at least one meaningful branc
 Dynamic civil-war countries often do not match normal focus tree selectors. Pair the civil war effect with a runtime tree load:
 
 ```python
-reward = Mod.effect_spawn_civil_war_with_focus_tree(
+reward = effects.spawn_civil_war_with_focus_tree(
     "communism",
     "FB_AUS_focus",
     size=0.4,
@@ -504,7 +504,7 @@ guessed `D01`-style dynamic tag is needed.
 If a revolt tag may already exist, use the existing-or-spawn helper instead of assuming the tag is unreleased:
 
 ```python
-effect = Mod.effect_convert_existing_or_spawn_revolt(
+effect = effects.convert_existing_or_spawn_revolt(
     "SLV",
     [102, 103],
     overlord="YUG",
@@ -523,7 +523,7 @@ Use `create_decision_chain()` for staged revolt/campaign decisions instead of ha
 mod.create_decision_chain("slv_revolt", [
     {"id": "SLV_organize_cells", "complete_effect": "add_political_power = 25", "event": "slv.1"},
     {"id": "SLV_launch_revolt",
-     "complete_effect": Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
+     "complete_effect": effects.convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
 ], final_event="slv.99")
 ```
 
@@ -533,7 +533,7 @@ For live-save migrations, create a visible repair decision or a hidden one trigg
 mod.create_recovery_decision(
     "slv_revolt",
     "SLV_repair_focus_tree",
-    effect=Mod.effect_load_focus_tree("SLV_focus"),
+    effect=effects.load_focus_tree("SLV_focus"),
     hidden=True,
     loc_name="Repair Slovenia Revolt",
 )

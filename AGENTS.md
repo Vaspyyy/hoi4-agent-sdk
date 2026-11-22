@@ -87,7 +87,7 @@ with mod.transaction():
 
 4. Event and focus block fields contain the block body without outer braces: `mean_time_to_happen="days = 1"`.
 
-5. `set_state_owner()` writes state history files. Event and focus rewards are runtime effects; use `Mod.effect_transfer_state(state_id, tag)` there, not `set_owner = ...`.
+5. `set_state_owner()` writes state history files. Event and focus rewards are runtime effects; use `effects.transfer_state(state_id, tag)` there, not `set_owner = ...`.
 
 6. Never use bare country-scope core effects such as:
 
@@ -98,11 +98,11 @@ with mod.transaction():
    Use state-scoped helpers:
 
    ```python
-   Mod.effect_add_state_core(state_id, tag)
-   Mod.effect_remove_state_core(state_id, tag)
+   effects.add_state_core(state_id, tag)
+   effects.remove_state_core(state_id, tag)
    ```
 
-7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_swap_idea(...)`, `Mod.effect_upgrade_idea_chain(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_army_experience(...)`, `Mod.effect_add_navy_experience(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_set_politics(...)`, `Mod.effect_create_faction(...)`, `Mod.effect_add_target_to_faction(...)`, `Mod.effect_join_faction(...)`, `Mod.effect_white_peace(...)`, `Mod.effect_spawn_revolution(...)`, `Mod.effect_convert_existing_or_spawn_revolt(...)`, `Mod.effect_load_focus_tree(...)`, `Mod.effect_spawn_civil_war_with_focus_tree(...)`, `Mod.effect_release(...)`, `Mod.effect_release_puppet(...)`, `Mod.effect_end_puppet(...)`, `Mod.effect_set_autonomy(...)`, `Mod.effect_convert_puppet_to_ally(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `hoi4.scope_block(...)`.
+7. Prefer SDK helpers over manually assembled Paradox script: `effects.transfer_state_with_core(...)`, `effects.transfer_state(...)`, `effects.swap_idea(...)`, `effects.upgrade_idea_chain(...)`, `effects.add_political_power(...)`, `effects.add_war_support(...)`, `effects.add_manpower(...)`, `effects.add_army_experience(...)`, `effects.add_navy_experience(...)`, `effects.add_equipment(...)`, `effects.set_technology(...)`, `effects.set_politics(...)`, `effects.create_faction(...)`, `effects.add_target_to_faction(...)`, `effects.join_faction(...)`, `effects.white_peace(...)`, `effects.spawn_revolution(...)`, `effects.convert_existing_or_spawn_revolt(...)`, `effects.load_focus_tree(...)`, `effects.spawn_civil_war_with_focus_tree(...)`, `effects.release(...)`, `effects.release_puppet(...)`, `effects.end_puppet(...)`, `effects.set_autonomy(...)`, `effects.convert_puppet_to_ally(...)`, `effects.add_civilian_factory(...)`, `effects.add_bunker(...)`, `effects.add_tech_bonus(...)`, `effects.declare_war_from(...)`, `effects.scope_block(...)`.
 
 8. Search rather than guess:
 
@@ -133,7 +133,7 @@ with mod.transaction():
 
 13. Use `create_event(..., overwrite=True)` only when replacing an existing event. Use `update_event()` or `update_event_option()` for targeted edits.
 
-14. Register startup hooks with `create_on_action()`, not manual `common/on_actions` file edits. Use `Mod.effect_schedule_country_event(...)` for delayed event firing.
+14. Register startup hooks with `create_on_action()`, not manual `common/on_actions` file edits. Use `effects.schedule_country_event(...)` for delayed event firing.
 
 15. New ideas default to current HOI4 `common/ideas/...` files and `ideas = { country = { ... } }`. Use `create_idea(..., category="political_advisor")` or another explicit category for non-spirit ideas. National spirits and other ideas use `picture = <bare_stem>`, never `icon =` and never `picture = GFX_idea_<stem>`. HOI4 prepends `GFX_idea_` itself, so `picture = generic_political_support` resolves the sprite declaration `GFX_idea_generic_political_support` in `interface/*.gfx`. The compatibility `icon=` API argument accepts either spelling but normalizes to the bare stem. Validate both the assignment shape and sprite resolution before treating the idea as renderable.
 
@@ -153,20 +153,20 @@ with mod.transaction():
 
 20. State edits (`set_state_owner()`, `add_state_core()`, `remove_state_core()`, `update_state()`) change only the statements they touch; `update_state(id, owner=..., add_cores=[...], remove_cores=[...])` sets the owner and several cores in one call, and `set_state_owner()` takes one state id or a list. A state is identified by the `id` directly inside its own `state = { }` block, not by its file name.
 
-21. Avoid bare `add_to_faction = TAG`. Use `effect_add_target_to_faction(leader, target)` or `effect_join_faction(actor, leader)` so faction direction is explicit.
+21. Avoid bare `add_to_faction = TAG`. Use `effects.add_target_to_faction(leader, target)` or `effects.join_faction(actor, leader)` so faction direction is explicit.
 
 22. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
 
-23. For civil-war countries that need custom focus trees, use `Mod.effect_spawn_civil_war_with_focus_tree(...)`. It nests the tree load inside `start_civil_war`, where HOI4 scopes it to the spawned country. Do not guess dynamic `D01`-style rebel tags.
+23. For civil-war countries that need custom focus trees, use `effects.spawn_civil_war_with_focus_tree(...)`. It nests the tree load inside `start_civil_war`, where HOI4 scopes it to the spawned country. Do not guess dynamic `D01`-style rebel tags.
 
-24. For revolt chains where the tag might already exist or be a puppet, use `Mod.effect_convert_existing_or_spawn_revolt(...)` or explicit puppet helpers. Do not assume the target tag is unreleased.
+24. For revolt chains where the tag might already exist or be a puppet, use `effects.convert_existing_or_spawn_revolt(...)` or explicit puppet helpers. Do not assume the target tag is unreleased.
 
 25. Do not use `add_resistance` as generic unrest on states that are cores of their current owner. Use flags, variables, decisions, and events for unrest/revolt progression.
 
 26. Triggered lore events should have at least one gameplay effect in each option, even if it is only a flag. Use `create_decision_chain()` for staged flag/event/cleanup decision chains and `create_recovery_decision()` for live-save repair hooks.
 
 27. Use native `create_dynamic_modifier()` and
-    `effect_add_dynamic_modifier()`. `dynamic_country_ideas` is not a HOI4
+    `effects.add_dynamic_modifier()`. `dynamic_country_ideas` is not a HOI4
     construct and validation rejects it.
 
 28. A new mod-only country keeps its color in

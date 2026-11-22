@@ -350,7 +350,7 @@ deliberate islands or enclaves; do not suppress accidental missed transfers.
 `set_state_owner()`, `add_state_core()`, `remove_state_core()` and `update_state()` patch state history files. In event options, event immediate blocks, decisions, and focus rewards, use the runtime effect helper instead:
 
 ```python
-Mod.effect_transfer_state(115, "SCL")  # SCL = { transfer_state = 115 }
+effects.transfer_state(115, "SCL")  # SCL = { transfer_state = 115 }
 ```
 
 ### Country File Layout
@@ -570,7 +570,7 @@ mod.add_event_option("my_mod.1", EventOption(
     effect="add_political_power = 100"
 ))
 mod.update_event_option("my_mod.1", "my_mod.1.a",
-                        effect=Mod.effect_transfer_state(115, "SCL"))
+                        effect=effects.transfer_state(115, "SCL"))
 # Optional; already inferred for "my_mod.1".
 mod.set_event_namespace("my_mod.1", "my_mod")
 ```
@@ -605,7 +605,7 @@ once in one file. The SDK retains every occurrence.
 ```python
 mod.create_on_action(
     "on_startup",
-    effect=Mod.effect_schedule_country_event("sic.1", days=58, target="SCL"),
+    effect=effects.schedule_country_event("sic.1", days=58, target="SCL"),
 )
 ```
 
@@ -688,7 +688,7 @@ mod.create_decision(
     cost=25,
     days_remove=30,
     available="has_war = no",
-    complete_effect=Mod.effect_add_civilian_factory(8, 1),
+    complete_effect=effects.add_civilian_factory(8, 1),
 )
 mod.set_loc("LUX_subsidize_arbed", "Subsidize ARBED")
 mod.set_loc("LUX_subsidize_arbed_desc", "Support the domestic steel industry.")
@@ -700,7 +700,7 @@ Staged chain example:
 mod.create_decision_chain("slv_revolt", [
     {"id": "SLV_organize_cells", "complete_effect": "add_political_power = 25", "event": "slv.1"},
     {"id": "SLV_launch_revolt",
-     "complete_effect": Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
+     "complete_effect": effects.convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
 ], final_event="slv.99")
 ```
 
@@ -1036,66 +1036,71 @@ Default file: `localisation/english/mod_l_english.yml` (for other languages,
 
 Prefer these helpers when generating event effects, decision effects, or focus rewards. They avoid Python f-string brace escaping and encode common HOI4 scoping rules.
 
+They live in the `hoi4.effects` module, not on `Mod`: `from hoi4 import effects`, then
+`effects.add_political_power(100)`. Each one is a plain function that returns the
+script as a `str`; none of them needs a mod or changes one. The snippets in these docs
+assume that import.
+
 | Helper | Output shape |
 |--------|--------------|
-| `Mod.effect_transfer_state(state_id, tag)` | `TAG = { transfer_state = 115 }` |
-| `Mod.effect_transfer_state_with_core(state_id, tag)` | Transfer plus `115 = { add_core_of = TAG }` |
-| `Mod.effect_add_state_core(state_id, tag)` | `115 = { add_core_of = TAG }` |
-| `Mod.effect_remove_state_core(state_id, tag)` | `115 = { remove_core_of = TAG }` |
-| `Mod.effect_add_political_power(amount)` | `add_political_power = 100` |
-| `Mod.effect_add_war_support(amount)` | `add_war_support = 0.1` |
-| `Mod.effect_add_stability(amount)` | `add_stability = 0.05` |
-| `Mod.effect_add_manpower(amount)` | `add_manpower = 15000` |
-| `Mod.effect_add_army_experience(amount)` | `army_experience = 25` |
-| `Mod.effect_add_navy_experience(amount)` | `navy_experience = 25` |
-| `Mod.effect_add_air_experience(amount)` | `air_experience = 25` |
-| `Mod.effect_add_civilian_factory(state_id, level=1)` | State-scoped `industrial_complex` construction |
-| `Mod.effect_add_military_factory(state_id, level=1)` | State-scoped `arms_factory` construction |
-| `Mod.effect_add_infrastructure(state_id, level=1)` | State-scoped infrastructure construction |
-| `Mod.effect_add_bunker(state_id, level=1, province=None)` | State/province-scoped bunker construction |
-| `Mod.effect_add_equipment(equipment_type, amount, producer=None, variant_name=None)` | `add_equipment_to_stockpile = { type = ... amount = ... }` |
-| `Mod.effect_set_technology(technology, level=1, popup=None)` | `set_technology = { tech = 1 }` |
-| `Mod.effect_set_technologies({technology: level, ...})` | Multi-entry `set_technology` block |
-| `Mod.effect_schedule_country_event(event_id, days=0, target=None)` | `country_event = { id = sic.1 days = 58 }`, optionally scoped |
-| `Mod.effect_division_template(name, regiments, support="", division_names_group="")` | `division_template = { ... }` |
-| `Mod.effect_create_unit(division, owner=None, start_experience_factor=None)` | `create_unit = { division = "..." }` |
-| `Mod.effect_swap_idea(old, new, target=None)` | `swap_ideas = { remove_idea = old add_idea = new }`, optionally scoped |
-| `Mod.effect_upgrade_idea_chain([idea_1, idea_2, ...], target=None)` | Conditional staged-spirit upgrade chain using `swap_ideas` |
-| `Mod.effect_set_politics(ruling_party, elections_allowed=None)` | `set_politics = { ... }` |
-| `Mod.effect_create_faction(name)` | `create_faction = "Name"` |
-| `Mod.effect_add_to_faction(tag)` | Bare current-scope `add_to_faction = TAG`; prefer explicit helpers below |
-| `Mod.effect_add_target_to_faction(faction_leader, target)` | `LEADER = { add_to_faction = TARGET }` |
-| `Mod.effect_join_faction(actor, faction_leader)` | Same output, named from the joining country's perspective |
-| `Mod.effect_white_peace(target="all")` | `white_peace = all` or `white_peace = TAG` |
-| `Mod.effect_set_rule(rule, value=True)` | `set_rule = { rule = yes }` |
-| `Mod.effect_start_civil_war(ideology, size=0.5, capital=None, effects=None)` | `start_civil_war = { ... }`, optionally with effects executed in the spawned-country scope |
-| `Mod.effect_spawn_revolution(tag, state_ids, ...)` | Transfer/core states and optionally add manpower, tech, stockpile, units, faction, and war |
-| `Mod.effect_add_tech_bonus(name, category, uses=1, bonus=0.5)` | Validated `add_tech_bonus` block |
-| `Mod.effect_create_wargoal(target, war_goal_type="annex_everything")` | `create_wargoal = { type = ... target = TAG }` |
-| `Mod.effect_declare_war(target, war_goal_type="annex_everything")` | Current-scope `declare_war_on` block |
-| `Mod.effect_declare_war_from(attacker, target, war_goal_type="annex_everything")` | Attacker-scoped war declaration |
-| `Mod.effect_load_focus_tree(tree_id, keep_completed=False, copy_completed_from=None, mark_layout_dirty=True)` | Runtime `load_focus_tree` plus optional `mark_focus_tree_layout_dirty = yes` |
-| `Mod.effect_spawn_civil_war_with_focus_tree(ideology, tree_id, size=0.5, capital=None, ...)` | Nests `load_focus_tree` inside `start_civil_war`, executing it in the spawned-country scope |
-| `Mod.effect_release(tag)` | `release = TAG` |
-| `Mod.effect_release_puppet(tag)` | `release_puppet = TAG` |
-| `Mod.effect_end_puppet(puppet, overlord=None)` | `end_puppet = PUP` or `OVER = { end_puppet = PUP }` |
-| `Mod.effect_set_autonomy(target, autonomy_state, freedom_level=None)` | `set_autonomy = { target = TAG autonomy_state = ... }` |
-| `Mod.effect_convert_puppet_to_ally(puppet, overlord, faction_leader=None)` | End puppet relationship and optionally join a faction |
-| `Mod.effect_convert_existing_or_spawn_revolt(tag, state_ids, ...)` | Handles `TAG = { exists = yes }` edge cases before falling back to revolt spawning |
-| `hoi4.scope_block(scope, *effects)` | Generic scoped effect block |
-| `hoi4.effect_block(name, fields)` | Generic `effect = { key = value }` block |
+| `effects.transfer_state(state_id, tag)` | `TAG = { transfer_state = 115 }` |
+| `effects.transfer_state_with_core(state_id, tag)` | Transfer plus `115 = { add_core_of = TAG }` |
+| `effects.add_state_core(state_id, tag)` | `115 = { add_core_of = TAG }` |
+| `effects.remove_state_core(state_id, tag)` | `115 = { remove_core_of = TAG }` |
+| `effects.add_political_power(amount)` | `add_political_power = 100` |
+| `effects.add_war_support(amount)` | `add_war_support = 0.1` |
+| `effects.add_stability(amount)` | `add_stability = 0.05` |
+| `effects.add_manpower(amount)` | `add_manpower = 15000` |
+| `effects.add_army_experience(amount)` | `army_experience = 25` |
+| `effects.add_navy_experience(amount)` | `navy_experience = 25` |
+| `effects.add_air_experience(amount)` | `air_experience = 25` |
+| `effects.add_civilian_factory(state_id, level=1)` | State-scoped `industrial_complex` construction |
+| `effects.add_military_factory(state_id, level=1)` | State-scoped `arms_factory` construction |
+| `effects.add_infrastructure(state_id, level=1)` | State-scoped infrastructure construction |
+| `effects.add_bunker(state_id, level=1, province=None)` | State/province-scoped bunker construction |
+| `effects.add_equipment(equipment_type, amount, producer=None, variant_name=None)` | `add_equipment_to_stockpile = { type = ... amount = ... }` |
+| `effects.set_technology(technology, level=1, popup=None)` | `set_technology = { tech = 1 }` |
+| `effects.set_technologies({technology: level, ...})` | Multi-entry `set_technology` block |
+| `effects.schedule_country_event(event_id, days=0, target=None)` | `country_event = { id = sic.1 days = 58 }`, optionally scoped |
+| `effects.division_template(name, regiments, support="", division_names_group="")` | `division_template = { ... }` |
+| `effects.create_unit(division, owner=None, start_experience_factor=None)` | `create_unit = { division = "..." }` |
+| `effects.swap_idea(old, new, target=None)` | `swap_ideas = { remove_idea = old add_idea = new }`, optionally scoped |
+| `effects.upgrade_idea_chain([idea_1, idea_2, ...], target=None)` | Conditional staged-spirit upgrade chain using `swap_ideas` |
+| `effects.set_politics(ruling_party, elections_allowed=None)` | `set_politics = { ... }` |
+| `effects.create_faction(name)` | `create_faction = "Name"` |
+| `effects.add_to_faction(tag)` | Bare current-scope `add_to_faction = TAG`; prefer explicit helpers below |
+| `effects.add_target_to_faction(faction_leader, target)` | `LEADER = { add_to_faction = TARGET }` |
+| `effects.join_faction(actor, faction_leader)` | Same output, named from the joining country's perspective |
+| `effects.white_peace(target="all")` | `white_peace = all` or `white_peace = TAG` |
+| `effects.set_rule(rule, value=True)` | `set_rule = { rule = yes }` |
+| `effects.start_civil_war(ideology, size=0.5, capital=None, effects=None)` | `start_civil_war = { ... }`, optionally with effects executed in the spawned-country scope |
+| `effects.spawn_revolution(tag, state_ids, ...)` | Transfer/core states and optionally add manpower, tech, stockpile, units, faction, and war |
+| `effects.add_tech_bonus(name, category, uses=1, bonus=0.5)` | Validated `add_tech_bonus` block |
+| `effects.create_wargoal(target, war_goal_type="annex_everything")` | `create_wargoal = { type = ... target = TAG }` |
+| `effects.declare_war(target, war_goal_type="annex_everything")` | Current-scope `declare_war_on` block |
+| `effects.declare_war_from(attacker, target, war_goal_type="annex_everything")` | Attacker-scoped war declaration |
+| `effects.load_focus_tree(tree_id, keep_completed=False, copy_completed_from=None, mark_layout_dirty=True)` | Runtime `load_focus_tree` plus optional `mark_focus_tree_layout_dirty = yes` |
+| `effects.spawn_civil_war_with_focus_tree(ideology, tree_id, size=0.5, capital=None, ...)` | Nests `load_focus_tree` inside `start_civil_war`, executing it in the spawned-country scope |
+| `effects.release(tag)` | `release = TAG` |
+| `effects.release_puppet(tag)` | `release_puppet = TAG` |
+| `effects.end_puppet(puppet, overlord=None)` | `end_puppet = PUP` or `OVER = { end_puppet = PUP }` |
+| `effects.set_autonomy(target, autonomy_state, freedom_level=None)` | `set_autonomy = { target = TAG autonomy_state = ... }` |
+| `effects.convert_puppet_to_ally(puppet, overlord, faction_leader=None)` | End puppet relationship and optionally join a faction |
+| `effects.convert_existing_or_spawn_revolt(tag, state_ids, ...)` | Handles `TAG = { exists = yes }` edge cases before falling back to revolt spawning |
+| `effects.scope_block(scope, *effects)` | Generic scoped effect block |
+| `effects.block(name, fields)` | Generic `effect = { key = value }` block |
 
 Examples:
 
 ```python
 reward = "\n".join([
-    Mod.effect_transfer_state_with_core(115, "SCL"),
-    Mod.effect_add_political_power(100),
-    Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="GER"),
-    Mod.effect_set_technology("infantry_weapons", 1, popup=False),
-    Mod.effect_swap_idea("old_spirit", "new_spirit", target="SCL"),
-    Mod.effect_add_target_to_faction("AUS", "BAY"),
-    Mod.effect_load_focus_tree("FB_AUS_focus"),
+    effects.transfer_state_with_core(115, "SCL"),
+    effects.add_political_power(100),
+    effects.add_equipment("infantry_equipment_0", 1000, producer="GER"),
+    effects.set_technology("infantry_weapons", 1, popup=False),
+    effects.swap_idea("old_spirit", "new_spirit", target="SCL"),
+    effects.add_target_to_faction("AUS", "BAY"),
+    effects.load_focus_tree("FB_AUS_focus"),
 ])
 mod.validate_effect(reward)
 ```
@@ -1308,7 +1313,7 @@ assigned OOB file that could not be read. `invalid_decision_category_layout`
 (error) marks category `icon`, `allowed` or `visible` written beside the
 decisions instead of in `common/decisions/categories/`.
 
-The `history_set_owner_in_effect` warning catches a common HOI4 boundary mistake: `set_owner` is a state history directive, not a runtime event/focus effect. Use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`.
+The `history_set_owner_in_effect` warning catches a common HOI4 boundary mistake: `set_owner` is a state history directive, not a runtime event/focus effect. Use `transfer_state`, preferably through `effects.transfer_state(...)`.
 
 Use icon suggestion helpers instead of guessing:
 
@@ -1439,9 +1444,9 @@ hidden by the saved override.
 | `create_dynamic_modifier(modifier_id, *, icon="", enable="", remove_trigger="", attacker_modifier=None, modifier=None, path=None, overwrite=False) -> DynamicModifier` | Modifier | Creates a native top-level entry under `common/dynamic_modifiers`. |
 | `update_dynamic_modifier(modifier_id, **kwargs) -> DynamicModifier` | `DynamicModifier` | Source-patches modeled fields or the direct modifier mapping. |
 | `delete_dynamic_modifier(modifier_id) -> None` | `None` | Stages deletion while preserving unrelated file content; raises `NotFoundError`. |
-| `Mod.effect_add_dynamic_modifier(modifier_id, days=None, scope=None)` | `str` | Builds `add_dynamic_modifier`; optionally timed or scoped. |
-| `Mod.effect_remove_dynamic_modifier(modifier_id, scope=None)` | `str` | Builds `remove_dynamic_modifier`; optionally scoped. |
-| `Mod.effect_force_update_dynamic_modifier()` | `str` | Builds `force_update_dynamic_modifier = yes`. |
+| `effects.add_dynamic_modifier(modifier_id, days=None, scope=None)` | `str` | Builds `add_dynamic_modifier`; optionally timed or scoped. |
+| `effects.remove_dynamic_modifier(modifier_id, scope=None)` | `str` | Builds `remove_dynamic_modifier`; optionally scoped. |
+| `effects.force_update_dynamic_modifier()` | `str` | Builds `force_update_dynamic_modifier = yes`. |
 
 At the same destination path, `create_dynamic_modifier(..., overwrite=True)`
 replaces all modeled fields, clearing omitted optional fields and replacing the
@@ -1471,7 +1476,7 @@ right-hand sides raise `ValueError`; the helper does not evaluate Lua expression
 or control flow.
 
 ```python
-from hoi4 import BookmarkCountry, SubIdeology
+from hoi4 import BookmarkCountry, SubIdeology, effects
 
 mod.create_ideology(
     "social_democracy",
@@ -1486,7 +1491,7 @@ mod.create_dynamic_modifier(
     enable="original_tag = ABC",
     modifier={"stability_factor": 0.1},
 )
-reward = Mod.effect_add_dynamic_modifier("ABC_reconstruction")
+reward = effects.add_dynamic_modifier("ABC_reconstruction")
 
 mod.create_bookmark(
     "MY_START",
