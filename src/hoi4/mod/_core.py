@@ -914,6 +914,19 @@ class CoreLayer:
         self._read_digests[key] = _text_digest(text)
         self._scan_digests.pop(key, None)
 
+    def _output_path(self, relative: str | Path) -> Path:
+        """The mod file an edit is going to write, noted as it is now.
+
+        An edit may name a file that nothing has read: one in a subfolder
+        no loader looks into, or a leftover no tag file registers. What is
+        there is replaced by the save, so it is noted when the edit is made
+        and a change of it before ``save()`` is refused.
+        """
+
+        target = resolve_mod_output_path(self.mod_root, relative)
+        self._note_target(target)
+        return target
+
     def _note_target(self, path: Path) -> None:
         """Note the text of a mod file that an edit is about to replace or patch.
 
@@ -959,9 +972,11 @@ class CoreLayer:
         ``touch`` that keeps the text is no change, and a rewrite of the same
         size whose time was set back is one: size and time cannot prove a
         file unchanged, and this is the last check before its content is
-        replaced. A file the SDK never read has no digest; for it only size
-        and time are known. A file without a baseline counts as changed if
-        it exists.
+        replaced. Every reader and every edit notes what it found (with
+        ``HOI4_VERIFY_RELOAD=1`` a file without a noted read is an error).
+        Should one be missing, the check uses what else is known: the digest
+        the scan took of a fresh file, a text a section holds, or size and
+        time alone. A file without a baseline counts as changed if it exists.
         """
 
         key = path.resolve(strict=False)
@@ -1070,7 +1085,7 @@ class CoreLayer:
             raise FileNotFoundError(relative)
         if source.is_relative_to(self.mod_root):
             return
-        target = resolve_mod_output_path(self.mod_root, relative)
+        target = self._output_path(relative)
         if target in self._original_files:
             return
         original = read_text(source)

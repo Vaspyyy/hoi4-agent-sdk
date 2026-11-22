@@ -836,6 +836,11 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         fresh._base_content = self._base_content
         fresh._vanilla_tags = set(self._vanilla_tags)
         before = set(self._section_loaded)
+        # The check loads every section of this Mod, and every loader notes
+        # the files it reads. Without the check those files are first read
+        # later, so what is noted here is put back afterwards: the check
+        # must not change which read counts as the first.
+        noted = (dict(self._fingerprints), dict(self._read_digests), dict(self._scan_digests))
         try:
             self._load_all_sections()
             fresh._load_all_sections()
@@ -879,6 +884,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 )
         finally:
             self._unload_sections(self._section_loaded - before)
+            self._fingerprints, self._read_digests, self._scan_digests = noted
 
     def _fill_cache_for_check(self, fresh: PersistenceLayer, attribute: str, lookup: str) -> None:
         """Let ``fresh`` look up what lookups added to a cache of this mod.

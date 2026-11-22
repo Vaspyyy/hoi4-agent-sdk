@@ -11,7 +11,6 @@ from ..localisation import (
 )
 from ..paths import (
     require_country_tag,
-    resolve_mod_output_path,
 )
 from ..states import (
     build_state_index,
@@ -249,7 +248,7 @@ class StatesLayer(CoreLayer):
             relative = Path("history") / "states" / source.name
             if self._base_content is not None:
                 relative = self._base_content.relative(source.resolve(strict=False)) or relative
-        target = resolve_mod_output_path(self.mod_root, relative)
+        target = self._output_path(relative)
         if state.raw_text and parse(state.raw_text).problems:
             # Like the game, read the inherited file forgivingly, but write the
             # mod's own copy well formed.

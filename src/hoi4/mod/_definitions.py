@@ -76,7 +76,7 @@ class DefinitionsLayer(CoreLayer):
         source_bytes = source.read_bytes()
         text = decode_text(source_bytes)
         parsed = parse_pdx(text)
-        target = resolve_mod_output_path(self.mod_root, relative)
+        target = self._output_path(relative)
         if (target.exists() or target in self._script_file_updates) and not overwrite:
             raise FileExistsError(f"Script target already exists: {relative}")
         ideas: list[Idea] = []
@@ -283,6 +283,9 @@ class DefinitionsLayer(CoreLayer):
         target = resolve_mod_output_path(self.mod_root, relative)
         if text == original and target not in self._script_file_updates:
             return target
+        # Usually read (and noted) by ``_definition_texts``; a file of
+        # another kind's folder at an explicit path is noted here.
+        self._note_target(target)
         self._script_file_updates[target] = text
         self._scan_cache.clear()
         self._equipment_unlock_cache = None

@@ -97,10 +97,12 @@ touched, changed or created after `Mod()` and before anything read it is
 simply read, as a fresh `Mod` would read it, and `save()` may write it.
 
 That first read stands until the baseline is taken again: by `save()` for
-the files it wrote, by `discard()` for the files that changed on disk, and
-by `reload()` for all. A later read never moves it. What is in memory, or
-staged for a save, was built from the first text, so a change behind the
-SDK's back keeps looking like one and `save()` refuses to overwrite it.
+the files it wrote, by `save()` and `discard()` for the files they find
+changed on disk (they unload the sections that read them, so those files
+are read again), and by `reload()` for all. A later read never moves it.
+What is in memory, or staged for a save, was built from the first text, so
+a change behind the SDK's back keeps looking like one and `save()` refuses
+to overwrite it.
 
 Who notes a read:
 
@@ -114,6 +116,11 @@ Who notes a read:
 - An edit that replaces or patches a file it did not read, when the edit is
   made (`_note_target`): `import_script_file(overwrite=True)`,
   `rebuild_country_color_table()`, `set_country_name_pool()`, the map files.
+- An edit that names its target file, when the edit is made
+  (`_output_path`, which every `path=` argument goes through). The file may
+  be one that no loader reads: loaders read the files directly in their
+  folder, not in subfolders. `create_country` does the same for the files
+  of its tag, which may be on disk although no tag file registers them.
 - Not the reads made while a save is rendered (`_read_current_text`). They
   happen a moment before the check below and must not become what that
   check compares with.
@@ -154,6 +161,11 @@ Two questions are asked of them, with different care:
   files are remembered (`_seen_changed`), and the next `discard()` treats
   them as changed. So after a refusal, `discard()` always reads the changed
   file again, and the edit can be made once more and saved.
+- The limit of this: such a change of a file that is NOT being written is
+  noticed by nobody. `discard()`, and a `save()` of other files, leave the
+  section loaded, so lookups keep answering from the older text until the
+  file is written (refused) or `reload()` is called. `stat` cannot do
+  better, and reading every file on every save is what this design avoids.
 
 ## Threads
 
@@ -185,7 +197,9 @@ the inherited layers), loads every section of both, lets the fresh one look up
 what lookups added to the live caches, and compares every section attribute,
 the load diagnostics and `_original_files` by value. A difference raises
 `AssertionError` naming the section, the attribute and the first differing id.
-Sections the check loaded are unloaded again afterwards.
+Sections the check loaded are unloaded again afterwards, and the reads
+their loaders noted are taken back: the check does not change which read of
+a file counts as the first.
 
 A lookup may cache something the loader did not load: content of the game
 or a base mod (`get_country`, `get_state`, `get_character`, `get_oob`), or

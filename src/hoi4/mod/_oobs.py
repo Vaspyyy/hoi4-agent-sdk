@@ -28,7 +28,6 @@ from ..patching import (
 from ..paths import (
     require_country_tag,
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..syntax import parse, repair
 from ..textio import read_text
@@ -234,9 +233,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 f"OOB '{name}' already exists. Use overwrite=True only for "
                 "deliberate replacement."
             )
-        target = resolve_mod_output_path(
-            self.mod_root,
-            path or Path("history") / "units" / f"{name}.txt",
+        target = self._output_path(            path or Path("history") / "units" / f"{name}.txt",
         )
         inferred_kind = _oob_content_kind(
             templates,
@@ -677,7 +674,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         )
         if relative is None:
             raise ValueError(f"Cannot retarget OOB '{oob.name}' without a HOI4 install")
-        target = resolve_mod_output_path(self.mod_root, relative)
+        target = self._output_path(relative)
         self._original_files.setdefault(
             target,
             self._read_noted_text(target)

@@ -22,7 +22,6 @@ from ..patching import (
 )
 from ..paths import (
     require_country_tag,
-    resolve_mod_output_path,
 )
 from ..politics import LEADER_IDEOLOGIES_BY_PARTY, RULING_PARTIES
 from ..script import (
@@ -291,7 +290,7 @@ class CountriesLayer(CoreLayer):
             relative = fallback
             if self._base_content is not None:
                 relative = self._base_content.relative(source.resolve(strict=False)) or fallback
-            target = resolve_mod_output_path(self.mod_root, relative)
+            target = self._output_path(relative)
             setattr(country, field_name, target)
             self._original_files.setdefault(target, self._read_noted_text(target))
 

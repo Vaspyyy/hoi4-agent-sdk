@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from hoi4 import ExternalModificationError, Mod
+from hoi4 import Character, ExternalModificationError, Mod
 
 FILES = {
     "descriptor.mod": 'name = "t"\n',
@@ -364,5 +364,152 @@ def test_an_edit_that_replaces_a_file_refuses_a_change_since_the_edit(
         os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
 
     with pytest.raises(ExternalModificationError, match=Path(relative).name):
+        mod.save()
+    assert path.read_text(encoding="utf-8") == changed
+
+
+# ── Edits pointed at an existing file that nothing has read ─────────────────
+#
+# A loader reads the files directly in its folder. An edit can still name a
+# file in a subfolder, and a new country can meet leftovers that no tag file
+# registers. The save replaces such a file, so the edit notes it when it is
+# made.
+
+UNREAD_TEXT = "# keep me 1234\n"
+
+
+def _move_ideology(mod: Mod) -> None:
+    mod.create_ideology("new_ideology")
+    mod.update_ideology("new_ideology", path="common/ideologies/sub/extra.txt")
+
+
+def _move_bookmark(mod: Mod) -> None:
+    mod.create_bookmark("New")
+    mod.update_bookmark("New", path="common/bookmarks/sub/extra.txt")
+
+
+# name: (the existing file, the edit that is pointed at it)
+UNREAD: dict[str, tuple[str, Step]] = {
+    "update_event": (
+        "events/sub/extra.txt",
+        lambda mod: mod.update_event("mod_ev.1", path="events/sub/extra.txt"),
+    ),
+    "update_focus_tree": (
+        "common/national_focus/sub/extra.txt",
+        lambda mod: mod.update_focus_tree("mod_tree", path="common/national_focus/sub/extra.txt"),
+    ),
+    "create_idea": (
+        "common/ideas/sub/extra.txt",
+        lambda mod: mod.create_idea("new_spirit", path="common/ideas/sub/extra.txt"),
+    ),
+    "update_idea": (
+        "common/ideas/sub/extra.txt",
+        lambda mod: mod.update_idea("mod_spirit", path="common/ideas/sub/extra.txt"),
+    ),
+    "create_ideology": (
+        "common/ideologies/sub/extra.txt",
+        lambda mod: mod.create_ideology("new_ideology", path="common/ideologies/sub/extra.txt"),
+    ),
+    "update_ideology": ("common/ideologies/sub/extra.txt", _move_ideology),
+    "create_bookmark": (
+        "common/bookmarks/sub/extra.txt",
+        lambda mod: mod.create_bookmark("New", path="common/bookmarks/sub/extra.txt"),
+    ),
+    "update_bookmark": ("common/bookmarks/sub/extra.txt", _move_bookmark),
+    "create_dynamic_modifier": (
+        "common/dynamic_modifiers/sub/extra.txt",
+        lambda mod: mod.create_dynamic_modifier(
+            "new_modifier", path="common/dynamic_modifiers/sub/extra.txt"
+        ),
+    ),
+    "create_on_action": (
+        "common/on_actions/sub/extra.txt",
+        lambda mod: mod.create_on_action(
+            "on_weekly", effect="log = w", path="common/on_actions/sub/extra.txt"
+        ),
+    ),
+    "update_on_action": (
+        "common/on_actions/sub/extra.txt",
+        lambda mod: mod.update_on_action("on_startup", path="common/on_actions/sub/extra.txt"),
+    ),
+    "create_character": (
+        "common/characters/sub/extra.txt",
+        lambda mod: mod.create_character(
+            "MOD", Character(id="MOD_new", name="MOD_new"), path="common/characters/sub/extra.txt"
+        ),
+    ),
+    "create_oob": (
+        "history/units/sub/extra.txt",
+        lambda mod: mod.create_oob("MOD_new", "MOD", path="history/units/sub/extra.txt"),
+    ),
+    "create_decision": (
+        "common/decisions/sub/extra.txt",
+        lambda mod: mod.create_decision("mod_cat", "new_dec", path="common/decisions/sub/extra.txt"),
+    ),
+    "create_decision_category": (
+        "common/decisions/categories/sub/extra.txt",
+        lambda mod: mod.create_decision_category(
+            "new_cat", path="common/decisions/categories/sub/extra.txt"
+        ),
+    ),
+    "update_decision_category": (
+        "common/decisions/categories/sub/extra.txt",
+        lambda mod: mod.update_decision_category(
+            "mod_cat", path="common/decisions/categories/sub/extra.txt"
+        ),
+    ),
+    "create_country, definition": (
+        "common/countries/XYZ.txt",
+        lambda mod: mod.create_country("XYZ", "Xyzland", capital=2, overwrite=True),
+    ),
+    "create_country, history": (
+        "history/countries/XYZ - Xyzland.txt",
+        lambda mod: mod.create_country("XYZ", "Xyzland", capital=2, overwrite=True),
+    ),
+}
+
+EVERY_UNREAD = pytest.mark.parametrize("name", sorted(UNREAD))
+
+
+def _unread_file(root: Path, name: str) -> Path:
+    path = root / UNREAD[name][0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(UNREAD_TEXT, encoding="utf-8")
+    old = time.time() - 600
+    os.utime(path, (old, old))
+    return path
+
+
+@pytest.mark.parametrize("touch", [None, "before the edit", "after the edit"])
+@EVERY_UNREAD
+def test_an_edit_pointed_at_an_unread_file_saves(old_mod: Path, name: str, touch: str | None) -> None:
+    path = _unread_file(old_mod, name)
+    mod = Mod(old_mod)
+    if touch == "before the edit":
+        os.utime(path, None)
+    UNREAD[name][1](mod)
+    if touch == "after the edit":
+        os.utime(path, None)
+
+    mod.save()
+
+    assert path.read_text(encoding="utf-8") != UNREAD_TEXT
+
+
+@TIMES
+@EVERY_UNREAD
+def test_an_edit_pointed_at_an_unread_file_refuses_a_change_since_the_edit(
+    old_mod: Path, name: str, same_time: bool
+) -> None:
+    path = _unread_file(old_mod, name)
+    mod = Mod(old_mod)
+    UNREAD[name][1](mod)
+    before = path.stat()
+    changed = UNREAD_TEXT.replace("1234", "9999")
+    path.write_text(changed, encoding="utf-8")
+    if same_time:
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    with pytest.raises(ExternalModificationError, match="extra.txt|XYZ"):
         mod.save()
     assert path.read_text(encoding="utf-8") == changed

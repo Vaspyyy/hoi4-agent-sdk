@@ -251,6 +251,31 @@ def test_the_reload_check_passes_and_keeps_what_was_unloaded(
 # ── Fingerprints ─────────────────────────────────────────────────
 
 
+def test_the_reload_check_is_not_the_first_reader_of_a_file(mod_root: Path) -> None:
+    """The check loads every section to compare; without it the states are first read later.
+
+    The test suite runs with ``HOI4_VERIFY_RELOAD=1``. If the reads of the
+    check counted, a change after a save and before the first real read
+    would be refused under test and built on everywhere else.
+    """
+
+    path = mod_root / "history/states/1-Test.txt"
+    for file in mod_root.rglob("*.txt"):
+        _age(file)
+    mod = Mod(mod_root)
+    mod.update_event("test.1", title="mine")
+    mod.save()
+    assert "states" not in mod._section_loaded
+    assert path not in mod._read_digests
+
+    path.write_text(STATE.replace("manpower = 100", "manpower = 777"), encoding="utf-8")
+    mod.set_state_properties(1, state_category="city")
+    mod.save()
+
+    saved = path.read_text(encoding="utf-8")
+    assert "manpower = 777" in saved and "city" in saved
+
+
 def test_an_external_edit_is_refused(mod_root: Path) -> None:
     path = mod_root / "events/test.txt"
     _age(path)

@@ -17,7 +17,6 @@ from ..characters import (
 from ..paths import (
     require_country_tag,
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..textio import read_text
 from ._countries import CountriesLayer
@@ -104,9 +103,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 f"Character '{character_id}' already exists. "
                 "Use overwrite=True only for deliberate replacement."
             )
-        target = resolve_mod_output_path(
-            self.mod_root,
-            path
+        target = self._output_path(            path
             or (
                 existing.path
                 if existing is not None
@@ -443,7 +440,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             raise ValueError(
                 f"Cannot retarget character '{character.id}' without a HOI4 install"
             )
-        target = resolve_mod_output_path(self.mod_root, relative)
+        target = self._output_path(relative)
         source_text = read_text(source)
         for item in load_characters_file(source, country_tag=character.country_tag):
             cached = self._characters.get(item.id)

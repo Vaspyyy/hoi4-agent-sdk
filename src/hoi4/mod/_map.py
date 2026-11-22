@@ -879,7 +879,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 inherited_file = (
                     self.hoi4_install is not None and (self.hoi4_install / relative).is_file()
                 )
-            target = resolve_mod_output_path(self.mod_root, relative)
+            target = self._output_path(relative)
             self._deleted_state_files[target] = shadow if inherited_file else None
         self._states.pop(state_id, None)
         if state_id in self._state_ids:

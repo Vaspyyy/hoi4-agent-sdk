@@ -7,7 +7,6 @@ from ..paths import (
     EVENT_NAMESPACE_RE,
     require_event_namespace,
     require_script_id,
-    resolve_mod_output_path,
 )
 from ..script import (
     normalize_block_body,
@@ -162,7 +161,7 @@ class EventsLayer(CoreLayer):
             / f"{self._event_namespaces.get(event_id) or 'mod'}_events.txt"
         )
         if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+            kwargs["path"] = self._output_path(kwargs["path"])
         for key in ("trigger", "immediate", "mean_time_to_happen"):
             if key in kwargs and isinstance(kwargs[key], str):
                 kwargs[key] = normalize_block_body(kwargs[key])

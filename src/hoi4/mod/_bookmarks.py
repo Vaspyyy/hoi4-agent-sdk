@@ -60,7 +60,7 @@ class BookmarksLayer(CoreLayer):
         if existing is not None:
             self.delete_bookmark(name)
         target = (
-            resolve_mod_output_path(self.mod_root, path)
+            self._output_path(path)
             if path is not None
             else self.mod_root
             / "common"
@@ -99,7 +99,7 @@ class BookmarksLayer(CoreLayer):
             raise ValueError(f"Internal bookmark fields: {sorted(forbidden)}")
         old_path = bookmark.path
         if "path" in kwargs:
-            kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
+            kwargs["path"] = self._output_path(kwargs["path"])
         if "filters" in kwargs:
             kwargs["filters"] = normalize_block_body(kwargs["filters"])
         if "effect" in kwargs:

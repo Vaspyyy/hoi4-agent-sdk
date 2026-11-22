@@ -22,9 +22,6 @@ from ..localisation import (
     parse_localization_dir,
     parse_localization_files,
 )
-from ..paths import (
-    resolve_mod_output_path,
-)
 from ..textio import read_text
 from ..types import (
     Country,
@@ -228,7 +225,7 @@ class LocalisationLayer(CoreLayer):
         language_dir = self.mod_root / "localisation" / language
         target = None
         if file_path is not None:
-            target = resolve_mod_output_path(self.mod_root, file_path)
+            target = self._output_path(file_path)
             if not target.is_relative_to(language_dir) or target.suffix != ".yml":
                 raise ValueError(
                     f"set_loc() supports only .yml files under localisation/{language}; "
