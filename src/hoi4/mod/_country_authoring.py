@@ -25,7 +25,10 @@ from ..types import (
 from ..errors import ReadOnlyError, not_found
 from ._characters import CharactersLayer
 from ._shared import (
+    _check_field_names,
+    _check_fields,
     _set_fields,
+    _settable_fields,
 )
 
 
@@ -169,17 +172,25 @@ class CountryAuthoringLayer(CharactersLayer):
 
         return country
 
-    def update_country(self, tag: str, **kwargs) -> bool:
-        try:
-            tag = require_country_tag(tag)
-        except ValueError:
-            return False
+    def update_country(self, tag: str, **kwargs) -> Country:
+        """Patch modeled country fields; ``leader_<field>`` sets the leader's fields.
+
+        A country of the game or a base mod is copied into the mod first.
+
+        Returns:
+            The updated country.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: ``tag`` is not a valid tag.
+        """
+        tag = require_country_tag(tag)
         country = self._countries.get(tag)
         if country is None and tag in self._vanilla_tags:
             country = self.get_country(tag)
         if country is None:
-            return False
-        self._materialize_country_override(country)
+            raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
         leader_kwargs = {}
         other_kwargs = {}
         for key, value in kwargs.items():
@@ -189,6 +200,19 @@ class CountryAuthoringLayer(CharactersLayer):
                 leader_kwargs[key.removeprefix("leader_")] = value
             else:
                 other_kwargs[key] = value
+        leader_fields = {
+            f"leader_{name}"
+            for name in _settable_fields(
+                country.leader or Leader(name="Leader"), exclude={"character_id"}
+            )
+        }
+        _check_fields("update_country", country, other_kwargs, extra=leader_fields)
+        _check_field_names(
+            "update_country",
+            {f"leader_{key}": value for key, value in leader_kwargs.items()},
+            leader_fields,
+        )
+        self._materialize_country_override(country)
         if other_kwargs:
             _set_fields(country, other_kwargs)
             if "color" in other_kwargs and "color_ui" not in other_kwargs:
@@ -211,7 +235,7 @@ class CountryAuthoringLayer(CharactersLayer):
             self._sync_leader_character_model(country)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
-        return True
+        return country
 
     def _sync_leader_character_model(self, country: Country) -> None:
         leader = country.leader

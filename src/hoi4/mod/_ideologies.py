@@ -13,6 +13,7 @@ from ..paths import (
 from ..errors import ReadOnlyError, not_found
 from ._core import CoreLayer
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
 
@@ -93,21 +94,30 @@ class IdeologiesLayer(CoreLayer):
         self._dirty.add("ideologies")
         return ideology
 
-    def update_ideology(self, ideology_id: str, **kwargs) -> bool:
-        ideology = self._ideologies.get(ideology_id)
-        if ideology is None:
-            vanilla = self._vanilla_ideologies.get(ideology_id)
-            if vanilla is None:
-                return False
-            ideology = copy.deepcopy(vanilla)
+    def update_ideology(self, ideology_id: str, **kwargs) -> Ideology:
+        """Patch fields of an ideology; a game ideology is copied into the mod first.
+
+        Returns:
+            The updated ideology.
+
+        Raises:
+            NotFoundError: No one defines ``ideology_id``.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        existing = self._ideologies.get(ideology_id)
+        source = existing if existing is not None else self.get_ideology(ideology_id)
+        forbidden = {"id", "raw_block", "touched_fields", "is_vanilla"} & set(kwargs)
+        if forbidden:
+            raise ValueError(f"Immutable/internal ideology fields: {sorted(forbidden)}")
+        _check_fields("update_ideology", source, kwargs, allow_path=True)
+        ideology = source
+        if existing is None:
+            ideology = copy.deepcopy(source)
             ideology.is_vanilla = False
             ideology.path = (
                 self.mod_root / "common" / "ideologies" / "00_mod_ideologies.txt"
             )
             self._ideologies[ideology_id] = ideology
-        forbidden = {"id", "raw_block", "touched_fields", "is_vanilla"} & set(kwargs)
-        if forbidden:
-            raise ValueError(f"Immutable/internal ideology fields: {sorted(forbidden)}")
         old_path = ideology.path
         if "path" in kwargs:
             kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
@@ -119,7 +129,7 @@ class IdeologiesLayer(CoreLayer):
             self._dirty_ideology_files.add(ideology.path)
         self._dirty_ideologies.add(ideology_id)
         self._dirty.add("ideologies")
-        return True
+        return ideology
 
     def delete_ideology(self, ideology_id: str) -> None:
         """Stage the deletion of an ideology the mod defines.

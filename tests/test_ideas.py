@@ -294,7 +294,7 @@ def test_mod_description_edit_does_not_rebuild_unrelated_nested_blocks(
     from hoi4 import Mod
 
     mod = Mod(tmp_path)
-    assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    mod.update_idea("custom_spirit", desc="custom_spirit_desc")
     mod.save()
 
     assert path.read_text(encoding="utf-8") == original.replace(
@@ -319,7 +319,7 @@ def test_modifier_merge_preserves_nested_unmodeled_modifier_content(tmp_path: Pa
     from hoi4 import Mod
 
     mod = Mod(tmp_path)
-    assert mod.update_idea(
+    mod.update_idea(
         "custom_spirit",
         modifier={"political_power_gain": 0.2},
         merge_modifier=True,

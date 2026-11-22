@@ -22,6 +22,7 @@ from ..script import (
 from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
 
@@ -101,14 +102,21 @@ class BookmarksLayer(CoreLayer):
         self._dirty.add("bookmarks")
         return bookmark
 
-    def update_bookmark(self, name: str, **kwargs) -> bool:
-        try:
-            bookmark = self.get_bookmark(name)
-        except KeyError:
-            return False
+    def update_bookmark(self, name: str, **kwargs) -> Bookmark:
+        """Patch fields of a bookmark; ``path=`` moves it to another file.
+
+        Returns:
+            The updated bookmark.
+
+        Raises:
+            NotFoundError: No bookmark is called ``name``.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        bookmark = self.get_bookmark(name)
         forbidden = {"raw_block", "source_index", "touched_fields"} & set(kwargs)
         if forbidden:
             raise ValueError(f"Internal bookmark fields: {sorted(forbidden)}")
+        _check_fields("update_bookmark", bookmark, kwargs, allow_path=True)
         old_path = bookmark.path
         if "path" in kwargs:
             kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
@@ -124,7 +132,7 @@ class BookmarksLayer(CoreLayer):
             self._dirty_bookmark_files.add(bookmark.path)
             self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
         self._dirty.add("bookmarks")
-        return True
+        return bookmark
 
     def add_bookmark_country(self, bookmark_name: str, country: BookmarkCountry) -> None:
         bookmark = self.get_bookmark(bookmark_name)
@@ -143,16 +151,26 @@ class BookmarksLayer(CoreLayer):
         *,
         occurrence: int = 0,
         **kwargs,
-    ) -> bool:
+    ) -> BookmarkCountry:
+        """Patch one country entry of a bookmark (zero-based ``occurrence`` of ``tag``).
+
+        Returns:
+            The updated entry.
+
+        Raises:
+            NotFoundError: The bookmark, or that entry, does not exist.
+            TypeError: A field name is unknown; nothing changed.
+        """
         bookmark = self.get_bookmark(bookmark_name)
         tag = require_bookmark_country_key(tag)
         matches = [country for country in bookmark.countries if country.tag == tag]
         if occurrence < 0 or occurrence >= len(matches):
-            return False
+            raise _missing_bookmark_country(bookmark, tag, occurrence, len(matches))
         country = matches[occurrence]
         forbidden = {"tag", "raw_block", "source_index", "touched_fields"} & set(kwargs)
         if forbidden:
             raise ValueError(f"Immutable/internal bookmark country fields: {sorted(forbidden)}")
+        _check_fields("update_bookmark_country", country, kwargs)
         if "available" in kwargs:
             kwargs["available"] = normalize_block_body(kwargs["available"])
         if "required_dlc" in kwargs:
@@ -163,7 +181,7 @@ class BookmarksLayer(CoreLayer):
             self._dirty_bookmark_files.add(bookmark.path)
             self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
         self._dirty.add("bookmarks")
-        return True
+        return country
 
     def delete_bookmark_country(
         self,

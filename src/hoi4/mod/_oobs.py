@@ -337,11 +337,21 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         required_dlc: Sequence[str] | None = None,
         excluded_dlc: Sequence[str] | None = None,
         assign: bool = False,
-    ) -> bool:
-        try:
-            oob = self.get_oob(name)
-        except (KeyError, ValueError):
-            return False
+    ) -> OrderOfBattle:
+        """Replace selected collections and assignment data of an OOB.
+
+        A game OOB is copied into the mod first. ``assign=True`` also adds
+        the history reference of ``country_tag``.
+
+        Returns:
+            The updated OOB.
+
+        Raises:
+            NotFoundError: No OOB file has this name.
+            ValueError: The update would mix land, naval and air content, or
+                the kind does not match the content.
+        """
+        oob = self.get_oob(name)
         existing_content_kind = _oob_content_kind(
             oob.templates,
             oob.divisions,
@@ -424,7 +434,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         if oob.path is not None:
             self._dirty_oob_files.add(oob.path)
         self._dirty.add("oobs")
-        return True
+        return oob
 
     def delete_oob(self, name: str, *, unassign: bool = True) -> None:
         """Stage the deletion of an OOB the mod defines.

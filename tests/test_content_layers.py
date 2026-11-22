@@ -234,8 +234,8 @@ def test_inherited_scripts_edit_siblings_and_sources_preserved(tmp_path):
         mod.load_inherited_content(relative)
     assert not mod.preview()
     assert mod.get_idea("ancient_idea").path == top / "common/ideas/ancient.txt"
-    assert mod.update_event("ancient.1", title="new_title")
-    assert mod.update_focus("ancient_tree", "ancient_focus", cost=3)
+    mod.update_event("ancient.1", title="new_title")
+    mod.update_focus("ancient_tree", "ancient_focus", cost=3)
     result = mod.save(require_changes=True)
     assert result.written_files
     assert "ancient.2" in (top / "events/ancient.txt").read_text()

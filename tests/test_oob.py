@@ -280,7 +280,7 @@ def test_mod_update_oob_patches_navy_without_clobbering_unknown_content(
     fleets = copy.deepcopy(mod.get_oob("ABC_1936").fleets)
     fleets[0].task_forces[0].ships[0].name = "SMS New"
 
-    assert mod.update_oob("ABC_1936", fleets=fleets)
+    mod.update_oob("ABC_1936", fleets=fleets)
     mod.save()
     rendered = (tmp_path / "history/units/ABC_1936.txt").read_text(encoding="utf-8")
 

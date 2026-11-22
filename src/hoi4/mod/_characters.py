@@ -22,6 +22,7 @@ from ..paths import (
 from ..textio import read_text
 from ..errors import NotFoundError, not_found
 from ._countries import CountriesLayer
+from ._shared import _check_field_names
 from ._localisation import LocalisationLayer
 
 
@@ -35,6 +36,18 @@ def _require_character_lookup_id(value: str) -> str:
     ):
         return require_script_id(text, label="character ID")
     return text
+
+
+def _missing_role(
+    character: Character, role_type: str, occurrence: int | None, count: int
+) -> NotFoundError:
+    which = "" if occurrence is None else f" occurrence {occurrence}"
+    return NotFoundError(
+        f"Character '{character.id}' has no '{role_type}' role{which} "
+        f"({count} '{role_type}' roles).",
+        kind="character role",
+        id=role_type,
+    )
 
 
 class CharactersLayer(CountriesLayer, LocalisationLayer):
@@ -144,23 +157,27 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         self._sync_character_loc(replacement)
         return replacement
 
-    def update_character(self, character_id: str, **kwargs: object) -> bool:
-        try:
-            character = self.get_character(character_id)
-        except (KeyError, ValueError):
-            return False
+    def update_character(self, character_id: str, **kwargs: object) -> Character:
+        """Patch a character's top-level ``name`` or ``portraits``.
+
+        Roles and instances have their own methods. A character loaded from
+        the game or a base mod is copied into the mod first.
+
+        Returns:
+            The updated character.
+
+        Raises:
+            NotFoundError: No character has this id.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        character = self.get_character(character_id)
         if "country_tag" in kwargs:
             raise TypeError(
                 "update_character() cannot update country_tag, even to the existing tag. "
                 "Remove country_tag from this call; persistent character reassignment "
                 "is not supported."
             )
-        unknown = set(kwargs) - {"name", "portraits"}
-        if unknown:
-            raise TypeError(
-                f"Unknown character fields: {sorted(unknown)}. "
-                "Use the explicit instance and role mutation methods for nested content."
-            )
+        _check_field_names("update_character", dict(kwargs), {"name", "portraits"})
         self._materialize_character_override(character)
         for key, value in kwargs.items():
             setattr(character, key, copy.deepcopy(value))
@@ -170,7 +187,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             self._dirty_character_files.add(character.path)
         self._dirty.add("characters")
         self._sync_character_loc(character)
-        return True
+        return character
 
     def delete_character(
         self,
@@ -227,16 +244,23 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         character_id: str,
         occurrence: int,
         **kwargs: object,
-    ) -> bool:
+    ) -> CharacterInstance:
+        """Patch ``allowed``, ``name`` or ``portraits`` of one instance (zero-based).
+
+        Roles of an instance have their own methods.
+
+        Returns:
+            The updated instance.
+
+        Raises:
+            NotFoundError: The character or that instance does not exist.
+            TypeError: A field name is unknown; nothing changed.
+        """
         character = self.get_character(character_id)
-        if occurrence < 0 or occurrence >= len(character.instances):
-            return False
-        unknown = set(kwargs) - {"allowed", "name", "portraits"}
-        if unknown:
-            raise TypeError(
-                f"Unknown character instance fields: {sorted(unknown)}. "
-                "Use role mutation methods for instance roles."
-            )
+        self._require_character_instance(character, occurrence)
+        _check_field_names(
+            "update_character_instance", dict(kwargs), {"allowed", "name", "portraits"}
+        )
         self._materialize_character_override(character)
         instance = character.instances[occurrence]
         for key, value in kwargs.items():
@@ -244,7 +268,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         instance.touched_fields.update(kwargs)
         character.touched_fields.add("instances")
         self._mark_character_dirty(character)
-        return True
+        return instance
 
     def delete_character_instance(
         self,
@@ -301,7 +325,21 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         occurrence: int | None = None,
         instance_occurrence: int | None = None,
         **kwargs: object,
-    ) -> bool:
+    ) -> CharacterRole:
+        """Patch one role of a character or of one of its instances.
+
+        When the character has several roles of ``role_type``, pass
+        ``occurrence=`` (zero-based). ``instance_occurrence=`` picks an
+        instance instead of the character's own roles.
+
+        Returns:
+            The updated role.
+
+        Raises:
+            NotFoundError: The character, the instance or the role does not exist.
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: Several roles match and no ``occurrence`` was given.
+        """
         if role_type not in {
             "country_leader",
             "advisor",
@@ -314,7 +352,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         roles, scope = self._character_role_scope(character, instance_occurrence)
         matches = [role for role in roles if role_key(role) == role_type]
         if not matches:
-            return False
+            raise _missing_role(character, role_type, occurrence, 0)
         if occurrence is None:
             if len(matches) != 1:
                 raise ValueError(
@@ -324,19 +362,14 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             role = matches[0]
         else:
             if occurrence < 0 or occurrence >= len(matches):
-                return False
+                raise _missing_role(character, role_type, occurrence, len(matches))
             role = matches[occurrence]
-        self._materialize_character_override(character)
         internal = {"raw_block", "touched_fields", "source_occurrence", "kind"}
         valid = {
             field.name for field in dataclasses.fields(role)
         } - internal
-        unknown = set(kwargs) - valid
-        if unknown:
-            raise TypeError(
-                f"Unknown {role_type} fields: {sorted(unknown)}. "
-                f"Valid: {sorted(valid)}"
-            )
+        _check_field_names("update_character_role", dict(kwargs), valid)
+        self._materialize_character_override(character)
         for key, value in kwargs.items():
             setattr(role, key, copy.deepcopy(value))
         role.touched_fields.update(kwargs)
@@ -344,7 +377,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         if isinstance(scope, CharacterInstance):
             character.touched_fields.add("instances")
         self._mark_character_dirty(character)
-        return True
+        return role
 
     def remove_character_role(
         self,

@@ -17,9 +17,10 @@ from ..types import (
     EventOption,
     EventText,
 )
-from ..errors import not_found
+from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
 
@@ -143,19 +144,25 @@ class EventsLayer(CoreLayer):
             return self._events[event_id]
         return self.create_event(event_id, **kwargs)
 
-    def update_event(self, event_id: str, **kwargs) -> bool:
+    def update_event(self, event_id: str, **kwargs) -> Event:
         """Patch fields of an event; only the changed fields are rewritten on save.
 
         ``title`` and ``description`` are the plain keys the game falls back
         to. Setting one leaves the conditional alternatives alone; change
         those with ``conditional_titles`` / ``conditional_descriptions``
-        (an empty list removes them).
+        (an empty list removes them). ``path=`` moves the event to another file.
+
+        Returns:
+            The updated event.
+
+        Raises:
+            NotFoundError: No event has this id.
+            TypeError: A field name is unknown; nothing changed.
         """
-        event = self._events.get(event_id)
-        if event is None:
-            return False
+        event = self.get_event(event_id)
         if "id" in kwargs:
             raise ValueError("Event IDs are immutable; create a new event instead")
+        _check_fields("update_event", event, kwargs, allow_path=True)
         old_path = (
             event.path
             or self.mod_root
@@ -182,7 +189,7 @@ class EventsLayer(CoreLayer):
         )
         self._dirty.add("events")
         self._dirty_events.add(event_id)
-        return True
+        return event
 
     def delete_event(self, event_id: str) -> None:
         """Stage the deletion of an event and its namespace mapping.
@@ -231,21 +238,39 @@ class EventsLayer(CoreLayer):
         self._dirty_events.add(event_id)
         return True
 
-    def update_event_option(self, event_id: str, option: int | str, **kwargs) -> bool:
-        event = self._events.get(event_id)
-        if event is None:
-            return False
+    def update_event_option(self, event_id: str, option: int | str, **kwargs) -> EventOption:
+        """Patch one option of an event, chosen by zero-based index or by name.
+
+        Returns:
+            The updated option.
+
+        Raises:
+            NotFoundError: The event or the option does not exist.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        event = self.get_event(event_id)
         event_option: EventOption | None
         if isinstance(option, int):
             if option < 0 or option >= len(event.options):
-                return False
+                raise NotFoundError(
+                    f"Event '{event_id}' has no option {option} "
+                    f"({len(event.options)} options).",
+                    kind="event option",
+                    id=option,
+                )
             event_option = event.options[option]
         else:
             event_option = next(
                 (candidate for candidate in event.options if candidate.name == option), None
             )
             if event_option is None:
-                return False
+                raise not_found(
+                    "event option",
+                    option,
+                    (candidate.name for candidate in event.options if candidate.name),
+                    where=f"event '{event_id}'",
+                )
+        _check_fields("update_event_option", event_option, kwargs)
         for key in ("trigger", "ai_chance"):
             if key in kwargs and isinstance(kwargs[key], str):
                 kwargs[key] = normalize_block_body(kwargs[key])
@@ -257,4 +282,4 @@ class EventsLayer(CoreLayer):
         event.touched = True
         self._dirty.add("events")
         self._dirty_events.add(event_id)
-        return True
+        return event_option

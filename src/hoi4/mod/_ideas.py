@@ -19,6 +19,7 @@ from ..types import (
 from ..errors import not_found
 from ._core import CoreLayer
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
 
@@ -93,17 +94,23 @@ class IdeasLayer(CoreLayer):
             return self._ideas[idea_id]
         return self.create_idea(idea_id, **kwargs)
 
-    def update_idea(self, idea_id: str, *, merge_modifier: bool = False, **kwargs) -> bool:
+    def update_idea(self, idea_id: str, *, merge_modifier: bool = False, **kwargs) -> Idea:
         """Update an idea, replacing its modifier mapping by default.
 
         ``modifier={}`` therefore clears the block. Pass
         ``merge_modifier=True`` for the legacy key-by-key merge behavior.
+
+        Returns:
+            The updated idea.
+
+        Raises:
+            NotFoundError: No idea has this id.
+            TypeError: A field name is unknown; nothing changed.
         """
-        idea = self._ideas.get(idea_id)
-        if idea is None:
-            return False
+        idea = self.get_idea(idea_id)
         if "id" in kwargs:
             raise ValueError("Idea IDs are immutable; create a new idea instead")
+        _check_fields("update_idea", idea, kwargs, allow_path=True)
         if "desc" in kwargs:
             expected_desc = f"{idea_id}_desc"
             desc = kwargs["desc"]
@@ -139,7 +146,7 @@ class IdeasLayer(CoreLayer):
             self._dirty_idea_files.add(idea.path)
         self._dirty.add("ideas")
         self._dirty_ideas.add(idea_id)
-        return True
+        return idea
 
     def delete_idea(self, idea_id: str) -> None:
         """Stage the deletion of an idea.

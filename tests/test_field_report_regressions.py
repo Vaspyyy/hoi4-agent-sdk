@@ -83,7 +83,7 @@ def test_vanilla_color_override_seeds_complete_vanilla_table(tmp_path: Path) -> 
     mod = Mod(mod_root, hoi4_install=game_root)
     mod.get_country("GER")
 
-    assert mod.update_country("GER", color=(9, 8, 7))
+    mod.update_country("GER", color=(9, 8, 7))
     mod.save()
 
     colors = (mod_root / "common/countries/colors.txt").read_text(encoding="utf-8")
@@ -99,7 +99,7 @@ def test_vanilla_color_override_fails_without_source_table(tmp_path: Path) -> No
     (game_root / "common/countries/colors.txt").unlink()
     mod = Mod(mod_root, hoi4_install=game_root)
     mod.get_country("GER")
-    assert mod.update_country("GER", color=(9, 8, 7))
+    mod.update_country("GER", color=(9, 8, 7))
 
     try:
         mod.save()

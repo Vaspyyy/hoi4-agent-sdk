@@ -515,8 +515,8 @@ def test_allow_branch_cleared_through_the_api_counts_before_save(tmp_path):
     mod = Mod(root)
     assert overlaps(mod) == ["F"]
     # Without its own allow_branch, B is hidden with A: B hangs on X, D on Z.
-    assert mod.update_focus("test_tree", "B", allow_branch="")
-    assert mod.update_focus("test_tree", "E", cost=7)
+    mod.update_focus("test_tree", "B", allow_branch="")
+    mod.update_focus("test_tree", "E", cost=7)
     assert overlaps(mod) == ["F"]
     mod.save()
     saved = (root / "common/national_focus/t.txt").read_text()

@@ -20,6 +20,7 @@ from ._effects import EffectsLayer
 from ._localisation import LocalisationLayer
 from ._shared import (
     _decision_category_definition_path,
+    _check_fields,
     _join_script_parts,
     _set_fields,
 )
@@ -192,16 +193,29 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             return self._decision_categories[category_id]
         return self.create_decision_category(category_id, **kwargs)
 
-    def update_decision_category(self, category_id: str, **kwargs) -> bool:
-        category = self._decision_categories.get(category_id)
-        if category is None:
-            return False
+    def update_decision_category(self, category_id: str, **kwargs) -> DecisionCategory:
+        """Patch fields of a decision category.
+
+        ``path=`` moves its decisions' block to another file and
+        ``category_path=`` its definition in ``common/decisions/categories``.
+
+        Returns:
+            The updated category.
+
+        Raises:
+            NotFoundError: No decision category has this id.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        category = self.get_decision_category(category_id)
         if "id" in kwargs:
             raise ValueError("Decision category IDs are immutable")
         if "paths" in kwargs:
             raise ValueError(
                 "Decision category paths are read from the files; pass path= to move it"
             )
+        _check_fields(
+            "update_decision_category", category, kwargs, extra={"path", "category_path"}
+        )
         old_definition_path = category.definition_path
         category_path = kwargs.pop("category_path", None)
         target = (
@@ -238,7 +252,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             self._dirty_decision_category_files.add(category.definition_path)
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(category_id)
-        return True
+        return category
 
     def create_decision(
         self,
@@ -377,15 +391,22 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             return self._decisions[decision_id]
         return self.create_decision(category_id, decision_id, **kwargs)
 
-    def update_decision(self, decision_id: str, **kwargs) -> bool:
-        decision = self._decisions.get(decision_id)
-        if decision is None:
-            return False
+    def update_decision(self, decision_id: str, **kwargs) -> Decision:
+        """Patch fields of a decision in place; its file and category stay.
+
+        Returns:
+            The updated decision.
+
+        Raises:
+            NotFoundError: No decision has this id.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        decision = self.get_decision(decision_id)
         if "id" in kwargs or "category" in kwargs:
             raise ValueError(
                 "Decision identity/category are immutable; recreate the decision to move it"
             )
-        kwargs.pop("path", None)
+        _check_fields("update_decision", decision, kwargs)
         if "targets" in kwargs:
             kwargs["targets"] = _decision_targets(kwargs["targets"])
         _set_fields(decision, kwargs)
@@ -400,7 +421,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         if category is not None:
             if category.path is not None:
                 self._dirty_decision_files.add(category.path)
-        return True
+        return decision
 
     def delete_decision(self, decision_id: str) -> None:
         """Stage the deletion of a decision; its category drops the reference.

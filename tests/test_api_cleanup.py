@@ -160,3 +160,170 @@ def test_deleting_game_content_raises_read_only(tmp_path, game) -> None:
     with pytest.raises(ReadOnlyError, match="game's own files"):
         mod.delete_loc("GAME_key")
     assert mod.preview() == ""
+
+
+# ── update_* ────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def full_mod(tmp_path) -> Mod:
+    """A mod with one object of every kind that has an update method."""
+    from hoi4 import (
+        BookmarkCountry,
+        Character,
+        CharacterInstance,
+        CountryLeaderRole,
+        EventOption,
+        Focus,
+    )
+
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    mod.create_bookmark("zz_bm", countries=[BookmarkCountry(tag="ABC")])
+    mod.create_character(
+        "ABC",
+        Character(
+            id="ABC_hero",
+            roles=[CountryLeaderRole(ideology="liberalism")],
+            instances=[CharacterInstance()],
+        ),
+    )
+    mod.create_decision_category("zz_cat")
+    mod.create_decision("zz_cat", "zz_dec")
+    mod.create_dynamic_modifier("zz_dm")
+    mod.create_event("zz.1", options=[EventOption(name="zz.1.a")])
+    mod.create_focus_tree("zz_tree", "ABC")
+    mod.add_focus("zz_tree", Focus(id="ABC_f"))
+    mod.create_idea("zz_idea")
+    mod.create_ideology("zz_ideo")
+    mod.create_on_action("on_startup", effect="add_political_power = 1")
+    mod.create_oob("ABC_1936", "ABC")
+    return mod
+
+
+def test_every_update_returns_the_object_it_changed(full_mod: Mod) -> None:
+    from hoi4 import (
+        Bookmark,
+        BookmarkCountry,
+        Character,
+        CharacterInstance,
+        CountryLeaderRole,
+        Country,
+        Decision,
+        DecisionCategory,
+        DynamicModifier,
+        Event,
+        EventOption,
+        Focus,
+        FocusTree,
+        Idea,
+        Ideology,
+        OnAction,
+        OrderOfBattle,
+    )
+
+    mod = full_mod
+    cases = [
+        (mod.update_bookmark("zz_bm", description="d"), Bookmark),
+        (mod.update_bookmark_country("zz_bm", "ABC", history="h"), BookmarkCountry),
+        (mod.update_character("ABC_hero", name="Hero"), Character),
+        (mod.update_character_instance("ABC_hero", 0, name="Young hero"), CharacterInstance),
+        (mod.update_character_role("ABC_hero", "country_leader", traits=[]), CountryLeaderRole),
+        (mod.update_country("ABC", stability=0.5), Country),
+        (mod.update_decision("zz_dec", cost=10), Decision),
+        (mod.update_decision_category("zz_cat", icon="generic"), DecisionCategory),
+        (mod.update_dynamic_modifier("zz_dm", icon="x"), DynamicModifier),
+        (mod.update_event("zz.1", title="zz.1.t"), Event),
+        (mod.update_event_option("zz.1", "zz.1.a", effect="add_stability = 0.1"), EventOption),
+        (mod.update_focus("zz_tree", "ABC_f", cost=5), Focus),
+        (mod.update_focus_tree("zz_tree", default=False), FocusTree),
+        (mod.update_idea("zz_idea", removal_cost=1), Idea),
+        (mod.update_ideology("zz_ideo", color=(1, 2, 3)), Ideology),
+        (mod.update_on_action("on_startup", effect="add_stability = 0.1"), OnAction),
+        (mod.update_oob("ABC_1936", templates=[]), OrderOfBattle),
+    ]
+    for result, expected in cases:
+        assert isinstance(result, expected), (result, expected)
+    assert mod.update_focus("zz_tree", "ABC_f", cost=7) is mod.get_focus("zz_tree", "ABC_f")
+
+
+def _missing_updates(mod: Mod) -> dict[str, object]:
+    return {
+        "update_bookmark": lambda: mod.update_bookmark("zz_missing", description="d"),
+        "update_bookmark_country": lambda: mod.update_bookmark_country("zz_bm", "GER", history="h"),
+        "update_bookmark_country occurrence": lambda: mod.update_bookmark_country(
+            "zz_bm", "ABC", occurrence=1, history="h"
+        ),
+        "update_character": lambda: mod.update_character("ABC_missing", name="x"),
+        "update_character_instance": lambda: mod.update_character_instance("ABC_hero", 4, name="x"),
+        "update_character_role": lambda: mod.update_character_role("ABC_hero", "advisor", cost=1),
+        "update_character_role occurrence": lambda: mod.update_character_role(
+            "ABC_hero", "country_leader", occurrence=2, traits=[]
+        ),
+        "update_country": lambda: mod.update_country("ZZX", stability=0.5),
+        "update_decision": lambda: mod.update_decision("zz_missing", cost=1),
+        "update_decision_category": lambda: mod.update_decision_category("zz_missing", icon="x"),
+        "update_dynamic_modifier": lambda: mod.update_dynamic_modifier("zz_missing", icon="x"),
+        "update_event": lambda: mod.update_event("zz.9", title="t"),
+        "update_event_option index": lambda: mod.update_event_option("zz.1", 5, effect="x = 1"),
+        "update_event_option name": lambda: mod.update_event_option("zz.1", "zz.1.b", effect="x = 1"),
+        "update_focus": lambda: mod.update_focus("zz_tree", "ABC_missing", cost=1),
+        "update_focus tree": lambda: mod.update_focus("zz_missing", "ABC_f", cost=1),
+        "update_focus_tree": lambda: mod.update_focus_tree("zz_missing", default=False),
+        "update_idea": lambda: mod.update_idea("zz_missing", removal_cost=1),
+        "update_ideology": lambda: mod.update_ideology("zz_missing", color=(1, 2, 3)),
+        "update_on_action": lambda: mod.update_on_action("on_zz_missing", effect="x = 1"),
+        "update_oob": lambda: mod.update_oob("ABC_missing", templates=[]),
+    }
+
+
+@pytest.mark.parametrize("case", sorted(_missing_updates(Mod.__new__(Mod))))
+def test_every_update_raises_not_found_for_a_missing_target_or_child(full_mod: Mod, case: str) -> None:
+    before = full_mod.preview()
+    with pytest.raises(NotFoundError):
+        _missing_updates(full_mod)[case]()
+    assert full_mod.preview() == before
+
+
+def test_an_unknown_field_names_the_method_and_changes_nothing(full_mod: Mod) -> None:
+    mod = full_mod
+    before = mod.preview()
+    with pytest.raises(TypeError, match=r"update_idea\(\): Unknown fields: \['zz_bogus'\]\. Valid: \["):
+        mod.update_idea("zz_idea", modifier={"stability_factor": 0.1}, zz_bogus=1)
+    with pytest.raises(TypeError, match=r"update_character\(\): Unknown fields: .* Valid: \['name', 'portraits'\]"):
+        mod.update_character("ABC_hero", zz_bogus=1)
+    with pytest.raises(TypeError, match=r"update_character_instance\(\): .*Valid: \['allowed', 'name', 'portraits'\]"):
+        mod.update_character_instance("ABC_hero", 0, zz_bogus=1)
+    with pytest.raises(TypeError, match=r"update_country\(\): Unknown fields: \['leader_zz'\]"):
+        mod.update_country("ABC", stability=0.2, leader_zz=1)
+    with pytest.raises(TypeError, match=r"update_decision\(\): Unknown fields: \['path'\]"):
+        mod.update_decision("zz_dec", path="common/decisions/other.txt")
+    assert mod.get_idea("zz_idea").modifier == {}
+    assert mod.preview() == before
+
+
+@pytest.mark.parametrize(
+    ("method", "call"),
+    [
+        ("update_event_option", lambda mod: mod.update_event_option("zz.1", 0, _source_body="x")),
+        ("update_bookmark", lambda mod: mod.update_bookmark("zz_bm", touched=True)),
+        ("update_on_action", lambda mod: mod.update_on_action("on_startup", touched=True)),
+        ("update_focus", lambda mod: mod.update_focus("zz_tree", "ABC_f", touched=True)),
+        ("update_ideology", lambda mod: mod.update_ideology("zz_ideo", is_vanilla=True)),
+    ],
+)
+def test_bookkeeping_fields_are_not_accepted(full_mod: Mod, method: str, call) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        call(full_mod)
+
+
+def test_bookkeeping_fields_are_not_listed_as_valid(full_mod: Mod) -> None:
+    with pytest.raises(TypeError) as caught:
+        full_mod.update_event_option("zz.1", 0, zz_bogus=1)
+    assert "_source_body" not in str(caught.value)
+    with pytest.raises(TypeError) as caught:
+        full_mod.update_bookmark("zz_bm", zz_bogus=1)
+    assert "source_index" not in str(caught.value)
+    with pytest.raises(TypeError) as caught:
+        full_mod.update_decision_category("zz_cat", zz_bogus=1)
+    assert "'paths'" not in str(caught.value)

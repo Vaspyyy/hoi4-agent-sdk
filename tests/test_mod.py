@@ -475,14 +475,19 @@ class TestPass1Fixes:
         mod.save()
         assert mod.preview() == ""
 
-    def test_update_nonexistent_country_returns_false(self, tmp_mod):
-        assert tmp_mod.mod.update_country("NOPE", name="X") is False
+    def test_update_nonexistent_country_raises(self, tmp_mod):
+        with pytest.raises(ValueError, match="Invalid country tag"):
+            tmp_mod.mod.update_country("NOPE", name="X")
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.update_country("NOP", name="X")
 
-    def test_update_nonexistent_event_returns_false(self, tmp_mod):
-        assert tmp_mod.mod.update_event("no.event", title="X") is False
+    def test_update_nonexistent_event_raises(self, tmp_mod):
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.update_event("no.event", title="X")
 
-    def test_update_nonexistent_idea_returns_false(self, tmp_mod):
-        assert tmp_mod.mod.update_idea("no_idea", icon="X") is False
+    def test_update_nonexistent_idea_raises(self, tmp_mod):
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.update_idea("no_idea", icon="X")
 
     def test_delete_nonexistent_raises(self, tmp_mod):
         mod = tmp_mod.mod
@@ -852,7 +857,7 @@ class TestAgentFacingApis:
 
     def test_update_focus_tree(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.update_focus_tree("german_focus", continuous_focus_position="x = 0 y = 1000")
+        mod.update_focus_tree("german_focus", continuous_focus_position="x = 0 y = 1000")
         assert mod.get_focus_tree("german_focus").continuous_focus_position == "x = 0 y = 1000"
 
     def test_ensure_and_upsert_helpers_are_idempotent(self, tmp_mod):
@@ -1866,11 +1871,12 @@ class TestModEvents:
             ],
         )
 
-        assert mod.update_event_option("sic.1", 0, effect=Mod.effect_transfer_state(115, "SCL"))
-        assert mod.update_event_option(
+        mod.update_event_option("sic.1", 0, effect=Mod.effect_transfer_state(115, "SCL"))
+        mod.update_event_option(
             "sic.1", "sic.1.b", trigger="{ has_war = no }", effect="add_stability = 0.05"
         )
-        assert mod.update_event_option("sic.1", "missing", effect="noop = yes") is False
+        with pytest.raises(NotFoundError):
+            mod.update_event_option("sic.1", "missing", effect="noop = yes")
         event = mod.get_event("sic.1")
         assert event.options[0].effect == "SCL = { transfer_state = 115 }"
         assert event.options[1].trigger == "has_war = no"
@@ -2366,7 +2372,7 @@ def test_save_rejects_external_changes_until_reload(tmp_path: Path) -> None:
     source = "ideas = { country = { custom_spirit = { desc = OLD_DESC } } }\n"
     path.write_text(source, encoding="utf-8")
     mod = Mod(tmp_path)
-    assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    mod.update_idea("custom_spirit", desc="custom_spirit_desc")
 
     external = source.rstrip() + "\n# legacy writer changed this file\n"
     path.write_text(external, encoding="utf-8")
@@ -2378,7 +2384,7 @@ def test_save_rejects_external_changes_until_reload(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == external
 
     mod.discard()
-    assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    mod.update_idea("custom_spirit", desc="custom_spirit_desc")
     mod.save()
     assert path.read_text(encoding="utf-8") == external.replace(
         "{ desc = OLD_DESC }", "{}"

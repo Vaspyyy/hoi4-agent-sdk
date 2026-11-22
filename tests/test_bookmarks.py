@@ -328,7 +328,7 @@ def test_country_deletion_preview_save_reload(
         "BOOKMARK_NAME", removed.tag, occurrence=1 if case == "second_variant" else 0,
     )
     if edit_bookmark:
-        assert mod.update_bookmark("BOOKMARK_NAME", description="UPDATED_DESC")
+        mod.update_bookmark("BOOKMARK_NAME", description="UPDATED_DESC")
     preview = mod.preview()
     assert "common/bookmarks/test.txt" in preview
     assert any(

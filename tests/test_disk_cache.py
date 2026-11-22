@@ -918,7 +918,7 @@ def test_shared_focuses_of_other_files_with_lazy_sections(
         mod.assert_no_visual_overlap("t_tree")
     assert overlaps(mod) == ["H2"]
     # The focus section reloads after an edit and a discard.
-    assert mod.update_focus("t_tree", "H1", cost=2)
+    mod.update_focus("t_tree", "H1", cost=2)
     mod.discard()
     assert overlaps(mod) == ["H2"]
     with pytest.raises(ValueError, match="H2"):

@@ -101,6 +101,18 @@ The older error classes (`ParseError`, `ExternalModificationError`, the image
 and Gemini errors, `OperationCancelled`, `MapRenderCancelled`) keep their names
 and derive from `Hoi4Error` too.
 
+### Return values and field checks
+
+Every `update_x(id, **fields)` returns the object it changed and raises
+`NotFoundError` when the target, or a child it names (a focus in a tree, an
+option of an event, an entry of a bookmark, a role or instance of a
+character), does not exist. An unknown field name raises `TypeError` that
+names the method and lists the valid fields, before anything changes.
+Bookkeeping fields (`touched`, `touched_fields`, `source_index`, `paths`,
+`is_vanilla` and names starting with `_`) are not accepted. Every
+`delete_x(id)` returns `None`, raises `NotFoundError` for a missing target and
+`ReadOnlyError` for game content that has to be overridden instead.
+
 ## Countries
 
 Country data spans tag registration, definition and `colors.txt` files,
@@ -116,7 +128,7 @@ history, characters, and localization.
 | `suggest_tags(name: str, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
 | `create_country(tag, name, adjective="", color=(128,128,128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. Raises for existing mod or vanilla tags unless explicitly allowed. |
-| `update_country(tag: str, **kwargs) -> bool` | `bool` | Update modeled country fields, including `color` and `color_ui`. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
+| `update_country(tag: str, **kwargs) -> Country` | `Country` | Update modeled country fields, including `color` and `color_ui`. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
 | `delete_country(tag: str) -> None` | `None` | Stage deletion of a mod-owned country and its generated localization. Raises `NotFoundError` for an unknown tag and `ReadOnlyError` for a game or base-mod country (that needs an explicit total-conversion strategy). |
 
 ### Example
@@ -174,13 +186,13 @@ ordering, and untouched variants.
 | `list_characters(tag=None, include_vanilla=True) -> list[str]` | List character IDs, optionally limited to one country |
 | `get_character(character_id, include_vanilla=True) -> Character` | Load a mod or vanilla character |
 | `create_character(tag, character, recruit=True, overwrite=False, path=None) -> Character` | Define a character, create localization, and normally add `recruit_character` to country history. `recruit=False` is for source-managed recruitment, never a runtime event effect. |
-| `update_character(character_id, **kwargs) -> bool` | Patch top-level `name` or `portraits` |
+| `update_character(character_id, **kwargs) -> Character` | Patch top-level `name` or `portraits` |
 | `delete_character(character_id, remove_recruitment=True) -> None` | Delete a loaded character and its generated localization/recruitment; raises `NotFoundError` when none is loaded |
 | `add_character_instance(character_id, instance)` | Append a DLC/source variant |
-| `update_character_instance(character_id, occurrence, **kwargs)` | Patch one selected repeated instance |
+| `update_character_instance(character_id, occurrence, **kwargs) -> CharacterInstance` | Patch one selected repeated instance |
 | `delete_character_instance(character_id, occurrence) -> None` | Delete one selected repeated instance; raises `NotFoundError` for a missing character or instance |
 | `add_character_role(character_id, role, instance_occurrence=None)` | Add a direct or instance-scoped role |
-| `update_character_role(character_id, role_type, occurrence=None, instance_occurrence=None, **kwargs)` | Patch one role; repeated matches require `occurrence` |
+| `update_character_role(character_id, role_type, occurrence=None, instance_occurrence=None, **kwargs) -> CharacterRole` | Patch one role; repeated matches require `occurrence` |
 | `remove_character_role(character_id, role_type, occurrence=None, instance_occurrence=None)` | Remove one role; ambiguous removal raises |
 
 `update_character()` rejects `country_tag` with `TypeError`, even when assigning
@@ -207,7 +219,7 @@ large portrait used elsewhere.
 | `list_oobs(include_vanilla=False) -> list[str]` | List known `history/units` stems |
 | `get_oob(name, include_vanilla=True) -> OrderOfBattle` | Load a mod or vanilla OOB |
 | `create_oob(name, country_tag, templates=(), divisions=(), fleets=(), air_wings=(), kind="auto", required_dlc=(), excluded_dlc=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write one land, naval, or air OOB and assign it with the correct country-history effect |
-| `update_oob(name, templates=None, divisions=None, fleets=None, air_wings=None, country_tag=None, kind=None, required_dlc=None, excluded_dlc=None, assign=False) -> bool` | Replace selected modeled collections and assignment metadata while preserving neighboring production, comments, and unknown fields |
+| `update_oob(name, templates=None, divisions=None, fleets=None, air_wings=None, country_tag=None, kind=None, required_dlc=None, excluded_dlc=None, assign=False) -> OrderOfBattle` | Replace selected modeled collections and assignment metadata while preserving neighboring production, comments, and unknown fields |
 | `delete_oob(name, unassign=True) -> None` | Delete a mod-owned OOB and optionally clear country references; raises `NotFoundError` or, for a game OOB, `ReadOnlyError` |
 | `assign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="")` | Assign an existing OOB through `set_oob`, `set_naval_oob`, or `set_air_oob`, optionally under DLC conditions or a dated history block |
 | `unassign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="") -> bool` | Remove one exact dated/conditioned assignment without re-rendering surrounding history |
@@ -483,8 +495,8 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 | `get_event(event_id: str) -> Event` | `Event` | Raises `NotFoundError` with close matches if not found |
 | `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer the namespace: the text before the last dot. Conditional titles and descriptions are written before the plain fallback. |
 | `ensure_event(event_id: str, **kwargs) -> Event` | `Event` | Idempotent create-or-update wrapper |
-| `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
-| `update_event_option(event_id: str, option: int \| str, **kwargs) -> bool` | `bool` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |
+| `update_event(event_id: str, **kwargs) -> Event` | `Event` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
+| `update_event_option(event_id: str, option: int \| str, **kwargs) -> EventOption` | `EventOption` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |
 | `delete_event(event_id: str) -> None` | `None` | Remove event and its namespace mapping; raises `NotFoundError` |
 | `set_event_namespace(event_id: str, namespace: str) -> None` | `None` | Set which file this event writes to (`{namespace}_events.txt`) |
 | `add_event_option(event_id: str, option: EventOption) -> bool` | `bool` | Append an option to an event |
@@ -572,7 +584,7 @@ once in one file. The SDK retains every occurrence.
 | `get_on_action_occurrences(action_id: str) -> tuple[OnAction, ...]` | Occurrences | Returns every compositional occurrence |
 | `create_on_action(action_id, *, effect="", events=None, random_events=None, path=None, overwrite=False) -> OnAction` | `OnAction` | Creates an occurrence. The same hook may be extended in another file; an existing occurrence in the target file requires `overwrite=True`. |
 | `ensure_on_action(action_id, **kwargs) -> OnAction` | `OnAction` | Ensures the only occurrence or the one identified by `path`. |
-| `update_on_action(action_id, *, occurrence=None, source_path=None, **kwargs) -> bool` | `bool` | Patches one occurrence; ambiguous calls must provide an occurrence or source file. |
+| `update_on_action(action_id, *, occurrence=None, source_path=None, **kwargs) -> OnAction` | `OnAction` | Patches one occurrence; ambiguous calls must provide an occurrence or source file. |
 | `delete_on_action(action_id, *, occurrence=None, source_path=None) -> None` | `None` | Deletes one occurrence; ambiguous calls must provide an occurrence or source file. Raises `NotFoundError` for a missing hook or occurrence. |
 
 ### Example
@@ -650,8 +662,8 @@ patches those files separately.
 | `create_mission(category_id, decision_id, *, days_mission_timeout, activation="", available="", complete_effect="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a mission: it starts when `activation` holds, completes with `complete_effect` once `available` holds, otherwise runs `timeout_effect` after the timeout. Rejects a positive `cost`/`custom_cost_trigger` and non-positive timeouts. |
 | `create_targeted_decision(category_id, decision_id, *, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", loc_name="", loc_desc="", **kwargs) -> Decision` | `Decision` | Create a decision with one instance per target country or state. Requires at least one of `target_trigger`, `targets`, `target_array`, or `state_target=True`. |
 | `create_recovery_decision(category_id, decision_id, effect, hidden=False, ...) -> Decision` | `Decision` | Create a visible or hidden repair/migration decision for already-started saves |
-| `update_decision_category(category_id: str, **kwargs) -> bool` | `bool` | Update a decision category |
-| `update_decision(decision_id: str, **kwargs) -> bool` | `bool` | Update any modeled decision field, including the mission/targeted/general fields; edits patch the source in place |
+| `update_decision_category(category_id: str, **kwargs) -> DecisionCategory` | `DecisionCategory` | Update a decision category |
+| `update_decision(decision_id: str, **kwargs) -> Decision` | `Decision` | Update any modeled decision field, including the mission/targeted/general fields; edits patch the source in place |
 | `delete_decision(decision_id: str) -> None` | `None` | Remove a decision; raises `NotFoundError` |
 
 ### Example
@@ -766,7 +778,7 @@ SDK output as an error and removes it when the idea is edited.
 | `get_idea(idea_id: str) -> Idea` | `Idea` | Raises `NotFoundError` if not found |
 | `create_idea(idea_id, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, *, desc="", removal_cost=None) -> Idea` | `Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
 | `ensure_idea(idea_id, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
-| `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> bool` | `bool` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |
+| `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |
 | `delete_idea(idea_id: str) -> None` | `None` | Stage the deletion; raises `NotFoundError` |
 | `suggest_idea_icons(query: str, count=5) -> list[str]` | `list[str]` | Rank loaded `GFX_idea_` sprites and return canonical bare stems. Prefixed queries remain accepted. |
 
@@ -846,13 +858,13 @@ static checks do not establish the layout displayed by the game.
 | `get_focus_tree(tree_id: str) -> FocusTree` | `FocusTree` | Raises `NotFoundError` if not found |
 | `create_focus_tree(tree_id: str, country_tag: str, overwrite=False) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
 | `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields; `country_tag` is used only at creation |
-| `update_focus_tree(tree_id: str, **kwargs) -> bool` | `bool` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
+| `update_focus_tree(tree_id: str, **kwargs) -> FocusTree` | `FocusTree` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id: str) -> None` | `None` | Remove tree; raises `NotFoundError` |
 | `add_focus(tree_id: str, focus: Focus) -> None` | `None` | Append focus to tree |
 | `upsert_focus(tree_id: str, focus: Focus) -> Focus` | `Focus` | Add a new focus or replace modeled fields on an existing focus |
 | `remove_focus(tree_id: str, focus_id: str) -> bool` | `bool` | Remove focus by ID |
 | `get_focus(tree_id: str, focus_id: str) -> Focus \| None` | `Focus \| None` | Find focus in tree |
-| `update_focus(tree_id: str, focus_id: str, **kwargs) -> bool` | `bool` | Update any Focus field |
+| `update_focus(tree_id: str, focus_id: str, **kwargs) -> Focus` | `Focus` | Update any Focus field |
 | `focus_tree_bounds(tree_id: str) -> dict[str, int]` | Bounds dict | `min_x`, `max_x`, `min_y`, `max_y`, `width`, `height` |
 | `place_continuous_focus_below_tree(tree_id, padding=400, x=50) -> str` | Position body | Sets `continuous_focus_position` below the lowest focus row |
 | `assert_no_visual_overlap(tree_id, min_continuous_padding=100) -> bool` | `bool` | Raises `ValueError` on duplicate focus positions or too-high continuous focus |
@@ -869,7 +881,7 @@ including newly created unsaved trees and same-tag assignments. Country selector
 reassignment is unsupported: remove `country_tag` from update calls and set it
 when creating a new tree with `create_focus_tree()` instead. Rejection happens
 before any fields are changed, including in mixed-field calls, and preserves
-pending edits and localization. Calls for missing tree IDs still return `False`.
+pending edits and localization. A missing tree raises `NotFoundError`.
 Loaded selectors, including weighted or complex conditions, are not rewritten
 from this metadata field.
 
@@ -1393,7 +1405,7 @@ atomic-save lifecycle as the original content model:
 | `list_ideologies(*, include_vanilla=True) -> list[str]` | Ideology IDs | Lists mod ideologies and, by default, configured vanilla ideologies. |
 | `get_ideology(ideology_id, *, include_vanilla=True) -> Ideology` | `Ideology` | Gets a mod or vanilla ideology definition. |
 | `create_ideology(ideology_id, *, color=(128,128,128), types=None, rules=None, modifiers=None, hidden_modifiers=None, faction_modifiers=None, dynamic_faction_names=None, ai_behavior="", can_host_government_in_exile=False, can_collaborate=False, effects=None, path=None, overwrite=False) -> Ideology` | `Ideology` | Creates a mod ideology definition. |
-| `update_ideology(ideology_id, **kwargs) -> bool` | `bool` | Source-patches a mod ideology or materializes a vanilla definition as a mod override. |
+| `update_ideology(ideology_id, **kwargs) -> Ideology` | `Ideology` | Source-patches a mod ideology or materializes a vanilla definition as a mod override. |
 | `delete_ideology(ideology_id) -> None` | `None` | Stages deletion of a mod ideology; raises `NotFoundError`, or `ReadOnlyError` for a game ideology. |
 
 Creating or updating an ideology at a missing writable path (including the
@@ -1411,7 +1423,7 @@ hidden by the saved override.
 | `list_dynamic_modifiers() -> list[str]` | Modifier IDs | Lists loaded dynamic modifiers. |
 | `get_dynamic_modifier(modifier_id) -> DynamicModifier` | Modifier | Gets one dynamic modifier. |
 | `create_dynamic_modifier(modifier_id, *, icon="", enable="", remove_trigger="", attacker_modifier=None, modifier=None, path=None, overwrite=False) -> DynamicModifier` | Modifier | Creates a native top-level entry under `common/dynamic_modifiers`. |
-| `update_dynamic_modifier(modifier_id, **kwargs) -> bool` | `bool` | Source-patches modeled fields or the direct modifier mapping. |
+| `update_dynamic_modifier(modifier_id, **kwargs) -> DynamicModifier` | `DynamicModifier` | Source-patches modeled fields or the direct modifier mapping. |
 | `delete_dynamic_modifier(modifier_id) -> None` | `None` | Stages deletion while preserving unrelated file content; raises `NotFoundError`. |
 | `Mod.effect_add_dynamic_modifier(modifier_id, days=None, scope=None)` | `str` | Builds `add_dynamic_modifier`; optionally timed or scoped. |
 | `Mod.effect_remove_dynamic_modifier(modifier_id, scope=None)` | `str` | Builds `remove_dynamic_modifier`; optionally scoped. |
@@ -1430,9 +1442,9 @@ sibling definitions. All non-reserved scalar assignments belong to the modeled
 | `list_bookmarks() -> list[str]` | Bookmark names | Lists loaded bookmarks in source order. |
 | `get_bookmark(name) -> Bookmark` | `Bookmark` | Gets one bookmark by name. |
 | `create_bookmark(name, *, description="", date="1936.1.1.12", picture="GFX_select_date_1936", default_country="", default=None, filters="", effect="randomize_weather = 22345", countries=None, path=None, overwrite=False) -> Bookmark` | `Bookmark` | Creates a bookmark; its default effect randomizes weather. |
-| `update_bookmark(name, **kwargs) -> bool` | `bool` | Source-patches modeled bookmark fields. |
+| `update_bookmark(name, **kwargs) -> Bookmark` | `Bookmark` | Source-patches modeled bookmark fields. |
 | `add_bookmark_country(bookmark_name, country) -> None` | `None` | Appends one ordered country entry. |
-| `update_bookmark_country(bookmark_name, tag, *, occurrence=0, **kwargs) -> bool` | `bool` | Patches one repeated tag occurrence using a zero-based index. |
+| `update_bookmark_country(bookmark_name, tag, *, occurrence=0, **kwargs) -> BookmarkCountry` | `BookmarkCountry` | Patches one repeated tag occurrence using a zero-based index. |
 | `delete_bookmark_country(bookmark_name, tag, *, occurrence=0) -> None` | `None` | Deletes one repeated tag occurrence using a zero-based index; raises `NotFoundError` for a missing bookmark or entry. |
 | `delete_bookmark(name) -> None` | `None` | Stages deletion of a bookmark; raises `NotFoundError`. |
 | `set_bookmark_date_range(start_date, end_date, *, path="common/defines/zz_bookmark_dates.lua") -> Path` | `Path` | Stages `START_DATE` and `END_DATE` defines in the normal transaction. |

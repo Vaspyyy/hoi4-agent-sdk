@@ -53,7 +53,7 @@ def test_weighted_on_action_effect_edit_preview_save_reload(
         mod.load_inherited_content(RELATIVE)
     original_list = list(mod.get_on_action("on_daily").random_events)
     assert mod.preview() == ""
-    assert mod.update_on_action("on_daily", effect="add_stability = 0.20")
+    mod.update_on_action("on_daily", effect="add_stability = 0.20")
 
     preview = mod.preview()
     assert "add_stability = 0.20" in preview

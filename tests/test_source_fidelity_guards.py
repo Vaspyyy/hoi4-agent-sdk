@@ -36,7 +36,7 @@ def test_duplicate_ideology_cannot_be_lost_by_editing_same_file(tmp_path: Path) 
     second_path.write_text(second_source, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_ideology("editable", color=(9, 8, 7))
+    mod.update_ideology("editable", color=(9, 8, 7))
 
     _assert_guarded_rewrite(mod, second_path, second_source)
 
@@ -57,7 +57,7 @@ editable = { stability_factor = 0.3 }
     second_path.write_text(second_source, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_dynamic_modifier("editable", modifier={"stability_factor": 0.4})
+    mod.update_dynamic_modifier("editable", modifier={"stability_factor": 0.4})
 
     _assert_guarded_rewrite(mod, second_path, second_source)
 
@@ -78,7 +78,7 @@ def test_duplicate_bookmark_cannot_be_lost_by_editing_same_file(tmp_path: Path) 
     second_path.write_text(second_source, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_bookmark("EDITABLE_START", picture="GFX_updated")
+    mod.update_bookmark("EDITABLE_START", picture="GFX_updated")
 
     _assert_guarded_rewrite(mod, second_path, second_source)
 
@@ -97,7 +97,7 @@ country_event = { id = editable.1 picture = GFX_old option = { name = editable.1
     second_path.write_text(second_source, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_event("editable.1", picture="GFX_new")
+    mod.update_event("editable.1", picture="GFX_new")
 
     _assert_guarded_rewrite(mod, second_path, second_source)
 
@@ -118,7 +118,7 @@ def test_duplicate_decision_cannot_be_lost_by_editing_same_file(tmp_path: Path) 
     second_path.write_text(second_source, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_decision("editable_decision", cost=4)
+    mod.update_decision("editable_decision", cost=4)
 
     _assert_guarded_rewrite(mod, second_path, second_source)
 
@@ -141,7 +141,7 @@ shared_category = { second_decision = { cost = 2 } }
     assert not any(
         issue.code == "duplicate_decision_category_id" for issue in mod.validate()
     )
-    assert mod.update_decision("first_decision", cost=3)
+    mod.update_decision("first_decision", cost=3)
     mod.save()
 
     assert path.read_text(encoding="utf-8") == source.replace("cost = 1", "cost = 3")
@@ -163,7 +163,7 @@ def test_duplicate_idea_cannot_be_lost_by_editing_same_file(tmp_path: Path) -> N
     second_path.write_text(second_source, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_idea("editable_idea", modifier={"stability_factor": 0.4})
+    mod.update_idea("editable_idea", modifier={"stability_factor": 0.4})
 
     _assert_guarded_rewrite(mod, second_path, second_source)
 
@@ -181,7 +181,7 @@ def test_duplicate_focus_cannot_be_lost_by_editing_same_file(tmp_path: Path) -> 
     focus_path.write_text(source, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_focus("duplicate_tree", "editable_focus", x=3)
+    mod.update_focus("duplicate_tree", "editable_focus", x=3)
 
     _assert_guarded_rewrite(mod, focus_path, source)
 
@@ -212,7 +212,7 @@ def test_compositional_on_actions_across_files_are_retained_and_selectable(
     with pytest.raises(ValueError, match="compositional occurrences"):
         mod.update_on_action("shared_action", effect="ambiguous = yes")
 
-    assert mod.update_on_action("shared_action", occurrence=1, effect="second = changed")
+    mod.update_on_action("shared_action", occurrence=1, effect="second = changed")
     mod.save(require_changes=True)
 
     assert first_path.read_text(encoding="utf-8") == first_source
@@ -237,7 +237,7 @@ def test_repeated_on_action_in_one_file_edits_and_deletes_exact_occurrence(
     mod = Mod(tmp_path, strict_loading=True)
 
     assert len(mod.get_on_action_occurrences("on_startup")) == 2
-    assert mod.update_on_action("on_startup", occurrence=1, effect="second = changed")
+    mod.update_on_action("on_startup", occurrence=1, effect="second = changed")
     mod.save(require_changes=True)
     edited = source.replace("second = yes", "second = changed")
     assert path.read_text(encoding="utf-8") == edited

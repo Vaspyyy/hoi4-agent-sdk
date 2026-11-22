@@ -17,6 +17,7 @@ from ..types import (
 from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
 
@@ -215,15 +216,29 @@ class OnActionsLayer(CoreLayer):
         occurrence: int | None = None,
         source_path: str | Path | None = None,
         **kwargs,
-    ) -> bool:
-        if action_id not in self._on_action_occurrences:
-            return False
+    ) -> OnAction:
+        """Patch one occurrence of an on-action hook.
+
+        When the hook has several occurrences, pass ``occurrence=`` or
+        ``source_path=`` to choose one.
+
+        Returns:
+            The updated occurrence.
+
+        Raises:
+            NotFoundError: The hook, or the chosen occurrence, does not exist.
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: The hook has several occurrences and none was chosen.
+        """
         _, action = self._select_on_action_occurrence(
             action_id,
             occurrence=occurrence,
             source_path=source_path,
             require_unique=True,
         )
+        if "id" in kwargs:
+            raise ValueError("On-action IDs are immutable; create a new on-action instead")
+        _check_fields("update_on_action", action, kwargs, allow_path=True)
         old_path = action.path
         if "effect" in kwargs and isinstance(kwargs["effect"], str):
             kwargs["effect"] = normalize_block_body(kwargs["effect"])
@@ -240,7 +255,7 @@ class OnActionsLayer(CoreLayer):
         self._dirty_on_action_files.add(
             action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
         )
-        return True
+        return action
 
     def delete_on_action(
         self,

@@ -139,7 +139,7 @@ def test_decision_edit_leaves_category_presentation_where_it_is(tmp_path):
     path.write_text(LEGACY_COMBINED, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_decision("legacy_decision", cost=10)
+    mod.update_decision("legacy_decision", cost=10)
     result = mod.save(require_changes=True)
 
     # One field changed, so one value changes: nothing is moved between files.
@@ -154,7 +154,7 @@ def test_editing_the_category_moves_its_presentation_to_the_category_file(tmp_pa
     path.write_text(LEGACY_COMBINED, encoding="utf-8")
     mod = Mod(tmp_path)
 
-    assert mod.update_decision_category("legacy_category", icon="generic_research")
+    mod.update_decision_category("legacy_category", icon="generic_research")
     mod.save(require_changes=True)
 
     decision_text = path.read_text(encoding="utf-8")
@@ -215,7 +215,7 @@ def test_cost_edit_keeps_nested_metadata_in_decisions(tmp_path, metadata_source)
     category = mod.get_decision_category("test_category")
     sibling_before = mod.get_decision("second").raw_block
     assert (category.icon, category.allowed, category.visible) == expected
-    assert mod.update_decision("first", cost=15)
+    mod.update_decision("first", cost=15)
 
     preview = mod.preview()
     assert "+        cost = 15" in preview

@@ -20,10 +20,10 @@ class ExternalModificationError(Hoi4Error, RuntimeError):
     """A source file changed on disk after this ``Mod`` instance loaded it."""
 
 
-def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False) -> None:
-    from ..types import _ensure_nested
-
-    internal = {
+#: Model fields that identify an object or record where it came from. No
+#: ``update_x`` accepts them.
+_INTERNAL_FIELDS = frozenset(
+    {
         "id",
         "tag",
         "raw_block",
@@ -40,15 +40,66 @@ def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False
         "touched_fields",
         "modifier_merge",
         "category_raw_block",
+        "source_index",
+        "paths",
+        "is_vanilla",
     }
-    if not allow_path:
-        internal.add("path")
+)
+
+
+def _settable_fields(
+    obj: object, *, allow_path: bool = False, exclude: Iterable[str] = ()
+) -> set[str]:
+    """The public fields of a model that ``update_x(**fields)`` may set."""
     if not dataclasses.is_dataclass(obj):
         raise TypeError(f"Expected dataclass instance, got {type(obj).__name__}")
-    valid = {f.name for f in dataclasses.fields(cast(Any, obj))} - internal
-    unknown = set(kwargs) - valid
+    internal = set(_INTERNAL_FIELDS) | set(exclude)
+    if not allow_path:
+        internal.add("path")
+    return {
+        field.name
+        for field in dataclasses.fields(cast(Any, obj))
+        if not field.name.startswith("_")
+    } - internal
+
+
+def _check_fields(
+    method: str,
+    obj: object,
+    kwargs: dict[str, Any],
+    *,
+    allow_path: bool = False,
+    exclude: Iterable[str] = (),
+    extra: Iterable[str] = (),
+) -> None:
+    """Raise ``TypeError`` naming ``method`` and the valid fields for an unknown name.
+
+    Call it before anything changes, so a typo leaves the mod untouched.
+    """
+    valid = _settable_fields(obj, allow_path=allow_path, exclude=exclude) | set(extra)
+    _check_field_names(method, kwargs, valid)
+
+
+def _check_field_names(method: str, kwargs: dict[str, Any], valid: Iterable[str]) -> None:
+    """Raise ``TypeError`` naming ``method`` and ``valid`` for a name not in ``valid``."""
+    allowed = set(valid)
+    unknown = set(kwargs) - allowed
     if unknown:
-        raise TypeError(f"Unknown fields: {sorted(unknown)}. Valid: {sorted(valid)}")
+        raise TypeError(
+            f"{method}(): Unknown fields: {sorted(unknown)}. Valid: {sorted(allowed)}"
+        )
+
+
+def _set_fields(
+    obj: object,
+    kwargs: dict[str, Any],
+    *,
+    allow_path: bool = False,
+    method: str = "update",
+) -> None:
+    from ..types import _ensure_nested
+
+    _check_fields(method, obj, kwargs, allow_path=allow_path)
     for key, value in kwargs.items():
         if key in ("prerequisites", "mutually_exclusive") and isinstance(value, list):
             value = _ensure_nested(value)

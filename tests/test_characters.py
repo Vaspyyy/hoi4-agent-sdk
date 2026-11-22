@@ -165,7 +165,7 @@ def test_country_tag_update_rejected_without_disturbing_pending_work(
             "ABC", Character(id="ABC_leader", name="Original Leader"), recruit=False,
         )
     elif source == "loaded_edited":
-        assert mod.update_character("ABC_leader", name="Staged Leader")
+        mod.update_character("ABC_leader", name="Staged Leader")
     character = mod.get_character("ABC_leader")
     original_name = character.name
     mod.set_loc("PENDING_WORK", "Keep this staged localization")

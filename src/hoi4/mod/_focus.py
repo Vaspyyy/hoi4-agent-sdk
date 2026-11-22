@@ -22,6 +22,7 @@ from ..errors import not_found
 from ._context import ContextLayer
 from ._effects import EffectsLayer
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
 
@@ -100,11 +101,17 @@ class FocusLayer(ContextLayer, EffectsLayer):
         self._dirty.add("focus")
         self._dirty_focus_trees.discard(tree_id)
 
-    def update_focus_tree(self, tree_id: str, **kwargs) -> bool:
-        """Patch tree-level fields; country selector reassignment is unsupported."""
-        tree = self._focus_trees.get(tree_id)
-        if tree is None:
-            return False
+    def update_focus_tree(self, tree_id: str, **kwargs) -> FocusTree:
+        """Patch tree-level fields; country selector reassignment is unsupported.
+
+        Returns:
+            The updated tree.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        tree = self.get_focus_tree(tree_id)
         if "country_tag" in kwargs:
             raise TypeError(
                 "update_focus_tree() cannot update country_tag, even to the existing tag. "
@@ -120,6 +127,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 f"'{tree_id}' holds the top-level focus blocks of a file, not a focus_tree; "
                 f"it has no {', '.join(sorted(_TREE_ONLY_FIELDS & set(kwargs)))}"
             )
+        _check_fields("update_focus_tree", tree, kwargs, allow_path=True)
         old_path = tree.path
         if "path" in kwargs:
             kwargs["path"] = resolve_mod_output_path(self.mod_root, kwargs["path"])
@@ -131,7 +139,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
             self._dirty_focus_files.add(tree.path)
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
-        return True
+        return tree
 
     # ── Focuses ──────────────────────────────────────────────────
 
@@ -162,13 +170,21 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 return f
         return None
 
-    def update_focus(self, tree_id: str, focus_id: str, **kwargs) -> bool:
-        focus = self.get_focus(tree_id, focus_id)
-        if focus is None:
-            return False
+    def update_focus(self, tree_id: str, focus_id: str, **kwargs) -> Focus:
+        """Patch fields of one focus.
+
+        Returns:
+            The updated focus.
+
+        Raises:
+            NotFoundError: The tree or the focus does not exist.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        tree = self.get_focus_tree(tree_id)
+        focus = self._require_focus(tree, focus_id)
         if "id" in kwargs:
             raise ValueError("Focus IDs are immutable; create a new focus instead")
-        tree = self.get_focus_tree(tree_id)
+        _check_fields("update_focus", focus, kwargs)
         if "kind" in kwargs:
             _require_focus_kind(tree, kwargs["kind"])
         _set_fields(focus, kwargs)
@@ -176,7 +192,21 @@ class FocusLayer(ContextLayer, EffectsLayer):
         tree.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
-        return True
+        return focus
+
+    @staticmethod
+    def _require_focus(tree: FocusTree, focus_id: str) -> Focus:
+        """Return the focus ``focus_id`` of ``tree`` or raise ``NotFoundError``."""
+        for focus in tree.focuses:
+            if focus.id == focus_id:
+                return focus
+        raise not_found(
+            "focus",
+            focus_id,
+            (focus.id for focus in tree.focuses),
+            where=f"focus tree '{tree.id}'",
+            plural="focuses",
+        )
 
     def upsert_focus(self, tree_id: str, focus: Focus) -> Focus:
         """Add a focus if missing, otherwise replace its modeled fields."""

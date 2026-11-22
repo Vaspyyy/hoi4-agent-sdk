@@ -18,6 +18,7 @@ from ..script import (
 from ..errors import not_found
 from ._core import CoreLayer
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
 
@@ -86,15 +87,23 @@ class DynamicModifiersLayer(CoreLayer):
         self._dirty.add("dynamic_modifiers")
         return dynamic_modifier
 
-    def update_dynamic_modifier(self, modifier_id: str, **kwargs: object) -> bool:
-        dynamic_modifier = self._dynamic_modifiers.get(modifier_id)
-        if dynamic_modifier is None:
-            return False
+    def update_dynamic_modifier(self, modifier_id: str, **kwargs: object) -> DynamicModifier:
+        """Patch fields of a dynamic modifier in place.
+
+        Returns:
+            The updated dynamic modifier.
+
+        Raises:
+            NotFoundError: No dynamic modifier has this id.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        dynamic_modifier = self.get_dynamic_modifier(modifier_id)
         forbidden = {"id", "path", "raw_block", "touched_fields"} & set(kwargs)
         if forbidden:
             raise ValueError(
                 f"Immutable/internal dynamic modifier fields: {sorted(forbidden)}"
             )
+        _check_fields("update_dynamic_modifier", dynamic_modifier, dict(kwargs))
         for key in ("enable", "remove_trigger"):
             if key in kwargs:
                 kwargs[key] = normalize_block_body(str(kwargs[key]))
@@ -104,7 +113,7 @@ class DynamicModifiersLayer(CoreLayer):
             self._dirty_dynamic_modifier_files.add(dynamic_modifier.path)
         self._dirty_dynamic_modifiers.add(modifier_id)
         self._dirty.add("dynamic_modifiers")
-        return True
+        return dynamic_modifier
 
     def delete_dynamic_modifier(self, modifier_id: str) -> None:
         """Stage the deletion of a dynamic modifier, keeping the rest of its file.

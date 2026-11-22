@@ -529,7 +529,7 @@ def test_character_role_mutation_requires_occurrence_when_ambiguous(
     with pytest.raises(ValueError, match="pass occurrence"):
         mod.update_character_role("ABC_multi", "advisor", cost=75)
 
-    assert mod.update_character_role(
+    mod.update_character_role(
         "ABC_multi",
         "advisor",
         occurrence=1,

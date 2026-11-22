@@ -254,12 +254,12 @@ def test_repeated_decision_category_with_unique_decisions_is_not_a_duplicate(
 
     # Each decision is edited in the file that holds it; the other file of the
     # shared category is left alone.
-    assert mod.update_decision("second_decision", cost=4)
+    mod.update_decision("second_decision", cost=4)
     preview = mod.preview()
     assert "b.txt" in preview
     assert "a.txt" not in preview
 
-    assert mod.update_decision("first_decision", cost=3)
+    mod.update_decision("first_decision", cost=3)
     mod.save()
     assert (tmp_path / "common/decisions/a.txt").read_text(encoding="utf-8") == (
         "shared_category = { first_decision = { cost = 3 } }\n"
