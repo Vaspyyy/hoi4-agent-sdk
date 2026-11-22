@@ -663,7 +663,19 @@ def serialize_fleet(fleet: Fleet, *, indent: int = 0) -> str:
     return _wrap_block("fleet", body, indent)
 
 
-def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
+def validate_oob(
+    oob: OrderOfBattle,
+    *,
+    known_templates: set[str] | None = None,
+) -> list[ValidationError]:
+    """Check one OOB file on its own.
+
+    ``known_templates`` names division templates defined outside this file
+    that the loading country already has: templates of OOB files it loaded
+    before, and templates that script creates. Without it, a division must
+    use a template of this file.
+    """
+
     errors: list[ValidationError] = []
     inferred_kind = _infer_oob_kind(
         oob.templates,
@@ -726,6 +738,8 @@ def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
                     )
                 position = (battalion.x, battalion.y)
                 if position in positions:
+                    # The game loads such a template; one battalion takes
+                    # the slot of the other, which is rarely intended.
                     errors.append(
                         _issue(
                             oob,
@@ -734,6 +748,7 @@ def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
                                 f"position {position}"
                             ),
                             "duplicate_oob_grid_position",
+                            severity="warning",
                         )
                     )
                 positions.add(position)
@@ -748,8 +763,9 @@ def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
                             "invalid_oob_grid_position",
                         )
                     )
+    usable_templates = template_names | (known_templates or set())
     for division in oob.divisions:
-        if division.division_template not in template_names:
+        if division.division_template not in usable_templates:
             errors.append(
                 _issue(
                     oob,
@@ -837,14 +853,29 @@ def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
                     )
                 )
             for ship in task_force.ships:
-                if not ship.name:
-                    errors.append(_issue(oob, "Ship has no name", "oob_ship_name"))
-                elif ship.name in ship_names:
+                # ``ordered_name = N`` takes the Nth name of the country's
+                # ship-name list instead of a written name.
+                if not ship.name and (
+                    not ship.raw_block
+                    or parse(ship.raw_block).root.scalar("ordered_name") is None
+                ):
+                    errors.append(
+                        _issue(
+                            oob,
+                            "Ship has neither name nor ordered_name",
+                            "oob_ship_name",
+                            severity="warning",
+                        )
+                    )
+                elif ship.name and ship.name in ship_names:
+                    # The game creates both ships; two equal names are
+                    # usually a copy mistake.
                     errors.append(
                         _issue(
                             oob,
                             f"Duplicate ship name '{ship.name}'",
                             "duplicate_oob_ship",
+                            severity="warning",
                         )
                     )
                 ship_names.add(ship.name)
@@ -886,7 +917,8 @@ def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
                             )
                         )
                     equipment_types.add(equipment.equipment_type)
-    air_keys: set[tuple[int, str, str]] = set()
+    # Two equal wings at one air base are two wings in the game, so a
+    # repeated entry is not a mistake.
     for wing in oob.air_wings:
         if wing.location <= 0:
             errors.append(
@@ -896,19 +928,6 @@ def validate_oob(oob: OrderOfBattle) -> list[ValidationError]:
             errors.append(
                 _issue(oob, "Air wing has invalid equipment", "invalid_oob_air_equipment")
             )
-        identity = (wing.location, wing.equipment_type, wing.owner)
-        if identity in air_keys:
-            errors.append(
-                _issue(
-                    oob,
-                    (
-                        "Duplicate air wing equipment "
-                        f"'{wing.equipment_type}' at province {wing.location}"
-                    ),
-                    "duplicate_oob_air_wing",
-                )
-            )
-        air_keys.add(identity)
     return errors
 
 

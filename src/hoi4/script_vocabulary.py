@@ -1,73 +1,121 @@
-"""Installed-game effect, trigger, and modifier vocabulary support."""
+"""The effect, trigger and modifier names a game install knows, and the check that uses them.
+
+Where the names come from:
+
+* the three generated documentation files of the install
+  (``documentation/effects_documentation.md``, ``triggers_documentation.md``
+  and ``modifiers_documentation.md``): every effect and trigger with the
+  scopes it supports, every modifier with its categories;
+* the modifier families the documentation writes as templates, such as
+  ``production_speed_<Building>_factor``. The documentation lists the
+  members it knew when it was generated; the game's own definitions add the
+  rest (every building of ``common/buildings``, every ideology of
+  ``common/ideologies``, ...), and a mod's definitions add its own;
+* ``common/modifier_definitions``: modifiers a game or mod defines itself;
+* ``common/scripted_effects`` and ``common/scripted_triggers`` of the game
+  and of the mod, which work in any scope;
+* ``common/characters``: character ids, which script may use as scopes.
+
+Everything that comes from the install is derived once and cached on disk
+(see :func:`load_game_script_vocabulary`). Statements are read with the
+scope-tracking walker of :mod:`hoi4.script_scopes`, never with a regular
+expression over raw text.
+"""
 
 from __future__ import annotations
 
 import fnmatch
+import hashlib
+import json
+import os
 import re
+import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterable, Literal, Mapping, cast
+from typing import Iterable, Iterator, Literal, Mapping, Sequence, cast
 
-from .ideologies import load_ideologies
-from .parser import ParseError
-from .patching import top_level_assignments
+from ._script_corpus import script_blocks
+from .script_scopes import ScriptStatement, walk_script
+from .syntax import Assignment, Block, Tagged, parse
 from .textio import read_text
 from .types import ValidationError
 
 ScriptTokenKind = Literal["effect", "trigger", "modifier"]
 
-_HEADING_RE = re.compile(r"(?m)^## ([A-Za-z0-9_.:-]+)\s*$")
-_ASSIGNMENT_RE = re.compile(r"(?m)^[ \t]*([A-Za-z0-9_.:@%-]+)[ \t]*(?:=|[<>!]=?)")
-_SCOPE_RE = re.compile(
-    r"^(?:[A-Z0-9]{3}|[0-9]+|ROOT|THIS|PREV(?:\.PREV)*|FROM(?:\.FROM)*|"
-    r"OWNER|CONTROLLER|CAPITAL_SCOPE|owner|controller|capital_scope|overlord|"
-    r"faction_leader|occupied_country|country|state|character|operative|"
-    r"division|unit_leader|event_target:.+|global_event_target:.+|scope:.+|var:.+)$"
+_KINDS: tuple[ScriptTokenKind, ...] = ("effect", "trigger", "modifier")
+_DOCUMENTATION_FILES: dict[ScriptTokenKind, str] = {
+    "effect": "effects_documentation.md",
+    "trigger": "triggers_documentation.md",
+    "modifier": "modifiers_documentation.md",
+}
+
+# Bump when the derived data or its meaning changes; old cache files are then
+# ignored.
+_CACHE_SCHEMA = 3
+_CACHE_KEEP = 12
+
+# ── modifier families ─────────────────────────────────────────────
+
+#: Where the game defines the members of each placeholder that the modifier
+#: documentation uses in its templates. Each entry is a folder (or file) under
+#: the content root and how to read it: ``("children", "buildings")`` takes the
+#: keys of every ``buildings = { key = { } }`` block, ``("top", None)`` the
+#: top-level block keys, ``("values", "technology_categories")`` the bare
+#: words of a list, ``("values_of", "slot")`` the values of every
+#: ``slot = x`` statement two levels down.
+FAMILY_SOURCES: Mapping[str, tuple[tuple[str, str, str | None], ...]] = MappingProxyType(
+    {
+        "Building": (("common/buildings", "children", "buildings"),),
+        "Ideology": (("common/ideologies", "children", "ideologies"),),
+        "IdeaGroup": (
+            ("common/idea_tags", "children", "idea_categories"),
+            ("common/idea_tags", "values_of", "slot"),
+            ("common/idea_tags", "values_of", "character_slot"),
+        ),
+        "IdeaCategory": (("common/idea_tags", "values_of", "type"),),
+        "Resource": (("common/resources", "children", "resources"),),
+        "Unit": (("common/units", "children", "sub_units"),),
+        "Equipment": (("common/units/equipment", "children", "equipments"),),
+        "NavalEquipment": (("common/units/equipment", "children", "equipments"),),
+        "EquipmentModule": (
+            ("common/units/equipment/modules", "children", "equipment_modules"),
+        ),
+        "Technology": (("common/technology_tags", "values", "technology_categories"),),
+        "Trait": (
+            ("common/unit_leader", "children", "leader_traits"),
+            ("common/country_leader", "children", "leader_traits"),
+        ),
+        "SpecialProject": (("common/special_projects/projects", "top", None),),
+        "Operation": (("common/operations", "top", None),),
+        "Doctrine": (
+            ("common/doctrines/folders", "top", None),
+            ("common/doctrines/grand_doctrines", "top", None),
+            ("common/doctrines/subdoctrines", "top", None),
+            ("common/doctrines/tracks", "top", None),
+        ),
+        "CombatTactic": (("common/combat_tactics.txt", "top", None),),
+    }
 )
-_CONTROL_BLOCKS = {
-    "AND",
-    "OR",
-    "NOT",
-    "NAND",
-    "NOR",
-    "if",
-    "else",
-    "else_if",
-    "hidden_effect",
-    "while",
-    "for_loop_effect",
-    "random_list",
-}
-_RECURSIVE_PREFIXES = (
-    "all_",
-    "any_",
-    "every_",
-    "random_",
-    "ordered_",
-)
-_NESTED_EFFECT_BLOCKS = {
-    "effect",
-    "effects",
-    "on_cancel",
-    "on_complete",
-    "on_failure",
-    "on_lose",
-    "on_success",
-    "on_win",
-}
-_NESTED_TRIGGER_BLOCKS = {
-    "allowed",
-    "available",
-    "trigger",
-    "visible",
-}
+
+#: Families the game generates even when its documentation does not list
+#: them (older installs): every ideology has a drift and an acceptance modifier.
+BUILTIN_TEMPLATES: tuple[ModifierTemplate, ...] = ()  # filled in below the class
+
+#: Placeholders whose members are triggers of their own: ``infrastructure > 3``
+#: (a state's building level), ``fascism > 0.3`` (a party's popularity),
+#: ``steel > 10`` (a state's resource).
+TRIGGER_FAMILIES = ("Building", "Ideology", "Resource")
+
+_TEMPLATE_HEADING_RE = re.compile(r"</span>\s*(\S+)\s*$")
+_PLACEHOLDER_RE = re.compile(r"<([A-Za-z]+)>")
+_PLAIN_HEADING_RE = re.compile(r"^[A-Za-z0-9_.:@-]+$")
 
 
 @dataclass(frozen=True)
 class ScriptTokenInfo:
-    """One token documented by the configured HOI4 installation."""
+    """One effect, trigger or modifier the configured game (or mod) knows."""
 
     name: str
     kind: ScriptTokenKind
@@ -77,28 +125,75 @@ class ScriptTokenInfo:
     usage_by_domain: Mapping[str, int] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    #: True for names the documentation does not list by name: scripted
+    #: effects and triggers, and modifier family members found in definitions.
     synthesized: bool = False
+    supported_targets: tuple[str, ...] = ()
+    #: Where the name comes from, such as ``"documentation"``,
+    #: ``"production_speed_<Building>_factor from common/buildings"`` or
+    #: ``"common/scripted_effects"``.
+    source: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
             "name": self.name,
             "kind": self.kind,
             "supported_scopes": list(self.supported_scopes),
+            "supported_targets": list(self.supported_targets),
             "categories": list(self.categories),
             "usage_count": self.usage_count,
             "usage_by_domain": dict(self.usage_by_domain),
             "synthesized": self.synthesized,
+            "source": self.source,
         }
 
 
 @dataclass(frozen=True)
+class ModifierTemplate:
+    """A documented modifier family such as ``production_speed_<Building>_factor``."""
+
+    pattern: str
+    placeholder: str
+    documented_members: tuple[str, ...]
+    categories: tuple[str, ...] = ()
+
+    def expand(self, member: str) -> str:
+        return self.pattern.replace(f"<{self.placeholder}>", member)
+
+
+BUILTIN_TEMPLATES = (
+    ModifierTemplate("<Ideology>_drift", "Ideology", (), ("country",)),
+    ModifierTemplate("<Ideology>_acceptance", "Ideology", (), ("country",)),
+)
+
+
+@dataclass(frozen=True)
 class GameScriptVocabulary:
-    """Documented script tokens plus observed installed-game usage."""
+    """Every effect, trigger and modifier name of a game install, with usage counts."""
 
     hoi4_install: Path
     effects: Mapping[str, ScriptTokenInfo]
     triggers: Mapping[str, ScriptTokenInfo]
     modifiers: Mapping[str, ScriptTokenInfo]
+    #: Character ids in lower case, which script may use as scopes
+    #: (``GER_erwin_rommel = { }``).
+    characters: frozenset[str] = frozenset()
+    modifier_templates: tuple[ModifierTemplate, ...] = ()
+    #: Members of each template placeholder found in definitions, with the
+    #: folder each came from: ``{"Building": {"rail_way": "common/buildings"}}``.
+    family_members: Mapping[str, Mapping[str, str]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    _folded: dict[ScriptTokenKind, dict[str, ScriptTokenInfo]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        for kind in _KINDS:
+            folded: dict[str, ScriptTokenInfo] = {}
+            for name, info in self.tokens(kind).items():
+                folded.setdefault(name.lower(), info)
+            self._folded[kind] = folded
 
     def tokens(self, kind: ScriptTokenKind) -> Mapping[str, ScriptTokenInfo]:
         if kind == "effect":
@@ -107,129 +202,733 @@ class GameScriptVocabulary:
             return self.triggers
         return self.modifiers
 
+    def lookup(self, kind: ScriptTokenKind, name: str) -> ScriptTokenInfo | None:
+        """Find a name the way the game does: without regard to case."""
+
+        return self._folded[kind].get(name.lower())
+
+    def folded_names(self, kind: ScriptTokenKind) -> Mapping[str, ScriptTokenInfo]:
+        """Every name of a kind in lower case."""
+
+        return self._folded[kind]
+
+    def extended(
+        self,
+        roots: Iterable[str | Path] = (),
+        *,
+        scripted_effects: Iterable[str] = (),
+        scripted_triggers: Iterable[str] = (),
+        ideology_ids: Iterable[str] = (),
+        characters: Iterable[str] | None = None,
+        pending: Mapping[Path, str | None] | None = None,
+    ) -> GameScriptVocabulary:
+        """Add what mods define: modifier family members, modifier definitions and more names.
+
+        ``roots`` are mod folders in load order. Their family definitions
+        (``common/buildings``, ``common/ideologies``, ...) and
+        ``common/modifier_definitions`` are read through the syntax tree.
+        ``pending`` maps files under those folders to the text they will have
+        after a save (``None``: the file will be deleted); it wins over the
+        disk, so definitions made through the API count before ``save()``.
+        The keyword arguments add names the caller already has: scripted
+        effects and triggers and ideologies, including pending edits that are
+        not on disk yet. ``characters`` is different: when given, it is the
+        whole set of character ids that script may use as a scope, and it
+        replaces the install's. A mod can hide a character of the game
+        (``replace_path``, a file of the same name, ``delete_character()``),
+        and such a name is no scope any more.
+        """
+
+        extra = _read_definitions(
+            [Path(root) for root in roots], usage=False, scripts=False, pending=pending
+        )
+        effects = set(scripted_effects)
+        triggers = set(scripted_triggers)
+        members: dict[str, dict[str, str]] = {
+            placeholder: dict(found) for placeholder, found in self.family_members.items()
+        }
+        for placeholder, found in extra.members.items():
+            for member, source in found.items():
+                members.setdefault(placeholder, {}).setdefault(member, source)
+        for ideology in ideology_ids:
+            members.setdefault("Ideology", {}).setdefault(ideology, "common/ideologies")
+        new_modifiers = _expand_templates(self.modifier_templates, members)
+        for name, source in extra.modifier_definitions.items():
+            new_modifiers.setdefault(name, (("country",), source))
+        known_characters = (
+            self.characters
+            if characters is None
+            else frozenset(name.lower() for name in characters)
+        )
+        family_triggers = _family_triggers(members)
+        new_family = any(name not in self.triggers for name in family_triggers)
+        if (
+            not (effects or triggers or new_modifiers or new_family)
+            and known_characters == self.characters
+        ):
+            return self
+
+        def merged(
+            kind: ScriptTokenKind,
+            additions: Mapping[str, tuple[tuple[str, ...], str]],
+        ) -> Mapping[str, ScriptTokenInfo]:
+            current = dict(self.tokens(kind))
+            folded = self.folded_names(kind)
+            for name, (categories, source) in additions.items():
+                if name.lower() in folded or name in current:
+                    continue
+                current[name] = ScriptTokenInfo(
+                    name=name,
+                    kind=kind,
+                    categories=categories,
+                    synthesized=True,
+                    source=source,
+                )
+            return MappingProxyType(current)
+
+        return GameScriptVocabulary(
+            hoi4_install=self.hoi4_install,
+            effects=merged("effect", {name: ((), "mod scripted_effects") for name in effects}),
+            triggers=merged(
+                "trigger",
+                {
+                    **{name: ((), "mod scripted_triggers") for name in triggers},
+                    **family_triggers,
+                },
+            ),
+            modifiers=merged("modifier", new_modifiers),
+            characters=known_characters,
+            modifier_templates=self.modifier_templates,
+            family_members=MappingProxyType(
+                {key: MappingProxyType(value) for key, value in members.items()}
+            ),
+        )
+
     def to_dict(self) -> dict[str, object]:
         return {
             "hoi4_install": str(self.hoi4_install),
-            "effects": {
-                key: value.to_dict() for key, value in self.effects.items()
-            },
-            "triggers": {
-                key: value.to_dict() for key, value in self.triggers.items()
-            },
-            "modifiers": {
-                key: value.to_dict() for key, value in self.modifiers.items()
-            },
+            "effects": {key: value.to_dict() for key, value in self.effects.items()},
+            "triggers": {key: value.to_dict() for key, value in self.triggers.items()},
+            "modifiers": {key: value.to_dict() for key, value in self.modifiers.items()},
         }
 
 
 @dataclass(frozen=True)
 class ScriptSource:
-    """A semantic script fragment emitted or loaded by the SDK."""
+    """One block of script to check: its text, what kind of block it is and where it lives.
+
+    ``scope`` is the scope the block runs in when that is certain (``"COUNTRY"``
+    for a focus reward), else ``None``. ``from_scope`` is what ``FROM`` points
+    to, when known. ``line`` is the line of the file on which the text's first
+    line stands, when known; findings then carry file lines. Without a line
+    and a file, findings carry lines of the text itself.
+
+    ``block`` is the block of a parsed file the text was read from; when it is
+    given it is walked instead of ``text``, and findings carry its file lines.
+    ``arguments`` are keys of the block to leave alone (an event option's
+    ``name``, ``trigger`` and ``ai_chance``).
+    """
 
     text: str
-    kind: ScriptTokenKind
+    kind: ScriptTokenKind | Literal["weight"]
     owner_kind: str = ""
     owner_id: str = ""
     file_path: str | None = None
     scope: str | None = None
+    from_scope: str | None = None
+    line: int | None = None
+    block: Block | None = None
+    arguments: frozenset[str] = frozenset()
 
 
-@dataclass(frozen=True)
-class _Command:
-    name: str
-    line: int
-    kind: ScriptTokenKind
-    scope: str | None = None
+def script_sources(root: Block, relative: str, file_path: str | None = None) -> list[ScriptSource]:
+    """Every checkable block of a parsed script file, ready for :func:`validate_script_sources`.
+
+    ``relative`` is the file's path inside the game or mod folder (it decides
+    how the file is split, see :mod:`hoi4._script_corpus`). History files give
+    nothing: they are read for references only.
+    """
+
+    return [
+        ScriptSource(
+            text=block.block.body,
+            kind=block.kind,
+            owner_kind=block.owner_kind,
+            owner_id=block.owner_id,
+            file_path=file_path,
+            scope=block.scope,
+            from_scope=block.from_scope,
+            block=block.block,
+            arguments=block.arguments,
+        )
+        for block in script_blocks(root, relative)
+    ]
+
+
+# ── loading ───────────────────────────────────────────────────────
 
 
 def load_game_script_vocabulary(
     hoi4_install: str | Path,
     *,
     ideology_ids: Iterable[str] = (),
+    cache: bool = True,
 ) -> GameScriptVocabulary:
-    """Load documentation tokens and count their use in installed scripts."""
+    """Read the vocabulary of a game install.
+
+    What is derived from the install is cached under the user cache folder
+    (``~/.cache/hoi4-sdk/script-vocabulary``, or ``$HOI4_SDK_CACHE_DIR``). The
+    cache key covers the SDK version, this module's source and the size and
+    modification time of every file the vocabulary is read from, so a game
+    update or a new SDK reads the install again. Pass ``cache=False`` to
+    neither read nor write the cache.
+    """
 
     root = Path(hoi4_install).resolve()
-    documentation = root / "documentation"
-    metadata: dict[
-        ScriptTokenKind, dict[str, tuple[tuple[str, ...], tuple[str, ...]]]
-    ] = {
-        "effect": _documentation_entries(
-            documentation / "effects_documentation.md"
-        ),
-        "trigger": _documentation_entries(
-            documentation / "triggers_documentation.md"
-        ),
-        "modifier": _documentation_entries(
-            documentation / "modifiers_documentation.md"
-        ),
-    }
-    installed_ideologies = {
-        ideology.id for ideology in load_ideologies(root, is_vanilla=True)
-    }
-    generated_modifiers = {
-        f"{ideology_id}_drift"
-        for ideology_id in installed_ideologies | set(ideology_ids)
-    }
-    synthesized: dict[ScriptTokenKind, set[str]] = {
-        "effect": set(),
-        "trigger": set(),
-        "modifier": set(generated_modifiers),
-    }
-    for name in generated_modifiers:
-        metadata["modifier"].setdefault(name, ((), ("country",)))
-    for kind, relative in (
-        ("effect", Path("common/scripted_effects")),
-        ("trigger", Path("common/scripted_triggers")),
-    ):
-        typed_kind = cast(ScriptTokenKind, kind)
-        for name in _scripted_tokens(root / relative):
-            metadata[typed_kind].setdefault(name, ((), ()))
-            synthesized[typed_kind].add(name)
-    names = {kind: set(entries) for kind, entries in metadata.items()}
-    all_names = set().union(*names.values())
-    counts: Counter[str] = Counter()
-    domains: dict[str, Counter[str]] = defaultdict(Counter)
-    for top_level in ("common", "events", "history"):
-        directory = root / top_level
-        if not directory.is_dir():
-            continue
-        for path in directory.rglob("*.txt"):
-            try:
-                text = read_text(path)
-            except OSError:
-                continue
-            relative = path.relative_to(root)
-            domain = "/".join(relative.parts[:2])
-            for match in _ASSIGNMENT_RE.finditer(_without_comments(text)):
-                token = match.group(1)
-                if token not in all_names:
-                    continue
-                counts[token] += 1
-                domains[token][domain] += 1
+    data = _cached_install_data(root) if cache else None
+    if data is None:
+        data = _install_data(root)
+        if cache:
+            _store_install_data(root, data)
+    vocabulary = _vocabulary_from_data(root, data)
+    ideologies = tuple(ideology_ids)
+    if ideologies:
+        vocabulary = vocabulary.extended(ideology_ids=ideologies)
+    return vocabulary
 
-    def build(kind: ScriptTokenKind) -> Mapping[str, ScriptTokenInfo]:
-        return MappingProxyType(
-            {
-                name: ScriptTokenInfo(
-                    name=name,
-                    kind=kind,
-                    supported_scopes=metadata[kind][name][0],
-                    categories=metadata[kind][name][1],
-                    usage_count=counts[name],
-                    usage_by_domain=MappingProxyType(dict(domains[name])),
-                    synthesized=name in synthesized[kind],
-                )
-                for name in sorted(names[kind])
-            }
+
+def _cache_dir() -> Path:
+    configured = os.environ.get("HOI4_SDK_CACHE_DIR")
+    base = Path(configured) if configured else Path.home() / ".cache" / "hoi4-sdk"
+    return base / "script-vocabulary"
+
+
+def _sdk_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("hoi4-agent-sdk")
+    except Exception:  # pragma: no cover - not installed as a package
+        return "unknown"
+
+
+def _install_files(root: Path) -> Iterator[Path]:
+    documentation = root / "documentation"
+    for name in _DOCUMENTATION_FILES.values():
+        path = documentation / name
+        if path.is_file():
+            yield path
+    for top in ("common", "events", "history"):
+        directory = root / top
+        if directory.is_dir():
+            yield from directory.rglob("*.txt")
+
+
+def _cache_key(root: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"{_CACHE_SCHEMA}\0{_sdk_version()}\0{root}\0".encode())
+    entries = []
+    for path in _install_files(root):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        entries.append(f"{path.relative_to(root).as_posix()}\0{stat.st_size}\0{stat.st_mtime_ns}")
+    for entry in sorted(entries):
+        digest.update(entry.encode("utf-8", "surrogateescape"))
+        digest.update(b"\n")
+    return digest.hexdigest()[:32]
+
+
+def _cached_install_data(root: Path) -> dict | None:
+    try:
+        path = _cache_dir() / f"{_cache_key(root)}.json"
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+        os.utime(path)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("schema") != _CACHE_SCHEMA:
+        return None
+    return data
+
+
+def _store_install_data(root: Path, data: dict) -> None:
+    directory = _cache_dir()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / f"{_cache_key(root)}.json"
+        handle, temporary = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, separators=(",", ":"))
+        os.replace(temporary, target)
+        cached = sorted(
+            directory.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True
+        )
+        for old in cached[_CACHE_KEEP:]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        return
+
+
+def _install_data(root: Path) -> dict:
+    """Everything the vocabulary needs from an install, as plain JSON data."""
+
+    documentation = root / "documentation"
+    docs: dict[str, dict[str, list[list[str]]]] = {}
+    templates: list[list[object]] = []
+    for kind in _KINDS:
+        path = documentation / _DOCUMENTATION_FILES[kind]
+        entries, kind_templates = _documentation_entries(path)
+        docs[kind] = {
+            name: [list(scopes), list(targets), list(categories)]
+            for name, (scopes, targets, categories) in entries.items()
+        }
+        if kind == "modifier":
+            templates = [
+                [item.pattern, item.placeholder, list(item.documented_members), list(item.categories)]
+                for item in kind_templates
+            ]
+    definitions = _read_definitions([root], usage=True)
+    return {
+        "schema": _CACHE_SCHEMA,
+        "docs": docs,
+        "templates": templates,
+        "members": {key: dict(value) for key, value in definitions.members.items()},
+        "modifier_definitions": dict(definitions.modifier_definitions),
+        "scripted": {key: sorted(value) for key, value in definitions.scripted.items()},
+        "characters": sorted(definitions.characters),
+        "usage": {
+            name: [count, dict(definitions.domains[name])]
+            for name, count in definitions.usage.items()
+        },
+    }
+
+
+def _vocabulary_from_data(root: Path, data: dict) -> GameScriptVocabulary:
+    usage: dict[str, list] = data.get("usage", {})
+    templates = tuple(
+        ModifierTemplate(
+            pattern=str(pattern),
+            placeholder=str(placeholder),
+            documented_members=tuple(cast(list, members)),
+            categories=tuple(cast(list, categories)),
+        )
+        for pattern, placeholder, members, categories in data.get("templates", [])
+    )
+    documented_patterns = {template.pattern for template in templates}
+    templates += tuple(
+        template for template in BUILTIN_TEMPLATES if template.pattern not in documented_patterns
+    )
+    members: dict[str, dict[str, str]] = {
+        str(key): dict(value) for key, value in data.get("members", {}).items()
+    }
+
+    def info(
+        name: str,
+        kind: ScriptTokenKind,
+        *,
+        scopes: Sequence[str] = (),
+        targets: Sequence[str] = (),
+        categories: Sequence[str] = (),
+        synthesized: bool = False,
+        source: str = "documentation",
+    ) -> ScriptTokenInfo:
+        count, domains = usage.get(name.lower(), (0, {}))
+        return ScriptTokenInfo(
+            name=name,
+            kind=kind,
+            supported_scopes=tuple(scopes),
+            supported_targets=tuple(targets),
+            categories=tuple(categories),
+            usage_count=count,
+            usage_by_domain=MappingProxyType(cast(dict[str, int], domains)),
+            synthesized=synthesized,
+            source=source,
         )
 
+    tables: dict[ScriptTokenKind, dict[str, ScriptTokenInfo]] = {kind: {} for kind in _KINDS}
+    for kind in _KINDS:
+        for name, (scopes, targets, categories) in data["docs"].get(kind, {}).items():
+            tables[kind][name] = info(
+                name, kind, scopes=scopes, targets=targets, categories=categories
+            )
+    for kind_name, names in data.get("scripted", {}).items():
+        kind = cast(ScriptTokenKind, kind_name)
+        for name in names:
+            tables[kind].setdefault(
+                name, info(name, kind, synthesized=True, source=f"common/scripted_{kind}s")
+            )
+    for name, (_, source) in _family_triggers(members).items():
+        tables["trigger"].setdefault(
+            name, info(name, "trigger", synthesized=True, source=source)
+        )
+    modifiers = tables["modifier"]
+    folded_modifiers = {name.lower() for name in modifiers}
+    documented_family: dict[str, tuple[tuple[str, ...], str]] = {}
+    for template in templates:
+        for member in template.documented_members:
+            documented_family.setdefault(
+                template.expand(member), (template.categories, f"{template.pattern} (documented)")
+            )
+    for name, (categories, source) in documented_family.items():
+        if name.lower() not in folded_modifiers:
+            modifiers[name] = info(name, "modifier", categories=categories, source=source)
+            folded_modifiers.add(name.lower())
+    extra = _expand_templates(templates, members)
+    for name, source in data.get("modifier_definitions", {}).items():
+        extra.setdefault(name, (("country",), source))
+    for name, (categories, source) in extra.items():
+        if name.lower() not in folded_modifiers:
+            modifiers[name] = info(
+                name, "modifier", categories=categories, synthesized=True, source=source
+            )
+            folded_modifiers.add(name.lower())
     return GameScriptVocabulary(
         hoi4_install=root,
-        effects=build("effect"),
-        triggers=build("trigger"),
-        modifiers=build("modifier"),
+        effects=MappingProxyType(dict(sorted(tables["effect"].items()))),
+        triggers=MappingProxyType(dict(sorted(tables["trigger"].items()))),
+        modifiers=MappingProxyType(dict(sorted(modifiers.items()))),
+        characters=frozenset(data.get("characters", ())),
+        modifier_templates=templates,
+        family_members=MappingProxyType(
+            {key: MappingProxyType(value) for key, value in members.items()}
+        ),
     )
+
+
+def _family_triggers(
+    members: Mapping[str, Mapping[str, str]],
+) -> dict[str, tuple[tuple[str, ...], str]]:
+    result: dict[str, tuple[tuple[str, ...], str]] = {}
+    for placeholder in TRIGGER_FAMILIES:
+        for member, source in members.get(placeholder, {}).items():
+            result.setdefault(member, ((), f"<{placeholder}> trigger from {source}"))
+    return result
+
+
+def _expand_templates(
+    templates: Iterable[ModifierTemplate],
+    members: Mapping[str, Mapping[str, str]],
+) -> dict[str, tuple[tuple[str, ...], str]]:
+    """Names of every template's family members found in definitions.
+
+    A documented template only learns members from the folders its documented
+    members come from: ``<Doctrine>_track_mastery_gain_factor`` lists doctrine
+    tracks, so it takes new members from ``common/doctrines/tracks`` and not
+    from the grand doctrines another ``<Doctrine>`` template lists. A template
+    none of whose documented members is defined anywhere learns nothing.
+    """
+
+    result: dict[str, tuple[tuple[str, ...], str]] = {}
+    for template in templates:
+        found = members.get(template.placeholder, {})
+        allowed: set[str] | None = None
+        if template.documented_members:
+            allowed = {found[name] for name in template.documented_members if name in found}
+            if not allowed:
+                continue
+        for member, source in found.items():
+            if allowed is None or source in allowed:
+                result.setdefault(
+                    template.expand(member),
+                    (template.categories, f"{template.pattern} from {source}"),
+                )
+    return result
+
+
+# ── documentation ─────────────────────────────────────────────────
+
+
+def _documentation_entries(
+    path: Path,
+) -> tuple[
+    dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]],
+    list[ModifierTemplate],
+]:
+    """Read one generated documentation file.
+
+    Returns ``{name: (scopes, targets, categories)}`` for every plain entry and
+    the templated modifier families such as ``production_speed_<Building>_factor``.
+    """
+
+    if not path.is_file():
+        return {}, []
+    entries: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = {}
+    templates: list[ModifierTemplate] = []
+    heading: str | None = None
+    lines: list[str] = []
+
+    def finish() -> None:
+        if heading is None:
+            return
+        scopes = _metadata_values(lines, "Supported Scopes")
+        targets = _metadata_values(lines, "Supported Targets")
+        categories = _metadata_values(lines, "Categories")
+        template = _TEMPLATE_HEADING_RE.search(heading)
+        if template is not None:
+            pattern = template.group(1)
+            placeholder = _PLACEHOLDER_RE.search(pattern)
+            if placeholder is not None:
+                templates.append(
+                    ModifierTemplate(
+                        pattern=pattern,
+                        placeholder=placeholder.group(1),
+                        documented_members=_metadata_values(lines, "Modified types"),
+                        categories=categories,
+                    )
+                )
+            return
+        name = heading.strip()
+        if _PLAIN_HEADING_RE.match(name) and name != "Table":
+            entries.setdefault(name, (scopes, targets, categories))
+
+    for line in read_text(path).split("\n"):
+        if line.startswith("## "):
+            finish()
+            heading = line[3:]
+            lines = []
+        elif line.startswith("# "):
+            finish()
+            heading = None
+        elif heading is not None:
+            lines.append(line)
+    finish()
+    entries.pop("Table", None)
+    return entries, templates
+
+
+def _metadata_values(lines: Sequence[str], label: str) -> tuple[str, ...]:
+    """The comma-separated values of a ``* Label: a, b`` line of a documentation entry."""
+
+    wanted = label.lower()
+    for line in lines:
+        text = line.strip()
+        if not text.startswith("*"):
+            continue
+        text = text.lstrip("*").strip().replace("**", "")
+        name, colon, rest = text.partition(":")
+        if not colon or name.strip().lower() != wanted:
+            continue
+        values = []
+        for value in re.split(r"[,|]", rest):
+            value = value.strip().strip("`*").strip()
+            if value and value.lower() != "none":
+                values.append(value)
+        return tuple(values)
+    return ()
+
+
+# ── definitions read through the tree ─────────────────────────────
+
+
+@dataclass
+class _Definitions:
+    members: dict[str, dict[str, str]] = field(default_factory=dict)
+    modifier_definitions: dict[str, str] = field(default_factory=dict)
+    scripted: dict[str, set[str]] = field(
+        default_factory=lambda: {"effect": set(), "trigger": set()}
+    )
+    characters: frozenset[str] = frozenset()
+    usage: Counter[str] = field(default_factory=Counter)
+    domains: dict[str, Counter[str]] = field(default_factory=lambda: defaultdict(Counter))
+
+
+def _script_files(
+    root: Path, relative: str, pending: Mapping[Path, str | None] | None = None
+) -> list[Path]:
+    """The files of a folder (or the one file) under ``root``, with pending ones."""
+
+    path = root / relative
+    found: set[Path] = set()
+    if path.is_file():
+        found.add(path)
+    elif path.is_dir():
+        found.update(item for item in path.rglob("*.txt") if item.is_file())
+    for item in pending or ():
+        if item == path or (item.suffix == ".txt" and item.is_relative_to(path)):
+            found.add(item)
+    return sorted(found)
+
+
+def _root_block(path: Path) -> Block | None:
+    try:
+        return parse(read_text(path)).root
+    except (OSError, ValueError):
+        return None
+
+
+def _read_definitions(
+    roots: Sequence[Path],
+    *,
+    usage: bool,
+    scripts: bool = True,
+    pending: Mapping[Path, str | None] | None = None,
+) -> _Definitions:
+    """What the folders define; ``pending`` texts win over the disk (``None`` deletes)."""
+
+    result = _Definitions()
+    documents: dict[Path, Block | None] = {}
+    waiting = pending or {}
+
+    def block_of(path: Path) -> Block | None:
+        if path not in documents:
+            if path in waiting:
+                text = waiting[path]
+                try:
+                    documents[path] = parse(text).root if text is not None else None
+                except ValueError:
+                    documents[path] = None
+            else:
+                documents[path] = _root_block(path)
+        return documents[path]
+
+    for root in roots:
+        for placeholder, sources in FAMILY_SOURCES.items():
+            found = result.members.setdefault(placeholder, {})
+            for relative, how, key in sources:
+                for path in _script_files(root, relative, waiting):
+                    block = block_of(path)
+                    if block is None:
+                        continue
+                    for member in _family_members(block, how, key):
+                        found.setdefault(member, relative)
+        for path in _script_files(root, "common/modifier_definitions", waiting):
+            block = block_of(path)
+            if block is not None:
+                for item in block.assignments():
+                    if item.block is not None:
+                        result.modifier_definitions.setdefault(
+                            item.name, "common/modifier_definitions"
+                        )
+        for kind in ("effect", "trigger") if scripts else ():
+            for path in _script_files(root, f"common/scripted_{kind}s", waiting):
+                block = block_of(path)
+                if block is not None:
+                    result.scripted[kind].update(
+                        item.name for item in block.assignments() if item.block is not None
+                    )
+    characters: set[str] = set()  # folded to lower case
+    for root in roots if scripts else ():
+        for path in _script_files(root, "common/characters", waiting):
+            block = block_of(path)
+            if block is None:
+                continue
+            for container in block.assignments():
+                if container.block is not None:
+                    characters.update(
+                        item.name.lower() for item in container.block.assignments()
+                        if item.block is not None
+                    )
+    result.characters = frozenset(characters)
+    result.members = {key: value for key, value in result.members.items() if value}
+    if usage:
+        for root in roots:
+            _count_usage(root, result)
+    return result
+
+
+def _family_members(block: Block, how: str, key: str | None) -> Iterator[str]:
+    if how == "top":
+        for item in block.assignments():
+            if item.block is not None and not item.name.startswith("@"):
+                if item.name != "phases":
+                    yield item.name
+        return
+    if how == "children":
+        for container in block.assignments(key):
+            inner = container.block
+            if inner is None:
+                continue
+            for item in inner.assignments():
+                if item.block is not None:
+                    yield item.name
+        return
+    if how == "values":
+        for container in block.assignments(key):
+            inner = container.block
+            if inner is not None:
+                for scalar in inner.values():
+                    yield scalar.value
+        return
+    if how == "values_of":
+        for container in block.assignments():
+            outer = container.block
+            if outer is None:
+                continue
+            for category in outer.assignments():
+                inner = category.block
+                if inner is None:
+                    continue
+                for item in inner.assignments(key):
+                    value = item.scalar
+                    if value:
+                        yield value
+
+
+def _count_usage(root: Path, result: _Definitions) -> None:
+    """Count every statement key of the install's script, folded to lower case.
+
+    This reads the whole install through the tree (about 80 MB of script), so
+    it only runs when the on-disk cache is missing or stale. It stays in this
+    process on purpose: worker processes would re-import a caller's script
+    that has no ``if __name__ == "__main__"`` guard.
+    """
+
+    files: list[str] = []
+    for top in ("common", "events", "history"):
+        directory = root / top
+        if directory.is_dir():
+            files.extend(str(path) for path in sorted(directory.rglob("*.txt")))
+    counts, domains = _count_files(str(root), files)
+    result.usage.update(counts)
+    for name, per_domain in domains.items():
+        result.domains[name].update(per_domain)
+
+
+def _count_files(root_text: str, paths: list[str]) -> tuple[dict[str, int], dict[str, dict[str, int]]]:
+    """Statement keys of some files, in total and per folder."""
+
+    root = Path(root_text)
+    counts: Counter[str] = Counter()
+    domains: dict[str, Counter[str]] = defaultdict(Counter)
+    for text_path in paths:
+        path = Path(text_path)
+        block = _root_block(path)
+        if block is None:
+            continue
+        domain = "/".join(path.relative_to(root).parts[:2])
+        local: Counter[str] = Counter()
+        stack = [block]
+        while stack:
+            current = stack.pop()
+            for item in current.items:
+                kind = type(item)
+                if kind is Assignment:
+                    assert isinstance(item, Assignment)
+                    local[item.key.value.lower()] += 1
+                    value = item.value
+                    if type(value) is Block:
+                        stack.append(value)
+                    elif type(value) is Tagged:
+                        stack.append(value.block)
+                elif kind is Block:
+                    assert isinstance(item, Block)
+                    stack.append(item)
+                elif kind is Tagged:
+                    assert isinstance(item, Tagged)
+                    stack.append(item.block)
+        counts.update(local)
+        for name, count in local.items():
+            domains[name][domain] += count
+    return dict(counts), {name: dict(value) for name, value in domains.items()}
+
+
+# ── validation ────────────────────────────────────────────────────
+
+#: Core effects in a country scope: one mistake, reported once, by the
+#: reference check (``country_scope_core_effect``).
+_CORE_EFFECTS = frozenset({"add_core_of", "remove_core_of"})
 
 
 def validate_script_sources(
@@ -240,411 +939,212 @@ def validate_script_sources(
     custom_tokens: Mapping[ScriptTokenKind, set[str]] | None = None,
     allowlist: Iterable[str] = (),
 ) -> list[ValidationError]:
-    """Warn about script tokens absent from installed-game documentation."""
+    """Report names the game does not know and names used in a scope they do not support.
+
+    Codes (all with a file and a line when the source has them):
+
+    * ``unknown_effect_token``, ``unknown_trigger_token``,
+      ``unknown_modifier_token`` (warning): a name neither the game, its
+      definitions nor the mod knows.
+    * ``unsupported_effect_scope``, ``unsupported_trigger_scope`` (warning):
+      a documented name used in a scope its documentation does not list. Only
+      reported when the scope is certain.
+    * ``unseen_effect_token``, ``unseen_trigger_token``,
+      ``unseen_modifier_token`` (info): a documented name the game's own
+      script never uses. It is legal, but nobody has tried it.
+    """
 
     allowed = tuple(dict.fromkeys(allowlist))
-    custom = (custom_tokens if custom_tokens is not None else
-              _custom_script_tokens(Path(mod_root)) if mod_root is not None else {})
+    custom = (
+        custom_tokens
+        if custom_tokens is not None
+        else _custom_script_tokens(Path(mod_root))
+        if mod_root is not None
+        else {}
+    )
+    custom_folded = {
+        kind: {name.lower() for name in names} for kind, names in custom.items()
+    }
+    characters = vocabulary.characters
     findings: list[ValidationError] = []
-    seen: set[tuple[ScriptTokenKind, str, str, int]] = set()
+    seen: set[tuple[str, str, str, int | None]] = set()
     for source in sources:
-        if not source.text.strip():
+        if source.block is None and not source.text.strip():
             continue
-        commands = (
-            _modifier_commands(source.text)
-            if source.kind == "modifier"
-            else _script_commands(source.text, source.kind, scope=source.scope)
+        statements = walk_script(
+            source.block if source.block is not None else source.text,
+            source.kind,
+            scope=source.scope.upper() if source.scope else None,
+            from_scope=source.from_scope.upper() if source.from_scope else None,
+            # A scripted effect is an effect and a scripted trigger a trigger:
+            # the game reads each only among statements of its own kind.
+            is_command=lambda kind, folded: (
+                folded in vocabulary.folded_names(kind) or folded in custom_folded.get(kind, ())
+            ),
+            characters=characters,
+            arguments=source.arguments,
         )
-        for command in commands:
-            known = vocabulary.tokens(command.kind)
-            if not known:
-                continue
-            custom_for_kind = custom.get(command.kind, set())
-            identity = (
-                command.kind,
-                command.name,
-                source.file_path or source.owner_id,
-                command.line,
+        for statement in statements:
+            line = statement.line
+            if source.block is None and source.line is not None:
+                line += source.line - 1
+            finding = check_statement(
+                statement, source, line, vocabulary, custom_folded, allowed
             )
-            if identity in seen:
+            if finding is None:
                 continue
-            seen.add(identity)
-            if command.name in custom_for_kind or _is_allowed(
-                command.name, command.kind, allowed
-            ):
-                continue
-            if command.name in known:
-                info = known[command.name]
-                if _unsupported_scope(command.scope, info.supported_scopes):
-                    supported = ", ".join(info.supported_scopes)
-                    owner = (
-                        f"{source.owner_kind} '{source.owner_id}' "
-                        if source.owner_kind and source.owner_id
-                        else ""
-                    )
-                    findings.append(
-                        ValidationError(
-                            message=(
-                                f"{owner}uses {command.kind} token "
-                                f"'{command.name}' in {command.scope} scope, but the "
-                                f"installed game documents supported scopes: {supported}."
-                            ),
-                            severity="warning",
-                            code=f"unsupported_{command.kind}_scope",
-                            file_path=source.file_path,
-                            line=command.line,
-                            focus_id=(
-                                source.owner_id
-                                if source.owner_kind == "focus"
-                                else None
-                            ),
-                            event_id=(
-                                source.owner_id
-                                if source.owner_kind == "event"
-                                else None
-                            ),
-                            idea_id=(
-                                source.owner_id
-                                if source.owner_kind == "idea"
-                                else None
-                            ),
-                            decision_id=(
-                                source.owner_id
-                                if source.owner_kind == "decision"
-                                else None
-                            ),
-                        )
-                    )
-                    continue
-                if info.usage_count or info.synthesized:
-                    continue
-                findings.append(
-                    ValidationError(
-                        message=(
-                            f"{source.owner_kind} '{source.owner_id}' uses documented "
-                            f"{command.kind} token '{command.name}', but it has 0 "
-                            "installed-game uses. This may be a legal unexercised token; "
-                            f"verify it or allow '{command.kind}:{command.name}'."
-                        ),
-                        severity="warning",
-                        code=f"unseen_{command.kind}_token",
-                        file_path=source.file_path,
-                        line=command.line,
-                        focus_id=(
-                            source.owner_id
-                            if source.owner_kind == "focus"
-                            else None
-                        ),
-                        event_id=(
-                            source.owner_id
-                            if source.owner_kind == "event"
-                            else None
-                        ),
-                        idea_id=(
-                            source.owner_id if source.owner_kind == "idea" else None
-                        ),
-                        decision_id=(
-                            source.owner_id
-                            if source.owner_kind == "decision"
-                            else None
-                        ),
-                    )
-                )
-                continue
-            suggestion = _nearest(command.name, known)
-            suggestion_text = ""
-            if suggestion is not None:
-                info = known[suggestion]
-                suggestion_text = (
-                    f" Did you mean '{suggestion}' "
-                    f"({info.usage_count} installed-game uses)?"
-                )
-            owner = (
-                f"{source.owner_kind} '{source.owner_id}' "
-                if source.owner_kind and source.owner_id
-                else ""
-            )
-            findings.append(
-                ValidationError(
-                    message=(
-                        f"{owner}uses undocumented {command.kind} token "
-                        f"'{command.name}' (0 installed-game uses)."
-                        f"{suggestion_text} Allow an intentional extension with "
-                        f"'{command.kind}:{command.name}'."
-                    ),
-                    severity="warning",
-                    code=f"unknown_{command.kind}_token",
-                    file_path=source.file_path,
-                    line=command.line,
-                    focus_id=(
-                        source.owner_id if source.owner_kind == "focus" else None
-                    ),
-                    event_id=(
-                        source.owner_id if source.owner_kind == "event" else None
-                    ),
-                    idea_id=(
-                        source.owner_id if source.owner_kind == "idea" else None
-                    ),
-                    decision_id=(
-                        source.owner_id if source.owner_kind == "decision" else None
-                    ),
-                )
-            )
+            # The same text can be checked twice (an on-action's event list).
+            identity = (finding.code, finding.message, finding.file_path or source.owner_id, line)
+            if identity not in seen:
+                seen.add(identity)
+                findings.append(finding)
     return findings
 
 
-def _documentation_entries(
-    path: Path,
-) -> dict[str, tuple[tuple[str, ...], tuple[str, ...]]]:
-    if not path.is_file():
-        return {}
-    text = read_text(path)
-    matches = list(_HEADING_RE.finditer(text))
-    result: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
-    for index, match in enumerate(matches):
-        body = text[
-            match.end() : matches[index + 1].start()
-            if index + 1 < len(matches)
-            else len(text)
-        ]
-        scopes = _metadata_values(body, "Supported Scopes")
-        categories = _metadata_values(body, "Categories")
-        result[match.group(1)] = (scopes, categories)
-    return result
+def check_statement(
+    statement: ScriptStatement,
+    source: ScriptSource,
+    line: int,
+    vocabulary: GameScriptVocabulary,
+    custom: Mapping[ScriptTokenKind, set[str]],
+    allowed: tuple[str, ...],
+) -> ValidationError | None:
+    """Check one statement found by the walker; ``None`` when it is fine.
 
+    ``custom`` holds extra names per kind in lower case, ``allowed`` the
+    allowlist patterns (``effect:my_effect``).
+    """
 
-def _metadata_values(body: str, label: str) -> tuple[str, ...]:
-    match = re.search(
-        rf"(?mi)^\s*\*?\s*(?:\*\*)?{re.escape(label)}(?:\*\*)?\s*:\s*(.+)$",
-        body,
-    )
-    if match is None:
-        return ()
-    return tuple(
-        value.strip().strip("`*")
-        for value in re.split(r"[,|]", match.group(1))
-        if value.strip().strip("`*")
-    )
-
-
-def _script_commands(
-    text: str,
-    kind: ScriptTokenKind,
-    *,
-    scope: str | None = None,
-) -> list[_Command]:
-    commands: list[_Command] = []
-    normalized_scope = scope.upper() if scope else None
-
-    def walk(
-        body: str,
-        base_line: int,
-        semantic_kind: ScriptTokenKind,
-        current_scope: str | None,
-        root_scope: str | None,
-    ) -> None:
-        try:
-            spans = top_level_assignments(body)
-        except (ParseError, ValueError):
-            return
-        for span in spans:
-            line = base_line + body.count("\n", 0, span.start)
-            key = span.key
-            nested_kind: ScriptTokenKind | None = None
-            if key in _NESTED_TRIGGER_BLOCKS:
-                nested_kind = "trigger"
-            elif key in _NESTED_EFFECT_BLOCKS:
-                nested_kind = "effect"
-            if nested_kind is not None:
-                if (
-                    span.is_block
-                    and span.body_start is not None
-                    and span.body_end is not None
-                ):
-                    walk(
-                        body[span.body_start : span.body_end],
-                        base_line + body.count("\n", 0, span.body_start),
-                        nested_kind,
-                        current_scope,
-                        root_scope,
-                    )
-                continue
-            if key == "limit":
-                if span.is_block and span.body_start is not None and span.body_end is not None:
-                    walk(
-                        body[span.body_start : span.body_end],
-                        base_line + body.count("\n", 0, span.body_start),
-                        "trigger",
-                        current_scope,
-                        root_scope,
-                    )
-                continue
-            recursive = (
-                key in _CONTROL_BLOCKS
-                or key.startswith(_RECURSIVE_PREFIXES)
-                or bool(_SCOPE_RE.match(key))
-            )
-            if not bool(_SCOPE_RE.match(key)) and key not in {
-                "AND",
-                "OR",
-                "NOT",
-                "NAND",
-                "NOR",
-                "else",
-                "hidden_effect",
-            }:
-                commands.append(_Command(key, line, semantic_kind, current_scope))
-            if (
-                recursive
-                and span.is_block
-                and span.body_start is not None
-                and span.body_end is not None
-            ):
-                walk(
-                    body[span.body_start : span.body_end],
-                    base_line + body.count("\n", 0, span.body_start),
-                    semantic_kind,
-                    _nested_scope(key, current_scope, root_scope),
-                    root_scope,
-                )
-
-    walk(text, 1, kind, normalized_scope, normalized_scope)
-    return commands
-
-
-def _modifier_commands(text: str) -> list[_Command]:
-    try:
-        return [
-            _Command(span.key, 1 + text.count("\n", 0, span.start), "modifier")
-            for span in top_level_assignments(text)
-            if not span.is_block
-        ]
-    except (ParseError, ValueError):
-        return []
-
-
-def _nested_scope(
-    key: str,
-    current_scope: str | None,
-    root_scope: str | None,
-) -> str | None:
-    upper = key.upper()
-    if upper in {"AND", "OR", "NOT", "NAND", "NOR"}:
-        return current_scope
-    if upper == "THIS":
-        return current_scope
-    if upper == "ROOT":
-        return root_scope
-    if upper.startswith(("PREV", "FROM")):
+    kind = cast(ScriptTokenKind, statement.kind)
+    name = statement.name
+    folded = name.lower()
+    if not vocabulary.tokens(kind):
         return None
-    if key.isdigit():
-        return "STATE"
-    if re.fullmatch(r"[A-Z0-9]{3}", key):
-        return "COUNTRY"
-    lowered = key.lower()
-    if lowered in {
-        "owner",
-        "controller",
-        "overlord",
-        "faction_leader",
-        "occupied_country",
-        "country",
-    }:
-        return "COUNTRY"
-    if lowered in {"capital_scope", "state"}:
-        return "STATE"
-    if lowered in {"character", "operative", "unit_leader"}:
-        return "CHARACTER"
-    if lowered == "division":
-        return "DIVISION"
-    inferred = (
-        ("strategic_region", "STRATEGIC_REGION"),
-        ("special_project", "SPECIAL_PROJECT"),
-        ("industrial_org", "INDUSTRIAL_ORG"),
-        ("unit_leader", "CHARACTER"),
-        ("army_leader", "CHARACTER"),
-        ("navy_leader", "CHARACTER"),
-        ("character", "CHARACTER"),
-        ("operative", "CHARACTER"),
-        ("country", "COUNTRY"),
-        ("state", "STATE"),
-        ("division", "DIVISION"),
-        ("operation", "OPERATION"),
+    if _is_allowed(name, kind, allowed):
+        return None
+    info = vocabulary.lookup(kind, name)
+    owner = (
+        f"{source.owner_kind} '{source.owner_id}' "
+        if source.owner_kind and source.owner_id
+        else ""
     )
-    for fragment, nested_scope in inferred:
-        if fragment in lowered and lowered.startswith(_RECURSIVE_PREFIXES):
-            return nested_scope
-    return current_scope
+    if info is None:
+        if folded in custom.get(kind, ()):
+            return None
+        suggestion = _nearest(name, vocabulary.tokens(kind))
+        hint = ""
+        other = {"effect": "trigger", "trigger": "effect"}.get(kind)
+        if other is not None and (
+            vocabulary.lookup(cast(ScriptTokenKind, other), name) is not None
+            or folded in custom.get(cast(ScriptTokenKind, other), ())
+        ):
+            # The most common mix-up: a condition where an action belongs, or
+            # the other way round. The name is known, so "undocumented" or a
+            # look-alike name would only mislead.
+            return _finding(
+                source,
+                line,
+                code=f"unknown_{kind}_token",
+                severity="warning",
+                message=(
+                    f"{owner}uses '{name}' among effects. '{name}' is a trigger: "
+                    "it tests something and changes nothing."
+                    if kind == "effect"
+                    else f"{owner}uses '{name}' among triggers. '{name}' is an effect: "
+                    "it changes something and cannot be a condition."
+                ),
+            )
+        if suggestion is not None:
+            hint = (
+                f" Did you mean '{suggestion}' "
+                f"({vocabulary.tokens(kind)[suggestion].usage_count} installed-game uses)?"
+            )
+        return _finding(
+            source,
+            line,
+            code=f"unknown_{kind}_token",
+            severity="warning",
+            message=(
+                f"{owner}uses undocumented {kind} token '{name}' (0 installed-game uses)."
+                f"{hint} Allow an intentional extension with '{kind}:{name}'."
+            ),
+        )
+    if statement.scope is not None and _unsupported_scope(statement.scope, info.supported_scopes):
+        if kind == "effect" and statement.scope == "COUNTRY" and folded in _CORE_EFFECTS:
+            # The reference check reports this mistake as
+            # ``country_scope_core_effect``, with the state-scoped fix.
+            return None
+        return _finding(
+            source,
+            line,
+            code=f"unsupported_{kind}_scope",
+            severity="warning",
+            message=(
+                f"{owner}uses {kind} token '{name}' in {statement.scope} scope, but the "
+                f"installed game documents supported scopes: "
+                f"{', '.join(info.supported_scopes)}."
+            ),
+        )
+    if info.usage_count or info.synthesized:
+        return None
+    return _finding(
+        source,
+        line,
+        code=f"unseen_{kind}_token",
+        severity="info",
+        message=(
+            f"{owner}uses documented {kind} token '{name}', but it has 0 "
+            "installed-game uses. This may be a legal unexercised token; "
+            f"verify it or allow '{kind}:{name}'."
+        ),
+    )
 
 
-def _unsupported_scope(
-    actual: str | None,
-    supported: tuple[str, ...],
-) -> bool:
-    if actual is None or not supported:
+def _finding(
+    source: ScriptSource, line: int, *, code: str, severity: str, message: str
+) -> ValidationError:
+    owner_kind = source.owner_kind
+    owner_id = source.owner_id or None
+    return ValidationError(
+        message=message,
+        severity=severity,
+        code=code,
+        file_path=source.file_path,
+        line=line,
+        focus_id=owner_id if owner_kind == "focus" else None,
+        event_id=owner_id if owner_kind == "event" else None,
+        idea_id=owner_id if owner_kind == "idea" else None,
+        decision_id=owner_id if owner_kind == "decision" else None,
+        dynamic_modifier_id=owner_id if owner_kind == "dynamic_modifier" else None,
+        bookmark_name=owner_id if owner_kind == "bookmark" else None,
+    )
+
+
+def _unsupported_scope(actual: str, supported: tuple[str, ...]) -> bool:
+    if not supported:
         return False
     normalized = {value.upper() for value in supported}
     return "ANY" not in normalized and actual.upper() not in normalized
 
 
 def _custom_script_tokens(mod_root: Path) -> dict[ScriptTokenKind, set[str]]:
-    result: dict[ScriptTokenKind, set[str]] = {
-        "effect": set(),
-        "trigger": set(),
-        "modifier": set(),
+    definitions = _read_definitions([mod_root], usage=False)
+    return {
+        "effect": set(definitions.scripted["effect"]),
+        "trigger": set(definitions.scripted["trigger"]),
+        "modifier": set(definitions.modifier_definitions),
     }
-    for kind, relative in (
-        ("effect", Path("common/scripted_effects")),
-        ("trigger", Path("common/scripted_triggers")),
-    ):
-        typed_kind = cast(ScriptTokenKind, kind)
-        directory = mod_root / relative
-        if not directory.is_dir():
-            continue
-        for path in directory.glob("*.txt"):
-            try:
-                result[typed_kind].update(
-                    span.key
-                    for span in top_level_assignments(
-                        read_text(path)
-                    )
-                    if span.is_block
-                )
-            except (OSError, ParseError, ValueError):
-                continue
-    return result
-
-
-def _scripted_tokens(directory: Path) -> set[str]:
-    """Return installed top-level scripted effect or trigger definitions."""
-
-    result: set[str] = set()
-    if not directory.is_dir():
-        return result
-    for path in directory.glob("*.txt"):
-        try:
-            result.update(
-                span.key
-                for span in top_level_assignments(
-                    read_text(path)
-                )
-                if span.is_block
-            )
-        except (OSError, ParseError, ValueError):
-            continue
-    return result
 
 
 def _is_allowed(name: str, kind: ScriptTokenKind, patterns: tuple[str, ...]) -> bool:
     return any(
-        fnmatch.fnmatch(name, pattern)
-        or fnmatch.fnmatch(f"{kind}:{name}", pattern)
+        fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(f"{kind}:{name}", pattern)
         for pattern in patterns
     )
 
 
 def _nearest(name: str, known: Mapping[str, ScriptTokenInfo]) -> str | None:
-    from difflib import get_close_matches
+    from difflib import SequenceMatcher, get_close_matches
 
     candidates = get_close_matches(name, known.keys(), n=3, cutoff=0.55)
     if not candidates:
@@ -652,37 +1152,21 @@ def _nearest(name: str, known: Mapping[str, ScriptTokenInfo]) -> str | None:
     return max(
         candidates,
         key=lambda candidate: (
-            _similarity(name, candidate),
+            SequenceMatcher(None, name, candidate).ratio(),
             known[candidate].usage_count,
         ),
     )
 
 
-def _similarity(left: str, right: str) -> float:
-    from difflib import SequenceMatcher
-
-    return SequenceMatcher(None, left, right).ratio()
-
-
-def _without_comments(text: str) -> str:
-    lines: list[str] = []
-    for line in text.splitlines():
-        quote = False
-        escaped = False
-        output: list[str] = []
-        for character in line:
-            if escaped:
-                output.append(character)
-                escaped = False
-                continue
-            if character == "\\" and quote:
-                output.append(character)
-                escaped = True
-                continue
-            if character == '"':
-                quote = not quote
-            if character == "#" and not quote:
-                break
-            output.append(character)
-        lines.append("".join(output))
-    return "\n".join(lines)
+__all__ = [
+    "FAMILY_SOURCES",
+    "GameScriptVocabulary",
+    "ModifierTemplate",
+    "ScriptSource",
+    "ScriptTokenInfo",
+    "ScriptTokenKind",
+    "load_game_script_vocabulary",
+    "script_sources",
+    "check_statement",
+    "validate_script_sources",
+]

@@ -540,6 +540,30 @@ def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Pat
     )
 
 
+def test_scope_block_reads_each_effect_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from hoi4 import script, syntax
+
+    effects = ["add_stability = 0.1 # why", "add_war_support = 0.1"] * 300
+    read: list[int] = []
+    real_parse = syntax.parse
+
+    def counting_parse(text: str) -> syntax.Document:
+        read.append(len(text))
+        return real_parse(text)
+
+    monkeypatch.setattr(syntax, "parse", counting_parse)
+    monkeypatch.setattr(script, "parse", counting_parse)
+    result = script.scope_block("GER", *effects)
+    monkeypatch.undo()
+
+    # One read per effect (and one for the scope): the cost does not grow
+    # with the square of the number of effects.
+    assert len(read) <= len(effects) + 1
+    assert max(read) < 40
+    (outer,) = real_parse(result).root.items
+    assert len(list(outer.block.assignments())) == 600
+
+
 def test_pdx_value_spells_any_object_as_one_scalar() -> None:
     from decimal import Decimal
 

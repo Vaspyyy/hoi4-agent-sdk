@@ -27,6 +27,19 @@ settings.register_profile(
 settings.load_profile(os.environ.get("HOI4_HYPOTHESIS_PROFILE", "ci"))
 
 
+@pytest.fixture(autouse=True, scope="session")
+def private_vocabulary_cache(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Keep the script vocabulary cache of the test run out of the user's cache.
+
+    The user cache keeps only a few installs. The many small fake installs the
+    tests build would push the real game's entry out, and the next real
+    validation would read the whole game again.
+    """
+
+    if "HOI4_SDK_CACHE_DIR" not in os.environ:
+        os.environ["HOI4_SDK_CACHE_DIR"] = str(tmp_path_factory.mktemp("hoi4-sdk-cache"))
+
+
 @pytest.fixture
 def patch_mod_helper(monkeypatch: pytest.MonkeyPatch) -> Callable[[Any, Any], None]:
     """Replace a module-level helper in every ``hoi4.mod`` layer module that binds it.

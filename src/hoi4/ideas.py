@@ -145,7 +145,13 @@ def detect_ideas_container(text: str) -> str:
 def scan_idea_ids_file(path: Path) -> set[str]:
     """Extract idea IDs without parsing every modeled property."""
 
-    root = parse(read_text(path)).root
+    return idea_ids_in_text(read_text(path))
+
+
+def idea_ids_in_text(text: str) -> set[str]:
+    """The id of every idea in the text of an ideas file."""
+
+    root = parse(text).root
     return {idea.key.value for idea, _ in _iter_entries(_containers(root))}
 
 

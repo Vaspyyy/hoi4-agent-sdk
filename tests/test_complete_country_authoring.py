@@ -687,3 +687,108 @@ def test_base_mod_default_name_pool_is_respected_unless_replaced(tmp_path):
     assert "missing_country_name_pool" in {
         finding.code for finding in mod.validate_country_package("ABC", check_geography=False).findings
     }
+
+
+def test_character_named_by_a_game_key_has_localisation(tmp_path: Path) -> None:
+    root = tmp_path / "mod"
+    _build_complete_country(root).save()
+    game = tmp_path / "game"
+    loc = game / "localisation" / "english" / "game_characters_l_english.yml"
+    loc.parent.mkdir(parents=True)
+    loc.write_text('﻿l_english:\n ABC_game_leader_name:0 "Game Name"\n', encoding="utf-8")
+    mod = Mod(root, hoi4_install=game)
+    leader = mod.get_character("ABC_leader_1")
+    # The id's own key is gone; the character is named by a key of the game.
+    mod.delete_loc("ABC_leader_1")
+    leader.name = "ABC_game_leader_name"
+
+    def missing() -> list[str]:
+        report = mod.validate_country_package("ABC", check_geography=False)
+        return [
+            finding.message
+            for finding in report.findings
+            if finding.code == "missing_character_localization"
+        ]
+
+    assert missing() == []
+    leader.name = "ABC_nowhere_name"
+    assert missing() == [
+        "Character 'ABC_leader_1' is missing name localization "
+        "(looked for 'ABC_nowhere_name' or 'ABC_leader_1')."
+    ]
+
+
+def test_what_a_complete_country_needs_is_a_warning_that_still_blocks_completeness(
+    tmp_path: Path,
+) -> None:
+    from hoi4 import COUNTRY_PACKAGE_REQUIREMENT_CODES, VALIDATION_SEVERITIES
+
+    # The game loads a country without any of these: none of them is an error.
+    assert COUNTRY_PACKAGE_REQUIREMENT_CODES == {
+        "missing_country_leader",
+        "insufficient_political_advisors",
+        "insufficient_military_commanders",
+        "missing_land_oob",
+        "capital_not_cored",
+    }
+    assert {VALIDATION_SEVERITIES[code] for code in COUNTRY_PACKAGE_REQUIREMENT_CODES} == {
+        "warning"
+    }
+
+    _write_state(tmp_path, 1, owner="OLD", cores=("OLD",), provinces=(1,))
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Incomplete", capital=1)
+
+    found = {
+        issue.code: issue.severity
+        for issue in mod.validate()
+        if issue.country_tag == "ABC" and issue.code in COUNTRY_PACKAGE_REQUIREMENT_CODES
+    }
+    assert found["insufficient_military_commanders"] == "warning"
+    assert found["insufficient_political_advisors"] == "warning"
+
+    # A modder who wants one general can say so.
+    hidden = mod.validate(
+        suppress=["insufficient_military_commanders:ABC", "insufficient_political_advisors"]
+    )
+    assert not [
+        issue for issue in hidden
+        if issue.code in {"insufficient_military_commanders", "insufficient_political_advisors"}
+    ]
+
+    # Completeness is another question: the package is not complete.
+    report = mod.validate_country_package("ABC", check_geography=False)
+    assert not report.complete
+    assert {finding.code for finding in report.unmet_requirements} >= {
+        "insufficient_military_commanders",
+        "insufficient_political_advisors",
+    }
+
+
+def test_a_country_definition_with_a_channel_above_255_is_reported(tmp_path: Path) -> None:
+    for relative, text in {
+        "common/country_tags/00_countries.txt": 'ZZZ = "countries/Zzz.txt"\nYYY = "countries/Yyy.txt"\n',
+        "common/countries/Zzz.txt": "graphical_culture = western_european_gfx\ncolor = { 314 176 74 }\n",
+        "common/countries/Yyy.txt": "color = rgb { 10 20 30 }\n",
+        "history/countries/ZZZ - Zzz.txt": "capital = 1\n",
+        "history/countries/YYY - Yyy.txt": "capital = 1\n",
+    }.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    mod = Mod(tmp_path)
+    # The reader clamps the channel; the check looks at the file itself.
+    assert mod.get_country("ZZZ").color == (255, 176, 74)
+    colours = [issue for issue in mod.validate() if issue.code == "invalid_country_color"]
+    assert [(issue.country_tag, issue.severity, issue.line) for issue in colours] == [
+        ("ZZZ", "error", 2)
+    ]
+    assert Path(colours[0].file_path or "").name == "Zzz.txt"
+    assert "314 176 74" in colours[0].message
+
+    # A colour set through the API replaces the file's: the finding goes
+    # before save(), and stays gone after it.
+    mod.update_country("ZZZ", color=(10, 20, 30))
+    assert not [issue for issue in mod.validate() if issue.code == "invalid_country_color"]
+    mod.save()
+    assert not [issue for issue in mod.validate() if issue.code == "invalid_country_color"]

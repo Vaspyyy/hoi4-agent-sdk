@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal, Sequence
 
@@ -13,7 +14,6 @@ from ..characters import (
 from ..country_package import CountryPackageReport
 from ..oob import (
     OrderOfBattle,
-    validate_oob,
 )
 from ..parser import (
     ParseError,
@@ -24,16 +24,73 @@ from ..paths import (
     require_country_tag,
 )
 from ..types import (
+    Country,
     ValidationError,
 )
+from ..script_references import dynamic_tags_of
+from ..syntax import parse
+from ..validation import validate_country
 from ._characters import CharactersLayer
 from ._context import ContextLayer
 from ._oob_validation import OobValidationLayer
 from ._oobs import OobsLayer
 
+# A localisation key: no spaces, with an underscore (``GER_erwin_rommel``).
+# A name without one is the text the SDK wrote, not a key.
+_KEY_LIKE_RE = re.compile(r"[\w.\-]*_[\w.\-]*")
+
 
 class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, CharactersLayer):
     """Country package completeness validation."""
+
+    def _validate_countries(self, known_parties: set[str]) -> list[ValidationError]:
+        """Check every country's history values and its variant unlocks."""
+
+        errors: list[ValidationError] = []
+        dynamic_tags = self._dynamic_country_tags()
+        for country in list(self._countries.values()):
+            errors.extend(
+                validate_country(
+                    country,
+                    known_parties=known_parties,
+                    has_localisation=self._has_loc,
+                    leader_ideologies=self._recruited_leader_ideologies(country),
+                    dynamic_tag=country.tag in dynamic_tags,
+                )
+            )
+            errors.extend(self._validate_equipment_variant_unlocks(country))
+        return errors
+
+    def _dynamic_country_tags(self) -> set[str]:
+        """Tags declared after ``dynamic_tags = yes`` in a tag file."""
+
+        tags: set[str] = set()
+        for _, text in self._effective_script_texts("common/country_tags"):
+            tags |= dynamic_tags_of(parse(text).root)
+        return tags
+
+    def _recruited_leader_ideologies(self, country: Country) -> list[str] | None:
+        """Ideologies of the recruited characters that can lead the country.
+
+        ``None`` when a recruited character cannot be found, so the caller
+        falls back to the one leader the country model knows.
+        """
+
+        recruited = country.recruited_characters
+        if not recruited:
+            return None
+        ideologies: list[str] = []
+        for character_id in recruited:
+            try:
+                character = self.get_character(character_id)
+            except (KeyError, ValueError):
+                return None
+            ideologies.extend(
+                role.ideology
+                for role in self._all_character_roles(character)
+                if isinstance(role, CountryLeaderRole) and role.ideology
+            )
+        return ideologies
 
     def _country_runtime_activation_evidence(
         self,
@@ -317,6 +374,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     f"Country '{tag}' has no recruited character with a "
                     "country_leader role."
                 ),
+                severity="warning",
             )
 
         advisor_ids = {
@@ -343,6 +401,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     f"Country '{tag}' has {len(advisor_ids)} recruited political "
                     "advisor(s); create and recruit at least 2."
                 ),
+                severity="warning",
             )
         if len(commander_ids) < 2:
             issue(
@@ -351,6 +410,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     f"Country '{tag}' has {len(commander_ids)} recruited army "
                     "commander(s); create and recruit at least 2."
                 ),
+                severity="warning",
             )
 
         sprite_textures = self._known_sprite_textures()
@@ -417,12 +477,17 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                         ),
                         file_path=str(character.path) if character.path else None,
                     )
-            if character.id not in self._loc_entries:
+            # A character loaded from a file may be named by ``name = KEY``,
+            # a key of the game or a base mod. The SDK writes the name as text
+            # and the key under the character's id, so the id always counts.
+            name_key = character.name if _KEY_LIKE_RE.fullmatch(character.name) else ""
+            name_keys = list(dict.fromkeys(key for key in (name_key, character.id) if key))
+            if not any(self._has_loc(key) for key in name_keys):
                 issue(
                     "missing_character_localization",
                     (
-                        f"Character '{character.id}' is missing name "
-                        f"localization key '{character.id}'."
+                        f"Character '{character.id}' is missing name localization "
+                        f"(looked for {' or '.join(repr(key) for key in name_keys)})."
                     ),
                     file_path=str(character.path) if character.path else None,
                 )
@@ -520,6 +585,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                         "Use create_oob(..., assign=True), or explicitly load one "
                         "tag-owned OOB from scenario script."
                     ),
+                    severity="warning",
                 )
         if package_oob is not None:
             if not package_oob.templates or not package_oob.divisions:
@@ -535,8 +601,14 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                         else None
                     ),
                 )
-            findings.extend(validate_oob(package_oob))
-            findings.extend(self._validate_oob_context(package_oob, tag))
+            findings.extend(
+                self._validate_oob_context(
+                    package_oob,
+                    tag,
+                    land_references[0] if land_references else None,
+                    structure=True,
+                )
+            )
 
         capital = owned_by_id.get(country.capital)
         if resolved_lifecycle == "starting":
@@ -566,6 +638,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                         f"{country.capital} is not cored by {tag}."
                     ),
                     state_id=country.capital,
+                    severity="warning",
                 )
 
         if (

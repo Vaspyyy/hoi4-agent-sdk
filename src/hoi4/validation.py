@@ -5,18 +5,24 @@ Validation rules for HOI4 mod data.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
+from typing import Callable, Sequence
 
 from .decisions import decision_has_cost, decision_has_mission_timeout
 from .effects_catalog import TECHNOLOGY_CATEGORIES
-from .events import VALID_EVENT_TYPES
-from .focus_layout import resolve_focus_positions
+from .events import VALID_EVENT_TYPES, event_namespace
+from .focus_layout import (
+    FocusBranches,
+    continuous_focus_position_issue,
+    resolve_focus_positions,
+)
 from .parser import iter_assignment_blocks
 from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
 from .syntax import parse as parse_script
 from .script import validate_script_syntax
-from .syntax import Assignment, parse
+from .syntax import Assignment, Block, Tagged, parse
 from .textio import read_text
 from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationError
 
@@ -37,26 +43,28 @@ VALIDATION_CODES: dict[str, str] = {
     ),
     "mission_with_cost": "A mission (days_mission_timeout) also declares a cost.",
     "mission_activation_without_timeout": (
-        "A decision has an activation trigger but no days_mission_timeout."
+        "A decision without days_mission_timeout has an activation trigger, which the "
+        "game ignores."
     ),
     "country_scope_core_effect": "Core add/remove effect appears outside an explicit state scope.",
     "history_set_owner_in_effect": "State history owner directive appears in runtime effect script.",
     "unknown_tech_bonus_category": "add_tech_bonus category is not in the technology category catalog.",
     "missing_effect_target": "War goal or war declaration block is missing target = TAG.",
     "missing_wargoal_type": "War goal or war declaration block is missing type = <wargoal_type>.",
-    "unknown_country_scope": "Script scopes into a tag not known from vanilla or the mod.",
+    "unknown_country_scope": (
+        "Script scopes into a tag that no country tag, tag alias or dynamic tag of the "
+        "game, a base mod or the mod declares."
+    ),
     "unknown_effect_token": "Effect token is absent from installed-game documentation.",
     "unknown_trigger_token": "Trigger token is absent from installed-game documentation.",
     "unknown_modifier_token": "Modifier token is absent from installed-game documentation.",
     "unsupported_effect_scope": "Effect token is used outside its documented scope.",
     "unsupported_trigger_scope": "Trigger token is used outside its documented scope.",
-    "unsupported_modifier_scope": "Modifier token is used outside its documented scope.",
     "unseen_effect_token": "A documented effect has zero installed-game uses.",
     "unseen_trigger_token": "A documented trigger has zero installed-game uses.",
     "unseen_modifier_token": "A documented modifier has zero installed-game uses.",
-    "leader_party_mismatch": "Country ruling party group does not match leader sub-ideology.",
+    "leader_party_mismatch": "No recruited leader of the country leads its ruling party; the game shows a generated one.",
     "unknown_assigned_idea": "Country history assigns an idea ID not loaded by the SDK.",
-    "assigned_idea_not_country_category": "Country history assigns an idea outside ideas = { country = { ... } }.",
     "unknown_idea_reference": "Effect script references an idea ID not loaded from the mod or configured HOI4 install.",
     "unknown_event_reference": "Effect script references an event ID not loaded from the mod or configured HOI4 install.",
     "unknown_technology_reference": "Effect script references a technology ID not found in configured data.",
@@ -67,7 +75,8 @@ VALIDATION_CODES: dict[str, str] = {
         "Idea definitions must use a bare picture stem, not an icon assignment."
     ),
     "invalid_idea_picture_prefix": (
-        "Idea picture values are bare stems; HOI4 prepends GFX_idea_ during lookup."
+        "An idea picture repeats the GFX_idea_ prefix. The game accepts it; the bare "
+        "stem is the convention."
     ),
     "invalid_idea_desc_key": (
         "Idea descriptions use the fixed <idea_id>_desc localization key, not a desc assignment."
@@ -89,19 +98,37 @@ VALIDATION_CODES: dict[str, str] = {
     "country_colors_parse": (
         "A country colors table changed after loading and could not be parsed during validation."
     ),
-    "bad_idea_tooltip_pattern": "Effect removes several ideas and adds one idea; swap_ideas usually produces cleaner tooltips.",
+    "bad_idea_tooltip_pattern": (
+        "An effect removes several ideas and adds one; swap_ideas usually gives a "
+        "cleaner tooltip."
+    ),
     "idea_mutation_collision": "Focuses and delayed/runtime events mutate the same idea IDs.",
     "unresolved_focus_position": "A focus position has a missing or cyclic local anchor.",
-    "visual_overlap": "Focus tree layout contains visual overlap risk.",
+    "visual_overlap": (
+        "Two focuses share a position and the game can show both (mutually exclusive "
+        "focuses are both drawn; only allow_branch or an offset block keeps one away)."
+    ),
     "faction_scope_footgun": "Faction effect direction depends on current scope.",
     "civil_war_scope_footgun": "Civil war effects need careful target/capital scope.",
     "civil_war_capital_ref": "A civil-war capital is not a known state ID.",
-    "missing_localization": "Referenced HOI4 object has no localization entry.",
-    "idea_not_addable": "Effect adds an idea that is not in the country idea category.",
+    "missing_localization": (
+        "Shown text (a focus, event, idea, country or leader name) has a localization "
+        "key that exists nowhere: not in the mod, a base mod or the game."
+    ),
+    "missing_optional_localization": (
+        "An optional localization key (an idea description, a country's _DEF name) is "
+        "missing; the game falls back to other text."
+    ),
+    "idea_not_addable": (
+        "An effect adds an idea of an advisor category with add_ideas. Advisors are "
+        "hired through their character, not added as ideas."
+    ),
     "civil_war_focus_tree_missing": "Civil war script starts a revolt without loading a focus tree.",
     "unknown_focus_tree_reference": "Effect script references a focus tree ID not loaded by the SDK.",
     "resistance_on_core_state": "Resistance effects target a state that is already a core of its owner.",
-    "event_option_no_effect": "Triggered event option has no gameplay effect.",
+    "event_option_no_effect": (
+        "An event option only closes the event. That is normal for flavour events."
+    ),
     "event_conditional_text_missing": (
         "A conditional event title, description or option name has no text key."
     ),
@@ -135,6 +162,7 @@ VALIDATION_CODES: dict[str, str] = {
     "missing_land_oob": "A complete country has no unambiguous land order of battle.",
     "empty_land_oob": "An assigned land OOB has no template or no starting division.",
     "missing_oob_reference": "Country history refers to an OOB file that does not exist.",
+    "unloaded_missing_oob_reference": "A country that owns no state at the start refers to an OOB file that does not exist.",
     "mixed_oob_kinds": (
         "One OOB file mixes land, naval, or air content instead of using the "
         "engine's separate assignment effects."
@@ -159,7 +187,7 @@ VALIDATION_CODES: dict[str, str] = {
     "oob_task_force_name": "A task force has no name.",
     "duplicate_oob_task_force": "A fleet repeats a task-force name.",
     "invalid_oob_naval_location": "A naval OOB entry has an invalid location.",
-    "oob_ship_name": "A ship has no name.",
+    "oob_ship_name": "A ship has neither a name nor an ordered_name.",
     "duplicate_oob_ship": "An OOB repeats a ship name.",
     "invalid_oob_ship_definition": "A ship has no unit definition.",
     "unknown_oob_ship_definition": "A ship uses an unknown unit definition.",
@@ -168,7 +196,6 @@ VALIDATION_CODES: dict[str, str] = {
     "duplicate_oob_ship_equipment": "A ship repeats an equipment type.",
     "invalid_oob_air_location": "An air wing has an invalid location.",
     "invalid_oob_air_equipment": "An air wing has invalid equipment.",
-    "duplicate_oob_air_wing": "An OOB repeats an air wing at one location.",
     "unknown_oob_naval_location": "A naval OOB entry references an unknown province.",
     "oob_naval_location_not_owned": "A naval OOB entry is outside its country's territory.",
     "unknown_oob_air_location": "An air OOB entry references an unknown state or province.",
@@ -216,12 +243,22 @@ VALIDATION_CODES: dict[str, str] = {
     "enclosed_foreign_territory": (
         "A foreign land component is completely enclosed by the target country."
     ),
-    "unreachable_focus": "A focus cannot be reached from any root focus.",
-    "unfired_event": "A triggered-only event has no modeled incoming reference.",
-    "ungranted_idea": "A country idea is never granted by modeled content.",
-    "flag_set_never_read": "A scripted flag is written but never read.",
-    "flag_read_never_set": "A scripted flag is read but never written by the mod.",
-    "unused_localization": "A localization key is not referenced by modeled content.",
+    "unreachable_focus": (
+        "A focus cannot be reached from any root focus. Release stage only."
+    ),
+    "unfired_event": (
+        "A triggered-only event is fired by nothing in the mod or the game. Release stage only."
+    ),
+    "ungranted_idea": (
+        "A country idea is granted by nothing in the mod or the game. Release stage only."
+    ),
+    "flag_set_never_read": "A scripted flag is written but never read. Release stage only.",
+    "flag_read_never_set": (
+        "A scripted flag is read but never written by the mod or the game. Release stage only."
+    ),
+    "unused_localization": (
+        "A localization key is not referenced by modeled content. Release stage only."
+    ),
     "focus_cycle": "A focus tree contains a prerequisite cycle.",
     "invalid_ideology_id": "An ideology ID is not valid Paradox Script syntax.",
     "invalid_ideology_color": "An ideology color channel is outside 0..255.",
@@ -243,10 +280,101 @@ VALIDATION_CODES: dict[str, str] = {
     ),
     "bookmark_default_country_missing": "The default country has no bookmark entry.",
     "duplicate_bookmark_country_variant": "A bookmark repeats an indistinguishable country variant.",
+    "missing_country_name_pool": "A country that needs generated names has no common/names entry.",
+    "missing_character_small_portrait": "An advisor character has no civilian small portrait.",
+    "runtime_recruit_character": (
+        "recruit_character runs outside country history, where the game ignores it."
+    ),
+    # Countries.
+    "invalid_country_tag": "A country tag is not three letters or digits.",
+    "missing_country_name": "No name localisation exists for a country, in any ideology variant.",
+    "country_popularity_sum": "A country's party popularities do not add up to 100.",
+    "invalid_ruling_party": "A country's ruling party is not a known ideology group.",
+    "invalid_country_color": "A country color is malformed or has a channel outside 0..255.",
+    # Focus trees.
+    "missing_focus_id": "A focus has no id.",
+    "invalid_focus_kind": "A focus block kind (focus, shared_focus, joint_focus) is not allowed where it is.",
+    "missing_focus_prerequisite": "A focus prerequisite names a focus that does not exist.",
+    "missing_focus_mutually_exclusive": "A focus mutually_exclusive entry names a focus that does not exist.",
+    "unknown_focus_search_filter": (
+        "A focus search filter has no GFX_<filter> sprite in the game, a base mod or the mod."
+    ),
+    "unknown_state_reference": "Focus effect script scopes into a state id that does not exist.",
+    "continuous_focus_position_high": (
+        "The continuous focus panel starts above the bottom row of the focus tree."
+    ),
+    # States.
+    "missing_state_id": "A state has no id.",
+    "missing_state_owner": "A state has no owner.",
+    "unknown_state_owner": "A state owner is not a known country tag.",
+    "unknown_state_core": "A state core is not a known country tag.",
+    "state_load_error": "A state file could not be read during validation.",
+    # Events.
+    "missing_event_id": "An event has no id.",
+    "missing_event_title": "A visible event has no title.",
+    "missing_event_description": "A visible event has no description.",
+    "missing_event_options": "A visible event has no option, so its window cannot be closed.",
+    "invalid_event_type": "An event block type is not one HOI4 knows.",
+    "undeclared_event_namespace": (
+        "A dotted event id uses a namespace that no add_namespace in the game, a base mod "
+        "or the mod declares."
+    ),
+    "triggered_only_with_mtth": (
+        "A triggered-only event also has mean_time_to_happen, which the game ignores."
+    ),
+    "war_declaration_in_immediate": (
+        "An event declares war in immediate, before the player picks an option."
+    ),
+    # Ideas.
+    "missing_idea_id": "An idea has no id.",
+    "unknown_idea_category": (
+        "An idea's category is not a category, slot or character_slot declared in "
+        "common/idea_tags of the game, a base mod or the mod."
+    ),
+    "idea_without_effect": "An idea has no modifier, bonus, rule or effect block.",
+    # Inherited content and definitions.
+    "duplicate_identifier": "A loaded object id is defined more than once.",
+    "duplicate_definition_id": "A scripted effect, trigger or other definition is defined twice.",
+    "unknown_character_trait": "A character uses a trait no trait file defines.",
+    "equipment_variant_chassis_not_unlocked": (
+        "Country history creates an equipment variant before its chassis technology."
+    ),
+    # Map.
+    "province_in_multiple_states": "A land province belongs to more than one state.",
+    "province_missing_state": "A land province belongs to no state.",
+    "unknown_state_province": "A state lists a province that does not exist.",
+    "non_land_state_province": "A state lists a sea province.",
+    "duplicate_strategic_region_id": "A strategic region id is defined more than once.",
+    "empty_strategic_region": "A strategic region has no provinces.",
+    "province_in_multiple_strategic_regions": "A province belongs to more than one strategic region.",
+    "unknown_strategic_region_province": "A strategic region lists a province that does not exist.",
+    "province_missing_strategic_region": "A province belongs to no strategic region.",
+    "strategic_region_parse_error": "A strategic region file could not be read.",
+    "invalid_supply_node": "A supply node is not on a known land province.",
+    "malformed_railway": "A railway line is malformed.",
+    "invalid_railway": "A railway has an invalid level, province or connection.",
+    "malformed_map_building": "A buildings.txt line is malformed.",
+    "map_building_unknown_state": "A buildings.txt line names a state that does not exist.",
+    "map_building_unknown_province": "A buildings.txt line names a province that does not exist.",
 }
+
+# What the SDK asks of a complete country beyond what the game needs. The
+# game loads a country without a leader, advisors, generals, an army or a core
+# on its capital, so these are warnings and can be hidden. A country package
+# is still not complete while one of them is open, and the release gate fails.
+COUNTRY_PACKAGE_REQUIREMENT_CODES: frozenset[str] = frozenset(
+    {
+        "missing_country_leader",
+        "insufficient_political_advisors",
+        "insufficient_military_commanders",
+        "missing_land_oob",
+        "capital_not_cored",
+    }
+)
 
 _ERROR_CODES = {
     "load_failure",
+    "runtime_recruit_character",
     "script_syntax",
     "localization_bom",
     "localization_encoding",
@@ -284,32 +412,25 @@ _ERROR_CODES = {
     "invalid_bookmark_effect",
     "bookmark_randomize_weather_missing",
     "invalid_idea_desc_key",
-    "invalid_idea_picture_prefix",
     "invalid_character_roles_key",
     "invalid_decision_category_layout",
-    "mission_activation_without_timeout",
     "invalid_set_politics_field",
     "game_log_error",
     "stale_game_log",
     "country_colors_parse",
     "missing_country_flag",
-    "missing_country_leader",
     "missing_character_portrait",
     "missing_character_portrait_gfx",
     "missing_character_portrait_texture",
-    "insufficient_political_advisors",
-    "insufficient_military_commanders",
     "undefined_recruited_character",
     "unrecruited_character",
     "missing_character_localization",
-    "missing_land_oob",
     "empty_land_oob",
     "missing_oob_reference",
     "oob_kind_mismatch",
     "oob_template_name",
     "duplicate_oob_template",
     "invalid_oob_battalion",
-    "duplicate_oob_grid_position",
     "invalid_oob_grid_position",
     "unknown_oob_template",
     "invalid_oob_location",
@@ -318,15 +439,12 @@ _ERROR_CODES = {
     "unknown_oob_province",
     "oob_water_location",
     "oob_load_error",
-    "oob_location_not_owned",
     "oob_fleet_name",
     "duplicate_oob_fleet",
     "invalid_oob_naval_base",
     "oob_task_force_name",
     "duplicate_oob_task_force",
     "invalid_oob_naval_location",
-    "oob_ship_name",
-    "duplicate_oob_ship",
     "invalid_oob_ship_definition",
     "unknown_oob_ship_definition",
     "missing_oob_ship_equipment",
@@ -334,11 +452,8 @@ _ERROR_CODES = {
     "duplicate_oob_ship_equipment",
     "invalid_oob_air_location",
     "invalid_oob_air_equipment",
-    "duplicate_oob_air_wing",
     "unknown_oob_naval_location",
-    "oob_naval_location_not_owned",
     "unknown_oob_air_location",
-    "oob_air_location_not_owned",
     "unknown_oob_equipment",
     "unknown_oob_equipment_owner",
     "legacy_naval_oob_without_dlc_fallback",
@@ -354,24 +469,174 @@ _ERROR_CODES = {
     "runtime_capital_not_cored",
     "no_owned_territory",
     "capital_not_owned",
-    "capital_not_cored",
+    "missing_country_name_pool",
+    "missing_character_small_portrait",
+    "invalid_country_tag",
+    "invalid_ruling_party",
+    "invalid_country_color",
+    "missing_focus_id",
+    "invalid_focus_kind",
+    "missing_focus_prerequisite",
+    "missing_focus_mutually_exclusive",
+    "missing_state_id",
+    "state_load_error",
+    "missing_event_id",
+    "missing_event_options",
+    "invalid_event_type",
+    "undeclared_event_namespace",
+    "missing_idea_id",
+    "unknown_idea_category",
+    "duplicate_identifier",
+    "duplicate_definition_id",
+    "equipment_variant_chassis_not_unlocked",
+    "province_in_multiple_states",
+    "unknown_state_province",
+    "non_land_state_province",
+    "duplicate_strategic_region_id",
+    "province_in_multiple_strategic_regions",
+    "unknown_strategic_region_province",
+    "strategic_region_parse_error",
+    "invalid_supply_node",
+    "malformed_railway",
+    "invalid_railway",
+    "malformed_map_building",
+    "map_building_unknown_state",
+    "map_building_unknown_province",
+}
+
+# Advice: style hints and things that are legal but often unintended. They are
+# returned only by ``Mod.validate(advice=True)``.
+_INFO_CODES = {
+    "missing_optional_localization",
+    "event_option_no_effect",
+    "idea_without_effect",
+    "triggered_only_with_mtth",
+    "war_declaration_in_immediate",
+    "invalid_idea_picture_prefix",
+    "mission_activation_without_timeout",
+    "continuous_focus_position_high",
+    "bad_idea_tooltip_pattern",
+    "idea_not_addable",
+    "faction_scope_footgun",
+    "civil_war_scope_footgun",
+    "civil_war_focus_tree_missing",
+    # The effect works; the state's history says little about the moment it
+    # runs.
+    "resistance_on_core_state",
+    "revolt_state_already_owned",
+    # Focuses and events often change the same spirit on purpose.
+    "idea_mutation_collision",
+    # A leader of another party is normal; the game makes one up for the
+    # ruling party.
+    "leader_party_mismatch",
+    # Units may start in a subject's or an ally's territory.
+    "oob_location_not_owned",
+    "oob_naval_location_not_owned",
+    "oob_air_location_not_owned",
+    # Documented by the game but never used in its own files: legal, unproven.
+    "unseen_effect_token",
+    "unseen_trigger_token",
+    "unseen_modifier_token",
+}
+
+#: Every validation code with its severity: ``"error"`` (the game rejects
+#: the content or behaves wrongly), ``"warning"`` (probably a mistake) or
+#: ``"info"`` (advice; only returned by ``Mod.validate(advice=True)``). A code
+#: has exactly one severity.
+VALIDATION_SEVERITIES: dict[str, str] = {
+    code: "error" if code in _ERROR_CODES else "info" if code in _INFO_CODES else "warning"
+    for code in VALIDATION_CODES
+}
+
+VALIDATION_ERROR_CODES: dict[str, str] = {
+    code: description
+    for code, description in VALIDATION_CODES.items()
+    if VALIDATION_SEVERITIES[code] == "error"
 }
 
 VALIDATION_WARNING_CODES: dict[str, str] = {
     code: description
     for code, description in VALIDATION_CODES.items()
-    if code not in _ERROR_CODES
+    if VALIDATION_SEVERITIES[code] == "warning"
 }
 
+VALIDATION_INFO_CODES: dict[str, str] = {
+    code: description
+    for code, description in VALIDATION_CODES.items()
+    if VALIDATION_SEVERITIES[code] == "info"
+}
 
-def validate_tag_definition_targets(mod_root: Path) -> list[ValidationError]:
-    """Report mod tag declarations whose country definition file is absent."""
+SEVERITIES: tuple[str, ...] = ("error", "warning", "info")
+
+
+def suppression_entries(*lists: Iterable[str] | None) -> list[str]:
+    """Join the entries of several suppression lists (``None`` is empty).
+
+    Raises ``ValueError`` for a bare string, which would otherwise be read
+    one character at a time.
+    """
+
+    entries: list[str] = []
+    for found in lists:
+        if found is None:
+            continue
+        if isinstance(found, str):
+            raise ValueError("suppress takes a list of codes, not one string")
+        entries.extend(found)
+    return entries
+
+
+def validation_suppressions(entries: Iterable[str]) -> dict[str, set[str]]:
+    """Read suppression entries into ``{code: ids}``.
+
+    ``"code"`` suppresses every finding with that code (an empty id set);
+    ``"code:ID"`` only findings about the object ``ID``. Raises
+    ``ValueError`` for an unknown code or for an error code: errors are
+    never suppressed.
+    """
+
+    if isinstance(entries, str):
+        raise ValueError("suppress takes a list of codes, not one string")
+    rules: dict[str, set[str]] = {}
+    for entry in entries:
+        code, _, object_id = str(entry).strip().partition(":")
+        code = code.strip()
+        object_id = object_id.strip()
+        severity = VALIDATION_SEVERITIES.get(code)
+        if severity is None:
+            raise ValueError(
+                f"Cannot suppress {entry!r}: {code!r} is not a validation code. "
+                "Suppress by code (see VALIDATION_CODES), optionally as 'code:ID'."
+            )
+        if severity == "error":
+            raise ValueError(f"Cannot suppress {entry!r}: '{code}' is an error code")
+        if code in rules and not rules[code]:
+            continue
+        if object_id:
+            rules.setdefault(code, set()).add(object_id)
+        else:
+            rules[code] = set()
+    return rules
+
+
+def validate_tag_definition_targets(
+    mod_root: Path, exists: Callable[[str], bool] | None = None
+) -> list[ValidationError]:
+    """Report mod tag declarations whose country definition file is absent.
+
+    A declared path such as ``countries/Germany.txt`` is read below
+    ``common/``. ``exists(relative)`` says whether the game will find a file
+    such as ``common/countries/Germany.txt``; pass one that knows the game
+    install and base mods (``Mod.content_source``), because a mod inherits
+    their country files. Without it only the mod's own folder counts.
+    """
 
     issues: list[ValidationError] = []
     tags_dir = mod_root / "common" / "country_tags"
-    countries_dir = mod_root / "common" / "countries"
     if not tags_dir.is_dir():
         return issues
+    if exists is None:
+        exists = lambda relative: (mod_root / relative).is_file()  # noqa: E731
     for path in sorted(tags_dir.glob("*.txt")):
         doc = parse(read_text(path))
         for item in doc.root.assignments():
@@ -380,8 +645,8 @@ def validate_tag_definition_targets(mod_root: Path) -> list[ValidationError]:
                 continue
             tag = item.name
             line_number = doc.line_col(item.start)[0]
-            target = countries_dir / Path(declared_path).name
-            if target.is_file():
+            relative = "common/" + declared_path.replace("\\", "/").lstrip("/")
+            if exists(relative):
                 continue
             issues.append(
                 ValidationError(
@@ -430,15 +695,27 @@ def validate_country_history_references(
     *,
     known_state_ids: set[int],
     known_character_ids: set[str],
+    pending: Mapping[Path, str | None] | None = None,
 ) -> list[ValidationError]:
-    """Validate capital and recruited-character references in mod histories."""
+    """Validate capital and recruited-character references in mod histories.
+
+    ``pending`` maps a file to the text an unsaved edit gives it (``None``
+    deletes it); such a file is read from there instead of from disk.
+    """
 
     issues: list[ValidationError] = []
     histories_dir = mod_root / "history" / "countries"
-    if not histories_dir.is_dir():
-        return issues
-    for path in sorted(histories_dir.glob("*.txt")):
-        doc = parse(read_text(path))
+    paths = set(histories_dir.glob("*.txt")) if histories_dir.is_dir() else set()
+    pending = pending or {}
+    paths.update(path for path in pending if path.parent == histories_dir and path.suffix == ".txt")
+    for path in sorted(paths):
+        if path in pending:
+            text = pending[path]
+            if text is None:
+                continue
+        else:
+            text = read_text(path)
+        doc = parse(text)
         # Every depth: a capital or recruitment inside a date or ``if`` block
         # is still a reference. Comments and strings are never statements.
         statements = sorted(
@@ -484,220 +761,167 @@ def _script_warnings(
     file_path: str | None = None,
     focus_id: str | None = None,
     event_id: str | None = None,
-    known_tags: set[str] | None = None,
 ) -> list[ValidationError]:
+    """Shape hints for one effect script, read from its syntax tree.
+
+    Hints that depend on the scope a statement runs in (core effects, faction
+    and civil-war advice, unknown country tags) come from the reference
+    checks of ``Mod.validate()`` and ``Mod.validate_effect()``, which know
+    the scope.
+    """
+
     errors: list[ValidationError] = []
     if not script:
         return errors
 
+    def finding(message: str, severity: str, code: str) -> ValidationError:
+        return ValidationError(
+            message=message,
+            severity=severity,
+            code=code,
+            file_path=file_path,
+            focus_id=focus_id,
+            event_id=event_id,
+        )
+
     for issue in validate_script_syntax(script):
+        errors.append(finding(f"Script syntax issue: {issue}", "error", "script_syntax"))
+
+    statements = list(parse(script).root.walk())
+
+    if any(item.name.lower() == "set_owner" for item, _ in statements):
         errors.append(
-            ValidationError(
-                message=f"Script syntax issue: {issue}",
-                severity="error",
-                code="script_syntax",
-                file_path=file_path,
-                focus_id=focus_id,
-                event_id=event_id,
+            finding(
+                "'set_owner' is a state history directive, not a runtime effect; use "
+                "transfer_state in event/focus effects",
+                "warning",
+                "history_set_owner_in_effect",
             )
         )
 
-    for effect_name in ("add_core_of", "remove_core_of"):
-        if re.search(rf"(?m)^\s*{effect_name}\s*=", script):
+    for item, _ in statements:
+        if item.name.lower() != "add_tech_bonus" or item.block is None:
+            continue
+        for category_item in item.block.assignments("category", fold=True):
+            category = category_item.scalar or ""
+            if category and category not in TECHNOLOGY_CATEGORIES:
+                examples = "industry, infantry_weapons, artillery, armor, electronics, land_doctrine"
+                errors.append(
+                    finding(
+                        f"Unknown add_tech_bonus category '{category}'. Common valid "
+                        f"categories: {examples}.",
+                        "warning",
+                        "unknown_tech_bonus_category",
+                    )
+                )
+
+    for item, _ in statements:
+        effect_name = item.name.lower()
+        if effect_name not in {"declare_war_on", "create_wargoal"} or item.block is None:
+            continue
+        if item.block.first("target", fold=True) is None:
             errors.append(
-                ValidationError(
-                    message=(
-                        f"'{effect_name}' appears at country scope. Use a state scope such as "
-                        f"'115 = {{ {effect_name} = TAG }}' to avoid changing every owned state."
-                    ),
-                    severity="warning",
-                    code="country_scope_core_effect",
-                    file_path=file_path,
-                    focus_id=focus_id,
-                    event_id=event_id,
+                finding(
+                    f"'{effect_name}' is missing required target = TAG",
+                    "error",
+                    "missing_effect_target",
                 )
             )
-        for scope, value in re.findall(
-            rf"\b([A-Z][A-Z0-9]{{2}})\s*=\s*\{{[^{{}}]*\b{effect_name}\s*=\s*([0-9]+)\b", script
-        ):
+        if item.block.first("type", fold=True) is None:
             errors.append(
-                ValidationError(
-                    message=(
-                        f"'{scope} = {{ {effect_name} = {value} }}' looks country-scoped. "
-                        f"Use '{value} = {{ {effect_name} = {scope} }}' for a state-scoped core change."
-                    ),
-                    severity="warning",
-                    code="country_scope_core_effect",
-                    file_path=file_path,
-                    focus_id=focus_id,
-                    event_id=event_id,
+                finding(
+                    f"'{effect_name}' is missing required type = <wargoal_type>",
+                    "warning",
+                    "missing_wargoal_type",
                 )
             )
-
-    if re.search(r"\bset_owner\s*=", script):
-        errors.append(
-            ValidationError(
-                message="'set_owner' is a state history directive, not a runtime effect; use transfer_state in event/focus effects",
-                severity="warning",
-                code="history_set_owner_in_effect",
-                file_path=file_path,
-                focus_id=focus_id,
-                event_id=event_id,
-            )
-        )
-
-    if re.search(r"\badd_to_faction\s*=", script):
-        iterated_scope = re.search(
-            r"\bevery_(?:other_)?country\s*=\s*\{[^{}]*\badd_to_faction\s*=",
-            script,
-            flags=re.DOTALL,
-        )
-        explicit_country_scope = re.search(
-            r"\b[A-Z][A-Z0-9]{2}\s*=\s*\{[^{}]*\badd_to_faction\s*=", script, flags=re.DOTALL
-        )
-        bare_effect = (
-            re.search(r"(?m)^\s*add_to_faction\s*=", script) and not explicit_country_scope
-        )
-        if iterated_scope:
-            message = (
-                "'add_to_faction' inside every_country/every_other_country is usually wrong because "
-                "the target joins each iterated country's faction. Use an explicit leader scope."
-            )
-        elif bare_effect:
-            message = (
-                "'add_to_faction = TAG' adds TAG to the current scope's faction. "
-                "Use Mod.effect_add_target_to_faction(leader, target) or Mod.effect_join_faction(actor, leader) "
-                "to make direction explicit."
-            )
-        else:
-            message = ""
-        if message:
-            errors.append(
-                ValidationError(
-                    message=message,
-                    severity="warning",
-                    code="faction_scope_footgun",
-                    file_path=file_path,
-                    focus_id=focus_id,
-                    event_id=event_id,
-                )
-            )
-
-    if re.search(r"\bstart_civil_war\s*=", script) and not re.search(r"\bcapital\s*=", script):
-        errors.append(
-            ValidationError(
-                message=(
-                    "'start_civil_war' has no capital = state_id. Civil wars without explicit capital/target setup "
-                    "often spawn fragile revolts; consider Mod.effect_spawn_revolution(...)."
-                ),
-                severity="warning",
-                code="civil_war_scope_footgun",
-                file_path=file_path,
-                focus_id=focus_id,
-                event_id=event_id,
-            )
-        )
-
-    if re.search(r"\bstart_civil_war\s*=", script) and not re.search(
-        r"\bload_focus_tree\s*=", script
-    ):
-        errors.append(
-            ValidationError(
-                message=(
-                    "'start_civil_war' is not paired with load_focus_tree. Dynamic civil-war countries often get "
-                    "a generic tree unless the revolt explicitly loads one."
-                ),
-                severity="warning",
-                code="civil_war_focus_tree_missing",
-                file_path=file_path,
-                focus_id=focus_id,
-                event_id=event_id,
-            )
-        )
-
-    if "add_tech_bonus" in script:
-        for category in re.findall(r"\bcategory\s*=\s*([A-Za-z0-9_]+)", script):
-            if category not in TECHNOLOGY_CATEGORIES:
-                examples = (
-                    "industry, infantry_weapons, artillery, armor, electronics, land_doctrine"
-                )
-                errors.append(
-                    ValidationError(
-                        message=(
-                            f"Unknown add_tech_bonus category '{category}'. Common valid categories: {examples}."
-                        ),
-                        severity="warning",
-                        code="unknown_tech_bonus_category",
-                        file_path=file_path,
-                        focus_id=focus_id,
-                        event_id=event_id,
-                    )
-                )
-
-    for effect_name in ("declare_war_on", "create_wargoal"):
-        for body, _, _ in iter_assignment_blocks(script, effect_name):
-            if not re.search(r"\btarget\s*=", body):
-                errors.append(
-                    ValidationError(
-                        message=f"'{effect_name}' is missing required target = TAG",
-                        severity="error",
-                        code="missing_effect_target",
-                        file_path=file_path,
-                        focus_id=focus_id,
-                        event_id=event_id,
-                    )
-                )
-            if not re.search(r"\btype\s*=", body):
-                errors.append(
-                    ValidationError(
-                        message=f"'{effect_name}' is missing required type = <wargoal_type>",
-                        severity="warning",
-                        code="missing_wargoal_type",
-                        file_path=file_path,
-                        focus_id=focus_id,
-                        event_id=event_id,
-                    )
-                )
-
-    if known_tags is not None:
-        for tag in re.findall(r"(?m)^\s*([A-Z][A-Z0-9]{2})\s*=\s*\{", script):
-            if tag in {"AND", "NOT", "NOR"}:
-                continue
-            if tag not in known_tags and not re.fullmatch(r"D[0-9]{2}", tag):
-                errors.append(
-                    ValidationError(
-                        message=f"Script scopes into unknown country tag '{tag}'",
-                        severity="warning",
-                        code="unknown_country_scope",
-                        file_path=file_path,
-                        focus_id=focus_id,
-                        event_id=event_id,
-                    )
-                )
 
     return errors
 
 
+def _written_color_channels(definition: str) -> tuple[list[float], int] | None:
+    """The channels of ``color = { r g b }`` as a definition file writes them, and the line.
+
+    ``None`` when there is no such colour or it is not three plain numbers
+    (``hsv`` colours use other ranges).
+    """
+
+    if "color" not in definition:
+        return None
+    document = parse(definition)
+    for item in document.root.assignments("color"):
+        value = item.value
+        if type(value) is Tagged:
+            if value.tag.value.lower() != "rgb":
+                return None
+            block = value.block
+        elif type(value) is Block:
+            block = value
+        else:
+            return None
+        try:
+            channels = [float(scalar.value) for scalar in block.values()]
+        except ValueError:
+            return None
+        if len(channels) != 3 or len(channels) != len(block.items):
+            return None
+        return channels, document.line_col(item.start)[0]
+    return None
+
+
 def validate_country(
-    country: Country, *, known_parties: set[str] | None = None
+    country: Country,
+    *,
+    known_parties: set[str] | None = None,
+    has_localisation: Callable[[str], bool] | None = None,
+    leader_ideologies: Sequence[str] | None = None,
+    dynamic_tag: bool = False,
 ) -> list[ValidationError]:
+    """Check one country's history values.
+
+    ``has_localisation`` tells whether a localisation key exists. The game
+    names a country by ``TAG``, ``TAG_DEF`` or, per ruling ideology,
+    ``TAG_<ideology>`` and ``TAG_<ideology>_DEF``; many countries only have
+    the ideology names. ``leader_ideologies`` are the ideologies of every
+    recruited character with a country-leader role. A ``dynamic_tag``
+    (declared after ``dynamic_tags = yes``) takes its name at runtime from
+    the country that spawns it.
+    """
+
     errors: list[ValidationError] = []
+    file_path = str(country.history_path) if country.history_path is not None else None
 
     if not TAG_RE.match(country.tag):
         errors.append(
             ValidationError(
                 message=f"Invalid country tag '{country.tag}' (must be 3 alphanumeric characters)",
                 severity="error",
+                code="invalid_country_tag",
                 country_tag=country.tag,
+                file_path=file_path,
             )
         )
 
-    if not country.name:
+    valid_parties = set(RULING_PARTIES) | set(known_parties or ())
+    name_keys = [country.tag, f"{country.tag}_DEF"]
+    for name_party in sorted(valid_parties):
+        name_keys.extend(
+            (f"{country.tag}_{name_party}", f"{country.tag}_{name_party}_DEF")
+        )
+    if not country.name and not dynamic_tag and not (
+        has_localisation is not None and any(has_localisation(key) for key in name_keys)
+    ):
         errors.append(
             ValidationError(
-                message=f"Country '{country.tag}' has no name",
+                message=(
+                    f"Country '{country.tag}' has no name: none of "
+                    f"{country.tag}, {country.tag}_DEF or "
+                    f"{country.tag}_<ideology> is localised, so the game shows the tag."
+                ),
                 severity="warning",
+                code="missing_country_name",
                 country_tag=country.tag,
+                file_path=file_path,
             )
         )
 
@@ -707,40 +931,83 @@ def validate_country(
             ValidationError(
                 message=f"Country '{country.tag}' popularities sum to {total_pop}, expected 100",
                 severity="warning",
+                code="country_popularity_sum",
                 country_tag=country.tag,
+                file_path=file_path,
             )
         )
 
-    valid_parties = set(RULING_PARTIES) | set(known_parties or ())
     if country.ruling_party not in valid_parties:
         errors.append(
             ValidationError(
                 message=f"Country '{country.tag}' has invalid ruling party '{country.ruling_party}'",
                 severity="error",
+                code="invalid_ruling_party",
                 country_tag=country.tag,
+                file_path=file_path,
             )
         )
 
-    if country.leader and country.leader.ideology:
-        expected_party = IDEOLOGY_PARTY_MAP.get(country.leader.ideology)
-        if (
-            expected_party
-            and country.ruling_party in valid_parties
-            and expected_party != country.ruling_party
-        ):
-            errors.append(
-                ValidationError(
-                    message=(
-                        f"Country '{country.tag}' ruling party '{country.ruling_party}' does not match "
-                        f"leader ideology '{country.leader.ideology}'. ruling_party uses party groups "
-                        "(democratic, fascism, communism, neutrality); leader_ideology uses sub-ideologies "
-                        "such as liberalism, stalinism, nazism, or despotism."
-                    ),
-                    severity="warning",
-                    code="leader_party_mismatch",
-                    country_tag=country.tag,
-                )
+    # Every ideology has its own leader; the game shows the leader of the
+    # ruling party and makes one up when no recruited character leads it.
+    # A leader of another party is normal, so this is advice only.
+    ideologies = (
+        list(leader_ideologies)
+        if leader_ideologies is not None
+        else [country.leader.ideology]
+        if country.leader and country.leader.ideology
+        else []
+    )
+    parties = {
+        party
+        for ideology in ideologies
+        if (party := IDEOLOGY_PARTY_MAP.get(ideology)) is not None
+    }
+    if (
+        parties
+        and country.ruling_party in valid_parties
+        and country.ruling_party not in parties
+    ):
+        errors.append(
+            ValidationError(
+                message=(
+                    f"Country '{country.tag}' ruling party '{country.ruling_party}' has no "
+                    f"recruited leader (leader ideologies: {', '.join(sorted(set(ideologies)))}), "
+                    "so the game shows a generated leader. ruling_party uses party groups "
+                    "(democratic, fascism, communism, neutrality); leader_ideology uses "
+                    "sub-ideologies such as liberalism, stalinism, nazism, or despotism."
+                ),
+                severity="info",
+                code="leader_party_mismatch",
+                country_tag=country.tag,
+                file_path=file_path,
             )
+        )
+
+    # The reader clamps a file's channels to 0..255, so a file that says 314
+    # arrives here as 255: look at what the definition file really holds. A
+    # colour set through the API replaces the file's on save(), so then the
+    # file's old colour is no longer the country's.
+    written = (
+        None
+        if {"*", "color"} & country.touched_fields
+        else _written_color_channels(country.raw_definition)
+    )
+    if written is not None and any(not 0 <= channel <= 255 for channel in written[0]):
+        shown = " ".join(f"{channel:g}" for channel in written[0])
+        errors.append(
+            ValidationError(
+                message=(
+                    f"Country '{country.tag}' has the color {{ {shown} }} in its definition "
+                    "file; every channel has to be between 0 and 255"
+                ),
+                severity="error",
+                code="invalid_country_color",
+                country_tag=country.tag,
+                file_path=str(country.definition_path) if country.definition_path else None,
+                line=written[1],
+            )
+        )
 
     try:
         r, g, b = country.color
@@ -749,6 +1016,7 @@ def validate_country(
                 ValidationError(
                     message=f"Country '{country.tag}' has invalid color {country.color}",
                     severity="error",
+                    code="invalid_country_color",
                     country_tag=country.tag,
                 )
             )
@@ -757,6 +1025,7 @@ def validate_country(
             ValidationError(
                 message=f"Country '{country.tag}' has malformed color {country.color!r}",
                 severity="error",
+                code="invalid_country_color",
                 country_tag=country.tag,
             )
         )
@@ -764,12 +1033,111 @@ def validate_country(
     return errors
 
 
+#: Search filters of the base game: every ``GFX_FOCUS_FILTER_*`` sprite in its
+#: ``interface/*.gfx`` files (HOI4 1.19). A filter needs a sprite of the same
+#: name with a ``GFX_`` prefix; with a configured game install the sprites are
+#: read from the game, base mods and the mod instead.
+DEFAULT_FOCUS_SEARCH_FILTERS: frozenset[str] = frozenset({
+    "FOCUS_FILTER_AIR_XP",
+    "FOCUS_FILTER_ANNEXATION",
+    "FOCUS_FILTER_ARMY_XP",
+    "FOCUS_FILTER_BALANCE_OF_POWER",
+    "FOCUS_FILTER_CHI_INFLATION",
+    "FOCUS_FILTER_COMPLETED_BY_EVENT",
+    "FOCUS_FILTER_CONSOLIDATION",
+    "FOCUS_FILTER_FOLKHEMMET",
+    "FOCUS_FILTER_FRA_OCCUPATION_COST",
+    "FOCUS_FILTER_FRA_POLITICAL_VIOLENCE",
+    "FOCUS_FILTER_GRE_DEBT_TO_IFC",
+    "FOCUS_FILTER_HISTORICAL",
+    "FOCUS_FILTER_IMPERIAL_INFLUENCE",
+    "FOCUS_FILTER_INDUSTRY",
+    "FOCUS_FILTER_INNER_CIRCLE",
+    "FOCUS_FILTER_INTERNAL_AFFAIRS",
+    "FOCUS_FILTER_INTERNATIONAL_TRADE",
+    "FOCUS_FILTER_ITA_MISSIOLINI",
+    "FOCUS_FILTER_MANPOWER",
+    "FOCUS_FILTER_MEX_CAUDILLO_REBELLION",
+    "FOCUS_FILTER_MEX_CHURCH_AUTHORITY",
+    "FOCUS_FILTER_MILITARY_CHARACTER",
+    "FOCUS_FILTER_NAVY_XP",
+    "FOCUS_FILTER_POLITICAL",
+    "FOCUS_FILTER_POLITICAL_CHARACTER",
+    "FOCUS_FILTER_POWER_STRUGGLE",
+    "FOCUS_FILTER_PROPAGANDA",
+    "FOCUS_FILTER_RESEARCH",
+    "FOCUS_FILTER_SOV_POLITICAL_PARANOIA",
+    "FOCUS_FILTER_SPA_CARLIST_UPRISING",
+    "FOCUS_FILTER_SPA_CIVIL_WAR",
+    "FOCUS_FILTER_STABILITY",
+    "FOCUS_FILTER_SWI_MILITARY_READINESS",
+    "FOCUS_FILTER_TFV_AUTONOMY",
+    "FOCUS_FILTER_TUR_KEMALISM",
+    "FOCUS_FILTER_TUR_KURDISTAN",
+    "FOCUS_FILTER_TUR_TRADITIONALISM",
+    "FOCUS_FILTER_USA_CONGRESS",
+    "FOCUS_FILTER_WAR_SUPPORT",
+})
+
+
+def focus_search_filters_from_sprites(sprite_names: Collection[str]) -> set[str]:
+    """Return the search filters a set of sprite names declares.
+
+    The focus view shows a filter with the sprite ``GFX_<filter>``, so every
+    sprite name is a possible filter once its ``GFX_`` prefix is removed.
+    """
+
+    return {name[4:] for name in sprite_names if name.startswith("GFX_") and len(name) > 4}
+
+
+def _pulled_in_focuses(
+    shared_focuses: Collection[str], parents: Mapping[str, Collection[str]]
+) -> set[str]:
+    """The focuses of other files that ``shared_focus = ID`` puts on a tree's canvas.
+
+    Each ``ID``, and every shared focus that has one of them among its
+    prerequisites, directly or through other shared focuses.
+    """
+
+    canvas = set(shared_focuses)
+    grew = True
+    while grew:
+        grew = False
+        for focus_id, refs in parents.items():
+            if focus_id not in canvas and not canvas.isdisjoint(refs):
+                canvas.add(focus_id)
+                grew = True
+    return canvas
+
+
 def validate_focus_tree(
     tree: FocusTree,
     known_focus_ids: set[str] | None = None,
     known_state_ids: set[int] | None = None,
-    known_tags: set[str] | None = None,
+    *,
+    known_search_filters: Collection[str] | None = None,
+    shared_focus_parents: Mapping[str, Collection[str]] | None = None,
+    shared_focus_conditions: Mapping[str, str | None] | None = None,
 ) -> list[ValidationError]:
+    """Check one focus tree.
+
+    ``known_search_filters`` are the filter names that have a ``GFX_<filter>``
+    sprite; ``None`` uses the filters of the base game
+    (``DEFAULT_FOCUS_SEARCH_FILTERS``).
+
+    ``shared_focus_parents`` maps every shared or joint focus of any file to
+    its prerequisites. With it, a focus of this tree may be placed relative
+    to exactly the shared focuses the tree pulls in (``shared_focus = ID``
+    and the shared focuses below ``ID``). Without it, any known focus of
+    another file is taken once the tree pulls in a shared focus.
+
+    ``shared_focus_conditions`` maps the same focuses to their
+    ``allow_branch`` condition (``None`` without one, ``""`` when it always
+    holds). With both maps, a focus of this tree that hangs below a shared
+    focus is hidden with it, which the position check needs. Without them
+    a prerequisite outside the tree counts as always drawn.
+    """
+
     errors: list[ValidationError] = []
     local_ids = {f.id for f in tree.focuses}
     all_known = local_ids | (known_focus_ids or set())
@@ -777,16 +1145,28 @@ def validate_focus_tree(
     seen_ids: set[str] = set()
     layout = resolve_focus_positions(tree)
     by_id = {focus.id: focus for focus in tree.focuses}
+    canvas: set[str] | None = None
     for focus_id, reason in layout.unresolved.items():
-        if tree.kind == "file":
-            # Top-level shared/joint focuses may anchor to a focus of the tree
-            # they are shared into; that is fine when the anchor exists.
-            anchor, seen = focus_id, set()
-            while anchor in by_id and anchor not in seen:
-                seen.add(anchor)
-                anchor = by_id[anchor].relative_position_id
-            if anchor not in by_id and anchor in all_known:
+        # A focus may anchor to a focus of another file: a top-level shared
+        # or joint focus to the tree it is shared into, and a focus of a tree
+        # to the shared focuses the tree pulls in (``shared_focus = ID``, and
+        # with it the focuses below that one). That is fine when the anchor
+        # exists somewhere. A tree that pulls in nothing has no focus of
+        # another file on its canvas.
+        anchor, seen = focus_id, set()
+        while anchor in by_id and anchor not in seen:
+            seen.add(anchor)
+            anchor = by_id[anchor].relative_position_id
+        if anchor not in by_id and anchor in all_known:
+            if tree.kind == "file":
                 continue
+            if tree.shared_focuses:
+                if shared_focus_parents is None:
+                    continue
+                if canvas is None:
+                    canvas = _pulled_in_focuses(tree.shared_focuses, shared_focus_parents)
+                if anchor in canvas:
+                    continue
         errors.append(
             ValidationError(
                 message=f"Focus '{focus_id}' position unresolved: {reason}",
@@ -796,23 +1176,13 @@ def validate_focus_tree(
                 file_path=str(tree.path) if tree.path else None,
             )
         )
-    seen_positions: dict[tuple[int, int], str] = {}
-    valid_filters = {
-        "FOCUS_FILTER_POLITICAL",
-        "FOCUS_FILTER_RESEARCH",
-        "FOCUS_FILTER_INDUSTRY",
-        "FOCUS_FILTER_STABILITY",
-        "FOCUS_FILTER_WAR_SUPPORT",
-        "FOCUS_FILTER_MANPOWER",
-        "FOCUS_FILTER_ANNEXATION",
-        "FOCUS_FILTER_ARMY_XP",
-        "FOCUS_FILTER_NAVY_XP",
-        "FOCUS_FILTER_AIR_XP",
-        "FOCUS_FILTER_INTERNATIONAL_TRADE",
-        "FOCUS_FILTER_DIPLOMACY",
-        "FOCUS_FILTER_EXCLUSIONS",
-        "FOCUS_FILTER_HISTORICAL",
-    }
+    seen_positions: dict[tuple[int, int], list[str]] = {}
+    valid_filters = (
+        DEFAULT_FOCUS_SEARCH_FILTERS if known_search_filters is None else known_search_filters
+    )
+    branches = FocusBranches(
+        tree, shared_parents=shared_focus_parents, shared_conditions=shared_focus_conditions
+    )
 
     for focus in tree.focuses:
         if not focus.id:
@@ -820,6 +1190,7 @@ def validate_focus_tree(
                 ValidationError(
                     message="Focus has no ID",
                     severity="error",
+                    code="missing_focus_id",
                     file_path=str(tree.path) if tree.path else None,
                 )
             )
@@ -835,6 +1206,9 @@ def validate_focus_tree(
                     file_path=str(tree.path) if tree.path else None,
                 )
             )
+            # One mistake, one finding: the second definition gets no
+            # findings of its own.
+            continue
         seen_ids.add(focus.id)
 
         expected_kind = focus.kind if tree.kind == "file" else "focus"
@@ -848,28 +1222,44 @@ def validate_focus_tree(
                         f"in {tree.kind} '{tree.id}'"
                     ),
                     severity="error",
+                    code="invalid_focus_kind",
                     focus_id=focus.id,
                     file_path=str(tree.path) if tree.path else None,
                 )
             )
 
         # The top-level blocks of one file are placed into different trees,
-        # so their positions do not share one canvas.
+        # so their positions do not share one canvas. Two focuses may share a
+        # position only when the game never draws both there (see
+        # FocusBranches): an offset block moves one, or each hangs on an
+        # allow_branch condition the other does not depend on.
         pos = layout.positions.get(focus.id) if tree.kind != "file" else None
-        if pos is not None and pos in seen_positions:
-            errors.append(
-                ValidationError(
-                    message=(
-                        f"Focus '{focus.id}' shares position ({pos[0]}, {pos[1]}) "
-                        f"with '{seen_positions[pos]}'"
-                    ),
-                    severity="warning",
-                    focus_id=focus.id,
-                    file_path=str(tree.path) if tree.path else None,
-                )
+        if pos is not None:
+            sharing = seen_positions.setdefault(pos, [])
+            # A focus id that is defined twice is its own finding
+            # (duplicate_focus_id), not an overlap of the focus with itself.
+            clash = next(
+                (
+                    other
+                    for other in sharing
+                    if other != focus.id and not branches.never_shown_together(focus.id, other)
+                ),
+                None,
             )
-        elif pos is not None:
-            seen_positions[pos] = focus.id
+            if clash is not None:
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"Focus '{focus.id}' shares position ({pos[0]}, {pos[1]}) "
+                            f"with '{clash}', and both can be shown at once"
+                        ),
+                        severity="warning",
+                        code="visual_overlap",
+                        focus_id=focus.id,
+                        file_path=str(tree.path) if tree.path else None,
+                    )
+                )
+            sharing.append(focus.id)
 
         for group in focus.prerequisites:
             for ref in group:
@@ -878,6 +1268,7 @@ def validate_focus_tree(
                         ValidationError(
                             message=f"Focus '{focus.id}' prerequisite '{ref}' not found",
                             severity="error",
+                            code="missing_focus_prerequisite",
                             focus_id=focus.id,
                             file_path=str(tree.path) if tree.path else None,
                         )
@@ -890,6 +1281,7 @@ def validate_focus_tree(
                         ValidationError(
                             message=f"Focus '{focus.id}' mutually_exclusive '{ref}' not found",
                             severity="error",
+                            code="missing_focus_mutually_exclusive",
                             focus_id=focus.id,
                             file_path=str(tree.path) if tree.path else None,
                         )
@@ -899,8 +1291,12 @@ def validate_focus_tree(
             if focus_filter not in valid_filters:
                 errors.append(
                     ValidationError(
-                        message=f"Focus '{focus.id}' has unknown search filter '{focus_filter}'",
+                        message=(
+                            f"Focus '{focus.id}' has unknown search filter '{focus_filter}': "
+                            f"no sprite 'GFX_{focus_filter}' is declared"
+                        ),
                         severity="warning",
+                        code="unknown_focus_search_filter",
                         focus_id=focus.id,
                         file_path=str(tree.path) if tree.path else None,
                     )
@@ -933,6 +1329,7 @@ def validate_focus_tree(
                         ValidationError(
                             message=f"Focus '{focus.id}' references unknown state ID {sid}",
                             severity="warning",
+                            code="unknown_state_reference",
                             focus_id=focus.id,
                             state_id=sid,
                             file_path=str(tree.path) if tree.path else None,
@@ -944,7 +1341,18 @@ def validate_focus_tree(
                 script,
                 file_path=str(tree.path) if tree.path else None,
                 focus_id=focus.id,
-                known_tags=known_tags,
+            )
+        )
+
+    continuous = continuous_focus_position_issue(tree, layout)
+    if continuous:
+        errors.append(
+            ValidationError(
+                message=f"Focus tree '{tree.id}': {continuous}",
+                severity="info",
+                code="continuous_focus_position_high",
+                focus_tree_id=tree.id,
+                file_path=str(tree.path) if tree.path else None,
             )
         )
 
@@ -1008,6 +1416,7 @@ def validate_state(
             ValidationError(
                 message="State has no ID",
                 severity="error",
+                code="missing_state_id",
                 state_id=state.id,
                 file_path=file_path,
             )
@@ -1018,6 +1427,7 @@ def validate_state(
             ValidationError(
                 message=f"State {state.id} has no owner",
                 severity="warning",
+                code="missing_state_owner",
                 state_id=state.id,
                 file_path=file_path,
             )
@@ -1028,6 +1438,7 @@ def validate_state(
             ValidationError(
                 message=f"State {state.id} owner '{state.owner}' is not a known country tag",
                 severity="warning",
+                code="unknown_state_owner",
                 state_id=state.id,
                 file_path=file_path,
             )
@@ -1039,6 +1450,7 @@ def validate_state(
                 ValidationError(
                     message=f"State {state.id} core '{core}' is not a known country tag",
                     severity="warning",
+                    code="unknown_state_core",
                     state_id=state.id,
                     file_path=file_path,
                 )
@@ -1083,35 +1495,56 @@ def validate_state(
 def validate_event(
     event: Event,
     namespace: str | None | object = _UNSET,
-    known_tags: set[str] | None = None,
+    *,
+    namespaces: Collection[str] | None = None,
 ) -> list[ValidationError]:
+    """Check one event.
+
+    The namespace check runs when ``namespaces`` (every namespace declared by
+    an ``add_namespace`` in the game, base mods and the mod) or the older
+    single ``namespace`` is given. The game compares namespaces without
+    regard to case, and a namespace declared in any event file can be used
+    by events of every file.
+    """
+
     errors: list[ValidationError] = []
+    file_path = str(event.path) if event.path else None
 
     if not event.id:
         errors.append(
             ValidationError(
                 message="Event has no ID",
                 severity="error",
+                code="missing_event_id",
                 event_id=event.id,
+                file_path=file_path,
             )
         )
         return errors
 
-    if not event.title and not event.conditional_titles:
+    # A hidden event never opens a window, so it needs no title, description
+    # or option.
+    hidden = event_is_hidden(event)
+
+    if not hidden and not event.title and not event.conditional_titles:
         errors.append(
             ValidationError(
                 message=f"Event '{event.id}' has no title",
                 severity="warning",
+                code="missing_event_title",
                 event_id=event.id,
+                file_path=file_path,
             )
         )
 
-    if not event.description and not event.conditional_descriptions:
+    if not hidden and not event.description and not event.conditional_descriptions:
         errors.append(
             ValidationError(
                 message=f"Event '{event.id}' has no description",
                 severity="warning",
+                code="missing_event_description",
                 event_id=event.id,
+                file_path=file_path,
             )
         )
 
@@ -1131,16 +1564,21 @@ def validate_event(
                     severity="warning",
                     code="event_conditional_text_missing",
                     event_id=event.id,
-                    file_path=str(event.path) if event.path else None,
+                    file_path=file_path,
                 )
             )
 
-    if not event.options:
+    if not hidden and not event.options:
         errors.append(
             ValidationError(
-                message=f"Event '{event.id}' has no options",
+                message=(
+                    f"Event '{event.id}' has no options; a visible event needs at "
+                    "least one option to close its window"
+                ),
                 severity="error",
+                code="missing_event_options",
                 event_id=event.id,
+                file_path=file_path,
             )
         )
 
@@ -1149,38 +1587,45 @@ def validate_event(
             ValidationError(
                 message=f"Event '{event.id}' has invalid type '{event.event_type}'",
                 severity="error",
+                code="invalid_event_type",
                 event_id=event.id,
+                file_path=file_path,
             )
         )
 
-    if namespace is not _UNSET:
-        inferred_namespace = event.id.split(".", 1)[0] if "." in event.id else None
-        if inferred_namespace and not namespace:
+    declared: Collection[str] | None = namespaces
+    if declared is None and namespace is not _UNSET:
+        declared = [namespace] if isinstance(namespace, str) and namespace else []
+    # The namespace is everything before the last dot: ``a.b.1`` needs
+    # ``add_namespace = a.b``.
+    prefix = event_namespace(event.id)
+    if declared is not None and prefix:
+        if prefix.lower() not in {name.lower() for name in declared}:
             errors.append(
                 ValidationError(
-                    message=f"Event '{event.id}' has no add_namespace = {inferred_namespace}; dotted event IDs need their namespace declared",
+                    message=(
+                        f"Event '{event.id}' uses namespace '{prefix}', but no "
+                        f"add_namespace = {prefix} is declared; dotted event IDs "
+                        "need their namespace declared"
+                    ),
                     severity="error",
+                    code="undeclared_event_namespace",
                     event_id=event.id,
-                    file_path=str(event.path) if event.path else None,
-                )
-            )
-        elif inferred_namespace and namespace != inferred_namespace:
-            errors.append(
-                ValidationError(
-                    message=f"Event '{event.id}' namespace '{namespace}' does not match ID prefix '{inferred_namespace}'",
-                    severity="warning",
-                    event_id=event.id,
-                    file_path=str(event.path) if event.path else None,
+                    file_path=file_path,
                 )
             )
 
     if event.is_triggered_only and event.mean_time_to_happen:
         errors.append(
             ValidationError(
-                message=f"Event '{event.id}' is_triggered_only but also has mean_time_to_happen; it will not fire randomly",
-                severity="warning",
+                message=(
+                    f"Event '{event.id}' is_triggered_only but also has "
+                    "mean_time_to_happen, which the game ignores"
+                ),
+                severity="info",
+                code="triggered_only_with_mtth",
                 event_id=event.id,
-                file_path=str(event.path) if event.path else None,
+                file_path=file_path,
             )
         )
 
@@ -1192,38 +1637,110 @@ def validate_event(
     errors.extend(
         _script_warnings(
             effect_script,
-            file_path=str(event.path) if event.path else None,
+            file_path=file_path,
             event_id=event.id,
-            known_tags=known_tags,
         )
     )
 
-    if event.immediate and "declare_war_on" in event.immediate:
+    if event.immediate and any(
+        item.name.lower() == "declare_war_on" for item, _ in parse(event.immediate).root.walk()
+    ):
         errors.append(
             ValidationError(
                 message=(
-                    f"Event '{event.id}' declares war in immediate; immediate runs before the option is chosen. "
-                    "Put war effects in an option unless that is intentional."
+                    f"Event '{event.id}' declares war in immediate; immediate runs before "
+                    "the option is chosen. Put war effects in an option unless that is "
+                    "intentional."
                 ),
-                severity="warning",
+                severity="info",
+                code="war_declaration_in_immediate",
                 event_id=event.id,
-                file_path=str(event.path) if event.path else None,
+                file_path=file_path,
             )
         )
 
-    for option in event.options:
-        if not option.effect.strip():
-            errors.append(
-                ValidationError(
-                    message=f"Event '{event.id}' option '{option.name or '<unnamed>'}' has no gameplay effect",
-                    severity="warning",
-                    code="event_option_no_effect",
-                    event_id=event.id,
-                    file_path=str(event.path) if event.path else None,
+    if not hidden:
+        for option in event.options:
+            if not option.effect.strip():
+                errors.append(
+                    ValidationError(
+                        message=(
+                            f"Event '{event.id}' option '{option.name or '<unnamed>'}' "
+                            "has no gameplay effect"
+                        ),
+                        severity="info",
+                        code="event_option_no_effect",
+                        event_id=event.id,
+                        file_path=file_path,
+                    )
                 )
-            )
 
     return errors
+
+
+def event_is_hidden(event: Event) -> bool:
+    """Return whether the event says ``hidden = yes`` (keys in any case)."""
+
+    # Most events never mention the key; skip parsing them.
+    if not event.raw_block or "hidden" not in event.raw_block.lower():
+        return False
+    value = parse(event.raw_block).root.scalar("hidden", fold=True)
+    return (value or "").lower() == "yes"
+
+
+#: Idea categories of the base game (HOI4 1.19 ``common/idea_tags``): every
+#: category and every ``slot`` and ``character_slot`` it declares. With a
+#: configured game install the declarations are read from the game, base
+#: mods and the mod and added to these.
+DEFAULT_IDEA_CATEGORIES: frozenset[str] = frozenset({
+    "academy_spirit", "air_chief", "air_force_academy_spirit", "air_force_command_spirit",
+    "air_force_spirit", "aircraft_manufacturer", "army_chief", "army_spirit", "country",
+    "division_command_spirit", "economy", "government", "hidden_ideas", "high_command",
+    "industrial_concern", "materiel_manufacturer", "military_staff", "mobilization_laws",
+    "naval_academy_spirit", "naval_command_spirit", "naval_manufacturer", "navy_chief",
+    "navy_spirit", "political_advisor", "research_production", "tank_manufacturer",
+    "theorist", "trade_laws",
+})
+
+
+def idea_categories_from_script(text: str) -> set[str]:
+    """Return the idea categories one ``common/idea_tags`` file declares.
+
+    An idea may sit in a category of ``idea_categories`` or in one of the
+    ``slot`` or ``character_slot`` names a category lists.
+    """
+
+    categories: set[str] = set()
+    for top in parse(text).root.assignments("idea_categories", fold=True):
+        if top.block is None:
+            continue
+        for category in top.block.assignments():
+            if category.block is None:
+                continue
+            categories.add(category.name)
+            for slot in category.block.assignments():
+                if slot.name.lower() in {"slot", "character_slot"} and slot.scalar:
+                    categories.add(slot.scalar)
+    return categories
+
+
+def validate_idea_category(idea: Idea, known_categories: Collection[str]) -> list[ValidationError]:
+    """Report an idea whose category no ``common/idea_tags`` file declares."""
+
+    if not idea.id or not idea.category or idea.category in known_categories:
+        return []
+    return [
+        ValidationError(
+            message=(
+                f"Idea '{idea.id}' is in category '{idea.category}', which no "
+                "common/idea_tags file declares as a category or slot"
+            ),
+            severity="error",
+            code="unknown_idea_category",
+            idea_id=idea.id,
+            file_path=str(idea.path) if idea.path else None,
+        )
+    ]
 
 
 # Idea blocks that give the idea an effect besides ``modifier``.
@@ -1247,6 +1764,8 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
             ValidationError(
                 message="Idea has no ID",
                 severity="error",
+                code="missing_idea_id",
+                file_path=str(idea.path) if idea.path else None,
             )
         )
         return errors
@@ -1263,8 +1782,10 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
         errors.append(
             ValidationError(
                 message=f"Idea '{idea.id}' has no modifiers or other effects",
-                severity="warning",
+                severity="info",
+                code="idea_without_effect",
                 idea_id=idea.id,
+                file_path=str(idea.path) if idea.path else None,
             )
         )
 
@@ -1299,10 +1820,10 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
                 ValidationError(
                     message=(
                         f"Idea '{idea.id}' picture value is prefixed with "
-                        "'GFX_idea_'. Store only the bare stem; HOI4 adds that "
-                        "prefix during sprite lookup."
+                        "'GFX_idea_'. The game accepts it, but the convention is the "
+                        "bare stem; HOI4 adds the prefix during sprite lookup."
                     ),
-                    severity="error",
+                    severity="info",
                     code="invalid_idea_picture_prefix",
                     idea_id=idea.id,
                     file_path=str(idea.path) if idea.path else None,
@@ -1334,7 +1855,12 @@ def validate_decision(decision: Decision) -> list[ValidationError]:
     errors: list[ValidationError] = []
     file_path = str(decision.path) if decision.path else None
     is_mission = decision_has_mission_timeout(decision)
-    if is_mission and (decision_has_cost(decision) or decision.custom_cost_trigger.strip()):
+    # A selectable mission is started by the player, who pays its cost.
+    if (
+        is_mission
+        and not decision.selectable_mission
+        and (decision_has_cost(decision) or decision.custom_cost_trigger.strip())
+    ):
         errors.append(
             ValidationError(
                 message=(
@@ -1353,9 +1879,9 @@ def validate_decision(decision: Decision) -> list[ValidationError]:
             ValidationError(
                 message=(
                     f"Decision '{decision.id}' has an activation trigger but no "
-                    "days_mission_timeout; activation only applies to missions"
+                    "days_mission_timeout; the game ignores activation outside missions"
                 ),
-                severity="error",
+                severity="info",
                 code="mission_activation_without_timeout",
                 decision_id=decision.id,
                 file_path=file_path,

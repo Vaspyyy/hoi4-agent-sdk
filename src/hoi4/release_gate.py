@@ -23,6 +23,7 @@ from .mod import Mod
 from .idea_icons import DEFAULT_IDEA_ICON
 from .game_log import GameLogReport, parse_hoi4_error_log
 from .types import Focus, LoadDiagnostic, ValidationError
+from .validation import COUNTRY_PACKAGE_REQUIREMENT_CODES
 
 ProbeStatus = Literal["passed", "failed", "skipped"]
 _T = TypeVar("_T")
@@ -105,6 +106,18 @@ class GateReport:
         return sum(issue.severity == "warning" for issue in self.validation_issues)
 
     @property
+    def incomplete_country_count(self) -> int:
+        """Findings about what a complete country needs (leader, advisors, army).
+
+        The game accepts a country without them, so they are warnings, but a
+        mod with a half-built country is not ready for release.
+        """
+
+        return sum(
+            issue.code in COUNTRY_PACKAGE_REQUIREMENT_CODES for issue in self.validation_issues
+        )
+
+    @property
     def missing_required_probes(self) -> tuple[str, ...]:
         passed = {probe.name for probe in self.probes if probe.status == "passed"}
         return tuple(name for name in self.required_probes if name not in passed)
@@ -121,7 +134,9 @@ class GateReport:
             return False
         if self.fail_on_load_diagnostics and self.load_diagnostics:
             return False
-        if self.fail_on_validation_errors and self.validation_error_count:
+        if self.fail_on_validation_errors and (
+            self.validation_error_count or self.incomplete_country_count
+        ):
             return False
         return True
 
@@ -151,6 +166,7 @@ class GateReport:
             "validation": {
                 "errors": self.validation_error_count,
                 "warnings": self.validation_warning_count,
+                "incomplete_countries": self.incomplete_country_count,
                 "issues": [asdict(issue) for issue in self.validation_issues],
             },
             "probes": [

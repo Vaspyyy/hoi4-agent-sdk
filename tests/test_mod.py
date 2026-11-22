@@ -918,7 +918,9 @@ class TestAgentFacingApis:
         mod.create_country("AUS", "Austria")
         mod.create_country("BAY", "Bavaria")
         bare_errors = mod.validate_effect("add_to_faction = BAY")
-        assert any(error.code == "faction_scope_footgun" for error in bare_errors)
+        assert not any(error.code == "faction_scope_footgun" for error in bare_errors)
+        iterated_errors = mod.validate_effect("every_country = { add_to_faction = ROOT }")
+        assert [error.severity for error in iterated_errors if error.code == "faction_scope_footgun"] == ["info"]
         scoped_errors = mod.validate_effect(Mod.effect_add_target_to_faction("AUS", "BAY"))
         assert not any(error.code == "faction_scope_footgun" for error in scoped_errors)
         multiline_scoped_errors = mod.validate_effect("AUS = {\n\tadd_to_faction = BAY\n}")
@@ -932,10 +934,13 @@ class TestAgentFacingApis:
         mod.create_event(
             "scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_advisor")]
         )
-        errors = mod.validate(strict_localization=True)
+        errors = mod.validate(strict_localization=True, advice=True)
         codes = {error.code for error in errors}
         assert "idea_not_addable" in codes
         assert "missing_localization" in codes
+        assert "idea_not_addable" not in {
+            error.code for error in mod.validate(strict_localization=True)
+        }
 
         mod.set_loc("scl.1.t", "Title")
         mod.set_loc("scl.1.d", "Description")
@@ -983,8 +988,9 @@ class TestAgentFacingApis:
         assert any(error.code == "revolt_state_already_owned" for error in no_op_transfer_errors)
 
         mod.create_event("slo.1", options=[EventOption(name="slo.1.a")])
-        errors = mod.validate()
+        errors = mod.validate(advice=True)
         assert any(error.code == "event_option_no_effect" for error in errors)
+        assert not any(error.code == "event_option_no_effect" for error in mod.validate())
 
     def test_patch_state_history_preserves_victory_points_text(self, tmp_mod):
         state_dir = tmp_mod.root / "history" / "states"
@@ -1026,12 +1032,12 @@ class TestAgentFacingApis:
         tech_dir = tmp_mod.root / "common" / "technologies"
         tech_dir.mkdir(parents=True, exist_ok=True)
         tech_dir.joinpath("industry.txt").write_text(
-            "known_tech = { research_cost = 1 }", encoding="utf-8"
+            "technologies = { known_tech = { research_cost = 1 } }", encoding="utf-8"
         )
         equip_dir = tmp_mod.root / "common" / "units" / "equipment"
         equip_dir.mkdir(parents=True, exist_ok=True)
         equip_dir.joinpath("infantry.txt").write_text(
-            "infantry_equipment_0 = { }", encoding="utf-8"
+            "equipments = { infantry_equipment_0 = { } }", encoding="utf-8"
         )
 
         mod.create_focus_tree("scl_focus", "SCL")
@@ -1056,7 +1062,7 @@ class TestAgentFacingApis:
         mod.add_focus(
             "scl_focus", Focus(id="SCL_bad_fallback_icon", icon="GFX_goal_generic_navy", x=1)
         )
-        errors = mod.validate(validate_icons=True)
+        errors = mod.validate(validate_icons=True, advice=True)
         codes = {error.code for error in errors}
         assert "unknown_focus_icon" in codes
         assert any("GFX_goal_generic_navy" in error.message for error in errors)
@@ -1067,7 +1073,9 @@ class TestAgentFacingApis:
         assert "bad_idea_tooltip_pattern" in codes
         assert mod.suggest_focus_icon("navy") == "GFX_custom_navy_goal"
 
-    def test_focus_icon_scan_is_cached_but_discard_refreshes(self, tmp_mod):
+    def test_focus_icon_scan_follows_the_files_on_disk(self, tmp_mod):
+        """The scan is kept per file until the file changes, so it is never stale."""
+
         mod = tmp_mod.mod
         interface_dir = tmp_mod.root / "interface"
         interface_dir.mkdir(parents=True, exist_ok=True)
@@ -1076,10 +1084,7 @@ class TestAgentFacingApis:
 
         assert "GFX_cached_icon" in mod._known_focus_icons()
         icon_file.write_text('spriteType = { name = "GFX_refreshed_icon" }', encoding="utf-8")
-        assert "GFX_cached_icon" in mod._known_focus_icons()
-        assert "GFX_refreshed_icon" not in mod._known_focus_icons()
-
-        mod.discard()
+        assert "GFX_cached_icon" not in mod._known_focus_icons()
         assert "GFX_refreshed_icon" in mod._known_focus_icons()
 
     def test_validation_warns_on_focus_event_idea_mutation_collision(self, tmp_mod):
@@ -1092,7 +1097,7 @@ class TestAgentFacingApis:
         mod.create_event(
             "scl.1", options=[EventOption(name="scl.1.a", effect="add_ideas = SCL_crisis")]
         )
-        errors = mod.validate()
+        errors = mod.validate(advice=True)
         assert any(error.code == "idea_mutation_collision" for error in errors)
 
     def test_idea_mutation_collision_ignores_guarded_runtime_addition(self, tmp_mod):
@@ -1118,7 +1123,7 @@ class TestAgentFacingApis:
             ],
         )
 
-        errors = mod.validate()
+        errors = mod.validate(advice=True)
 
         assert not any(
             error.code == "idea_mutation_collision" for error in errors
@@ -1147,7 +1152,7 @@ class TestAgentFacingApis:
             ],
         )
 
-        errors = mod.validate()
+        errors = mod.validate(advice=True)
 
         assert any(error.code == "idea_mutation_collision" for error in errors)
 
@@ -1779,11 +1784,13 @@ class TestModEvents:
             immediate="declare_war_on = { type = annex_everything target = FRA }",
             mean_time_to_happen="days = 1",
         )
-        messages = [e.message for e in mod.validate()]
-        assert any(
-            "is_triggered_only but also has mean_time_to_happen" in message for message in messages
-        )
-        assert any("declares war in immediate" in message for message in messages)
+        findings = mod.validate(advice=True)
+        codes = {e.code: e.severity for e in findings}
+        assert codes["triggered_only_with_mtth"] == "info"
+        assert codes["war_declaration_in_immediate"] == "info"
+        assert not {"triggered_only_with_mtth", "war_declaration_in_immediate"} & {
+            e.code for e in mod.validate()
+        }
 
     def test_validate_effect_catches_braces_and_declare_war_shape(self, tmp_mod):
         mod = tmp_mod.mod
@@ -2113,7 +2120,7 @@ class TestIdeaValidation:
         assert issue.file_path == str(path)
         assert not any(error.code == "unknown_idea_icon" for error in errors)
 
-    def test_prefixed_picture_is_error_even_when_resolved_sprite_exists(self, tmp_path):
+    def test_prefixed_picture_is_advice_and_resolves(self, tmp_path):
         path = tmp_path / "common" / "ideas" / "ideas.txt"
         path.parent.mkdir(parents=True)
         path.write_text(
@@ -2127,12 +2134,13 @@ class TestIdeaValidation:
             encoding="utf-8",
         )
 
-        errors = Mod(tmp_path).validate(validate_icons=True)
+        errors = Mod(tmp_path).validate(validate_icons=True, advice=True)
 
+        # The game's own files use the full sprite name, and it resolves.
         issue = next(
             error for error in errors if error.code == "invalid_idea_picture_prefix"
         )
-        assert issue.severity == "error"
+        assert issue.severity == "info"
         assert issue.idea_id == "t"
         assert not any(error.code == "unknown_idea_icon" for error in errors)
 
@@ -2255,7 +2263,15 @@ class TestCountryValidation:
             leader=Leader(name="Boss", ideology="nazism"),
         )
         errors = validate_country(country)
-        assert any("does not match" in e.message for e in errors)
+        mismatches = [e for e in errors if e.code == "leader_party_mismatch"]
+        # Advice only: the game shows a generated leader of the ruling party.
+        assert [e.severity for e in mismatches] == ["info"]
+        # Quiet when another recruited character leads the ruling party.
+        assert not [
+            e
+            for e in validate_country(country, leader_ideologies=["nazism", "liberalism"])
+            if e.code == "leader_party_mismatch"
+        ]
 
 
 class ModHelper:

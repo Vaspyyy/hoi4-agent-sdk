@@ -112,7 +112,7 @@ def test_unresolved_layout_diagnostics(tmp_path, focuses, diagnostic):
     assert any(e.code == "unresolved_focus_position" for e in errors)
     overlaps = [e for e in errors if e.code == "visual_overlap"]
     assert len(overlaps) == 1
-    assert "Y overlaps X" in overlaps[0].message
+    assert "Focus 'Y' shares position (9, 9) with 'X'" in overlaps[0].message
     assert "unresolved" not in overlaps[0].message
     assert "relative_position_id" not in overlaps[0].message
 
@@ -144,3 +144,45 @@ def test_long_chain_does_not_hit_python_recursion_limit():
     layout = resolve_focus_positions(FocusTree(id="long", focuses=list(reversed(focuses))))
     assert not layout.unresolved
     assert layout.positions["F1499"] == (1497, 1498)
+
+
+def test_assert_no_visual_overlap_follows_the_validate_rule(tmp_path):
+    """Variant branches behind their own allow_branch may share a spot; the
+    assert helper and ``validate()`` agree on what clashes."""
+
+    from hoi4 import Focus, Mod
+
+    mod = Mod(tmp_path)
+    mod.create_focus_tree("alt", "ALT")
+    mod.add_focus("alt", Focus(id="ALT_dlc", x=0, y=0, allow_branch="has_dlc = x"))
+    mod.add_focus("alt", Focus(id="ALT_plain", x=2, y=0, allow_branch="NOT = { has_dlc = x }"))
+    mod.add_focus("alt", Focus(id="ALT_dlc_next", x=1, y=1, prerequisites=[["ALT_dlc"]]))
+    mod.add_focus("alt", Focus(id="ALT_plain_next", x=1, y=1, prerequisites=[["ALT_plain"]]))
+    assert mod.assert_no_visual_overlap("alt")
+    assert not [f for f in mod.validate(stage="build") if f.code == "visual_overlap"]
+
+    mod.add_focus("alt", Focus(id="ALT_clash", x=1, y=1, prerequisites=[["ALT_dlc"]]))
+    import pytest
+
+    with pytest.raises(ValueError, match="ALT_clash overlaps ALT_dlc_next"):
+        mod.assert_no_visual_overlap("alt")
+    assert [f.focus_id for f in mod.validate(stage="build") if f.code == "visual_overlap"] == [
+        "ALT_clash"
+    ]
+
+
+def test_assert_no_visual_overlap_reports_exclusive_branches_on_one_spot(tmp_path):
+    """Both sides of an exclusive choice are drawn, so they must not share a spot."""
+
+    import pytest
+
+    from hoi4 import Focus, Mod
+
+    mod = Mod(tmp_path)
+    mod.create_focus_tree("alt", "ALT")
+    mod.add_focus("alt", Focus(id="ALT_left", x=0, y=0, mutually_exclusive=[["ALT_right"]]))
+    mod.add_focus("alt", Focus(id="ALT_right", x=2, y=0, mutually_exclusive=[["ALT_left"]]))
+    mod.add_focus("alt", Focus(id="ALT_left_next", x=1, y=1, prerequisites=[["ALT_left"]]))
+    mod.add_focus("alt", Focus(id="ALT_right_next", x=1, y=1, prerequisites=[["ALT_right"]]))
+    with pytest.raises(ValueError, match="ALT_right_next overlaps ALT_left_next"):
+        mod.assert_no_visual_overlap("alt")

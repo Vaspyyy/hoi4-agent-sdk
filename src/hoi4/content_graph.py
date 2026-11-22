@@ -8,8 +8,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Protocol
 
-from .localisation import parse_localization_dir
-from .parser import strip_comments
+from ._file_cache import cached_file_result
+from .localisation import YML_ENTRY_RE, normalize_localization_key, parse_localization_dir
+from .script_references import (
+    COUNTRY,
+    Definitions,
+    FileReferences,
+    event_key,
+    fragment_owner,
+    name_pattern,
+)
+from .syntax import Scalar, parse
 from .textio import read_text
 from .types import ValidationError
 
@@ -19,7 +28,6 @@ if TYPE_CHECKING:
     from .dynamic_modifiers import DynamicModifier
     from .ideologies import Ideology
     from .layers import ContentLayers
-    from .script_vocabulary import ScriptSource
     from .types import Country, Decision, DecisionCategory, Event, FocusTree, Idea
 
 
@@ -28,6 +36,7 @@ class LivenessSource(Protocol):
 
     mod_root: Path
     hoi4_install: Path | None
+    base_mod_paths: tuple[Path, ...]
     _content_layers: ContentLayers | None
     _scan_cache: dict[str, set[str]]
     _vanilla_tags: set[str]
@@ -45,55 +54,119 @@ class LivenessSource(Protocol):
     _decision_categories: dict[str, DecisionCategory]
     _bookmarks: list[Bookmark]
 
-    def _semantic_script_sources(self) -> list[ScriptSource]: ...
+    def _own_script_texts(
+        self, tops: tuple[str, ...] = ("common", "events")
+    ) -> list[tuple[Path, str, str]]: ...
+
+    def _reference_corpus(self, *, inherited: bool = True) -> list[FileReferences]: ...
+
+    def _localisation_value_names(self) -> set[str]: ...
+
+    def _character_scope_names(self) -> frozenset[str]: ...
 
 
-_EVENT_CALL_RE = re.compile(
-    r"\b(?:country_event|state_event|news_event|unit_leader_event|"
-    r"operative_leader_event)\s*=\s*(?:\{[^{}]*?\bid\s*=\s*)?"
-    r'"?([A-Za-z0-9_.:-]+)"?',
-    re.DOTALL,
-)
-_IDEA_SCALAR_RE = re.compile(
-    r"\b(?:add_ideas|add_timed_idea|swap_ideas)\s*=\s*"
-    r'"?([A-Za-z0-9_.:-]+)"?'
-)
-_IDEA_BLOCK_RE = re.compile(r"\badd_ideas\s*=\s*\{([^{}]*)\}", re.DOTALL)
-_SWAP_IDEA_RE = re.compile(
-    r"\bswap_ideas\s*=\s*\{[^{}]*?\badd_idea\s*=\s*"
-    r'"?([A-Za-z0-9_.:-]+)"?',
-    re.DOTALL,
-)
-_TIMED_IDEA_RE = re.compile(
-    r"\badd_timed_idea\s*=\s*\{[^{}]*?\bidea\s*=\s*"
-    r'"?([A-Za-z0-9_.:-]+)"?',
-    re.DOTALL,
-)
-_FLAG_RE = re.compile(
-    r"\b((?:set|clr|modify|set_timed|has)_"
-    r"(?:country|global|state|character|unit_leader)_flag)\s*=\s*"
-    r'(?:\{[^{}]*?\bflag\s*=\s*)?"?([A-Za-z0-9_.:-]+)"?',
-    re.DOTALL,
-)
 _BARE_TOKEN_RE = re.compile(r"[A-Za-z0-9_.:-]+")
 
 
-def _localization_keys_in_script(keys: Iterable[str], script: str) -> set[str]:
-    """Match localization references with the historical ASCII token boundary.
+def _script_tokens(fragments: Iterable[str]) -> set[str]:
+    """Every key and value of some script, read from its syntax tree.
 
-    Most keys consist entirely of the script token alphabet; those can share
-    one lexical pass instead of rescanning the complete mod once per key.
-    Punctuation/Unicode keys retain the exact original boundary-regex behavior.
+    Comments never count. A quoted value also counts word by word, so a key
+    named inside a quoted tooltip text is found.
     """
-    tokens = set(_BARE_TOKEN_RE.findall(script))
-    used: set[str] = set()
-    for key in keys:
-        if _BARE_TOKEN_RE.fullmatch(key):
-            if key in tokens:
-                used.add(key)
-        elif re.search(rf"(?<![A-Za-z0-9_.:-]){re.escape(key)}(?![A-Za-z0-9_.:-])", script):
-            used.add(key)
-    return used
+
+    tokens: set[str] = set()
+
+    def add_value(value: str) -> None:
+        tokens.add(value)
+        if not _BARE_TOKEN_RE.fullmatch(value):
+            tokens.update(_BARE_TOKEN_RE.findall(value))
+
+    for fragment in fragments:
+        if not fragment.strip():
+            continue
+        root = parse(fragment).root
+        for item in root.items:
+            if type(item) is Scalar:
+                add_value(item.value)
+        for assignment, _ in root.walk():
+            tokens.add(assignment.key.value)
+            value = assignment.value
+            if type(value) is Scalar:
+                add_value(value.value)
+            elif assignment.block is not None:
+                for entry in assignment.block.items:
+                    if type(entry) is Scalar:
+                        add_value(entry.value)
+    return tokens
+
+
+_NESTED_KEY_RE = re.compile(r"\$([A-Za-z0-9_.\-]+)(?:\|[^$\n]*)?\$")
+
+
+def _keys_in_localization_values(values: Iterable[str]) -> set[str]:
+    """The names a localisation text pulls in as ``$NAME$`` or ``$NAME|H$``.
+
+    The game puts the text of the key ``NAME`` there (``|H`` and the like
+    only format it), so a key that is used only this way is used.
+    """
+
+    found: set[str] = set()
+    for value in values:
+        if "$" in value:
+            found.update(_NESTED_KEY_RE.findall(value))
+    return found
+
+
+def _localization_keys_in_script(keys: Iterable[str], tokens: set[str]) -> set[str]:
+    """The localization keys that name something the script defines or mentions.
+
+    ``X_desc`` counts when ``X`` does: the game shows it as the description
+    of whatever ``X`` is (an idea, a dynamic modifier, a trait, ...).
+    """
+
+    return {
+        key
+        for key in keys
+        if key in tokens or (key.endswith("_desc") and key[: -len("_desc")] in tokens)
+    }
+
+
+def _inherited_localization_keys(mod: LivenessSource) -> set[str]:
+    """Every English localisation key of the game and the base mods.
+
+    Files the mod hides (same name, ``replace_path``) count too: the game
+    shows those texts, and the mod's key replaces them.
+    """
+
+    roots = [*mod.base_mod_paths]
+    if mod.hoi4_install is not None:
+        roots.append(mod.hoi4_install)
+    keys: set[str] = set()
+    for root in roots:
+        folder = Path(root) / "localisation"
+        if not folder.is_dir():
+            continue
+        for path in folder.rglob("*.yml"):
+            relative = path.relative_to(folder).as_posix().lower()
+            if "english" not in relative:
+                continue
+            try:
+                keys |= cached_file_result("localisation_keys", path, _yml_keys)
+            except (OSError, ValueError):
+                continue
+    return keys
+
+
+def _yml_keys(text: str) -> frozenset[str]:
+    """The keys of a localisation file, read the way the game finds them."""
+
+    found: set[str] = set()
+    for line in text.splitlines():
+        match = YML_ENTRY_RE.match(line)
+        if match is not None:
+            found.add(normalize_localization_key(match.group(1)))
+    return frozenset(found)
 
 
 @dataclass(frozen=True)
@@ -189,58 +262,73 @@ def analyze_content_liveness(
                 changed = True
     unreachable = set(all_focuses) - reachable
 
-    scripts = _all_script_text(mod)
-    event_calls = set(_EVENT_CALL_RE.findall(scripts))
-    autonomous_events = {
-        event.id for event in mod._events.values() if not event.is_triggered_only
+    corpus = mod._reference_corpus() + _country_history_references(mod)
+    defined_at = _definition_sites(corpus)
+
+    # Events: fired by an effect, an on-action or a border war anywhere in the
+    # mod or the game. A name the game builds while running is a pattern. The
+    # game matches an event's namespace without regard to case.
+    event_calls, event_patterns = _referenced(corpus, "event", {"fire"})
+    called = {event_key(event_id) for event_id in event_calls}
+    folded_patterns = tuple(event_key(pattern) for pattern in event_patterns)
+    fired_events = {
+        event.id
+        for event in mod._events.values()
+        if not event.is_triggered_only
+        or event_key(event.id) in called
+        or _matches(event_key(event.id), folded_patterns)
     }
-    fired_events = (event_calls | autonomous_events) & set(mod._events)
     unfired_events = {
         event.id
         for event in mod._events.values()
-        if event.is_triggered_only and event.id not in event_calls
+        if event.is_triggered_only and event.id not in fired_events
     }
 
-    grants = {
-        idea_id
-        for country in mod._countries.values()
-        for idea_id in country.ideas
-    }
-    grants.update(_IDEA_SCALAR_RE.findall(scripts))
-    grants.update(_SWAP_IDEA_RE.findall(scripts))
-    grants.update(_TIMED_IDEA_RE.findall(scripts))
-    for block in _IDEA_BLOCK_RE.findall(scripts):
-        grants.update(_BARE_TOKEN_RE.findall(block))
+    # Ideas: granted by an effect or country history, or shown on purpose
+    # (show_ideas_tooltip, a bookmark's idea list).
+    grants, grant_patterns = _referenced(corpus, "idea", {"add", "show"})
+    grants.update(idea_id for country in mod._countries.values() for idea_id in country.ideas)
     country_ideas = {
         idea.id for idea in mod._ideas.values() if idea.category == "country"
     }
-    granted_ideas = grants & country_ideas
-    ungranted_ideas = country_ideas - grants
+    granted_ideas = {
+        idea_id for idea_id in country_ideas
+        if idea_id in grants or _matches(idea_id, grant_patterns)
+    }
+    ungranted_ideas = country_ideas - granted_ideas
 
-    written: set[str] = set()
-    read: set[str] = set()
-    for operation, flag in _FLAG_RE.findall(scripts):
-        if operation.startswith("has_"):
-            read.add(flag)
-        else:
-            written.add(flag)
+    # Flags: the mod's own writes and reads, checked against every file.
+    written, written_patterns = _referenced(corpus, "flag", {"set", "clear"})
+    read, read_patterns = _referenced(corpus, "flag", {"read"})
+    # A localisation text reads a flag too: "[?TAG_flag:days_left] days".
+    read |= mod._localisation_value_names()
+    own_written, _ = _referenced(corpus, "flag", {"set", "clear"}, own_only=True)
+    own_read, _ = _referenced(corpus, "flag", {"read"}, own_only=True)
     allowed_flags = tuple(flag_allowlist)
-    external_written, external_read = _installed_flag_usage(mod)
     set_only = {
         flag
-        for flag in written - read - external_read
-        if not _matches(flag, allowed_flags)
+        for flag in own_written - read
+        if not _matches(flag, read_patterns) and not _matches(flag, allowed_flags)
     }
     read_only = {
         flag
-        for flag in read - written - external_written
-        if not _matches(flag, allowed_flags)
+        for flag in own_read - written
+        if not _matches(flag, written_patterns) and not _matches(flag, allowed_flags)
     }
+    written, read = own_written, own_read
 
     localization_keys = {key.split(":", 1)[0] for key in mod._loc_entries}
     authored_localization = _authored_localization_keys(mod)
     used_localization = _known_localization_uses(mod)
-    used_localization.update(_localization_keys_in_script(localization_keys, scripts))
+    used_localization.update(
+        _localization_keys_in_script(localization_keys, _script_tokens(_script_fragments(mod)))
+    )
+    used_localization.update(
+        localization_keys & _keys_in_localization_values(mod._loc_entries.values())
+    )
+    # A key the game or a base mod defines too is shown by the game already:
+    # the mod overrides its text (``localisation/english/replace``).
+    used_localization.update(authored_localization & _inherited_localization_keys(mod))
     allowed_localization = tuple(localization_allowlist)
     unused_localization = {
         key
@@ -248,9 +336,19 @@ def analyze_content_liveness(
         if not _matches(key, allowed_localization)
     }
 
+    write_sites = _first_sites(corpus, "flag", {"set", "clear"})
+    read_sites = _first_sites(corpus, "flag", {"read"})
+
+    def site(kind: str, name: str, fallback: Path | None) -> tuple[str | None, int | None]:
+        found = defined_at.get((kind, name))
+        if found is not None:
+            return found
+        return (str(fallback) if fallback is not None else None), None
+
     findings: list[ValidationError] = []
     for focus_id in sorted(unreachable):
         focus, path = all_focuses[focus_id]
+        file_path, line = site("focus", focus_id, path)
         findings.append(
             ValidationError(
                 message=(
@@ -260,51 +358,60 @@ def analyze_content_liveness(
                 severity="warning",
                 code="unreachable_focus",
                 focus_id=focus_id,
-                file_path=str(path) if path is not None else None,
+                file_path=file_path,
+                line=line,
             )
         )
     for event_id in sorted(unfired_events):
-        event = mod._events[event_id]
+        file_path, line = site("event", event_id, mod._events[event_id].path)
         findings.append(
             ValidationError(
                 message=(
-                    f"Triggered-only event '{event_id}' has no incoming event, "
-                    "on-action, focus, decision, or other modeled script reference."
+                    f"Triggered-only event '{event_id}' is never fired: no effect, "
+                    "on-action or border war in the mod or the game names it."
                 ),
                 severity="warning",
                 code="unfired_event",
                 event_id=event_id,
-                file_path=str(event.path) if event.path is not None else None,
+                file_path=file_path,
+                line=line,
             )
         )
     for idea_id in sorted(ungranted_ideas):
-        idea = mod._ideas[idea_id]
+        file_path, line = site("idea", idea_id, mod._ideas[idea_id].path)
         findings.append(
             ValidationError(
                 message=(
-                    f"Country idea '{idea_id}' is never granted by country history "
-                    "or modeled effect script."
+                    f"Country idea '{idea_id}' is never granted: no country history "
+                    "or effect in the mod or the game adds it, and nothing shows it."
                 ),
                 severity="warning",
                 code="ungranted_idea",
                 idea_id=idea_id,
-                file_path=str(idea.path) if idea.path is not None else None,
+                file_path=file_path,
+                line=line,
             )
         )
     for flag in sorted(set_only):
+        file_path, line = write_sites.get(flag, (None, None))
         findings.append(
             ValidationError(
                 message=f"Flag '{flag}' is written but never read.",
                 severity="warning",
                 code="flag_set_never_read",
+                file_path=file_path,
+                line=line,
             )
         )
     for flag in sorted(read_only):
+        file_path, line = read_sites.get(flag, (None, None))
         findings.append(
             ValidationError(
-                message=f"Flag '{flag}' is read but never written by this mod.",
+                message=f"Flag '{flag}' is read but never written by the mod or the game.",
                 severity="warning",
                 code="flag_read_never_set",
+                file_path=file_path,
+                line=line,
             )
         )
     for key in sorted(unused_localization):
@@ -338,52 +445,118 @@ def analyze_content_liveness(
     )
 
 
-def _all_script_text(mod: LivenessSource) -> str:
-    flattened = [
-        source.text
-        for source in mod._semantic_script_sources()
-        if source.kind != "modifier"
-    ]
-    for idea in mod._ideas.values():
-        flattened.extend((idea.allowed, idea.ai_will_do))
-    for country in mod._countries.values():
-        flattened.append(country.raw_history)
-    for modifier in mod._dynamic_modifiers.values():
-        flattened.extend((modifier.enable, modifier.remove_trigger))
-    for bookmark in mod._bookmarks:
-        flattened.append(bookmark.effect)
-    # Each fragment has its own lexical context; never let a trailing comment
-    # (or a quote inside one) affect the next independent source.
-    return "\n".join(strip_comments(text) for text in flattened)
+def _script_fragments(mod: LivenessSource) -> list[str]:
+    """The script of the mod, for the localization use check.
 
+    That is every script file of the mod itself (``common``, ``events``,
+    ``history``, with pending edits), its interface files and the history of
+    its countries: a key named anywhere there is used.
+    """
 
-def _installed_flag_usage(mod: LivenessSource) -> tuple[set[str], set[str]]:
-    """Return flags written/read by vanilla for cross-content liveness."""
-
-    if mod.hoi4_install is None:
-        return set(), set()
-    written_key = "vanilla_flags_written"
-    read_key = "vanilla_flags_read"
-    cached_written = mod._scan_cache.get(written_key)
-    cached_read = mod._scan_cache.get(read_key)
-    if cached_written is not None and cached_read is not None:
-        return set(cached_written), set(cached_read)
-    written: set[str] = set()
-    read: set[str] = set()
-    for top_level in ("common", "events", "history"):
-        directory = mod.hoi4_install / top_level
-        if not directory.is_dir():
-            continue
-        for path in directory.rglob("*.txt"):
+    fragments = [text for _, _, text in mod._own_script_texts(("common", "events", "history"))]
+    interface = mod.mod_root / "interface"
+    if interface.is_dir():
+        for path in sorted(interface.rglob("*.gui")):
             try:
-                text = read_text(path)
-            except OSError:
+                fragments.append(read_text(path))
+            except (OSError, ValueError):
                 continue
-            for operation, flag in _FLAG_RE.findall(strip_comments(text)):
-                (read if operation.startswith("has_") else written).add(flag)
-    mod._scan_cache[written_key] = written
-    mod._scan_cache[read_key] = read
-    return set(written), set(read)
+    for country in mod._countries.values():
+        fragments.append(country.raw_history)
+    return fragments
+
+
+def _country_history_references(mod: LivenessSource) -> list[FileReferences]:
+    """The in-memory history of the mod's countries, read like a history file.
+
+    A country's history is only written back on save, and not every field of
+    ``raw_history`` is kept by the writer, so it is read from the model too.
+    """
+
+    found: list[FileReferences] = []
+    characters = mod._character_scope_names()
+    for country in mod._countries.values():
+        if not country.raw_history.strip():
+            continue
+        owner = fragment_owner(
+            country.raw_history, "country_history", country.tag, COUNTRY, characters=characters
+        )
+        path = country.history_path or mod.mod_root / "history" / "countries" / f"{country.tag}.txt"
+        found.append(
+            FileReferences(
+                str(path),
+                f"history/countries/{country.tag}.txt",
+                True,
+                [owner],
+                Definitions(),
+            )
+        )
+    return found
+
+
+def _referenced(
+    corpus: list[FileReferences],
+    kind: str,
+    actions: set[str],
+    *,
+    own_only: bool = False,
+) -> tuple[set[str], tuple[str, ...]]:
+    """Names of one kind the script uses, and patterns for built names.
+
+    ``set_country_flag = PRC_infiltration_[ROOT.GetTag]`` gives the pattern
+    ``PRC_infiltration_*``. A name read from a variable (``var:x``) could be
+    anything, so it gives ``*``.
+    """
+
+    names: set[str] = set()
+    patterns: set[str] = set()
+    for found in corpus:
+        if own_only and not found.own:
+            continue
+        for _, ref in found.refs():
+            if ref.kind != kind or ref.action not in actions:
+                continue
+            if not ref.dynamic:
+                names.add(ref.value)
+            elif ":" in ref.value:
+                patterns.add("*")
+            else:
+                patterns.add(name_pattern(ref.value))
+    return names, tuple(sorted(patterns))
+
+
+def _first_sites(
+    corpus: list[FileReferences], kind: str, actions: set[str]
+) -> dict[str, tuple[str | None, int | None]]:
+    """Where the mod first uses each name: ``{name: (file, line)}``."""
+
+    sites: dict[str, tuple[str | None, int | None]] = {}
+    for found in corpus:
+        if not found.own:
+            continue
+        for _, ref in found.refs():
+            if ref.kind == kind and ref.action in actions and not ref.dynamic:
+                sites.setdefault(ref.value, (found.path, ref.line))
+    return sites
+
+
+def _definition_sites(
+    corpus: list[FileReferences],
+) -> dict[tuple[str, str], tuple[str | None, int | None]]:
+    """Where the mod defines each focus, event and idea."""
+
+    sites: dict[tuple[str, str], tuple[str | None, int | None]] = {}
+    for found in corpus:
+        if not found.own:
+            continue
+        for owner in found.owners:
+            if owner.kind == "focus":
+                sites.setdefault(("focus", owner.id), (found.path, owner.line))
+        for event_id, (_, line) in found.defines.events.items():
+            sites.setdefault(("event", event_id), (found.path, line))
+        for idea_id, (_, line) in found.defines.ideas.items():
+            sites.setdefault(("idea", idea_id), (found.path, line))
+    return sites
 
 
 def _authored_localization_keys(mod: LivenessSource) -> set[str]:

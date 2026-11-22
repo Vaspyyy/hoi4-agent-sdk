@@ -7,6 +7,7 @@ agent-facing footguns without pretending to fully model the HOI4 effect engine.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 
 from ._scalar import needs_quotes as _needs_quotes
@@ -74,12 +75,21 @@ def scope_block(scope: str | int, *effects: str) -> str:
     """
     scope = require_key(str(scope).strip(), "a scope")
     parts = [effect.strip() for effect in effects if effect and effect.strip()]
-    body = ""
+    pieces: list[str] = []
+    after_comment = False
     for part in parts:
-        require_well_formed(part, f"an effect in the scope '{scope}'")
-        # A comment runs to the end of its line: the next effect goes below it.
-        body += ("\n" if _ends_in_comment(body) else " " if body else "") + part
-    return f"{scope} = {braced(body)}"
+        document = require_well_formed(part, f"an effect in the scope '{scope}'")
+        # A comment runs to the end of its line: what follows goes below it.
+        if pieces:
+            pieces.append("\n" if after_comment else " ")
+        pieces.append(part)
+        # Each part is well formed on its own, so the body built so far ends
+        # in a comment exactly when its last part does: no need to read the
+        # whole body again for every part.
+        comments = document.comments
+        after_comment = bool(comments) and comments[-1][1] == len(part)
+    closing = "\n}" if after_comment else " }"
+    return f"{scope} = {{ {''.join(pieces)}{closing}"
 
 
 def braced(body: str) -> str:
@@ -97,56 +107,80 @@ def _ends_in_comment(text: str) -> bool:
     return bool(comments) and comments[-1][1] == len(text)
 
 
+# What the syntax scan stops at outside a string, and inside one.
+_SYNTAX_MARK_RE = re.compile(r'[#"{}]')
+_STRING_MARK_RE = re.compile(r'[\\"]')
+
+
 def validate_script_syntax(script: str) -> list[str]:
-    """Return human-readable syntax issues for a raw PDX snippet."""
+    """Return human-readable syntax issues for a raw PDX snippet.
+
+    Comments run to the end of their line, a backslash in a string skips the
+    next character (a line break too, which is then not counted). The scan
+    jumps from one brace, quote or comment mark to the next and counts the
+    lines and columns of the text in between.
+    """
     issues: list[str] = []
     stack: list[tuple[int, int]] = []
     line = 1
     col = 0
     i = 0
-    while i < len(script):
-        ch = script[i]
+    length = len(script)
+    next_mark = _SYNTAX_MARK_RE.search
+    next_string_mark = _STRING_MARK_RE.search
+    while i < length:
+        mark = next_mark(script, i)
+        j = mark.start() if mark is not None else length
+        # Plain text up to the mark: only the position moves.
+        newline = script.rfind("\n", i, j)
+        if newline >= 0:
+            line += script.count("\n", i, j)
+            col = j - newline - 1
+        else:
+            col += j - i
+        if mark is None:
+            break
+        ch = script[j]
         col += 1
-        if ch == "\n":
-            line += 1
-            col = 0
-            i += 1
-            continue
         if ch == "#":
-            while i < len(script) and script[i] != "\n":
-                i += 1
+            end = script.find("\n", j)
+            i = length if end < 0 else end
             continue
         if ch == '"':
             quote_line = line
             quote_col = col
-            i += 1
+            i = j + 1
             col += 1
             closed = False
-            while i < len(script):
-                if script[i] == "\\":
-                    i += 2
+            while i < length:
+                found = next_string_mark(script, i)
+                k = found.start() if found is not None else length
+                newline = script.rfind("\n", i, k)
+                if newline >= 0:
+                    line += script.count("\n", i, k)
+                    col = k - newline - 1
+                else:
+                    col += k - i
+                if found is None:
+                    i = length
+                    break
+                if script[k] == "\\":
+                    i = k + 2
                     col += 2
                     continue
-                if script[i] == '"':
-                    closed = True
-                    break
-                if script[i] == "\n":
-                    line += 1
-                    col = 0
-                else:
-                    col += 1
-                i += 1
+                closed = True
+                i = k
+                break
             if not closed:
                 issues.append(f"Unclosed quote from line {quote_line}, column {quote_col}")
                 break
         elif ch == "{":
             stack.append((line, col))
-        elif ch == "}":
-            if not stack:
-                issues.append(f"Unexpected closing brace at line {line}, column {col}")
-            else:
-                stack.pop()
-        i += 1
+        elif not stack:
+            issues.append(f"Unexpected closing brace at line {line}, column {col}")
+        else:
+            stack.pop()
+        i = (i if ch == '"' else j) + 1
     for open_line, open_col in stack:
         issues.append(f"Unclosed opening brace from line {open_line}, column {open_col}")
     return issues

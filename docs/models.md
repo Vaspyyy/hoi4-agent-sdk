@@ -239,6 +239,12 @@ models country-history `create_equipment_variant` definitions needed by Man
 the Guns hulls. Production and unknown blocks remain in `raw_text`; comments,
 ordering, and untouched modeled blocks remain source-preserved.
 
+A ship read from a file may have `ordered_name = { ... }` instead of `name`,
+like many of the game's own fleets. Its `name` is then empty, the block stays
+in its source, and validation accepts it; a ship with neither is a warning
+(`oob_ship_name`). A division may use a template that the country defines in
+another OOB file or creates in script, and two equal air wings are two wings.
+
 ### ContentLivenessReport and GameScriptVocabulary
 
 `ContentLivenessReport` exposes reachable/unreachable focuses, fired/unfired
@@ -249,7 +255,10 @@ supported scopes, categories, installed-game usage counts, and usage domains.
 Effect and trigger scopes come from the shipped generated documentation;
 modifier applicability is expressed through `categories`. Semantic validation
 tracks the current scope through explicit tag, state, character, and iterator
-blocks before comparing a token with `supported_scopes`.
+blocks before comparing a token with `supported_scopes`, and reports a scope
+finding only when the scope is certain. See
+[internals/script_scopes.md](internals/script_scopes.md) for how the walker
+reads blocks.
 `ContentLivenessReport.analysis_scope` is `"structural"`, and
 `proves_dynamic_achievability` is false: the graph does not solve popularity or
 variable arithmetic.
@@ -279,11 +288,41 @@ TerritoryComponent(state_ids: tuple[int, ...],
 runtime-released countries and unresolved generated tags.
 `runtime_state_ids` and `activation_sources` expose the evidence used for
 automatic classification. `.errors`, `.warnings`, `.complete`, and `.to_dict()`
-are derived views. `.complete` and `.structurally_complete` are intentionally
+are derived views. `findings` may also hold advice (`info`), which never
+makes a package incomplete. `.complete` and `.structurally_complete` are intentionally
 structural and do not prove a runtime threshold chain can fire.
 `TerritoryComponent` values returned by `find_disconnected_states()` or
 `find_enclosed_foreign_states()` represent disconnected owned land or enclosed
 foreign land after threshold and allowlist filtering.
+
+### ValidationError
+
+```python
+ValidationError(message: str,
+                severity: str = "error",
+                code: str = "",
+                file_path: str | None = None,
+                focus_id: str | None = None,
+                country_tag: str | None = None,
+                state_id: int | None = None,
+                event_id: str | None = None,
+                idea_id: str | None = None,
+                decision_id: str | None = None,
+                focus_tree_id: str | None = None,
+                ideology_id: str | None = None,
+                dynamic_modifier_id: str | None = None,
+                bookmark_name: str | None = None,
+                related_file_path: str | None = None,
+                line: int | None = None,
+                column: int | None = None)
+```
+
+`severity` is one of `"error"` (the game rejects the content or behaves
+wrongly), `"warning"` (probably a mistake) or `"info"` (advice about valid
+content). Every finding the SDK builds has a registered `code`, and its
+severity is always the one `hoi4.VALIDATION_SEVERITIES` gives that code.
+[validation.md](validation.md) lists every code. The id fields name the
+object the finding is about, and `suppress=["code:ID"]` matches them.
 
 ### State
 ```python

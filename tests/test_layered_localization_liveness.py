@@ -38,7 +38,9 @@ def test_layered_liveness_distinguishes_authorship_and_fallback(tmp_path: Path) 
         options=[EventOption(name="inherited_option", effect="add_political_power = 1")],
     )
     report = mod.analyze_content_liveness()
-    assert set(report.unused_localization) == {"top_unused", "pending_unused", "overridden"}
+    # "overridden" replaces a text the base mod defines: the mod overrides it,
+    # whoever shows it.
+    assert set(report.unused_localization) == {"top_unused", "pending_unused"}
     assert mod.get_loc("game_unused") == "Game only"
     assert mod.get_loc("base_unused") == "Base only"
     assert {"inherited_title", "inherited_desc", "inherited_option"} <= set(

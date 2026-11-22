@@ -92,6 +92,63 @@ All notable changes to this project are documented here. The format follows
   helpers, plus `mission_with_cost` and `mission_activation_without_timeout`
   validation.
 
+- **Three severities for validation findings.** Every validation code has
+  exactly one severity: `"error"` (the game rejects the content or behaves
+  wrongly), `"warning"` (probably a mistake) or `"info"` (advice: the
+  content is valid, but often not what was meant). The registry is exported
+  from `hoi4`: `VALIDATION_SEVERITIES` maps each code to its severity, and
+  `VALIDATION_ERROR_CODES`, `VALIDATION_WARNING_CODES` and
+  `VALIDATION_INFO_CODES` map the codes of one severity to a description.
+  Every finding the SDK builds has a registered code and that code's
+  severity, also when a check such as `validate_event` or `validate_oob` is
+  called on its own. [`docs/validation.md`](docs/validation.md) lists every
+  code.
+- `Mod.validate(advice=False)`: advice (`"info"`) is hidden unless
+  `advice=True`. `Mod.validate_effect(advice=True)` looks at one script, so
+  it shows advice unless `advice=False`.
+- `Mod.validate(suppress=[...])` hides warnings and advice by code: `"code"`
+  hides every finding with that code, `"code:ID"` only the findings about
+  one focus, event, idea, decision, country, state or other object.
+- New validation codes. Many of these findings were reported before without
+  a code.
+  - Errors: `duplicate_definition_id`, `duplicate_identifier`,
+    `duplicate_strategic_region_id`, `equipment_variant_chassis_not_unlocked`,
+    `invalid_country_color`, `invalid_country_tag`, `invalid_event_type`,
+    `invalid_focus_kind`, `invalid_railway`, `invalid_ruling_party`,
+    `invalid_supply_node`, `malformed_map_building`, `malformed_railway`,
+    `map_building_unknown_province`, `map_building_unknown_state`,
+    `missing_character_small_portrait`, `missing_country_name_pool`,
+    `missing_event_id`, `missing_event_options`, `missing_focus_id`,
+    `missing_focus_mutually_exclusive`, `missing_focus_prerequisite`,
+    `missing_idea_id`, `missing_state_id`, `non_land_state_province`,
+    `province_in_multiple_states`, `province_in_multiple_strategic_regions`,
+    `runtime_recruit_character`, `state_load_error`,
+    `strategic_region_parse_error`, `undeclared_event_namespace`,
+    `unknown_idea_category`, `unknown_state_province` and
+    `unknown_strategic_region_province`.
+  - Warnings: `country_popularity_sum`, `empty_strategic_region`,
+    `missing_country_name`, `missing_event_description`,
+    `missing_event_title`, `missing_state_owner`, `province_missing_state`,
+    `province_missing_strategic_region`, `unknown_character_trait`,
+    `unknown_focus_search_filter`, `unknown_state_core`,
+    `unknown_state_owner`, `unknown_state_reference` and
+    `unloaded_missing_oob_reference`.
+  - Advice: `continuous_focus_position_high`, `idea_without_effect`,
+    `missing_optional_localization`, `triggered_only_with_mtth` and
+    `war_declaration_in_immediate`.
+- `hoi4.script_scopes` walks script blocks and knows, for every statement,
+  whether it is a command, a scope change, a control block or an argument,
+  and which scope it runs in. See
+  [`docs/internals/script_scopes.md`](docs/internals/script_scopes.md).
+- `hoi4.script_references` reads every idea, event, flag, technology,
+  equipment, focus tree and country tag that script names, with its line and
+  scope. It rides on the scope walker of `hoi4.script_scopes` (through
+  `walk_script(..., visit=...)`), so the reference check and the token check
+  agree on what every statement is and where it runs.
+- `validate_effect(..., suppress=[...])`, like `validate()`.
+- `validate_oob(oob, known_templates=...)` accepts division templates that
+  the country defines in another OOB file or in script.
+
 ### Changed
 
 - **An edit to one field now changes only that field.** Focus trees, events,
@@ -197,8 +254,176 @@ All notable changes to this project are documented here. The format follows
   Commons sources. Paid Gemini generation is an explicitly authorized option;
   missing credentials no longer prevent local or web-sourced graphics.
 
+- Finding severities changed to fit the three-level model (see Added).
+  Errors that are now warnings: `duplicate_oob_grid_position`,
+  `duplicate_oob_ship` and `oob_ship_name`. Errors that are now advice:
+  `invalid_idea_picture_prefix`, `mission_activation_without_timeout`,
+  `oob_location_not_owned`, `oob_naval_location_not_owned` and
+  `oob_air_location_not_owned`. Warnings that are now advice:
+  `bad_idea_tooltip_pattern`, `civil_war_focus_tree_missing`,
+  `civil_war_scope_footgun`, `event_option_no_effect`,
+  `faction_scope_footgun`, `idea_mutation_collision`, `idea_not_addable`,
+  `leader_party_mismatch`, `resistance_on_core_state`,
+  `revolt_state_already_owned`, `unseen_effect_token`,
+  `unseen_modifier_token` and `unseen_trigger_token`. Advice is hidden by
+  `validate()` unless `advice=True`.
+- Suppression works by code only. An entry in `suppress=` or
+  `suppress_warnings=` (the older name of the same list) that is not a
+  known code, such as a piece of a message, raises `ValueError`, so a typo
+  no longer hides nothing in silence. Errors cannot be suppressed.
+- The check of effect, trigger and modifier names follows scopes. It reads
+  every block through the syntax tree, knows control blocks, scope changes,
+  iterators and their arguments, `random_list` weights and weight blocks
+  (`ai_will_do`, `mean_time_to_happen`), and folds case like the game. A
+  scope finding is reported only when the scope is certain. On a mod made
+  of the game's own files it went from about 13,000 false alarms to the 17
+  real mistakes in the game. What it reads from the install is cached under
+  `~/.cache/hoi4-sdk/script-vocabulary`.
+- Five findings about what a complete country needs are warnings now, not
+  errors: `missing_country_leader`, `insufficient_political_advisors`,
+  `insufficient_military_commanders`, `missing_land_oob` and
+  `capital_not_cored` (`hoi4.COUNTRY_PACKAGE_REQUIREMENT_CODES`). The game
+  loads a country without them, and an error cannot be hidden. They still
+  decide completeness: `validate_country_package(tag).complete` stays
+  `False` (see the new `unmet_requirements`), and the release gate fails
+  (`incomplete_country_count`).
+- `invalid_country_color` is reported for a country definition file whose
+  colour has a channel outside 0 to 255. The reader clamps such a value, so
+  the check never saw it. A colour set with `update_country(color=...)`
+  replaces the file's, so the finding goes before `save()`.
+- A trigger used where an effect belongs (or the other way round) is named
+  as such, instead of being answered with a look-alike name.
+- `docs/validation.md` says what each stage checks. The "is this ever
+  used?" findings (`unfired_event`, `flag_set_never_read` and the like)
+  belong to `stage="release"`, as before.
+- A strategic region without provinces is reported only when the mod's own
+  file holds it. The game ships three such regions, and every mod used to
+  get three warnings for them.
+- Reference and liveness checks read the syntax tree instead of searching
+  text with regular expressions. Comments and quoted text no longer count
+  as references, catalogs read definitions where the game keeps them (tag
+  aliases, equipment from `duplicate_archetypes`, events in sub folders),
+  and a flag read in localisation text (`[?flag:days_left]`) counts as read.
+- Order-of-battle and country checks no longer fire on valid game content.
+  States, provinces and OOB files are also read from the game install,
+  division templates from the country's other OOB files and from script
+  count, a country that owns no state at the start does not load its OOB
+  files, units may start outside the country's territory, a ship may use
+  `ordered_name`, and DLC conditions of equipment variants are read from the
+  real `if`/`else` blocks. Before, these checks raised about 6,000 errors
+  and warnings on a copy of the game's own files.
+- Content checks look localisation keys up in the mod, its base mods and
+  the game. A plain-text value or a bracket command (`[GetName]`) needs no
+  key, hidden events need no text, any `add_namespace` in any event file
+  declares a namespace, and a character named by a key of the game
+  (`name = KEY`) has its name.
+- `validate_focus_tree` and `validate_event` no longer take `known_tags`.
+  Unknown country tags are reported by the reference checks of
+  `Mod.validate()`, which know the scope. `validate_event` takes
+  `namespaces=` and `validate_focus_tree` takes `known_search_filters=`.
+- `assert_no_visual_overlap` and `validate()` use the same rule: two focuses
+  may share a position only when the game never draws both there, because
+  an `offset` block moves one and not the other (its own, or one on a focus
+  it is placed relative to) while `allow_branch` can hide at least one of
+  them, or each needs an `allow_branch` condition the other does not need
+  (two focuses with the same `allow_branch` text appear together, and a
+  focus whose conditions the other needs as well is drawn whenever the
+  other is). What a focus needs follows the HOI4 wiki: a focus with
+  `allow_branch` checks only its own condition, a focus without one is
+  hidden as soon as one of its prerequisite focuses is. Mutually exclusive
+  focuses are both drawn, so they must not share a position.
+- `validate()` and `validate_effect()` load a catalog of the game (ideas,
+  events, technologies, equipment) only when a name is not among the mod's
+  own objects, and then only once.
+
 ### Fixed
 
+- `unknown_assigned_idea` no longer reports an advisor's `idea_token` that a
+  country history hires with `add_ideas`, and the finding names the history
+  file and line.
+- `tag_definition` no longer reports a tag whose country file the mod
+  inherits from the game or a base mod (`replace_path` is respected).
+- A mod's focus may require, exclude or anchor to a focus of the game or a
+  base mod (shared and joint focuses included) without
+  `missing_focus_prerequisite` or `unresolved_focus_position`. The
+  inherited focus files are scanned once, and only when a name is not the
+  mod's own.
+- The catalogs read from a folder of the game and the mod (advisor idea
+  tokens, technologies, equipment, name pools, scripted effects and
+  triggers) skip the inherited files that the mod's `replace_path` hides.
+- A second `validate()` sees unsaved API edits: a deleted event, focus tree,
+  character or idea is unknown at once, and a created character and its
+  advisor idea token are known before `save()`. Every catalog reads the
+  mod's own content from the loaded models and keeps only per-file scans,
+  which follow the files on disk, so `save()` and `discard()` leave none
+  stale. A file's top-level focus container is no longer taken for a focus
+  tree id.
+- `capital_ref` and `character_ref` read a country history with its unsaved
+  edits, not only the file on disk.
+- `validate(suppress="code")` with one string instead of a list raises
+  "takes a list of codes, not one string" instead of complaining about the
+  code `'v'`.
+- A focus id that is defined twice in one tree is one `duplicate_focus_id`
+  finding. Before, it was reported twice, the focus "overlapped" itself
+  (`visual_overlap`), and its missing texts were listed twice.
+- The country tags a script may name follow the game: a mod's
+  `replace_path = "common/country_tags"` hides the game's tags, and a
+  country removed with `delete_country()` is an unknown tag before
+  `save()` (`unknown_country_scope`, `unknown_state_owner`, the order of
+  battle checks).
+- `load_focus_tree` cannot name the container the SDK keeps a file's
+  top-level shared focuses in (`unknown_focus_tree_reference`).
+- A focus of a tree may be placed relative to the shared focuses the tree
+  pulls in (`shared_focus = ID`, and the shared focuses below `ID`) without
+  `unresolved_focus_position`, and a focus below such a shared focus is
+  hidden with it (its `allow_branch` counts for the position check).
+  `validate_focus_tree` takes `shared_focus_parents=` and
+  `shared_focus_conditions=` for that.
+- `ALL` and `ANY` are country tags when a mod defines them, not keywords.
+- The reference checks know the characters, so what stands inside a
+  character scope keeps its scope: `GER_erwin_rommel = { owner = {
+  add_core_of = GER } }` is reported (`country_scope_core_effect`), and so
+  is an unknown tag in there. Before, such a block was read as data.
+- The roles inside a character's `instance = { ... }` blocks and the
+  `available` block of a bookmark country are checked like other script.
+- `unused_localization` no longer reports a key that another text of the
+  mod pulls in as `$KEY$` or `$KEY|H$`.
+- The namespace of an event id is everything before its last dot, as the
+  HOI4 wiki describes it: `my_mod.news.1` needs
+  `add_namespace = my_mod.news`. Before, only the text before the first dot
+  counted, so `undeclared_event_namespace` was reported for a declared
+  `my_mod.news` and stayed quiet when only `my_mod` was declared.
+  `create_event("my_mod.news.1")` now declares `my_mod.news` (it declared
+  `my_mod`), and `set_event_namespace` takes a namespace with dots.
+- A character of a base mod used as a scope (`BAS_hero = { ... }`) is known
+  to the token check, as it already was to the reference check.
+- Validation reads each script file through one splitter
+  (`hoi4._script_corpus`) and one scope walker. The token check reads the
+  mod's own files as `save()` will write them, with exact file lines; the
+  corpus test checks the same path. Fixed on the way: `NOR` is Norway, not a
+  keyword; `PREV`, `THIS` and `FROM` scope references; a bare top-level
+  `focus` is a focus; an iterator's scope comes from the table, not from
+  words in its name; event `after`, title and option-name triggers, idea
+  `on_add` and focus `cancel` are checked.
+- `state:123.owner`, `country:GER.capital_scope` and other links behind a
+  typed prefix lead where they say instead of to the prefix's scope.
+- A block holds statements of its own kind: `OR`, `NOT`, `hidden_trigger` or
+  `any_of` among effects, `hidden_effect` or `for_each_loop` among triggers,
+  `GER = 5` among effects, and a scripted trigger used as an effect (or the
+  other way round) are reported.
+- An event's namespace is matched without regard to case in the reference
+  check and in `unfired_event`, as the game does (`PER_SSB_events.8` fires
+  `PER_ssb_events.8`).
+- A definition made with `create_definition()` counts for the token check
+  before `save()`, and a deleted one stops counting.
+- `unused_localization` no longer reports keys the game or a base mod
+  defines too (overrides in `localisation/english/replace`), nor keys the
+  mod's own script files or interface files name.
+- A core effect in a country scope is one finding
+  (`country_scope_core_effect`), not also `unsupported_effect_scope`.
+- `ordered_*` names are not iterators: HOI4 has none.
+- Project flags (`set_project_flag`, `has_project_flag`, ...) are tracked by
+  the flag liveness checks.
 - Adding an event to an on-action merged its repeated `events` blocks into
   one and dropped the comments inside them. Event lists are now edited entry
   by entry.
@@ -368,6 +593,11 @@ All notable changes to this project are documented here. The format follows
   the code page then re-encoded every line. Files are now read line by line,
   and only edited lines are re-encoded.
 
+- A localisation value may hold quotes of its own (`KEY:0 "The "Plan""`).
+  The reader stopped at the first inner quote and dropped the line, and
+  saving another key of the same file then deleted it. Such lines are read
+  now, and a line that cannot be read is kept as it is on save.
+
 ### Removed
 
 - Module-level regular expressions that read script from raw text and are no
@@ -378,6 +608,14 @@ All notable changes to this project are documented here. The format follows
   decision edit. It now happens only when the category itself is edited.
 - `parser.extract_braced_block`, a second brace scanner that nothing used any
   more. Use `parser.find_assignment_block` or the syntax tree.
+
+- `parser.strip_comments` and the comment masking behind it. Nothing reads
+  script as text with blanked comments any more; use the syntax tree.
+- Validation codes `assigned_idea_not_country_category` (country history may
+  assign ideas of any category; `unknown_idea_category` checks the category
+  of an idea instead), `duplicate_oob_air_wing` (two equal air wings are
+  two wings for the game) and `unsupported_modifier_scope` (it was
+  registered, and nothing ever reported it).
 
 ## [0.6.5] - 2026-08-01
 

@@ -231,7 +231,9 @@ equipment variants.
 | `find_enclosed_foreign_states(tag, minimum_land_provinces=1, allowed_state_ids=()) -> tuple[TerritoryComponent, ...]` | Return foreign land components completely enclosed by the target country; requires the `map` extra |
 
 `CountryPackageReport.complete` is true only when it has no structural error
-findings. `analysis_scope == "structural"` and
+findings and no open requirement of a complete country (a leader, two
+advisors, two generals, a land army, a cored capital: these are warnings,
+listed by `report.unmet_requirements`; see `docs/validation.md`). `analysis_scope == "structural"` and
 `proves_dynamic_achievability == False` make the boundary machine-readable:
 the report does not solve popularity/variable arithmetic or prove a runtime
 branch can fire.
@@ -422,7 +424,7 @@ with mod.transaction():
 ```
 ## Events
 
-Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`.
+Events are grouped into files by namespace. Each event has a type, trigger, options, and optional mean_time_to_happen. Dotted event IDs infer their namespace automatically, which is everything before the last dot: `create_event("sic.1")` writes `add_namespace = sic` to `events/sic_events.txt`, and `create_event("sic.news.1")` writes `add_namespace = sic.news` to `events/sic.news_events.txt`.
 
 Block fields are body strings. The SDK adds the outer braces:
 
@@ -437,7 +439,7 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 |--------|---------|-------------|
 | `list_events() -> list[str]` | Sorted event IDs | All loaded events |
 | `get_event(event_id: str) -> Event` | `Event` | Raises `KeyError` with available IDs if not found |
-| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer namespace from the ID prefix. Conditional titles and descriptions are written before the plain fallback. |
+| `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer the namespace: the text before the last dot. Conditional titles and descriptions are written before the plain fallback. |
 | `ensure_event(event_id: str, **kwargs) -> Event` | `Event` | Idempotent create-or-update wrapper |
 | `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
 | `update_event_option(event_id: str, option: int \| str, **kwargs) -> bool` | `bool` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |
@@ -1030,9 +1032,21 @@ mod.assert_no_visual_overlap("west_focus")
 ```
 ## Validation
 
-`mod.validate(validate_icons=False, strict_localization=False, stage="package")`
-runs all validators and returns `list[ValidationError]`. It does **not** raise
-for content issues. Stages are:
+```python
+mod.validate(
+    suppress_warnings=None, validate_icons=False, strict_localization=False,
+    stage="package", script_token_allowlist=(), liveness_flag_allowlist=(),
+    liveness_localization_allowlist=(), progress=None, cancelled=None,
+    *, advice=False, suppress=(),
+) -> list[ValidationError]
+```
+
+`mod.validate()` runs all validators and returns their findings. It does
+**not** raise for content issues. Every finding has a registered `code` and
+that code's severity: `error` (the game rejects it or behaves wrongly),
+`warning` (probably a mistake) or `info` (advice). Advice is hidden unless
+you pass `advice=True`. [validation.md](validation.md) lists every code with
+its severity. Stages are:
 
 - `build`: syntax, references, OOBs, and installed-game vocabulary, while
   deferring complete-country checks during a multi-step build;
@@ -1049,7 +1063,9 @@ With `hoi4_install` configured, `game_script_vocabulary()` exposes documented
 effect, trigger, and modifier tokens, installed-game usage counts by domain,
 supported scopes, and modifier categories. `validate_script_vocabulary()` and
 `validate_effect()` warn on undocumented tokens and suggest a close,
-high-frequency installed token. Intentional extensions can be allowlisted as
+high-frequency installed token. The check walks every block with the
+scope-tracking walker described in
+[internals/script_scopes.md](internals/script_scopes.md). Intentional extensions can be allowlisted as
 `effect:my_token`, `trigger:my_token`, or `modifier:my_token` through
 `script_token_allowlist=`. Validation also tracks explicit country, state,
 character, and iterator scopes and reports `unsupported_effect_scope` or
@@ -1059,14 +1075,34 @@ scope. `validate_effect()` assumes a country-scope fragment; pass
 deliberately unknown. Explicit nested scopes are still checked with
 `scope=None`.
 
+```python
+mod.validate_effect(
+    script, suppress_warnings=None,
+    *, script_token_allowlist=(), scope="COUNTRY", advice=True,
+) -> list[ValidationError]
+```
+
+`validate_effect()` looks at one script, so it returns advice together with
+errors and warnings. Pass `advice=False` to get only errors and warnings,
+like `validate()`. It loads a catalog of the game (ideas, events,
+technologies, equipment) only when the script names something the mod does
+not define.
+
 `analyze_content_liveness()` returns `ContentLivenessReport`, covering focus
 reachability, incoming event references, idea grants, flag reads/writes, and
 localization use. `flag_allowlist=` and `localization_allowlist=` accept glob
 patterns for deliberate bookkeeping and reserved/future content.
-Comments are ignored in authored script, country history, and installed-game
-flag references without changing stored source. Quoted hashes and escaped
-quotes are preserved. Matching remains regex-based: effect-shaped text inside
-quoted strings can still count as a reference.
+Every reference is read from the syntax tree of every script file the game
+reads: the mod's own files with their pending edits, and the game and base-mod
+files the mod does not override. Comments and quoted strings never count. An
+event counts as fired by an effect, an on-action (`events`, `random_events`)
+or a border war (`on_win`, `on_lose`, `on_cancel`); an idea counts as granted
+by an effect or country history, or as used when `show_ideas_tooltip` or a
+bookmark shows it; a flag also counts as read by a localisation text
+(`[?flag:days_left]`). A name the game builds while running
+(`flag_[ROOT.GetTag]`) is matched as a pattern. Findings are only reported for
+content the mod defines, never for inherited content, and each comes with the
+file and line where it is defined or first used.
 It is deliberately structural. `analysis_scope` is `"structural"` and
 `proves_dynamic_achievability` is false because reference reachability cannot
 prove that popularity thresholds, variables, or mutually dependent triggers
@@ -1092,58 +1128,100 @@ except OperationCancelled:
 
 | Entity | Checks |
 |--------|--------|
-| **Country** | Tag format `^[A-Z0-9]{3}$`, tag definition target exists, has name, popularities sum to 100, valid ruling party, valid RGB color, capital state exists in mod/vanilla data, recruited characters exist in mod/vanilla data, leader ideology/ruling party mismatch; SDK-created tags additionally require a complete `CountryPackageReport` |
+| **Country** | Tag format `^[A-Z0-9]{3}$`, tag definition target exists, has a name (`TAG` or an ideology variant such as `TAG_fascism`, in the mod, base mods or game), popularities sum to 100, valid ruling party, valid RGB color, capital state exists in mod/vanilla data, recruited characters exist in mod/vanilla data. Advice: no recruited leader leads the ruling party. SDK-created tags additionally require a complete `CountryPackageReport` |
 | **Character** | Defined/recruited identity, localization, visible portraits, GFX declarations and textures, plus two recruited political advisors and two army commanders per complete country |
-| **OOB** | Unique land templates/grid positions, separate correctly assigned land/naval/air files, known unit and equipment IDs, valid owned locations, valid factors, fleet/task-force/ship structure, DLC-aware hull variant resolution, and valid country-history references |
+| **OOB** | Unique template names, separate correctly assigned land/naval/air files, known unit and equipment IDs (also equipment derived by `duplicate_archetypes`), known land, sea and air locations, valid factors, fleet/task-force/ship structure (a ship needs `name` or `ordered_name`), DLC-aware hull and airframe variant resolution, and valid country-history references. A division may use a template from the country's other OOB files or from script. A country that owns no state at the start never loads its OOB files, so only a missing file is reported (a warning). Warnings: a repeated grid position or ship name. Advice: units that start outside the country's territory |
 | **Geography** | Significant capital-disconnected owned components and fully enclosed foreign land components warn unless explicitly allowlisted |
 | **State** | Has ID, has owner, owner is known tag, cores are known tags |
 | **Map** | Land provinces belong to exactly one state (missing: warning `province_missing_state`; duplicate: error `province_in_multiple_states`); state provinces exist and are not sea provinces (vanilla states include lakes); land and sea provinces belong to exactly one strategic region (an empty region is a warning, as vanilla ships three); supply nodes, railways (levels, land provinces, adjacency when the mod overrides `railways.txt` and the province map is readable), and `buildings.txt` references resolve: the last field is a sea province, except for `floating_harbor`, which names its coastal land province. The whole check was run against the HOI4 1.19.3 map with no findings |
-| **Event** | Has ID, has title, has description, has options, option gameplay effects, valid event_type, namespace matches dotted ID, unsafe bare core effects, invalid tech categories, triggered-only MTTH contradiction, war declarations in immediate |
-| **Idea** | Has ID, has modifiers |
-| **Focus tree** | No duplicate IDs, no duplicate (x,y) positions, prerequisite references exist, no prerequisite cycles, mutually_exclusive references exist, unsafe bare core effects, invalid tech categories, continuous focus overlap risk, optional focus icon existence |
-| **Cross-cut** | Every focus has localization, optional strict localization, effect references, installed-game effect/trigger/modifier vocabulary, tooltip and scope footguns, and release-stage content liveness |
+| **Event** | Has ID; a visible (not `hidden = yes`) event has a title, a description and an option; valid event_type; the dotted ID's namespace is declared by an `add_namespace` anywhere in the game, base mods or mod; core effects at country scope; invalid tech categories. Advice: options that only close the event, triggered-only MTTH, war declarations in immediate |
+| **Idea** | Has ID. Advice: no modifier or other effect, `GFX_idea_` prefix in `picture` |
+| **Decision** | Non-selectable missions with a cost. Advice: `activation` without `days_mission_timeout` |
+| **Focus tree** | No duplicate IDs, two focuses on one position only when the game never draws both there (an `offset` block, or each behind its own `allow_branch` focus; mutually exclusive focuses are both drawn), prerequisite and mutually_exclusive references exist, no prerequisite cycles, search filters have a `GFX_<filter>` sprite, core effects at country scope, invalid tech categories, optional focus icon existence. Advice: continuous focus panel above the last row |
+| **Cross-cut** | Every focus has name and description localization (in the mod, base mods or game), optional strict localization, effect references, installed-game effect/trigger/modifier vocabulary, tooltip and scope hints, and release-stage content liveness |
 
 ### ValidationError Fields
 
 ```python
 @dataclass
 class ValidationError:
-    message: str            # Human-readable description
-    severity: str = "error" # "error" or "warning"
-    code: str = ""          # Stable suppression/matching code when available
-    file_path: str | None   # Source file if known
-    focus_id: str | None    # Focus ID if relevant
-    country_tag: str | None # Country tag if relevant
-    state_id: int | None    # State ID if relevant
-    event_id: str | None    # Event ID if relevant
-    idea_id: str | None     # Idea ID if relevant
+    message: str                      # Human-readable description
+    severity: str = "error"           # "error", "warning" or "info" (advice)
+    code: str = ""                    # Stable registered code, see validation.md
+    file_path: str | None = None      # Source file if known
+    focus_id: str | None = None       # The object the finding is about, if any
+    country_tag: str | None = None
+    state_id: int | None = None
+    event_id: str | None = None
+    idea_id: str | None = None
+    decision_id: str | None = None
+    focus_tree_id: str | None = None
+    ideology_id: str | None = None
+    dynamic_modifier_id: str | None = None
+    bookmark_name: str | None = None
+    related_file_path: str | None = None  # A second file, such as the other duplicate
+    line: int | None = None           # 1-based line in file_path, if known
+    column: int | None = None
 ```
 
-**Errors** mean the mod will crash or behave incorrectly. **Warnings** mean potential issues (missing localization, etc.).
+**Errors** mean the game rejects the content or behaves wrongly. **Warnings**
+mean a probable mistake (missing localization, etc.). **Advice** (`info`) is a
+hint about valid content. `mod.validate()` returns it only with
+`advice=True`; `mod.validate_effect()` returns it unless `advice=False`. A
+finding has the severity of its code also when a check such as
+`validate_event()` or `validate_oob()` is called on its own.
 
-Discover and suppress known false-positive warnings by stable code:
+The severity tables are exported from `hoi4`:
+
+| Name | Holds |
+| --- | --- |
+| `VALIDATION_SEVERITIES` | every code mapped to `"error"`, `"warning"` or `"info"` |
+| `VALIDATION_ERROR_CODES` | the error codes, each with a one-line description |
+| `VALIDATION_WARNING_CODES` | the warning codes, each with a one-line description |
+| `VALIDATION_INFO_CODES` | the advice codes, each with a one-line description |
+| `VALIDATION_CODES` | all codes, each with a one-line description |
+
+Hide known false-positive warnings or advice by stable code, for every
+object or for one (`code:ID`). Errors cannot be suppressed, and an unknown
+code raises `ValueError`:
 
 ```python
-from hoi4 import VALIDATION_WARNING_CODES
+from hoi4 import VALIDATION_SEVERITIES, VALIDATION_WARNING_CODES
 
 print(VALIDATION_WARNING_CODES)
-errors = mod.validate(suppress_warnings=["country_scope_core_effect"])
+print(VALIDATION_SEVERITIES["visual_overlap"])  # "warning"
+errors = mod.validate(suppress=["country_scope_core_effect"])
+errors = mod.validate(suppress=["missing_localization:TAG_secret_focus"])
 errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
 ```
 
-Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `faction_scope_footgun`, `civil_war_scope_footgun`, `civil_war_focus_tree_missing`, `unknown_tech_bonus_category`, `missing_effect_target`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_focus_tree_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `bad_idea_tooltip_pattern`, `idea_mutation_collision`, `idea_not_addable`, `resistance_on_core_state`, `revolt_state_already_owned`, `event_option_no_effect`, `missing_localization`, `visual_overlap`, and `script_syntax`.
+Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `unknown_tech_bonus_category`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_focus_tree_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `missing_localization` and `visual_overlap`; `missing_effect_target` and `script_syntax` are errors. Advice codes include `faction_scope_footgun`, `civil_war_scope_footgun`, `civil_war_focus_tree_missing`, `bad_idea_tooltip_pattern`, `idea_not_addable`, `idea_mutation_collision`, `resistance_on_core_state`, `revolt_state_already_owned` and `event_option_no_effect`.
 
 Vocabulary and liveness warning codes are `unknown_effect_token`,
-`unknown_trigger_token`, `unknown_modifier_token`, the corresponding
-`unseen_*_token` codes for documented zero-use tokens,
+`unknown_trigger_token`, `unknown_modifier_token`,
 `unsupported_effect_scope`, `unsupported_trigger_scope`,
-`unsupported_modifier_scope`, `unreachable_focus`, `unfired_event`,
-`ungranted_idea`, `flag_set_never_read`, `flag_read_never_set`, and
-`unused_localization`.
+`unreachable_focus`, `unfired_event`, `ungranted_idea`,
+`flag_set_never_read`, `flag_read_never_set`, and `unused_localization`.
+The `unseen_*_token` codes for documented tokens the game never uses are
+advice.
+
+Reference checks read the syntax tree too and name the scope each statement
+runs in, so `country_scope_core_effect` only fires when `add_core_of` or
+`remove_core_of` certainly runs in a country (`GER = { add_core_of = 64 }`, or
+bare in a focus reward), never inside a state id, a state iterator, `var:`,
+`FROM` or a scripted effect. `unknown_country_scope` knows the tags of
+`common/country_tags`, the aliases of `common/country_tag_aliases` (`SOU`,
+`SPD`, `VIC`, ...) and dynamic tags. Advice is reported with severity `info`:
+`faction_scope_footgun` (only `add_to_faction` inside a country iterator),
+`civil_war_scope_footgun`, `civil_war_focus_tree_missing`,
+`bad_idea_tooltip_pattern` (only removals and additions a tooltip shows),
+`idea_mutation_collision`, `resistance_on_core_state` and
+`revolt_state_already_owned`.
 
 Structural reference checks use `tag_definition`, `capital_ref`, `character_ref`,
-and `focus_cycle`. Undefined recruited characters are warnings; missing tag
-targets, missing capital states, and focus prerequisite cycles are errors.
+and `focus_cycle`. A recruited character that exists nowhere is a warning
+(`character_ref`); missing tag targets, missing capital states, and focus
+prerequisite cycles are errors.
 
 `event_conditional_text_missing` (warning) marks a conditional event title,
 description or option name without `text`. `oob_load_error` (error) marks an

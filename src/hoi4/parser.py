@@ -39,7 +39,6 @@ __all__ = [
     "iter_assignment_blocks",
     "parse_pdx",
     "serialize_pdx",
-    "strip_comments",
     "tokenize",
 ]
 
@@ -66,7 +65,6 @@ class Token:
 
 _NUMBER_RE = re.compile(r"-?\d+(\.\d+)?")
 _INLINE_MATHS_RE = re.compile(r"@\[[^\]\n]*\]")
-_COMMENT_OR_STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"?|#[^\n]*', re.DOTALL)
 
 
 def tokenize(text: str) -> list[Token]:
@@ -287,16 +285,6 @@ class _TreeBuilder:
                 self._take_comments(nested.end, node.children)
                 nodes.append(node)
         return nodes
-
-
-def strip_comments(text: str) -> str:
-    """Return text with line comments removed, preserving quoted strings."""
-
-    if "#" not in text:
-        return text
-    return _COMMENT_OR_STRING_RE.sub(
-        lambda found: found.group() if found.group().startswith('"') else "", text
-    )
 
 
 def find_assignment_block(text: str, key: str, start: int = 0) -> tuple[str, int, int] | None:

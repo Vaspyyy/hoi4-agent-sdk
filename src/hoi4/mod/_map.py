@@ -914,4 +914,13 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 buildings_path=BUILDINGS_FILE,
             )
         )
-        return errors
+        # The game ships strategic regions without provinces (15, 189, 253).
+        # An empty region is the mod's business only when its own file holds it.
+        return [
+            error for error in errors
+            if error.code != "empty_strategic_region"
+            or self._mod_owns_map_file(error.file_path or "")
+        ]
+
+    def _mod_owns_map_file(self, relative: str) -> bool:
+        return relative in self._map_file_updates or (self.mod_root / relative).is_file()

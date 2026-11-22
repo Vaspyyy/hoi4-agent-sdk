@@ -14,6 +14,7 @@ from ..patching import (
     AssignmentSpan,
     top_level_assignments,
 )
+from ..syntax import parse
 from ..types import (
     Country,
     ValidationError,
@@ -54,6 +55,8 @@ class EquipmentLayer(CatalogsLayer):
         country: Country,
     ) -> list[ValidationError]:
         unlock_map = self._equipment_unlock_technologies()
+        for equipment, projects in self._special_project_unlocks().items():
+            unlock_map[equipment] = (*unlock_map.get(equipment, ()), *projects)
         grants, occurrences = self._history_equipment_operations(country.raw_history)
         grants.extend(
             self._modeled_technology_grants_missing_from_history(country, grants)
@@ -62,11 +65,16 @@ class EquipmentLayer(CatalogsLayer):
         reported_offsets: set[int] = set()
         for occurrence in occurrences:
             variant = occurrence.variant
-            if not (
-                variant.equipment_type.startswith("ship_hull_")
-                or "airframe" in variant.equipment_type
-            ):
+            if variant.equipment_type.startswith("ship_hull_"):
+                dlc = "Man the Guns"
+            elif "airframe" in variant.equipment_type:
+                dlc = "By Blood Alone"
+            else:
                 continue
+            # Hulls and airframes only exist with their DLC, so only the
+            # paths where it is active can miss the chassis technology.
+            required, excluded = occurrence.condition
+            condition: _ScriptCondition = ((*required, ("dlc", dlc)), excluded)
             unlocks = unlock_map.get(variant.equipment_type, ())
             if not unlocks:
                 continue
@@ -77,7 +85,7 @@ class EquipmentLayer(CatalogsLayer):
                 and (grant.offset < occurrence.offset or grant.offset < 0)
             ]
             if self._script_conditions_are_covered(
-                occurrence.condition,
+                condition,
                 available_conditions,
             ):
                 continue
@@ -108,6 +116,26 @@ class EquipmentLayer(CatalogsLayer):
                 )
             )
         return errors
+
+    def _special_project_unlocks(self) -> dict[str, tuple[str, ...]]:
+        """Equipment that special projects enable, as ``sp:<project>``."""
+
+        unlocks: dict[str, list[str]] = {}
+        for _, text in self._effective_script_texts("common/special_projects/projects"):
+            for project in parse(text).root.assignments():
+                if project.block is None:
+                    continue
+                for output in project.block.assignments("project_output"):
+                    if output.block is None:
+                        continue
+                    for enabled in output.block.assignments("enable_equipments"):
+                        if enabled.block is None:
+                            continue
+                        for equipment in enabled.block.values():
+                            unlocks.setdefault(equipment.value, []).append(
+                                f"sp:{project.name}"
+                            )
+        return {key: tuple(value) for key, value in unlocks.items()}
 
     @classmethod
     def _history_equipment_operations(
@@ -319,6 +347,23 @@ class EquipmentLayer(CatalogsLayer):
                                 technology=technology.key,
                                 condition=condition,
                                 offset=child_offset + technology.start,
+                            )
+                        )
+                return
+            if span.key == "complete_special_project":
+                # A finished special project unlocks the equipment it
+                # enables, like a technology; recorded as ``sp:<project>``.
+                for field in top_level_assignments(child):
+                    if field.key != "project" or field.is_block:
+                        continue
+                    project = child[field.value_start : field.value_end]
+                    project = project.strip().strip('"').removeprefix("sp:")
+                    for condition in conditions:
+                        grants.append(
+                            _HistoryTechnologyGrant(
+                                technology=f"sp:{project}",
+                                condition=condition,
+                                offset=child_offset + field.start,
                             )
                         )
                 return

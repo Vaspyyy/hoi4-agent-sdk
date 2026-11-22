@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
-from typing import Optional, Sequence, TypeVar
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Optional, Sequence, TypeVar
 
 from ..bookmarks import (
     Bookmark,
@@ -39,6 +40,9 @@ from ..tags import (
     load_vanilla_tags,
 )
 from ..textio import read_text
+
+if TYPE_CHECKING:
+    from ..script_references import FileReferences
 from ..types import (
     Country,
     Decision,
@@ -52,6 +56,7 @@ from ..types import (
 )
 
 _InheritedModel = TypeVar("_InheritedModel", FocusTree, Event, Idea)
+_Built = TypeVar("_Built")
 
 
 class CoreLayer:
@@ -150,6 +155,14 @@ class CoreLayer:
             load_vanilla_tags(self._base_content_root) if self._base_content_root else set()
         )
         self._scan_cache: dict[str, set[str]] = {}
+        # The references of each of the mod's own script files, with the text
+        # they were read from; a changed text is read again.
+        # ``path -> (text, character ids, references)`` of the mod's own files.
+        self._own_reference_cache: dict[Path, tuple[str, frozenset[str], FileReferences]] = {}
+        self._character_scope_names_seen: frozenset[str] = frozenset()
+        # Data built once per validate() call and shared by its checks; None
+        # outside a run, because edits between runs change it.
+        self._validation_run: dict[str, object] | None = None
         self._script_vocabulary_cache: GameScriptVocabulary | None = None
         self._equipment_unlock_cache: dict[str, tuple[str, ...]] | None = None
         self._sprite_texture_cache: dict[str, str] | None = None
@@ -287,6 +300,19 @@ class CoreLayer:
         except ValueError:
             return False
         return self._mod_hides_inherited(relative)
+
+    def _run_cached(self, key: str, build: Callable[[], _Built]) -> _Built:
+        """``build()``, once per validate() run; every call outside a run builds.
+
+        The value is shared by the checks of one run: never change it.
+        """
+
+        run = self._validation_run
+        if run is None:
+            return build()
+        if key not in run:
+            run[key] = build()
+        return run[key]  # type: ignore[return-value]
 
     def _mod_hides_inherited(self, relative: Path) -> bool:
         """Whether the mod hides an inherited file (same name or replace_path).
@@ -433,39 +459,6 @@ class CoreLayer:
             if path.is_relative_to(self.mod_root)
             else str(path)
         )
-
-    @staticmethod
-    def _mask_script_comments(text: str) -> str:
-        """Replace comments and quoted values while retaining source offsets."""
-
-        chars = list(text)
-        in_quote = False
-        index = 0
-        while index < len(chars):
-            char = chars[index]
-            if char == "\\" and in_quote:
-                chars[index] = " "
-                if index + 1 < len(chars) and chars[index + 1] != "\n":
-                    chars[index + 1] = " "
-                index += 2
-                continue
-            if char == '"':
-                chars[index] = " "
-                in_quote = not in_quote
-                index += 1
-                continue
-            if in_quote:
-                if char != "\n":
-                    chars[index] = " "
-                index += 1
-                continue
-            if char == "#" and not in_quote:
-                while index < len(chars) and chars[index] != "\n":
-                    chars[index] = " "
-                    index += 1
-                continue
-            index += 1
-        return "".join(chars)
 
     @staticmethod
     def _line_column(text: str, offset: int) -> tuple[int, int]:

@@ -7,7 +7,9 @@ from pathlib import Path
 
 
 COUNTRY_TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
-EVENT_NAMESPACE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# The game takes dots inside a namespace: ``add_namespace = my_mod.news``
+# serves ``id = my_mod.news.1`` (HOI4 wiki, Event modding).
+EVENT_NAMESPACE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*$")
 SCRIPT_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 
@@ -22,7 +24,8 @@ def require_event_namespace(namespace: str) -> str:
     value = str(namespace)
     if not EVENT_NAMESPACE_RE.fullmatch(value):
         raise ValueError(
-            f"Invalid event namespace {namespace!r}; expected a letter/underscore followed by alphanumerics/underscores"
+            f"Invalid event namespace {namespace!r}; expected a letter/underscore followed by "
+            "alphanumerics/underscores, with single dots between such parts"
         )
     return value
 

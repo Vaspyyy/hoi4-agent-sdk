@@ -533,7 +533,9 @@ if = {
     }
 }
 """,
-            1,
+            # Without Man the Guns the hull does not exist, so that path
+            # cannot miss the chassis technology.
+            0,
         ),
         (
             """if = {
@@ -592,7 +594,9 @@ create_equipment_variant = {
     type = ship_hull_light_1
 }
 """,
-            1,
+            # Without Man the Guns the hull does not exist, so that path
+            # cannot miss the chassis technology.
+            0,
         ),
         (
             """if = {
@@ -696,7 +700,9 @@ if = {
     }
 }
 """,
-            1,
+            # Without Man the Guns the hull does not exist, so that path
+            # cannot miss the chassis technology.
+            0,
         ),
         (
             """if = {

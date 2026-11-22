@@ -14,6 +14,7 @@ from ..countries import (
 from ..localisation import (
     DEFAULT_LOCALISATION_LANGUAGE,
     LOCALISATION_LANGUAGES,
+    YML_ENTRY_RE,
     localisation_file_name,
     normalize_localisation_language,
     normalize_localization_key,
@@ -87,6 +88,53 @@ class LocalisationLayer(CoreLayer):
         """Return one language's text for ``key``; no cross-language fallback."""
         _, entries, _, _ = self._loc_tables(language)
         return entries.get(self._normalize_loc_key(key))
+
+    def _has_loc(self, key: str) -> bool:
+        """Return whether an English localisation key exists anywhere the game looks.
+
+        That is the mod's loaded table (with unsaved edits) and the key lines
+        of every effective ``localisation/english`` file of the game, the base
+        mods and the mod. The key index reads only ``KEY:0 "`` at the start of
+        a line, the way the game finds keys, so a line whose text the strict
+        reader rejects (such as inner quotes) still counts. For a key changed
+        in memory, the mod's own files on disk no longer count; the game's
+        and base mods' files still do.
+        """
+
+        key = normalize_localization_key(key)
+        if not key:
+            return False
+        # A value with spaces is plain text the game shows as written, and a
+        # bracket command (``[GetName]``, ``[CZE_title_dynamic]``) is
+        # resolved at runtime by scripted localisation.
+        if any(character.isspace() for character in key) or (
+            key.startswith("[") and key.endswith("]")
+        ):
+            return True
+        if key in self._loc_entries:
+            return True
+        inherited = self._scan_cache.get("validation_loc_keys")
+        own = self._scan_cache.get("validation_mod_loc_keys")
+        if inherited is None or own is None:
+            inherited, own = set(), set()
+            folder = Path("localisation") / DEFAULT_LOCALISATION_LANGUAGE
+            for path in self.content_files(folder).values():
+                if path.suffix.lower() != ".yml":
+                    continue
+                try:
+                    text = read_text(path)
+                except (OSError, ValueError):
+                    continue
+                index = own if path.is_relative_to(self.mod_root) else inherited
+                for line in text.splitlines():
+                    match = YML_ENTRY_RE.match(line)
+                    if match is not None:
+                        index.add(normalize_localization_key(match.group(1)))
+            self._scan_cache["validation_loc_keys"] = inherited
+            self._scan_cache["validation_mod_loc_keys"] = own
+        if key in inherited:
+            return True
+        return key in own and key not in self._dirty_loc_keys
 
     @staticmethod
     def _normalize_loc_key(key: str) -> str:

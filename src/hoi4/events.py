@@ -53,6 +53,18 @@ from .syntax import (
 from .textio import read_text, write_text
 from .types import Event, EventOption, EventText
 
+def event_namespace(event_id: str) -> str:
+    """The namespace of an event id: everything before the last dot.
+
+    The HOI4 wiki (Event modding): a namespace may hold dots
+    (``add_namespace = my_event.subtopic`` for ``id = my_event.subtopic.1``),
+    and "the numeric ID will be taken to be everything after the last dot".
+    An id without a dot has no namespace (``""``).
+    """
+
+    return event_id.rpartition(".")[0]
+
+
 VALID_EVENT_TYPES = frozenset(
     {
         "country_event",

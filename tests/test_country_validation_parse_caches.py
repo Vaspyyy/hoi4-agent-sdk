@@ -86,7 +86,9 @@ def test_sprite_exact_text_cache_refreshes_pending_and_disk_definitions(tmp_path
     assert len(parses) == 5
 
 
-def test_declared_laws_are_country_assignable_but_advisor_categories_are_not(tmp_path):
+def test_country_history_may_assign_ideas_of_any_category(tmp_path):
+    # The game adds laws, advisors and ideas of any other category from
+    # country history; only an unknown idea is reported.
     idea_file = tmp_path / "common/ideas/laws.txt"
     idea_file.parent.mkdir(parents=True)
     idea_file.write_text("""ideas = {
@@ -108,11 +110,14 @@ def test_declared_laws_are_country_assignable_but_advisor_categories_are_not(tmp
             "custom_law",
             "advisor",
             "not_a_law",
+            "no_such_idea",
         ],
     )
-    warnings = [
-        issue
-        for issue in mod.validate(stage="build")
-        if issue.code == "assigned_idea_not_country_category"
-    ]
-    assert {issue.idea_id for issue in warnings} == {"advisor", "not_a_law"}
+    findings = mod.validate(stage="build", advice=True)
+    assert {
+        issue.idea_id for issue in findings if issue.code == "unknown_assigned_idea"
+    } == {"no_such_idea"}
+    assert not any(
+        issue.idea_id in {"advisor", "not_a_law"} and issue.code.startswith("assigned_idea")
+        for issue in findings
+    )
