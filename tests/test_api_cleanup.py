@@ -1110,7 +1110,7 @@ def test_update_country_refuses_none_for_a_mapping(tmp_path) -> None:
     mod = Mod(tmp_path)
     mod.create_country("ABC", "Abcland")
     mod.save()
-    with pytest.raises(TypeError, match=r"update_country\(\): technologies must"):
+    with pytest.raises(TypeError, match=r"update_country\(\): technologies cannot be None"):
         mod.update_country("ABC", name="Renamed", technologies=None)  # type: ignore[arg-type]
     assert mod.get_country("ABC").name == "Abcland"
     assert mod.preview() == ""
@@ -1160,3 +1160,193 @@ def test_a_generator_of_models_is_read_once_and_kept(tmp_path) -> None:
     mod.update_oob("ABC_x", templates=iter([DivisionTemplate(name="Mot", battalions=[Battalion("infantry", 0, 0)])]))
     assert [item.name for item in mod.get_oob("ABC_x").templates] == ["Mot"]
     assert "Mot" in mod.preview()
+
+
+# ── Round 3 of the review: bookmarks ──
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error"),
+    [
+        ({"countries": ["nope"]}, TypeError),
+        ({"countries": [hoi4.BookmarkCountry(tag="not a tag")]}, ValueError),
+        ({"path": "../../x.txt"}, ValueError),
+    ],
+)
+def test_a_failed_overwrite_keeps_the_bookmark_that_was_there(tmp_path, arguments, error) -> None:
+    mod = Mod(tmp_path)
+    mod.create_bookmark("ZZ", countries=[hoi4.BookmarkCountry(tag="GER")], description="zzz")
+    mod.save()
+    path = tmp_path / "common/bookmarks/ZZ.txt"
+    before = path.read_text(encoding="utf-8")
+    mod = Mod(tmp_path)
+    with pytest.raises(error):
+        mod.create_bookmark("ZZ", overwrite=True, **arguments)
+    assert mod.list_bookmarks() == ["ZZ"]
+    assert mod.get_bookmark("ZZ").description == "zzz"
+    assert mod.preview() == ""
+    with pytest.warns(RuntimeWarning, match="No changes written"):
+        mod.save()
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_create_bookmark_leaves_the_callers_entries_alone(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    good = hoi4.BookmarkCountry(tag="ger")
+    with pytest.raises(ValueError):
+        mod.create_bookmark("ZZ", countries=[good, hoi4.BookmarkCountry(tag="not a tag")])
+    assert good.tag == "ger"  # not rewritten by the call that failed
+    assert mod.list_bookmarks() == []
+    assert mod.create_bookmark("ZZ", countries=[good]).countries[0].tag == "GER"
+
+
+def test_update_bookmark_replaces_the_country_entries(tmp_path) -> None:
+    """Before, the field was accepted and then ``preview()`` and ``save()`` raised."""
+    mod = Mod(tmp_path)
+    mod.create_bookmark(
+        "ZZ",
+        countries=[hoi4.BookmarkCountry(tag="GER", history="GER_DESC"), hoi4.BookmarkCountry(tag="FRA")],
+    )
+    mod.save()
+    mod = Mod(tmp_path)
+    with pytest.raises(ValueError):
+        mod.update_bookmark("ZZ", countries=[hoi4.BookmarkCountry(tag="not a tag")])
+    assert mod.preview() == ""
+    mod.update_bookmark("ZZ", countries=(hoi4.BookmarkCountry(tag=tag) for tag in ("ITA", "FRA")))
+    assert '"GER"' not in mod.preview().replace('-\t\t"GER"', "")
+    mod.save()
+    fresh = Mod(tmp_path)
+    assert [entry.tag for entry in fresh.get_bookmark("ZZ").countries] == ["ITA", "FRA"]
+    assert not fresh.load_diagnostics
+
+
+def test_a_model_handed_over_whole_is_checked_too(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    with pytest.raises(TypeError, match=r"create_character\(\): character.portraits must"):
+        mod.create_character("ABC", hoi4.Character(id="ABC_x", name="X", portraits=["x"]))  # type: ignore[list-item]
+    with pytest.raises(TypeError, match=r"create_character\(\): character must be a model"):
+        mod.create_character("ABC", "ABC_x")  # type: ignore[arg-type]
+    assert mod.list_characters(include_vanilla=False) == ["ABC_leader_1"]  # only the country's own
+    mod.create_character("ABC", hoi4.Character(id="ABC_x", name="X"))
+    with pytest.raises(TypeError, match=r"add_character_instance\(\): instance must be a model"):
+        mod.add_character_instance("ABC_x", "x")  # type: ignore[arg-type]
+    mod.create_event("zz.1")
+    with pytest.raises(TypeError, match=r"add_event_option\(\): option must be a model"):
+        mod.add_event_option("zz.1", "zz.1.b")  # type: ignore[arg-type]
+    mod.preview()
+
+
+# ── Round 4 of the review: one level deeper, and None ──
+
+
+def test_a_wrong_item_inside_a_nested_model_is_refused_at_the_call(tmp_path) -> None:
+    """Before, only the outer list was checked; the inner one broke ``preview()``."""
+    from hoi4.oob import DivisionTemplate
+
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    bad_instance = hoi4.CharacterInstance(name="i", portraits=["x"])  # type: ignore[list-item]
+    with pytest.raises(TypeError, match=r"create_character\(\): character\.instances\[0\]\.portraits must"):
+        mod.create_character("ABC", hoi4.Character(id="ABC_x", name="n", instances=[bad_instance]))
+    bad_option = hoi4.EventOption(name="zz.1.a", conditional_names=["x"])  # type: ignore[list-item]
+    with pytest.raises(TypeError, match=r"create_event\(\): options\[0\]\.conditional_names must"):
+        mod.create_event("zz.1", options=[bad_option])
+    mod.create_event("zz.1")
+    with pytest.raises(TypeError, match=r"update_event\(\): options\[0\]\.conditional_names must"):
+        mod.update_event("zz.1", options=[bad_option])
+    with pytest.raises(TypeError, match=r"add_event_option\(\): option\.conditional_names must"):
+        mod.add_event_option("zz.1", bad_option)
+    with pytest.raises(TypeError, match=r"create_oob\(\): templates\[0\]\.battalions must"):
+        mod.create_oob("ABC_o", "ABC", templates=[DivisionTemplate(name="T", battalions=["x"])])  # type: ignore[list-item]
+    assert mod.list_oobs() == []
+    assert mod.list_characters(include_vanilla=False) == ["ABC_leader_1"]
+    mod.preview()
+
+
+def test_a_whole_model_of_the_wrong_class_is_refused_at_the_call(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    mod.create_character("ABC", hoi4.Character(id="ABC_x", name="X"))
+    mod.create_focus_tree("zz_tree", "ABC")
+    mod.add_focus("zz_tree", hoi4.Focus(id="ABC_a", x=0, y=0))
+    mod.create_bookmark("ZZ")
+    for call, pattern in [
+        (lambda: mod.add_character_role("ABC_x", "advisor"), r"add_character_role\(\): role must be a model"),  # type: ignore[arg-type]
+        (lambda: mod.add_focus("zz_tree", "x"), r"add_focus\(\): focus must be a model"),  # type: ignore[arg-type]
+        (lambda: mod.ensure_focus("zz_tree", "x"), r"ensure_focus\(\): focus must be a model"),  # type: ignore[arg-type]
+        (
+            lambda: mod.insert_focus_after("zz_tree", "ABC_a", "x"),  # type: ignore[arg-type]
+            r"insert_focus_after\(\): focus must be a model",
+        ),
+        (lambda: mod.insert_branch("zz_tree", "ABC_a", ["x"]), r"insert_branch\(\): focuses must hold Focus"),  # type: ignore[list-item]
+        (lambda: mod.create_equipment_variant("ABC", "x"), r"create_equipment_variant\(\): variant must be a model"),  # type: ignore[arg-type]
+        (lambda: mod.add_bookmark_country("ZZ", "GER"), r"add_bookmark_country\(\): country must be a model"),  # type: ignore[arg-type]
+    ]:
+        before = mod.preview()
+        with pytest.raises(TypeError, match=pattern):
+            call()
+        assert mod.preview() == before
+
+
+def test_a_model_handed_over_whole_is_not_rewritten(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    portraits: list[hoi4.CharacterPortrait] = []
+    character = hoi4.Character(id="ZZZ_x", name="X", portraits=portraits)
+    with pytest.raises(NotFoundError):
+        mod.create_character("ZZZ", character)  # no such country: the call fails
+    assert character.portraits is portraits
+
+
+@pytest.mark.parametrize(
+    ("method", "arguments", "field"),
+    [
+        ("update_bookmark", ("ZZ",), "countries"),
+        ("update_bookmark_country", ("ZZ", "ABC"), "ideas"),
+        ("update_event", ("zz.1",), "options"),
+        ("update_event", ("zz.1",), "trigger"),
+        ("update_event", ("zz.1",), "event_type"),
+        ("update_idea", ("zz_idea",), "traits"),
+        ("update_idea", ("zz_idea",), "modifier"),
+        ("update_decision_category", ("zz_cat",), "decisions"),
+        ("update_focus_tree", ("zz_tree",), "focuses"),
+        ("update_focus", ("zz_tree", "ABC_a"), "x"),
+        ("update_ideology", ("zz_i",), "types"),
+        ("update_ideology", ("zz_i",), "color"),
+        ("update_on_action", ("on_startup",), "events"),
+        ("update_character", ("ABC_x",), "portraits"),
+        ("update_character_role", ("ABC_x", "advisor"), "traits"),
+        ("update_character_role", ("ABC_x", "advisor"), "slot"),
+    ],
+)
+def test_none_is_refused_for_a_field_that_cannot_be_empty(tmp_path, method, arguments, field) -> None:
+    """Before, the call went through and ``preview()`` and ``save()`` raised, or content was lost."""
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    mod.create_bookmark("ZZ", countries=[hoi4.BookmarkCountry(tag="ABC")])
+    mod.create_event("zz.1")
+    mod.create_idea("zz_idea")
+    mod.create_decision_category("zz_cat")
+    mod.create_focus_tree("zz_tree", "ABC")
+    mod.add_focus("zz_tree", hoi4.Focus(id="ABC_a", x=0, y=0))
+    mod.create_ideology("zz_i", types=[hoi4.SubIdeology("zz_s")])
+    mod.create_on_action("on_startup", effect="add_stability = 0.01")
+    mod.create_character(
+        "ABC",
+        hoi4.Character(id="ABC_x", name="X", roles=[hoi4.AdvisorRole(slot="political_advisor", traits=["zz"])]),
+    )
+    mod.save()
+    mod = Mod(tmp_path)
+    with pytest.raises(TypeError, match=rf"{method}\(\): {field} cannot be None"):
+        getattr(mod, method)(*arguments, **{field: None})
+    assert mod.preview() == ""
+
+
+def test_none_still_clears_a_field_that_can_be_empty(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_event("zz.1", fire_only_once=True)
+    assert mod.update_event("zz.1", fire_only_once=None).fire_only_once is None
+    mod.create_country("ABC", "Abcland")
+    mod.create_oob("ABC_o", "ABC")
+    mod.update_oob("ABC_o", templates=None)  # a keyword that means "not given"
+    mod.preview()

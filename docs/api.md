@@ -173,6 +173,17 @@ once (`create_country()`, `create_industrial_branch()`, `insert_branch()`,
 `create_decision_chain()`, `create_recovery_decision()`) check everything
 first, so a call that raises stages nothing.
 
+What a call checks, and what it leaves to `save()`: every call checks the
+names of its fields, that a list of models holds models of the right class
+(at every depth: the options of an event, the conditional names of each
+option), and that `None` is only given for a field that can be empty. A
+`TypeError` for any of these comes before anything changes. A call does not
+check the content of a value: a cost that is not a number, a date that is not
+a date, an event type the game does not know, script text with an unclosed
+brace. Those are written as given or refused by `preview()` / `save()`
+(`SaveRefusedError`, `ParseError`), and `validate()` reports what the game
+would not accept. After such a refusal, `discard()` drops the edit.
+
 The tables below give each method's signature (generated from the code by
 `scripts/api_signatures.py` and checked by `tests/test_doc_blocks.py`), what it
 returns and what it raises beyond these rules. `help(Mod.<name>)` shows the
@@ -1566,7 +1577,7 @@ sibling definitions. All non-reserved scalar assignments belong to the modeled
 | `list_bookmarks(*, include_vanilla=False) -> list[str]` | The names of the loaded bookmarks, sorted, each once. |
 | `get_bookmark(name, *, include_vanilla=True, default=...) -> Bookmark` | Gets one bookmark by name. |
 | `create_bookmark(name, *, description="", date="1936.1.1.12", picture="GFX_select_date_1936", default_country="", default=None, filters="", effect="randomize_weather = 22345", countries=None, path=None, overwrite=False) -> Bookmark` | Creates a bookmark; its default effect randomizes weather. |
-| `update_bookmark(name, **fields) -> Bookmark` | Source-patches modeled bookmark fields. |
+| `update_bookmark(name, **fields) -> Bookmark` | Source-patches modeled bookmark fields. `countries=[...]` replaces the country entries (use `add_bookmark_country()`, `update_bookmark_country()` and `delete_bookmark_country()` to change one). |
 | `add_bookmark_country(bookmark_name, country) -> BookmarkCountry` | Appends one ordered country entry; a second entry for the same tag and DLC raises `AlreadyExistsError`. |
 | `update_bookmark_country(bookmark_name, tag, *, occurrence=0, **fields) -> BookmarkCountry` | Patches one repeated tag occurrence using a zero-based index. |
 | `delete_bookmark_country(bookmark_name, tag, *, occurrence=0) -> None` | Deletes one repeated tag occurrence using a zero-based index; raises `NotFoundError` for a missing bookmark or entry. |

@@ -38,7 +38,7 @@ from ..types import (
 )
 from ..errors import AlreadyExistsError, NotFoundError, ReadOnlyError, not_found
 from ._countries import CountriesLayer
-from ._shared import MISSING, _D, _Missing, _check_model_lists
+from ._shared import MISSING, _D, _Missing, _check_model, _check_model_lists
 from ._equipment import EquipmentLayer
 
 
@@ -291,7 +291,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             "templates": templates, "divisions": divisions, "fleets": fleets,
             "air_wings": air_wings,
         }
-        _check_model_lists("create_oob", OrderOfBattle, lists)
+        _check_model_lists("create_oob", OrderOfBattle, lists, none_is_unset=True)
         templates, divisions = lists["templates"], lists["divisions"]
         fleets, air_wings = lists["fleets"], lists["air_wings"]
         country_tag = self._require_country_reference(tag)
@@ -424,7 +424,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             "templates": templates, "divisions": divisions, "fleets": fleets,
             "air_wings": air_wings,
         }
-        _check_model_lists("update_oob", OrderOfBattle, lists)
+        _check_model_lists("update_oob", OrderOfBattle, lists, none_is_unset=True)
         templates, divisions = lists["templates"], lists["divisions"]
         fleets, air_wings = lists["fleets"], lists["air_wings"]
         existing_content_kind = _oob_content_kind(
@@ -725,12 +725,14 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         """Append a validated equipment variant to country history.
 
         Raises:
+            TypeError: ``variant`` is not an ``EquipmentVariant``; nothing changed.
             NotFoundError: No one defines the country (its history is where
                 the variant goes).
             ValueError: The variant is invalid or uses a chassis before it is
                 unlocked.
         """
 
+        _check_model("create_equipment_variant", variant, "variant")
         country_tag = self._require_known_country(tag)
         if not variant.name.strip():
             raise ValueError("Equipment variant name cannot be empty")

@@ -24,7 +24,7 @@ from ..paths import (
 from ..textio import read_text
 from ..errors import AlreadyExistsError, NotFoundError, not_found
 from ._countries import CountriesLayer
-from ._shared import MISSING, _D, _Missing, _check_field_names, _check_model_lists
+from ._shared import MISSING, _D, _Missing, _check_field_names, _check_model, _check_model_lists
 from ._localisation import LocalisationLayer
 
 
@@ -148,12 +148,15 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             The character as stored in the mod.
 
         Raises:
+            TypeError: ``character`` is not a ``Character``, or one of its lists holds
+                something of another class; nothing changed.
             NotFoundError: ``recruit`` is true and no one defines ``tag``.
             AlreadyExistsError: The id exists and ``overwrite`` is false.
             ValueError: ``tag`` or the character id is not valid, or ``path``
                 is outside the mod.
         """
         tag = require_country_tag(tag)
+        _check_model("create_character", character, "character")
         character_id = require_script_id(character.id, label="character ID")
         if recruit and not self._is_known_country_tag(tag):
             raise not_found(
@@ -284,11 +287,14 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             The added instance as stored in the mod.
 
         Raises:
+            TypeError: ``instance`` is not a ``CharacterInstance``, or one of its
+                lists holds something of another class; nothing changed.
             NotFoundError: No character has this id.
             ValueError: The character comes from the game but no game install
                 is configured.
         """
         character = self.get_character(character_id)
+        _check_model("add_character_instance", instance, "instance")
         self._materialize_character_override(character)
         new_instance = copy.deepcopy(instance)
         new_instance.source_occurrence = -1
@@ -381,10 +387,12 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             The added role as stored in the mod.
 
         Raises:
+            TypeError: ``role`` is not a role object; nothing changed.
             NotFoundError: The character, or the chosen instance, does not exist.
             ValueError: The character comes from the game but no game install
                 is configured.
         """
+        _check_model("add_character_role", role, "role")
         character = self.get_character(character_id)
         self._materialize_character_override(character)
         roles, scope = self._character_role_scope(character, instance_occurrence)
@@ -451,6 +459,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             field.name for field in dataclasses.fields(role)
         } - internal
         _check_field_names("update_character_role", dict(kwargs), valid)
+        _check_model_lists("update_character_role", type(role), kwargs)
         self._materialize_character_override(character)
         for key, value in kwargs.items():
             setattr(role, key, copy.deepcopy(value))

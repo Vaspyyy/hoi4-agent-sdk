@@ -25,6 +25,8 @@ from ._shared import MISSING, _D, _Missing
 from .. import effects
 from ._shared import (
     _check_fields,
+    _check_model,
+    _require_items,
     _set_fields,
 )
 
@@ -235,10 +237,12 @@ class FocusLayer(ContextLayer):
             The added focus (the object passed in, now part of the tree).
 
         Raises:
+            TypeError: ``focus`` is not a ``Focus``; nothing changed.
             NotFoundError: No focus tree has this id.
             AlreadyExistsError: The tree already has a focus with this id;
                 use ``update_focus()`` or ``ensure_focus()``.
         """
+        _check_model("add_focus", focus, "focus")
         tree = self._mod_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
         _require_new_focus_ids(tree, [focus])
@@ -342,8 +346,10 @@ class FocusLayer(ContextLayer):
             The added focus, or the existing focus with the new fields.
 
         Raises:
+            TypeError: ``focus`` is not a ``Focus``; nothing changed.
             NotFoundError: No focus tree has this id.
         """
+        _check_model("ensure_focus", focus, "focus")
         existing = self._require_focus_or_none(self._mod_focus_tree(tree_id), focus.id)
         if existing is None:
             return self.add_focus(tree_id, focus)
@@ -491,9 +497,11 @@ class FocusLayer(ContextLayer):
             The inserted focus.
 
         Raises:
+            TypeError: ``focus`` is not a ``Focus``; nothing changed.
             NotFoundError: The tree or the anchor focus does not exist.
             AlreadyExistsError: The tree already has a focus with this id.
         """
+        _check_model("insert_focus_after", focus, "focus")
         tree = self._mod_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
         anchor = self._require_focus(tree, anchor_focus_id)
@@ -522,10 +530,12 @@ class FocusLayer(ContextLayer):
             The inserted focuses.
 
         Raises:
+            TypeError: ``focuses`` holds something that is not a ``Focus``; nothing changed.
             NotFoundError: The tree or the anchor focus does not exist.
             AlreadyExistsError: A focus id is already in the tree or repeats
                 in ``focuses``; nothing is inserted.
         """
+        focuses = _require_items("insert_branch", "focuses", focuses, (Focus,))
         tree = self._mod_focus_tree(tree_id)
         self._require_focus(tree, anchor_focus_id)
         for focus in focuses:
