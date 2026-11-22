@@ -262,3 +262,27 @@ def test_mypy_reports_the_three_wrong_calls_and_none_of_the_right_ones(tmp_path:
     assert 'Unexpected keyword argument "titel"' in errors[0]
     assert '"manpower"' in errors[1] and "list[int]" in errors[1]
     assert 'Unexpected keyword argument "touched"' in errors[2]
+
+
+@pytest.mark.parametrize(
+    ("method", "target", "own"),
+    [
+        ("split_state", "create_state", {"provinces"}),
+        ("create_mission", "create_decision", {"category_id", "decision_id"}),
+        ("create_targeted_decision", "create_decision", {"category_id", "decision_id"}),
+    ],
+)
+def test_pass_through_dict_holds_every_keyword_of_the_called_method(
+    method: str, target: str, own: set[str]
+) -> None:
+    import inspect
+
+    spec = _spec_of(method)
+    passing = {  # positional-only names (split_state's state_id) stay free for **fields
+        name
+        for name, parameter in inspect.signature(getattr(Mod, method)).parameters.items()
+        if parameter.kind in (parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY)
+    }
+    called = set(inspect.signature(getattr(Mod, target)).parameters) - {"self"}
+    expected = called - own - passing - spec.refused
+    assert set(getattr(hoi4.fields, spec.name).__annotations__) == expected

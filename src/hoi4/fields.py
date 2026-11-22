@@ -462,6 +462,7 @@ class MissionOptions(TypedDict, total=False):
     remove_effect: str
     ai_will_do: str
     path: str | Path | None
+    overwrite: bool
     target_trigger: str
     targets: Sequence[str] | str
     target_array: str
@@ -496,6 +497,7 @@ class TargetedDecisionOptions(TypedDict, total=False):
     remove_effect: str
     ai_will_do: str
     path: str | Path | None
+    overwrite: bool
     days_mission_timeout: int | None
     activation: str
     timeout_effect: str

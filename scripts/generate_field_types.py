@@ -219,9 +219,11 @@ def _model_keys(spec: ModelDict) -> dict[str, Any]:
     return keys
 
 
-def _function_keys(function: Callable[..., Any], skip: Iterable[str]) -> dict[str, Any]:
+def _function_keys(
+    function: Callable[..., Any], skip: Iterable[str], *, keep_overwrite: bool = False
+) -> dict[str, Any]:
     hints = typing.get_type_hints(function)
-    excluded = set(skip) | {"self", "overwrite"}
+    excluded = set(skip) | {"self"} | (set() if keep_overwrite else {"overwrite"})
     return {
         name: hints[name]
         for name, parameter in inspect.signature(function).parameters.items()
@@ -243,7 +245,7 @@ def build() -> dict[str, dict[str, Any]]:
                 name: hint for name, hint in built[spec.update].items() if name in created
             }
         else:
-            keys = _function_keys(spec.function, spec.skip)
+            keys = _function_keys(spec.function, spec.skip, keep_overwrite=True)
             built[spec.name] = {
                 name: hint for name, hint in keys.items() if name not in spec.refused
             }
