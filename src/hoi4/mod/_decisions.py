@@ -10,7 +10,8 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
-from ..syntax import quote
+from ..syntax import parse, quote
+from ..textio import read_text
 from ..types import (
     Decision,
     DecisionCategory,
@@ -319,7 +320,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             self._dirty_decision_files.add(existing.path)
         category = self._decision_categories.get(category_id)
         if category is None:
-            category = self.create_decision_category(category_id, path=path)
+            category = self._extend_inherited_decision_category(category_id, path)
         elif path is not None:
             self._point_decision_category_at(
                 category, resolve_mod_output_path(self.mod_root, path)
@@ -384,6 +385,60 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         if category.definition_path is not None and category.touched:
             self._dirty_decision_category_files.add(category.definition_path)
         return decision
+
+    def _inherited_decision_category_ids(self) -> set[str]:
+        """Categories that the game and the base mods define, minus files the mod hides."""
+
+        cached = self._scan_cache.get("inherited_decision_categories")
+        if cached is not None:
+            return set(cached)
+        ids: set[str] = set()
+        if self._base_content is not None:
+            files = self._base_content.glob("common/decisions/categories", "*.txt")
+            for path in files.values():
+                if self._is_shadowed_by_mod(self._base_content, path):
+                    continue
+                try:
+                    document = parse(read_text(path))
+                except (OSError, ValueError):
+                    continue
+                ids.update(
+                    item.key.value
+                    for item in document.root.assignments()
+                    if item.block is not None
+                )
+        self._scan_cache["inherited_decision_categories"] = set(ids)
+        return ids
+
+    def _extend_inherited_decision_category(
+        self, category_id: str, path: str | Path | None
+    ) -> DecisionCategory:
+        """A block of the mod's decisions file that adds to a category defined elsewhere.
+
+        Nothing is written to ``common/decisions/categories``: that would
+        replace the game's or a base mod's definition. Without a configured
+        game install the category may be the game's, so it is accepted and
+        ``validate()`` checks it.
+        """
+
+        inherited = self._inherited_decision_category_ids()
+        if self.hoi4_install is not None and inherited and category_id not in inherited:
+            raise not_found(
+                "decision category",
+                category_id,
+                set(self._decision_categories) | self._inherited_decision_category_ids(),
+                plural="decision categories",
+                hint="Create it with create_decision_category() first.",
+            )
+        target = resolve_mod_output_path(
+            self.mod_root, path or Path("common") / "decisions" / "mod_decisions.txt"
+        )
+        category = DecisionCategory(id=category_id, path=target)
+        self._decision_categories[category_id] = category
+        self._dirty.add("decisions")
+        self._dirty_decision_categories.add(category_id)
+        self._dirty_decision_files.add(target)
+        return category
 
     def ensure_decision(self, category_id: str, decision_id: str, **kwargs) -> Decision:
         if decision_id in self._decisions:

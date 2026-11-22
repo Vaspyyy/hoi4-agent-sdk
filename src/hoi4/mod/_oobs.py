@@ -224,7 +224,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         path: str | Path | None = None,
     ) -> OrderOfBattle:
         name = require_script_id(name, label="OOB name")
-        country_tag = require_country_tag(country_tag)
+        country_tag = self._require_country_reference(country_tag)
         existing = self._oobs.get(name)
         if existing is not None and not overwrite:
             raise ValueError(
@@ -476,6 +476,28 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                             date=reference.date,
                         )
 
+    def _require_oob_reference(self, name: str) -> None:
+        """Raise ``NotFoundError`` when the SDK knows no OOB file is called ``name``.
+
+        The mod's OOBs (pending ones included) count, and with a configured
+        game install the inherited ones too. Without a game install the OOB
+        may be the game's, so it is accepted and ``validate()`` checks it.
+        """
+        if name in self._oobs or (self.mod_root / "history" / "units" / f"{name}.txt").is_file():
+            return
+        if self.hoi4_install is None or self._base_content is None:
+            return
+        inherited = self._base_content.glob("history/units", "*.txt")
+        if not inherited or any(path.stem == name for path in inherited.values()):
+            return
+        raise not_found(
+            "OOB",
+            name,
+            self.list_oobs(include_vanilla=True),
+            plural="OOBs",
+            hint="Create it with create_oob() first.",
+        )
+
     def _assign_country_oob(self, tag: str, name: str) -> None:
         if name:
             self.assign_country_oob(tag, name, kind="land")
@@ -501,10 +523,19 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         excluded_dlc: Sequence[str] = (),
         date: str = "",
     ) -> None:
-        """Assign an OOB with the engine's land/naval/air history effect."""
+        """Assign an OOB with the engine's land/naval/air history effect.
 
-        tag = require_country_tag(tag)
+        Raises:
+            NotFoundError: No one defines the country (its history is where
+                the assignment goes), or a game install is configured and no
+                OOB file has this name.
+            ValueError: The country already assigns another OOB of this kind
+                for the same date and DLC conditions.
+        """
+
+        tag = self._require_known_country(tag)
         name = require_script_id(name, label="OOB name")
+        self._require_oob_reference(name)
         country = self.get_country(tag)
         required = tuple(
             dict.fromkeys(value.strip() for value in required_dlc if value.strip())
@@ -569,10 +600,14 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         required_dlc: Sequence[str] = (),
         excluded_dlc: Sequence[str] = (),
         date: str = "",
-    ) -> bool:
-        """Remove one exact land, naval, or air OOB assignment."""
+    ) -> None:
+        """Remove one exact land, naval, or air OOB assignment.
 
-        tag = require_country_tag(tag)
+        Raises:
+            NotFoundError: The country, or that exact assignment, does not exist.
+        """
+
+        tag = self._require_known_country(tag)
         name = require_script_id(name, label="OOB name")
         country = self.get_country(tag)
         required = tuple(
@@ -583,7 +618,12 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         )
         reference = OOBReference(name, kind, required, excluded, date)
         if reference not in self._country_oob_references(country):
-            return False
+            raise NotFoundError(
+                f"Country '{tag}' has no {kind} OOB assignment of '{name}' with these "
+                "date and DLC conditions.",
+                kind="OOB assignment",
+                id=name,
+            )
         self._materialize_country_override(country)
         updated, removed = remove_oob_reference(country.raw_history, reference)
         if (
@@ -601,16 +641,22 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         if removed:
             self._dirty_countries.add(tag)
             self._dirty.add("countries")
-        return removed
 
     def create_equipment_variant(
         self,
         country_tag: str,
         variant: EquipmentVariant,
     ) -> EquipmentVariant:
-        """Append a validated equipment variant to country history."""
+        """Append a validated equipment variant to country history.
 
-        country_tag = require_country_tag(country_tag)
+        Raises:
+            NotFoundError: No one defines the country (its history is where
+                the variant goes).
+            ValueError: The variant is invalid or uses a chassis before it is
+                unlocked.
+        """
+
+        country_tag = self._require_known_country(country_tag)
         if not variant.name.strip():
             raise ValueError("Equipment variant name cannot be empty")
         if not variant.equipment_type.strip():

@@ -338,7 +338,7 @@ def test_joint_focus_edit_on_shared_line(tmp_path: Path) -> None:
 def test_add_remove_and_rekind_top_level_focuses(tmp_path: Path) -> None:
     path = _write(tmp_path, MIXED)
     mod = Mod(tmp_path)
-    assert mod.remove_focus("TST_focus", "SH_child")
+    mod.remove_focus("TST_focus", "SH_child")
     mod.add_focus("TST_focus", Focus(id="SH_new", kind="shared_focus", x=1, y=2))
     mod.update_focus("TST_focus", "JF_root", kind="shared_focus")
     mod.save()

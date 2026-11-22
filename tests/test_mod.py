@@ -51,7 +51,7 @@ class TestModFocusTrees:
 
     def test_remove_focus(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.remove_focus("german_focus", "GER_anschluss")
+        mod.remove_focus("german_focus", "GER_anschluss")
         assert mod.get_focus("german_focus", "GER_anschluss") is None
 
     def test_update_focus(self, tmp_mod):
@@ -503,11 +503,13 @@ class TestPass1Fixes:
             mod.delete_focus_tree("no_tree")
 
     def test_add_event_option_nonexistent_returns_false(self, tmp_mod):
-        assert tmp_mod.mod.add_event_option("no.event", EventOption()) is False
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.add_event_option("no.event", EventOption())
 
     def test_remove_focus_not_found(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.remove_focus("german_focus", "NONEXISTENT") is False
+        with pytest.raises(NotFoundError):
+            mod.remove_focus("german_focus", "NONEXISTENT")
 
     def test_get_focus_not_found(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
@@ -519,7 +521,8 @@ class TestPass1Fixes:
 
     def test_set_event_namespace_nonexistent(self, tmp_mod):
         mod = tmp_mod.mod
-        mod.set_event_namespace("no.event", "ns")
+        with pytest.raises(NotFoundError):
+            mod.set_event_namespace("no.event", "ns")
         assert "events" not in mod._dirty
 
 
@@ -614,7 +617,7 @@ class TestAgentFacingApis:
 
     def test_append_to_focus_reward(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.append_to_focus_reward("german_focus", "GER_rhineland", "add_stability = 0.05")
+        mod.append_to_focus_reward("german_focus", "GER_rhineland", "add_stability = 0.05")
         focus = mod.get_focus("german_focus", "GER_rhineland")
         assert "add_political_power = 50" in focus.completion_reward
         assert "add_stability = 0.05" in focus.completion_reward
@@ -920,7 +923,7 @@ class TestAgentFacingApis:
         assert branch[1].prerequisites == [["SCL_a"]]
         position = mod.place_continuous_focus_below_tree("scl_focus", padding=400)
         assert position == "x = 50 y = 800"
-        assert mod.assert_no_visual_overlap("scl_focus") is True
+        mod.assert_no_visual_overlap("scl_focus")
         mod.add_focus("scl_focus", Focus(id="SCL_overlap", x=4, y=3))
         with pytest.raises(ValueError, match="overlaps"):
             mod.assert_no_visual_overlap("scl_focus")
@@ -1202,7 +1205,7 @@ class TestAgentFacingApis:
         mod.create_focus_tree("alt_focus", "ALT")
         mod.add_focus("alt_focus", Focus(id="ALT_a"))
         mod.add_focus("alt_focus", Focus(id="ALT_b", x=1))
-        assert mod.set_focuses_mutually_exclusive("alt_focus", "ALT_a", "ALT_b")
+        mod.set_focuses_mutually_exclusive("alt_focus", "ALT_a", "ALT_b")
         assert mod.get_focus("alt_focus", "ALT_a").mutually_exclusive == [["ALT_b"]]
         assert mod.get_focus("alt_focus", "ALT_b").mutually_exclusive == [["ALT_a"]]
 

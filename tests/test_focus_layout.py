@@ -36,7 +36,7 @@ def test_relative_chain_bounds_placement_and_round_trip(tmp_path):
         "height": 3,
     }
     assert mod.place_continuous_focus_below_tree("layout") == "x = 50 y = 1200"
-    assert mod.assert_no_visual_overlap("layout")
+    mod.assert_no_visual_overlap("layout")
     assert not validate_focus_tree(mod.get_focus_tree("layout"))
     errors = mod.validate()
     assert not any(e.severity == "error" for e in errors)
@@ -122,7 +122,7 @@ def test_absolute_and_empty_layouts(tmp_path):
     assert mod.focus_tree_bounds("layout") == dict.fromkeys(
         ["min_x", "max_x", "min_y", "max_y", "width", "height"], 0
     )
-    assert mod.assert_no_visual_overlap("layout")
+    mod.assert_no_visual_overlap("layout")
     mod.add_focus("layout", Focus(id="A", x=-3, y=-2))
     mod.add_focus("layout", Focus(id="B", x=2, y=4))
     assert mod.focus_tree_bounds("layout") == {
@@ -134,7 +134,7 @@ def test_absolute_and_empty_layouts(tmp_path):
         "height": 7,
     }
     assert mod.place_continuous_focus_below_tree("layout", padding=200, x=-10) == "x = -10 y = 700"
-    assert mod.assert_no_visual_overlap("layout")
+    mod.assert_no_visual_overlap("layout")
 
 
 def test_long_chain_does_not_hit_python_recursion_limit():
@@ -158,7 +158,7 @@ def test_assert_no_visual_overlap_follows_the_validate_rule(tmp_path):
     mod.add_focus("alt", Focus(id="ALT_plain", x=2, y=0, allow_branch="NOT = { has_dlc = x }"))
     mod.add_focus("alt", Focus(id="ALT_dlc_next", x=1, y=1, prerequisites=[["ALT_dlc"]]))
     mod.add_focus("alt", Focus(id="ALT_plain_next", x=1, y=1, prerequisites=[["ALT_plain"]]))
-    assert mod.assert_no_visual_overlap("alt")
+    mod.assert_no_visual_overlap("alt")
     assert not [f for f in mod.validate(stage="build") if f.code == "visual_overlap"]
 
     mod.add_focus("alt", Focus(id="ALT_clash", x=1, y=1, prerequisites=[["ALT_dlc"]]))

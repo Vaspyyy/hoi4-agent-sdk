@@ -66,7 +66,7 @@ from ..types import (
     State,
     ValidationError,
 )
-from ..errors import NotFoundError, not_found
+from ..errors import NotFoundError, already_exists, not_found
 from ._catalogs import CatalogsLayer
 from ._states import StatesLayer
 from ..textio import read_text
@@ -368,14 +368,24 @@ class MapLayer(StatesLayer, CatalogsLayer):
         text = self._map_text(SUPPLY_NODES_FILE)
         return [] if text is None else [province for _, province in parse_supply_nodes(text)]
 
-    def add_supply_node(self, province: int) -> None:
-        """Queue a ``map/supply_nodes.txt`` entry for a land province."""
+    def add_supply_node(self, province: int) -> int:
+        """Queue a ``map/supply_nodes.txt`` entry for a land province.
+
+        Returns:
+            The province id of the new supply node.
+
+        Raises:
+            NotFoundError: The province is not in ``definition.csv``.
+            AlreadyExistsError: The province already has a supply node.
+            ValueError: The province is not a land province.
+        """
 
         province = self._require_land_province(province)
         text = self._map_text(SUPPLY_NODES_FILE) or ""
         if any(value == province for _, value in parse_supply_nodes(text)):
-            raise ValueError(f"Province {province} already has a supply node")
+            raise already_exists("supply node", province, hint=f"Province {province} has one.")
         self._queue_map_text(SUPPLY_NODES_FILE, add_supply_node_text(text, province))
+        return province
 
     def remove_supply_node(self, province: int) -> None:
         text = self._map_text(SUPPLY_NODES_FILE)
@@ -423,17 +433,25 @@ class MapLayer(StatesLayer, CatalogsLayer):
         self._queue_map_text(RAILWAYS_FILE, text)
         return Railway(level=level, provinces=tuple(route), index=len(split_lines(text)) - 1)
 
-    def remove_railway(self, railway: Railway | Sequence[int]) -> int:
+    def remove_railway(self, railway: Railway | Sequence[int]) -> None:
         """Remove railway lines matching a listed ``Railway`` or a province route.
 
-        A route matches in either direction. Returns the number of removed lines.
+        A route matches in either direction.
+
+        Raises:
+            NotFoundError: No railway line matches.
         """
 
         text, matches = self._match_railways(railway)
         self._queue_map_text(RAILWAYS_FILE, remove_lines(text, (item.index for item in matches)))
-        return len(matches)
 
-    def set_railway_level(self, railway: Railway | Sequence[int], level: int) -> int:
+    def set_railway_level(self, railway: Railway | Sequence[int], level: int) -> None:
+        """Set the level of every railway line matching a ``Railway`` or a province route.
+
+        Raises:
+            NotFoundError: No railway line matches.
+            ValueError: ``level`` is not between 1 and the game's maximum.
+        """
         if isinstance(level, bool) or not isinstance(level, int) or not (
             1 <= level <= MAX_RAILWAY_LEVEL
         ):
@@ -442,7 +460,6 @@ class MapLayer(StatesLayer, CatalogsLayer):
         for item in matches:
             text = set_railway_level_text(text, item.index, level)
         self._queue_map_text(RAILWAYS_FILE, text)
-        return len(matches)
 
     def list_map_buildings(self, state_id: int | None = None) -> list[MapBuilding]:
         text = self._map_text(BUILDINGS_FILE)
@@ -502,11 +519,19 @@ class MapLayer(StatesLayer, CatalogsLayer):
         building: str | None = None,
         *,
         entries: Sequence[MapBuilding] = (),
-    ) -> int:
-        """Remove building positions by state/type filters or listed entries."""
+    ) -> None:
+        """Remove building positions by state/type filters or listed entries.
+
+        Raises:
+            NotFoundError: The state does not exist, a listed entry is stale,
+                or no building position matches the filters.
+            ValueError: No filter and no entries were given.
+        """
 
         if state_id is None and building is None and not entries:
             raise ValueError("remove_map_buildings() requires state_id, building, or entries")
+        if state_id is not None:
+            self.get_state(state_id)
         text = self._map_text(BUILDINGS_FILE)
         parsed = parse_map_buildings(text or "")[0]
         if entries:
@@ -527,9 +552,19 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 if (state_id is None or entry.state_id == state_id)
                 and (building is None or entry.building == building)
             }
-        if indices and text is not None:
-            self._queue_map_text(BUILDINGS_FILE, remove_lines(text, indices))
-        return len(indices)
+        if not indices or text is None:
+            wanted = " and ".join(
+                part
+                for part in (
+                    f"state {state_id}" if state_id is not None else "",
+                    f"building '{building}'" if building is not None else "",
+                )
+                if part
+            )
+            raise NotFoundError(
+                f"No building position matches {wanted}.", kind="map building", id=building
+            )
+        self._queue_map_text(BUILDINGS_FILE, remove_lines(text, indices))
 
     def _map_result(
         self,

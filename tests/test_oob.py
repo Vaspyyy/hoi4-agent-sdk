@@ -26,6 +26,7 @@ from hoi4.oob import (
     serialize_oob,
     validate_oob,
 )
+from hoi4.errors import NotFoundError
 
 
 OOB = """division_template = {
@@ -951,18 +952,19 @@ def test_mod_authors_separate_dlc_aware_naval_and_air_oobs(tmp_path: Path) -> No
         "ABC_air", "air", ("By Blood Alone",), ()
     ) in references
     assert find_equipment_variants(history) == (variant,)
-    assert mod.unassign_country_oob(
+    mod.unassign_country_oob(
         "ABC",
         "ABC_air",
         kind="air",
         required_dlc=("By Blood Alone",),
     )
-    assert not mod.unassign_country_oob(
-        "ABC",
-        "ABC_air",
-        kind="air",
-        required_dlc=("By Blood Alone",),
-    )
+    with pytest.raises(NotFoundError):
+        mod.unassign_country_oob(
+            "ABC",
+            "ABC_air",
+            kind="air",
+            required_dlc=("By Blood Alone",),
+        )
 
 
 def _write_minimal_naval_context(root: Path) -> None:

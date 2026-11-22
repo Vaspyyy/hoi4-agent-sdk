@@ -322,7 +322,7 @@ def test_bookmark_date_defines_participate_in_preview_transaction_and_save(
     target = tmp_path / "common/defines/zz_bookmark_dates.lua"
 
     with mod.transaction():
-        assert mod.set_bookmark_date_range("1940.1.1.12", "1960.1.1.1") == target
+        assert mod.set_bookmark_date_range("1940.1.1.12", "1960.1.1.1") is None
         preview = mod.preview()
         assert "START_DATE" in preview and "END_DATE" in preview
     assert not target.exists()

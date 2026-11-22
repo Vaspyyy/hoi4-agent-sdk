@@ -23,7 +23,7 @@ from ..types import (
     State,
 )
 from ..errors import NotFoundError, not_found
-from ._core import CoreLayer
+from ._countries import CountriesLayer
 from ._shared import (
     _set_fields,
 )
@@ -42,7 +42,7 @@ def _fold_search_text(value: object) -> str:
     return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
-class StatesLayer(CoreLayer):
+class StatesLayer(CountriesLayer):
     """State lookup, search and history edits."""
 
     # ── States ──────────────────────────────────────────────────
@@ -261,7 +261,7 @@ class StatesLayer(CoreLayer):
         return True
 
     def set_state_owner(self, state_id: int, tag: str, add_core: bool = True) -> State:
-        tag = require_country_tag(tag)
+        tag = self._require_country_reference(tag)
         state = self.get_state(state_id)
         self._materialize_state_override(state)
         state.owner = tag
@@ -285,23 +285,44 @@ class StatesLayer(CoreLayer):
         return True
 
     def add_state_core(self, state_id: int, tag: str) -> State:
+        """Add ``tag`` to a state's history cores.
+
+        Returns:
+            The changed state.
+
+        Raises:
+            NotFoundError: The state does not exist, or a game install is
+                configured and no one defines ``tag``.
+        """
+        tag = self._require_country_reference(tag)
         state = self.get_state(state_id)
         self._materialize_state_override(state)
-        tag = require_country_tag(tag)
         if tag not in state.cores:
             state.cores.append(tag)
         self._dirty.add("states")
         self._dirty_states.add(state_id)
         return state
 
-    def remove_state_core(self, state_id: int, tag: str) -> State:
-        state = self.get_state(state_id)
-        self._materialize_state_override(state)
+    def remove_state_core(self, state_id: int, tag: str) -> None:
+        """Remove ``tag`` from a state's history cores.
+
+        Raises:
+            NotFoundError: The state does not exist, or ``tag`` is not one of
+                its cores. Nothing is copied into the mod then.
+        """
         tag = require_country_tag(tag)
+        state = self.get_state(state_id)
+        if tag not in state.cores:
+            raise not_found(
+                "core",
+                tag,
+                state.cores,
+                where=f"state {state_id}",
+            )
+        self._materialize_state_override(state)
         state.cores = [core for core in state.cores if core != tag]
         self._dirty.add("states")
         self._dirty_states.add(state_id)
-        return state
 
     def patch_state_history(
         self,

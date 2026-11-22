@@ -165,6 +165,15 @@ def _plain_mod(root: Path) -> Mod:
     return Mod(root)
 
 
+def _mod_with_country(root: Path) -> Mod:
+    # An equipment variant goes into a country's history, so the country
+    # must exist.
+    mod = Mod(root)
+    mod.create_country("ZZZ", "Zzz")
+    mod.save()
+    return Mod(root)
+
+
 def _map_mod(root: Path) -> Mod:
     """A mod over a tiny game folder with two states, for map and state edits."""
 
@@ -594,6 +603,7 @@ RECIPES: list[Recipe] = [
             "ZZZ",
             EquipmentVariant(**{"name": "Variant", "equipment_type": "light_tank_chassis_1", field: value}),
         ),
+        make_mod=_mod_with_country,
     ),
     Recipe(
         "definition",

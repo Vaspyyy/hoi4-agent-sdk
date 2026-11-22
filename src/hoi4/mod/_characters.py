@@ -386,14 +386,20 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         occurrence: int | None = None,
         instance_occurrence: int | None = None,
-    ) -> bool:
+    ) -> None:
+        """Remove one role of a character or of one of its instances.
+
+        Raises:
+            NotFoundError: The character, the instance or the role does not exist.
+            ValueError: Several roles match and no ``occurrence`` was given.
+        """
         character = self.get_character(character_id)
         roles, scope = self._character_role_scope(character, instance_occurrence)
         indexes = [
             index for index, role in enumerate(roles) if role_key(role) == role_type
         ]
         if not indexes:
-            return False
+            raise _missing_role(character, role_type, occurrence, 0)
         if occurrence is None:
             if len(indexes) != 1:
                 raise ValueError(
@@ -403,7 +409,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             index = indexes[0]
         else:
             if occurrence < 0 or occurrence >= len(indexes):
-                return False
+                raise _missing_role(character, role_type, occurrence, len(indexes))
             index = indexes[occurrence]
         self._materialize_character_override(character)
         roles.pop(index)
@@ -411,7 +417,6 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         if isinstance(scope, CharacterInstance):
             character.touched_fields.add("instances")
         self._mark_character_dirty(character)
-        return True
 
     def _character_role_scope(
         self,

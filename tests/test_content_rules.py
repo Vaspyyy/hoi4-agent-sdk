@@ -559,7 +559,7 @@ def test_a_focus_below_a_shared_focus_of_another_file_is_hidden_with_it(tmp_path
             with pytest.raises(ValueError, match="overlaps"):
                 mod.assert_no_visual_overlap("t_tree")
         else:
-            assert mod.assert_no_visual_overlap("t_tree")
+            mod.assert_no_visual_overlap("t_tree")
         return found
 
     gate_x, gate_y = 'allow_branch = { has_dlc = "X" }', 'allow_branch = { has_dlc = "Y" }'

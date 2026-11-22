@@ -45,6 +45,26 @@ say what you got, no duplicate entry points, and the script builders moved to
 | `TypeError("Unknown fields: [...]")` without the method, or raised after part of the change was made | `TypeError("update_x(): Unknown fields: [...]. Valid: [...]")`, raised before anything changes | The message names the method and the valid fields |
 | `update_x(touched=..., touched_fields=..., source_index=..., _source_body=..., is_vanilla=...)`, `update_decision_category(paths=...)` | not accepted (`TypeError` or `ValueError`) | Bookkeeping, not content |
 | `mod.update_decision(id, path=...)` silently ignored | raises `TypeError`; a decision stays in its file | No silent no-op |
+| `mod.add_focus(tree, focus)` returning `None`, adding a second focus with the same id | returns the `Focus`; an id the tree has raises `AlreadyExistsError` | No silent duplicate |
+| `mod.insert_focus_after(...)`, `mod.insert_branch(...)` returning `None` | return the inserted `Focus` / `list[Focus]`; a duplicate id raises `AlreadyExistsError` before anything is inserted | Returns say what you got |
+| `mod.auto_layout_branch(..., anchor_focus_id=missing)` writing a prerequisite to a focus that does not exist | raises `NotFoundError` | No dangling prerequisite |
+| `mod.remove_focus(tree, id)` returning `bool` | returns `None`; a missing focus raises `NotFoundError` | `remove_*` returns nothing |
+| `mod.append_to_focus_reward(...)` returning `bool` | returns the `Focus`; a missing focus raises `NotFoundError` | Returns say what you got |
+| `mod.set_focuses_mutually_exclusive(...)` returning `bool` | returns `None`; a missing focus raises `NotFoundError` | `set_*` returns nothing |
+| `assert mod.assert_no_visual_overlap(tree)` (it returned `True`) | `mod.assert_no_visual_overlap(tree)` returns `None` and raises `ValueError` as before | The `True` carried no information |
+| `mod.add_event_option(event, option)` returning `bool`, adding a second option with the same name | returns the `EventOption`; a missing event raises `NotFoundError`, a duplicate name `AlreadyExistsError` | No silent duplicate |
+| `mod.set_event_namespace(missing, ns)` silently doing nothing | raises `NotFoundError` | No silent no-op |
+| `mod.add_bookmark_country(name, bc)` returning `None`, adding a second entry for the same tag | returns the `BookmarkCountry`; the same tag with the same `required_dlc` raises `AlreadyExistsError` | No silent duplicate |
+| `mod.set_bookmark_date_range(...)` returning the `Path` | returns `None` | `set_*` returns nothing |
+| `mod.add_supply_node(province)` returning `None` | returns the province id; an existing node raises `AlreadyExistsError` (a `ValueError`, as before) | Returns say what you got |
+| `n = mod.remove_map_buildings(...)`, `n = mod.remove_railway(...)`, `n = mod.set_railway_level(...)` returning a count | return `None`; a missing state, a stale entry or no match raises `NotFoundError` | A `0` hid a wrong filter |
+| `mod.remove_state_core(id, tag)` returning the `State`, and copying the game's state file into the mod when `tag` was not a core | returns `None`; a tag that is not a core raises `NotFoundError` and nothing is copied | No silent no-op |
+| `mod.remove_character_role(...)` returning `bool` | returns `None`; a missing role raises `NotFoundError` | `remove_*` returns nothing |
+| `mod.unassign_country_oob(...)` returning `bool` | returns `None`; a missing assignment raises `NotFoundError` | No `False` |
+| `mod.assign_country_oob(tag, name)` with an undefined country inventing an empty one | raises `NotFoundError`; with a game install an unknown OOB raises too | No silent invention |
+| `mod.create_equipment_variant(tag, v)` with an undefined country inventing an empty one | raises `NotFoundError` | No silent invention |
+| `mod.create_decision(category, ...)` with a category the mod does not define writing an empty category definition (which replaced the game's) | extends the category without a definition; with a game install, a category no one defines raises `NotFoundError` ("create it with `create_decision_category()` first") | No silent invention; the game's category keeps its icon and triggers |
+| `mod.create_focus_tree(id, tag)`, `mod.create_oob(name, tag)`, `mod.add_state_core(id, tag)`, `mod.set_state_owner(id, tag)`, `mod.set_country_name_pool(tag, ...)` with a tag no one defines | with a game install: `NotFoundError`; without one the tag may be the game's and is accepted (`validate()` checks it) | Catch a typo in a tag at the call |
 | `hoi4.bookmarks.load_bookmarks`, `hoi4.decisions.write_decisions_file`, `hoi4.focus.write_focus_tree`, `hoi4.ideologies.load_ideologies`, `hoi4.localisation.delete_localization_keys`, `hoi4.on_actions.write_on_actions_file`, `hoi4.states.ensure_state_in_mod`, `hoi4.states.patch_state_history_owner_cores`, `hoi4.tags.load_all_tags`, `hoi4.validation.collect_character_ids` | the matching `Mod` method (`mod.list_bookmarks()`, `mod.save()`, ...) | Unused module functions that bypassed the `Mod` staging |
 
 ### Added

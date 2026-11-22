@@ -33,7 +33,6 @@ from ..types import (
     State,
     ValidationError,
 )
-from ._countries import CountriesLayer
 from ._equipment import EquipmentLayer, _ScriptCondition
 from ._states import StatesLayer
 
@@ -165,7 +164,7 @@ def _oob_lines(oob: OrderOfBattle) -> _OobLines:
     return lines
 
 
-class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
+class OobValidationLayer(StatesLayer, EquipmentLayer):
     """Order-of-battle validation against the effective game data."""
 
     # ── Shared game data ───────────────────────────────────────

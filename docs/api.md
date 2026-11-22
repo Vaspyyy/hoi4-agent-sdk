@@ -193,7 +193,7 @@ ordering, and untouched variants.
 | `delete_character_instance(character_id, occurrence) -> None` | Delete one selected repeated instance; raises `NotFoundError` for a missing character or instance |
 | `add_character_role(character_id, role, instance_occurrence=None)` | Add a direct or instance-scoped role |
 | `update_character_role(character_id, role_type, occurrence=None, instance_occurrence=None, **kwargs) -> CharacterRole` | Patch one role; repeated matches require `occurrence` |
-| `remove_character_role(character_id, role_type, occurrence=None, instance_occurrence=None)` | Remove one role; ambiguous removal raises |
+| `remove_character_role(character_id, role_type, occurrence=None, instance_occurrence=None) -> None` | Remove one role; a missing role raises `NotFoundError`, ambiguous removal raises `ValueError` |
 
 `update_character()` rejects `country_tag` with `TypeError`, even when assigning
 the existing tag. Remove that argument from update calls: persistent character
@@ -221,8 +221,8 @@ large portrait used elsewhere.
 | `create_oob(name, country_tag, templates=(), divisions=(), fleets=(), air_wings=(), kind="auto", required_dlc=(), excluded_dlc=(), assign=True, overwrite=False, path=None) -> OrderOfBattle` | Write one land, naval, or air OOB and assign it with the correct country-history effect |
 | `update_oob(name, templates=None, divisions=None, fleets=None, air_wings=None, country_tag=None, kind=None, required_dlc=None, excluded_dlc=None, assign=False) -> OrderOfBattle` | Replace selected modeled collections and assignment metadata while preserving neighboring production, comments, and unknown fields |
 | `delete_oob(name, unassign=True) -> None` | Delete a mod-owned OOB and optionally clear country references; raises `NotFoundError` or, for a game OOB, `ReadOnlyError` |
-| `assign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="")` | Assign an existing OOB through `set_oob`, `set_naval_oob`, or `set_air_oob`, optionally under DLC conditions or a dated history block |
-| `unassign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="") -> bool` | Remove one exact dated/conditioned assignment without re-rendering surrounding history |
+| `assign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="") -> None` | Raises `NotFoundError` for an undefined country, or (with a game install) an unknown OOB. Assign an existing OOB through `set_oob`, `set_naval_oob`, or `set_air_oob`, optionally under DLC conditions or a dated history block |
+| `unassign_country_oob(tag, name, kind="land", required_dlc=(), excluded_dlc=(), date="") -> None` | Remove one exact dated/conditioned assignment without re-rendering surrounding history; raises `NotFoundError` when there is no such assignment |
 | `create_equipment_variant(country_tag, variant) -> EquipmentVariant` | Append a country-history equipment variant, including optional DLC conditions |
 
 Air-wing updates retain existing location/equipment occurrence order, including
@@ -398,8 +398,8 @@ states for copying, use `get_country_context(tag, copy_states=True)` or
 | `get_state(state_id: int) -> State` | `State` | Cached or reads from mod/vanilla without writing. Raises `NotFoundError`. |
 | `set_state_owner(state_id: int, tag: str, add_core: bool = True) -> State` | `State` | Change owner, optionally add core |
 | `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field. List fields such as `cores` and `provinces` append unique values instead of replacing. |
-| `add_state_core(state_id: int, tag: str) -> State` | `State` | Append a core without replacing existing cores |
-| `remove_state_core(state_id: int, tag: str) -> State` | `State` | Remove a core |
+| `add_state_core(state_id: int, tag: str) -> State` | `State` | Append a core without replacing existing cores; with a game install, an undefined tag raises `NotFoundError` |
+| `remove_state_core(state_id: int, tag: str) -> None` | `None` | Remove a core; raises `NotFoundError` when `tag` is not a core (nothing is copied into the mod) |
 | `patch_state_history(state_id, owner=None, add_cores=None, remove_cores=None) -> State` | `State` | Queue a text-preserving owner/core patch for the next `save()` |
 | `batch_set_owner(state_ids: list[int], tag: str, add_core: bool = True) -> list[State]` | `list[State]` | Batch owner change |
 
@@ -449,11 +449,11 @@ Province-list edits remove or append the affected IDs in place.
 | `list_strategic_regions()` / `get_strategic_region(region_id)` | `StrategicRegion` | `id`, `name`, `provinces`, `path`, `has_weather` |
 | `move_provinces_to_strategic_region(provinces, region_id)` | `StrategicRegion` | Moves land or sea provinces; refuses to empty a region |
 | `create_strategic_region(name, provinces, *, region_id=None, weather=None, localisation_file=None)` | `int` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
-| `list_supply_nodes()` / `add_supply_node(province)` / `remove_supply_node(province)` | `list[int]` / `None` | Land provinces only |
+| `list_supply_nodes()` / `add_supply_node(province)` / `remove_supply_node(province)` | `list[int]` / `int` / `None` | Land provinces only; adding an existing node raises `AlreadyExistsError`, removing a missing one `NotFoundError` |
 | `list_railways()` / `add_railway(level, provinces, *, check_adjacency=True)` | `Railway` | Levels 1-5. Consecutive provinces must be adjacent when the province map and the `map` extra are available. |
-| `remove_railway(railway)` / `set_railway_level(railway, level)` | `int` | Select a listed `Railway`, or a province route matched in either direction |
+| `remove_railway(railway)` / `set_railway_level(railway, level)` | `None` | Select a listed `Railway`, or a province route matched in either direction; no match raises `NotFoundError` |
 | `list_map_buildings(state_id=None)` / `add_map_building(state_id, building, x, y, z, rotation, adjacent_sea_province=0)` | `MapBuilding` | `z` is the north-south map coordinate |
-| `remove_map_buildings(state_id=None, building=None, *, entries=())` | `int` | Remove positions by filters or listed entries |
+| `remove_map_buildings(state_id=None, building=None, *, entries=())` | `None` | Remove positions by filters or listed entries; a missing state, a stale entry or no match raises `NotFoundError` |
 
 `MapEditReport` lists the moved provinces, source states, deleted or emptied
 states, moved victory points and province buildings, the number of reassigned
@@ -498,8 +498,8 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 | `update_event(event_id: str, **kwargs) -> Event` | `Event` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
 | `update_event_option(event_id: str, option: int \| str, **kwargs) -> EventOption` | `EventOption` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |
 | `delete_event(event_id: str) -> None` | `None` | Remove event and its namespace mapping; raises `NotFoundError` |
-| `set_event_namespace(event_id: str, namespace: str) -> None` | `None` | Set which file this event writes to (`{namespace}_events.txt`) |
-| `add_event_option(event_id: str, option: EventOption) -> bool` | `bool` | Append an option to an event |
+| `set_event_namespace(event_id: str, namespace: str) -> None` | `None` | Set which file this event writes to (`{namespace}_events.txt`); raises `NotFoundError` for a missing event |
+| `add_event_option(event_id: str, option: EventOption) -> EventOption` | `EventOption` | Append an option to an event; a missing event raises `NotFoundError`, an option name the event has raises `AlreadyExistsError` |
 
 `update_event(id, options=[...])` supports removing, reordering, and mixing loaded
 options with new `EventOption` objects. Each loaded option retains its own source
@@ -655,7 +655,7 @@ patches those files separately.
 | `get_decision(decision_id: str) -> Decision` | `Decision` | Get a decision |
 | `get_decision_category(category_id: str) -> DecisionCategory` | `DecisionCategory` | Get a category |
 | `create_decision_category(category_id, icon="", allowed="", visible="", path=None, category_path=None, overwrite=False) -> DecisionCategory` | `DecisionCategory` | Create or route a category. `path` targets decision content; optional `category_path` must be under `common/decisions/categories`. Raises if it exists unless `overwrite=True`. |
-| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, **fields) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. Also accepts every mission, targeted, and general field listed below by keyword. |
+| `create_decision(category_id, decision_id, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, **fields) -> Decision` | `Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. A category the mod does not define is extended in the mod's decisions file without writing a category definition (that would replace the game's); with a game install, a category that no one defines raises `NotFoundError` (create it with `create_decision_category()` first). Also accepts every mission, targeted, and general field listed below by keyword. |
 | `ensure_decision_category(category_id, **kwargs) -> DecisionCategory` | `DecisionCategory` | Idempotent create-or-update wrapper |
 | `ensure_decision(category_id, decision_id, **kwargs) -> Decision` | `Decision` | Idempotent create-or-update wrapper |
 | `create_decision_chain(category_id, steps, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Decisions | Build staged decisions with generated completion flags, event calls, localization, and final event |
@@ -860,19 +860,19 @@ static checks do not establish the layout displayed by the game.
 | `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields; `country_tag` is used only at creation |
 | `update_focus_tree(tree_id: str, **kwargs) -> FocusTree` | `FocusTree` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id: str) -> None` | `None` | Remove tree; raises `NotFoundError` |
-| `add_focus(tree_id: str, focus: Focus) -> None` | `None` | Append focus to tree |
+| `add_focus(tree_id: str, focus: Focus) -> Focus` | `Focus` | Append focus to tree; an id the tree has raises `AlreadyExistsError` |
 | `upsert_focus(tree_id: str, focus: Focus) -> Focus` | `Focus` | Add a new focus or replace modeled fields on an existing focus |
-| `remove_focus(tree_id: str, focus_id: str) -> bool` | `bool` | Remove focus by ID |
+| `remove_focus(tree_id: str, focus_id: str) -> None` | `None` | Remove focus by ID; raises `NotFoundError` |
 | `get_focus(tree_id: str, focus_id: str) -> Focus \| None` | `Focus \| None` | Find focus in tree |
 | `update_focus(tree_id: str, focus_id: str, **kwargs) -> Focus` | `Focus` | Update any Focus field |
 | `focus_tree_bounds(tree_id: str) -> dict[str, int]` | Bounds dict | `min_x`, `max_x`, `min_y`, `max_y`, `width`, `height` |
 | `place_continuous_focus_below_tree(tree_id, padding=400, x=50) -> str` | Position body | Sets `continuous_focus_position` below the lowest focus row |
-| `assert_no_visual_overlap(tree_id, min_continuous_padding=100) -> bool` | `bool` | Raises `ValueError` on duplicate focus positions or too-high continuous focus |
+| `assert_no_visual_overlap(tree_id, min_continuous_padding=100) -> None` | `None` | Raises `ValueError` on duplicate focus positions or too-high continuous focus |
 | `auto_layout_branch(tree_id, focuses, anchor_focus_id=None, x=None, y_start=None, spacing_y=1, chain_prerequisites=True) -> list[Focus]` | `list[Focus]` | Assign positions/prerequisites before inserting a generated branch |
-| `insert_focus_after(tree_id, anchor_focus_id, focus, add_prerequisite=True, relative_position=True) -> None` | `None` | Insert a focus after an existing focus and optionally wire prerequisite/relative positioning |
-| `insert_branch(tree_id, anchor_focus_id, focuses, chain_prerequisites=True) -> None` | `None` | Insert a vertical branch after an anchor focus |
-| `append_to_focus_reward(tree_id, focus_id, effect) -> bool` | `bool` | Append an effect to an existing focus reward |
-| `set_focuses_mutually_exclusive(tree_id, focus_a_id, focus_b_id) -> bool` | `bool` | Add reciprocal simple mutual exclusion groups |
+| `insert_focus_after(tree_id, anchor_focus_id, focus, add_prerequisite=True, relative_position=True) -> Focus` | `Focus` | Insert a focus after an existing focus and optionally wire prerequisite/relative positioning |
+| `insert_branch(tree_id, anchor_focus_id, focuses, chain_prerequisites=True) -> list[Focus]` | `list[Focus]` | Insert a vertical branch after an anchor focus; a duplicate id raises `AlreadyExistsError` before anything is inserted |
+| `append_to_focus_reward(tree_id, focus_id, effect) -> Focus` | `Focus` | Append an effect to an existing focus reward; raises `NotFoundError` |
+| `set_focuses_mutually_exclusive(tree_id, focus_a_id, focus_b_id) -> None` | `None` | Add reciprocal simple mutual exclusion groups; raises `NotFoundError` |
 | `set_focus_loc(focus_id, name, description, file_path=None) -> None` | `None` | Set both focus name and description localization |
 | `create_industrial_branch(tree_id, tag, anchor_focus_id=None, state_id=None, grounded=True) -> list[Focus]` | `list[Focus]` | Generate a small grounded industrial branch with localization |
 
@@ -1443,11 +1443,11 @@ sibling definitions. All non-reserved scalar assignments belong to the modeled
 | `get_bookmark(name) -> Bookmark` | `Bookmark` | Gets one bookmark by name. |
 | `create_bookmark(name, *, description="", date="1936.1.1.12", picture="GFX_select_date_1936", default_country="", default=None, filters="", effect="randomize_weather = 22345", countries=None, path=None, overwrite=False) -> Bookmark` | `Bookmark` | Creates a bookmark; its default effect randomizes weather. |
 | `update_bookmark(name, **kwargs) -> Bookmark` | `Bookmark` | Source-patches modeled bookmark fields. |
-| `add_bookmark_country(bookmark_name, country) -> None` | `None` | Appends one ordered country entry. |
+| `add_bookmark_country(bookmark_name, country) -> BookmarkCountry` | `BookmarkCountry` | Appends one ordered country entry; a second entry for the same tag and DLC raises `AlreadyExistsError`. |
 | `update_bookmark_country(bookmark_name, tag, *, occurrence=0, **kwargs) -> BookmarkCountry` | `BookmarkCountry` | Patches one repeated tag occurrence using a zero-based index. |
 | `delete_bookmark_country(bookmark_name, tag, *, occurrence=0) -> None` | `None` | Deletes one repeated tag occurrence using a zero-based index; raises `NotFoundError` for a missing bookmark or entry. |
 | `delete_bookmark(name) -> None` | `None` | Stages deletion of a bookmark; raises `NotFoundError`. |
-| `set_bookmark_date_range(start_date, end_date, *, path="common/defines/zz_bookmark_dates.lua") -> Path` | `Path` | Stages `START_DATE` and `END_DATE` defines in the normal transaction. |
+| `set_bookmark_date_range(start_date, end_date, *, path="common/defines/zz_bookmark_dates.lua") -> None` | `None` | Stages `START_DATE` and `END_DATE` defines in the normal transaction. |
 
 The date helper edits every active literal `NDefines.NGame.START_DATE` and
 `NDefines.NGame.END_DATE` Lua assignment. It skips Lua comments and string

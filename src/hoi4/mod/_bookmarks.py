@@ -19,7 +19,7 @@ from ..paths import (
 from ..script import (
     normalize_block_body,
 )
-from ..errors import NotFoundError, not_found
+from ..errors import NotFoundError, already_exists, not_found
 from ._core import CoreLayer
 from ._shared import (
     _check_fields,
@@ -134,15 +134,38 @@ class BookmarksLayer(CoreLayer):
         self._dirty.add("bookmarks")
         return bookmark
 
-    def add_bookmark_country(self, bookmark_name: str, country: BookmarkCountry) -> None:
+    def add_bookmark_country(self, bookmark_name: str, country: BookmarkCountry) -> BookmarkCountry:
+        """Append a country entry to a bookmark.
+
+        Returns:
+            The added entry (the object passed in, now part of the bookmark).
+
+        Raises:
+            NotFoundError: No bookmark is called ``bookmark_name``.
+            AlreadyExistsError: The bookmark already has an entry for this tag
+                with the same ``required_dlc``; use ``update_bookmark_country()``.
+        """
         bookmark = self.get_bookmark(bookmark_name)
-        country.tag = require_bookmark_country_key(country.tag)
-        country.required_dlc = normalize_required_dlc(country.required_dlc)
+        tag = require_bookmark_country_key(country.tag)
+        required_dlc = normalize_required_dlc(country.required_dlc)
+        if any(
+            existing.tag == tag and existing.required_dlc == required_dlc
+            for existing in bookmark.countries
+        ):
+            raise already_exists(
+                "bookmark country",
+                tag,
+                hint=f"Bookmark '{bookmark_name}' has an entry for it; "
+                "use update_bookmark_country() to change it.",
+            )
+        country.tag = tag
+        country.required_dlc = required_dlc
         bookmark.countries.append(country)
         if bookmark.path is not None:
             self._dirty_bookmark_files.add(bookmark.path)
             self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
         self._dirty.add("bookmarks")
+        return country
 
     def update_bookmark_country(
         self,
@@ -227,8 +250,12 @@ class BookmarksLayer(CoreLayer):
         end_date: str,
         *,
         path: str | Path = "common/defines/zz_bookmark_dates.lua",
-    ) -> Path:
-        """Stage START_DATE/END_DATE defines in the normal preview/save transaction."""
+    ) -> None:
+        """Stage START_DATE/END_DATE defines in the normal preview/save transaction.
+
+        Raises:
+            ValueError: A date is not a valid ``Y.M.D[.H]`` date.
+        """
 
         start = require_bookmark_date(start_date, label="bookmark start date")
         end = require_bookmark_date(end_date, label="bookmark end date")
@@ -237,4 +264,3 @@ class BookmarksLayer(CoreLayer):
             self._original_files[target] = self._read_current_text(target)
         self._bookmark_date_defines = (target, start, end)
         self._dirty.add("bookmark_dates")
-        return target

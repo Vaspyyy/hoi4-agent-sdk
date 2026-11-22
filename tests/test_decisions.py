@@ -82,6 +82,7 @@ def test_create_decision_requires_explicit_overwrite(tmp_path):
 
 def test_mod_saves_and_loads_decision(tmp_path):
     mod = Mod(tmp_path)
+    mod.create_decision_category("test_category")
     mod.create_decision(
         "test_category",
         "test_decision",

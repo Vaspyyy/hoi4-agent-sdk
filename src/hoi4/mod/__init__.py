@@ -36,7 +36,7 @@ only the ones it does not already reach through another base.
   ``_localisation``, ``_countries``, ``_characters``.
 * ``_oobs``: Orders of battle, equipment variants and their country assignment. Uses
   ``_catalogs``, ``_equipment``, ``_countries``.
-* ``_states``: State lookup, search and history edits. Uses only ``_core``.
+* ``_states``: State lookup, search and history edits. Uses ``_countries``.
 * ``_map``: Map editing: provinces, strategic regions, supply, railways and buildings.
   Uses ``_localisation``, ``_catalogs``, ``_states``.
 * ``_events``: Event authoring. Uses only ``_core``.
@@ -50,7 +50,7 @@ only the ones it does not already reach through another base.
 * ``_context``: Country context reports, icon suggestions and territory checks. Uses
   ``_catalogs``, ``_countries``, ``_states``.
 * ``_focus``: Focus tree authoring and layout. Uses ``_effects``, ``_localisation``,
-  ``_context``, ``_catalogs``.
+  ``_context``, ``_catalogs``, ``_countries``.
 * ``_definitions``: Script imports and the keyed ``common/`` definition API. Uses only
   ``_core``.
 * ``_assets``: Flag, portrait, icon and picture imports. Uses only ``_core``.

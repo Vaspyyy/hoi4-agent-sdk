@@ -5,12 +5,11 @@ from __future__ import annotations
 import copy
 import dataclasses
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 from ..focus import FOCUS_KINDS
 from ..focus_layout import resolve_focus_positions, visual_overlap_issues
 from ..paths import (
-    require_country_tag,
     require_script_id,
     resolve_mod_output_path,
 )
@@ -18,7 +17,7 @@ from ..types import (
     Focus,
     FocusTree,
 )
-from ..errors import not_found
+from ..errors import already_exists, not_found
 from ._context import ContextLayer
 from ._effects import EffectsLayer
 from ._shared import (
@@ -39,6 +38,20 @@ def _require_focus_kind(tree: FocusTree, kind: str) -> None:
             f"Focus kind {kind!r} is not allowed in {tree.kind} '{tree.id}'. "
             f"Use one of: {', '.join(allowed)}"
         )
+
+
+def _require_new_focus_ids(tree: FocusTree, focuses: Sequence[Focus]) -> None:
+    """Raise ``AlreadyExistsError`` when a focus id is in ``tree`` or repeats in ``focuses``."""
+    taken = {focus.id for focus in tree.focuses}
+    for focus in focuses:
+        if focus.id in taken:
+            raise already_exists(
+                "focus",
+                focus.id,
+                hint=f"It is in focus tree '{tree.id}' (or twice in this call); "
+                "use update_focus() or ensure_focus() to change it.",
+            )
+        taken.add(focus.id)
 
 
 class FocusLayer(ContextLayer, EffectsLayer):
@@ -64,7 +77,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 f"Focus tree '{tree_id}' already exists. "
                 "Use overwrite=True to replace it or update_focus_tree()/add_focus() to patch it."
             )
-        tag = require_country_tag(country_tag)
+        tag = self._require_country_reference(country_tag)
         path = (
             existing.path
             if existing is not None and existing.path is not None
@@ -143,25 +156,38 @@ class FocusLayer(ContextLayer, EffectsLayer):
 
     # ── Focuses ──────────────────────────────────────────────────
 
-    def add_focus(self, tree_id: str, focus: Focus) -> None:
+    def add_focus(self, tree_id: str, focus: Focus) -> Focus:
+        """Append ``focus`` to a tree.
+
+        Returns:
+            The added focus (the object passed in, now part of the tree).
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+            AlreadyExistsError: The tree already has a focus with this id;
+                use ``update_focus()`` or ``ensure_focus()``.
+        """
         tree = self.get_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
+        _require_new_focus_ids(tree, [focus])
         focus.touched = True
         tree.focuses.append(focus)
         tree.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
+        return focus
 
-    def remove_focus(self, tree_id: str, focus_id: str) -> bool:
+    def remove_focus(self, tree_id: str, focus_id: str) -> None:
+        """Remove one focus from a tree.
+
+        Raises:
+            NotFoundError: The tree or the focus does not exist.
+        """
         tree = self.get_focus_tree(tree_id)
-        for i, f in enumerate(tree.focuses):
-            if f.id == focus_id:
-                tree.focuses.pop(i)
-                tree.touched = True
-                self._dirty.add("focus")
-                self._dirty_focus_trees.add(tree_id)
-                return True
-        return False
+        tree.focuses.remove(self._require_focus(tree, focus_id))
+        tree.touched = True
+        self._dirty.add("focus")
+        self._dirty_focus_trees.add(tree_id)
 
     def get_focus(self, tree_id: str, focus_id: str) -> Optional[Focus]:
         tree = self.get_focus_tree(tree_id)
@@ -249,7 +275,14 @@ class FocusLayer(ContextLayer, EffectsLayer):
         self.update_focus_tree(tree_id, continuous_focus_position=position)
         return position
 
-    def assert_no_visual_overlap(self, tree_id: str, *, min_continuous_padding: int = 100) -> bool:
+    def assert_no_visual_overlap(self, tree_id: str, *, min_continuous_padding: int = 100) -> None:
+        """Check that no two focuses of a tree are drawn on top of each other.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+            ValueError: Focuses overlap, or the continuous focus position is
+                closer than ``min_continuous_padding`` to the tree.
+        """
         tree = self.get_focus_tree(tree_id)
         layout = resolve_focus_positions(tree)
         layout.require_complete()
@@ -271,7 +304,6 @@ class FocusLayer(ContextLayer, EffectsLayer):
         )
         if issues:
             raise ValueError("; ".join(issues))
-        return True
 
     def auto_layout_branch(
         self,
@@ -284,23 +316,30 @@ class FocusLayer(ContextLayer, EffectsLayer):
         spacing_y: int = 1,
         chain_prerequisites: bool = True,
     ) -> list[Focus]:
+        """Place ``focuses`` in one column and chain their prerequisites.
+
+        The focuses are positioned, not added; pass them to ``add_focus()``
+        or ``insert_branch()`` afterwards. With ``anchor_focus_id`` the column
+        starts below that focus and the first focus requires it.
+
+        Returns:
+            The same focuses, positioned.
+
+        Raises:
+            NotFoundError: The tree or the anchor focus does not exist.
+        """
         tree = self.get_focus_tree(tree_id)
+        anchor = self._require_focus(tree, anchor_focus_id) if anchor_focus_id else None
         if not focuses:
             return []
         if x is None:
-            if anchor_focus_id:
-                anchor = self.get_focus(tree_id, anchor_focus_id)
-                x = anchor.x if anchor else 0
+            if anchor is not None:
+                x = anchor.x
             else:
                 x = max((focus.x for focus in tree.focuses), default=0) + 2
         if y_start is None:
-            if anchor_focus_id:
-                anchor = self.get_focus(tree_id, anchor_focus_id)
-                y_start = (
-                    (anchor.y + spacing_y)
-                    if anchor
-                    else max((focus.y for focus in tree.focuses), default=-1) + spacing_y
-                )
+            if anchor is not None:
+                y_start = anchor.y + spacing_y
             else:
                 y_start = max((focus.y for focus in tree.focuses), default=-1) + spacing_y
         previous = anchor_focus_id
@@ -320,27 +359,32 @@ class FocusLayer(ContextLayer, EffectsLayer):
         *,
         add_prerequisite: bool = True,
         relative_position: bool = True,
-    ) -> None:
+    ) -> Focus:
+        """Insert ``focus`` right after ``anchor_focus_id`` in the tree's file order.
+
+        By default the new focus requires the anchor and is positioned
+        relative to it.
+
+        Returns:
+            The inserted focus.
+
+        Raises:
+            NotFoundError: The tree or the anchor focus does not exist.
+            AlreadyExistsError: The tree already has a focus with this id.
+        """
         tree = self.get_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
-        for idx, existing in enumerate(tree.focuses):
-            if existing.id == anchor_focus_id:
-                if add_prerequisite and not focus.prerequisites:
-                    focus.prerequisites = [[anchor_focus_id]]
-                if relative_position and not focus.relative_position_id:
-                    focus.relative_position_id = anchor_focus_id
-                focus.touched = True
-                tree.focuses.insert(idx + 1, focus)
-                self._dirty.add("focus")
-                self._dirty_focus_trees.add(tree_id)
-                return
-        raise not_found(
-            "focus",
-            anchor_focus_id,
-            (existing.id for existing in tree.focuses),
-            where=f"focus tree '{tree_id}'",
-            plural="focuses",
-        )
+        anchor = self._require_focus(tree, anchor_focus_id)
+        _require_new_focus_ids(tree, [focus])
+        if add_prerequisite and not focus.prerequisites:
+            focus.prerequisites = [[anchor_focus_id]]
+        if relative_position and not focus.relative_position_id:
+            focus.relative_position_id = anchor_focus_id
+        focus.touched = True
+        tree.focuses.insert(tree.focuses.index(anchor) + 1, focus)
+        self._dirty.add("focus")
+        self._dirty_focus_trees.add(tree_id)
+        return focus
 
     def insert_branch(
         self,
@@ -349,7 +393,22 @@ class FocusLayer(ContextLayer, EffectsLayer):
         focuses: list[Focus],
         *,
         chain_prerequisites: bool = True,
-    ) -> None:
+    ) -> list[Focus]:
+        """Insert a chain of focuses after ``anchor_focus_id``, each after the previous.
+
+        Returns:
+            The inserted focuses.
+
+        Raises:
+            NotFoundError: The tree or the anchor focus does not exist.
+            AlreadyExistsError: A focus id is already in the tree or repeats
+                in ``focuses``; nothing is inserted.
+        """
+        tree = self.get_focus_tree(tree_id)
+        self._require_focus(tree, anchor_focus_id)
+        for focus in focuses:
+            _require_focus_kind(tree, focus.kind)
+        _require_new_focus_ids(tree, focuses)
         previous = anchor_focus_id
         for focus in focuses:
             if chain_prerequisites and not focus.prerequisites:
@@ -358,26 +417,38 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 focus.relative_position_id = previous
             self.insert_focus_after(tree_id, previous, focus, add_prerequisite=False)
             previous = focus.id
+        return focuses
 
-    def append_to_focus_reward(self, tree_id: str, focus_id: str, effect: str) -> bool:
-        focus = self.get_focus(tree_id, focus_id)
-        if focus is None:
-            return False
+    def append_to_focus_reward(self, tree_id: str, focus_id: str, effect: str) -> Focus:
+        """Append ``effect`` to a focus's ``completion_reward``.
+
+        Returns:
+            The changed focus.
+
+        Raises:
+            NotFoundError: The tree or the focus does not exist.
+        """
+        tree = self.get_focus_tree(tree_id)
+        focus = self._require_focus(tree, focus_id)
         focus.completion_reward = "\n".join(
             part for part in [focus.completion_reward.strip(), effect.strip()] if part
         )
         focus.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
-        return True
+        return focus
 
     def set_focuses_mutually_exclusive(
         self, tree_id: str, focus_a_id: str, focus_b_id: str
-    ) -> bool:
-        focus_a = self.get_focus(tree_id, focus_a_id)
-        focus_b = self.get_focus(tree_id, focus_b_id)
-        if focus_a is None or focus_b is None:
-            return False
+    ) -> None:
+        """Make two focuses of a tree mutually exclusive, both ways.
+
+        Raises:
+            NotFoundError: The tree or one of the focuses does not exist.
+        """
+        tree = self.get_focus_tree(tree_id)
+        focus_a = self._require_focus(tree, focus_a_id)
+        focus_b = self._require_focus(tree, focus_b_id)
         if [focus_b_id] not in focus_a.mutually_exclusive:
             focus_a.mutually_exclusive.append([focus_b_id])
         if [focus_a_id] not in focus_b.mutually_exclusive:
@@ -386,7 +457,6 @@ class FocusLayer(ContextLayer, EffectsLayer):
         focus_b.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
-        return True
 
     def set_focus_loc(
         self,

@@ -138,9 +138,14 @@ class CountriesLayer(CoreLayer):
         female_names: Sequence[str] = (),
         callsigns: Sequence[str] = (),
     ) -> None:
-        """Define random character and ace names for one country tag."""
+        """Define random character and ace names for one country tag.
 
-        tag = require_country_tag(tag)
+        Raises:
+            NotFoundError: A game install is configured and no one defines ``tag``.
+            ValueError: ``tag`` is invalid, or a required list is empty.
+        """
+
+        tag = self._require_country_reference(tag)
 
         def values(items: Sequence[str], *, required: bool, label: str) -> str:
             normalized = tuple(
@@ -324,6 +329,29 @@ class CountriesLayer(CoreLayer):
         tag = require_country_tag(tag)
         if not self._is_known_country_tag(tag):
             raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
+        return tag
+
+    def _require_country_reference(self, tag: str) -> str:
+        """Return the normalized tag of a country that a new object refers to.
+
+        Raises ``NotFoundError`` when the SDK knows no one defines it: the
+        mod, a base mod and the configured game do not. Without a configured
+        game install (or one without a country tag list) the tag may be the
+        game's, so it is accepted and ``validate()`` checks it.
+        """
+        tag = require_country_tag(tag)
+        if (
+            self.hoi4_install is not None
+            and self._vanilla_tags
+            and not self._is_known_country_tag(tag)
+        ):
+            raise not_found(
+                "country",
+                tag,
+                self._country_tag_candidates(),
+                plural="countries",
+                hint="Create it with create_country() first.",
+            )
         return tag
 
     def _is_known_country_tag(self, tag: str) -> bool:

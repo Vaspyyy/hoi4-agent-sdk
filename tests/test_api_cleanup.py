@@ -327,3 +327,146 @@ def test_bookkeeping_fields_are_not_listed_as_valid(full_mod: Mod) -> None:
     with pytest.raises(TypeError) as caught:
         full_mod.update_decision_category("zz_cat", zz_bogus=1)
     assert "'paths'" not in str(caught.value)
+
+
+# ── add_*, remove_*, set_*, insert_*, assign_* ──────────────────────
+
+
+def test_focus_additions_return_the_focus_and_refuse_duplicates(full_mod: Mod) -> None:
+    from hoi4 import AlreadyExistsError, Focus
+
+    mod = full_mod
+    added = mod.add_focus("zz_tree", Focus(id="ABC_g", x=2))
+    assert isinstance(added, Focus) and added.id == "ABC_g"
+    with pytest.raises(AlreadyExistsError, match="Focus 'ABC_g' already exists"):
+        mod.add_focus("zz_tree", Focus(id="ABC_g"))
+    inserted = mod.insert_focus_after("zz_tree", "ABC_f", Focus(id="ABC_h"))
+    assert inserted.prerequisites == [["ABC_f"]]
+    with pytest.raises(AlreadyExistsError):
+        mod.insert_focus_after("zz_tree", "ABC_f", Focus(id="ABC_h"))
+    before = [focus.id for focus in mod.get_focus_tree("zz_tree").focuses]
+    with pytest.raises(AlreadyExistsError):
+        mod.insert_branch("zz_tree", "ABC_f", [Focus(id="ABC_i"), Focus(id="ABC_g")])
+    assert [focus.id for focus in mod.get_focus_tree("zz_tree").focuses] == before
+    branch = mod.insert_branch("zz_tree", "ABC_f", [Focus(id="ABC_i"), Focus(id="ABC_j")])
+    assert [focus.id for focus in branch] == ["ABC_i", "ABC_j"]
+    with pytest.raises(NotFoundError, match="Focus 'ABC_nope' not found in focus tree 'zz_tree'"):
+        mod.auto_layout_branch("zz_tree", [Focus(id="ABC_k")], anchor_focus_id="ABC_nope")
+    rewarded = mod.append_to_focus_reward("zz_tree", "ABC_f", "add_stability = 0.1")
+    assert rewarded.completion_reward == "add_stability = 0.1"
+    with pytest.raises(NotFoundError):
+        mod.append_to_focus_reward("zz_tree", "ABC_nope", "add_stability = 0.1")
+    assert mod.set_focuses_mutually_exclusive("zz_tree", "ABC_i", "ABC_j") is None
+    with pytest.raises(NotFoundError):
+        mod.set_focuses_mutually_exclusive("zz_tree", "ABC_i", "ABC_nope")
+    assert mod.remove_focus("zz_tree", "ABC_j") is None
+    with pytest.raises(NotFoundError):
+        mod.remove_focus("zz_tree", "ABC_j")
+
+
+def test_assert_no_visual_overlap_returns_none(full_mod: Mod) -> None:
+    assert full_mod.assert_no_visual_overlap("zz_tree") is None
+
+
+def test_event_options_and_namespaces(full_mod: Mod) -> None:
+    from hoi4 import AlreadyExistsError, EventOption
+
+    mod = full_mod
+    added = mod.add_event_option("zz.1", EventOption(name="zz.1.b"))
+    assert isinstance(added, EventOption) and added.name == "zz.1.b"
+    with pytest.raises(AlreadyExistsError, match="Event option 'zz.1.b' already exists"):
+        mod.add_event_option("zz.1", EventOption(name="zz.1.b"))
+    with pytest.raises(NotFoundError):
+        mod.add_event_option("zz.9", EventOption(name="zz.9.a"))
+    with pytest.raises(NotFoundError):
+        mod.set_event_namespace("zz.9", "zz")
+
+
+def test_bookmark_country_additions_refuse_duplicates(full_mod: Mod) -> None:
+    from hoi4 import AlreadyExistsError, BookmarkCountry
+
+    added = full_mod.add_bookmark_country("zz_bm", BookmarkCountry(tag="GER"))
+    assert isinstance(added, BookmarkCountry) and added.tag == "GER"
+    with pytest.raises(AlreadyExistsError, match="Bookmark country 'GER' already exists"):
+        full_mod.add_bookmark_country("zz_bm", BookmarkCountry(tag="GER"))
+    # The same tag behind another DLC gate is a different entry.
+    full_mod.add_bookmark_country(
+        "zz_bm", BookmarkCountry(tag="GER", required_dlc=("Man the Guns",))
+    )
+    assert full_mod.set_bookmark_date_range("1936.1.1.12", "1950.1.1.1") is None
+
+
+def test_character_roles_raise_for_a_missing_role(full_mod: Mod) -> None:
+    with pytest.raises(NotFoundError, match="has no 'advisor' role"):
+        full_mod.remove_character_role("ABC_hero", "advisor")
+    assert full_mod.remove_character_role("ABC_hero", "country_leader") is None
+
+
+def test_oob_assignments_raise_instead_of_inventing(full_mod: Mod) -> None:
+    mod = full_mod
+    with pytest.raises(NotFoundError, match="has no land OOB assignment of 'ABC_1936'"):
+        mod.unassign_country_oob("ABC", "ABC_1936", date="1939.1.1")
+    assert mod.unassign_country_oob("ABC", "ABC_1936") is None
+    with pytest.raises(NotFoundError, match="Country 'ZZX' not found"):
+        mod.assign_country_oob("ZZX", "ABC_1936")
+    assert "ZZX" not in mod.list_countries()
+
+
+def test_equipment_variants_need_a_defined_country(tmp_path) -> None:
+    from hoi4 import EquipmentVariant
+
+    mod = Mod(tmp_path)
+    with pytest.raises(NotFoundError, match="Country 'ZZX' not found"):
+        mod.create_equipment_variant(
+            "ZZX", EquipmentVariant(name="V", equipment_type="light_tank_chassis_1")
+        )
+    assert mod.preview() == ""
+
+
+def test_remove_state_core_raises_for_a_tag_that_is_not_a_core(tmp_path, game) -> None:
+    _write(game, "history/states/1-Berlin.txt", "state = { id = 1 history = { owner = GER add_core_of = GER } provinces = { 1 } }\n")
+    mod = Mod(tmp_path / "mod", hoi4_install=game)
+    with pytest.raises(NotFoundError, match="Core 'POL' not found in state 1"):
+        mod.remove_state_core(1, "POL")
+    assert mod.preview() == ""  # nothing was copied into the mod
+    assert mod.remove_state_core(1, "GER") is None
+
+
+def test_references_to_an_undefined_country_raise_when_the_game_is_known(tmp_path, game) -> None:
+    mod = Mod(tmp_path / "mod", hoi4_install=game)
+    _write(game, "history/states/1-Berlin.txt", "state = { id = 1 history = { owner = GER } provinces = { 1 } }\n")
+    for call in (
+        lambda: mod.create_focus_tree("zz_tree", "ZZX"),
+        lambda: mod.create_oob("ZZX_1936", "ZZX", assign=False),
+        lambda: mod.set_country_name_pool("ZZX", male_names=["A"], surnames=["B"]),
+        lambda: mod.add_state_core(1, "ZZX"),
+        lambda: mod.set_state_owner(1, "ZZX"),
+    ):
+        with pytest.raises(NotFoundError, match="Country 'ZZX' not found"):
+            call()
+    assert mod.preview() == ""
+    # A tag the game defines is fine.
+    mod.create_focus_tree("ger_tree", "GER")
+
+
+def test_references_are_accepted_without_a_game_install(tmp_path) -> None:
+    # Without a game install the tag may be the game's; validate() checks it.
+    mod = Mod(tmp_path)
+    mod.create_focus_tree("ger_tree", "GER")
+    mod.create_oob("GER_new", "GER", assign=False)
+    mod.set_country_name_pool("GER", male_names=["A"], surnames=["B"])
+
+
+def test_create_decision_never_invents_a_category_definition(tmp_path, game) -> None:
+    _write(game, "common/decisions/categories/00_cat.txt", "political_actions = { icon = generic }\n")
+    mod = Mod(tmp_path / "mod", hoi4_install=game)
+    mod.create_decision("political_actions", "zz_dec")
+    preview = mod.preview()
+    assert "common/decisions/mod_decisions.txt" in preview
+    assert "categories" not in preview
+    with pytest.raises(NotFoundError, match="Decision category 'zz_nope' not found"):
+        mod.create_decision("zz_nope", "zz_dec2")
+
+    no_game = Mod(tmp_path / "plain")
+    no_game.create_decision("political_actions", "zz_dec")
+    assert "categories" not in no_game.preview()

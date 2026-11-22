@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from hoi4 import MapBuilding, MapEditReport, Mod, Railway
+from hoi4 import MapBuilding, MapEditReport, Mod, NotFoundError, Railway
 from hoi4.map_editing import (
     append_list_tokens,
     parse_strategic_regions,
@@ -474,10 +474,17 @@ def test_railway_editing_checks_adjacency_and_keeps_other_lines(tmp_path: Path) 
         mod.add_railway(9, [1, 3])
     added = mod.add_railway(3, [1, 3, 6])
     assert added == Railway(level=3, provinces=(1, 3, 6), index=2)
-    assert mod.set_railway_level([6, 5, 4], 4) == 1
-    assert mod.remove_railway(mod.list_railways()[0]) == 1
-    with pytest.raises(KeyError):
+    assert mod.set_railway_level([6, 5, 4], 4) is None
+    assert any(
+        railway.level == 4 and railway.provinces == (4, 5, 6) for railway in mod.list_railways()
+    )
+    railways = len(mod.list_railways())
+    assert mod.remove_railway(mod.list_railways()[0]) is None
+    assert len(mod.list_railways()) == railways - 1
+    with pytest.raises(NotFoundError):
         mod.remove_railway([2, 3])
+    with pytest.raises(NotFoundError):
+        mod.set_railway_level([2, 3], 2)
     mod.save()
 
     assert (tmp_path / "mod/map/railways.txt").read_text(encoding="utf-8") == (
@@ -511,8 +518,14 @@ def test_map_buildings_add_list_remove(tmp_path: Path) -> None:
     assert added.index == 4 and added.z == 2.5
     with pytest.raises(ValueError):
         mod.remove_map_buildings()
-    assert mod.remove_map_buildings(state_id=2, building="arms_factory") == 2
-    with pytest.raises(KeyError, match="stale"):
+    assert len(mod.list_map_buildings(state_id=2)) == 3
+    assert mod.remove_map_buildings(state_id=2, building="arms_factory") is None
+    assert [entry.building for entry in mod.list_map_buildings(state_id=2)] == ["bunker"]
+    with pytest.raises(NotFoundError, match="No building position matches state 2"):
+        mod.remove_map_buildings(state_id=2, building="arms_factory")
+    with pytest.raises(NotFoundError, match="State 42 not found"):
+        mod.remove_map_buildings(state_id=42)
+    with pytest.raises(NotFoundError, match="stale"):
         mod.remove_map_buildings(entries=[added])
     mod.save()
 

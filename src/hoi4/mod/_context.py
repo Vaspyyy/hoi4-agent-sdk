@@ -32,7 +32,6 @@ from ..types import (
     State,
 )
 from ._catalogs import CatalogsLayer
-from ._countries import CountriesLayer
 from ._states import StatesLayer
 
 COMMON_FOCUS_ICONS: tuple[str, ...] = (
@@ -53,7 +52,7 @@ COMMON_FOCUS_ICONS: tuple[str, ...] = (
 )
 
 
-class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
+class ContextLayer(StatesLayer, CatalogsLayer):
     """Country context reports, icon suggestions and territory checks."""
 
     def get_country_context(self, tag: str, *, copy_states: bool = False) -> dict:

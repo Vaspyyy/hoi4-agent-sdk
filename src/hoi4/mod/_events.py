@@ -17,7 +17,7 @@ from ..types import (
     EventOption,
     EventText,
 )
-from ..errors import NotFoundError, not_found
+from ..errors import NotFoundError, already_exists, not_found
 from ._core import CoreLayer
 from ._shared import (
     _check_fields,
@@ -211,32 +211,51 @@ class EventsLayer(CoreLayer):
         self._dirty_events.discard(event_id)
 
     def set_event_namespace(self, event_id: str, namespace: str) -> None:
-        if event_id in self._events:
-            namespace = require_event_namespace(namespace)
-            event = self._events[event_id]
-            old_path = (
-                event.path
-                or self.mod_root
-                / "events"
-                / f"{self._event_namespaces.get(event_id) or 'mod'}_events.txt"
-            )
-            event.path = self.mod_root / "events" / f"{namespace}_events.txt"
-            event.touched = True
-            self._dirty_event_files.update({old_path, event.path})
-            self._event_namespaces[event_id] = namespace
-            self._dirty.add("events")
-            self._dirty_events.add(event_id)
+        """Move an event to ``events/<namespace>_events.txt`` under that namespace.
 
-    def add_event_option(self, event_id: str, option: EventOption) -> bool:
-        event = self._events.get(event_id)
-        if event is None:
-            return False
-        event.options.append(_normalize_event_option(option))
-        event.options[-1].touched = True
+        Raises:
+            NotFoundError: No event has this id.
+            ValueError: ``namespace`` is not a valid namespace.
+        """
+        event = self.get_event(event_id)
+        namespace = require_event_namespace(namespace)
+        old_path = (
+            event.path
+            or self.mod_root
+            / "events"
+            / f"{self._event_namespaces.get(event_id) or 'mod'}_events.txt"
+        )
+        event.path = self.mod_root / "events" / f"{namespace}_events.txt"
+        event.touched = True
+        self._dirty_event_files.update({old_path, event.path})
+        self._event_namespaces[event_id] = namespace
+        self._dirty.add("events")
+        self._dirty_events.add(event_id)
+
+    def add_event_option(self, event_id: str, option: EventOption) -> EventOption:
+        """Append an option to an event.
+
+        Returns:
+            The added option.
+
+        Raises:
+            NotFoundError: No event has this id.
+            AlreadyExistsError: The event already has an option with this name.
+        """
+        event = self.get_event(event_id)
+        if option.name and any(existing.name == option.name for existing in event.options):
+            raise already_exists(
+                "event option",
+                option.name,
+                hint=f"It is in event '{event_id}'; use update_event_option() to change it.",
+            )
+        added = _normalize_event_option(option)
+        added.touched = True
+        event.options.append(added)
         event.touched = True
         self._dirty.add("events")
         self._dirty_events.add(event_id)
-        return True
+        return added
 
     def update_event_option(self, event_id: str, option: int | str, **kwargs) -> EventOption:
         """Patch one option of an event, chosen by zero-based index or by name.
