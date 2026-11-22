@@ -48,8 +48,8 @@ class BookmarksLayer(CoreLayer):
     # ── Bookmarks ────────────────────────────────────────────────
 
     def list_bookmarks(self) -> list[str]:
-        """Return the names of the mod's bookmarks, in file order."""
-        return [bookmark.name for bookmark in self._bookmarks]
+        """Return the sorted names of the mod's bookmarks, each once."""
+        return sorted({bookmark.name for bookmark in self._bookmarks})
 
     def get_bookmark(self, name: str, *, default: _D | _Missing = MISSING) -> Bookmark | _D:
         """Return the bookmark called ``name``.

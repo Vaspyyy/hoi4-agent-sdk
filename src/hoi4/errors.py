@@ -1,8 +1,8 @@
 """Error classes shared by the whole SDK.
 
 Every error the SDK raises on purpose derives from :class:`Hoi4Error`, so
-``except hoi4.Hoi4Error`` catches all of them. The three common cases have
-their own classes:
+``except hoi4.Hoi4Error`` catches all of them. The common cases have their
+own classes:
 
 * :class:`NotFoundError`: an id, a tag, a file entry or an occurrence does not
   exist. It is also a ``KeyError``.
@@ -10,6 +10,11 @@ their own classes:
   exists. It is also a ``ValueError``.
 * :class:`ReadOnlyError`: the target is game content that this call cannot
   change. It is also a ``ValueError``.
+* :class:`SaveRefusedError`: ``save()`` (or ``preview()``) refuses to write,
+  because nothing would change with ``require_changes=True`` or because
+  writing would lose or break content. It is also a ``RuntimeError``.
+* :class:`LoadError`: with ``strict_loading=True``, a mod file failed to load.
+  It is also a ``RuntimeError``.
 
 This module imports nothing from the rest of the package, so every module can
 use it.
@@ -24,8 +29,10 @@ from typing import Any
 __all__ = [
     "AlreadyExistsError",
     "Hoi4Error",
+    "LoadError",
     "NotFoundError",
     "ReadOnlyError",
+    "SaveRefusedError",
     "already_exists",
     "not_found",
 ]
@@ -84,6 +91,24 @@ class AlreadyExistsError(Hoi4Error, ValueError):
 
 class ReadOnlyError(Hoi4Error, ValueError):
     """The target is game content that this call cannot change or delete."""
+
+
+class SaveRefusedError(Hoi4Error, RuntimeError):
+    """``save()`` or ``preview()`` refused to write; nothing was written.
+
+    Raised when ``require_changes=True`` and no file would change, and when
+    writing would lose or break content: a file that failed to load, a new
+    syntax problem, definitions skipped while loading, or a partial copy of
+    a file the game replaces as a whole. The message says which and what to
+    do. It is a ``RuntimeError`` too, so ``except RuntimeError`` keeps working.
+    """
+
+
+class LoadError(Hoi4Error, RuntimeError):
+    """With ``strict_loading=True``, a mod file failed to load.
+
+    It is a ``RuntimeError`` too, so ``except RuntimeError`` keeps working.
+    """
 
 
 def _plural(kind: str) -> str:

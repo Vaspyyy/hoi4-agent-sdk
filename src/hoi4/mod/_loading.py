@@ -26,6 +26,7 @@ from ..decisions import (
 from ..dynamic_modifiers import (
     load_dynamic_modifiers_text,
 )
+from ..errors import LoadError, SaveRefusedError
 from ..events import load_events_file
 from ..focus import load_focus_trees
 from ..ideas import read_ideas_text
@@ -69,7 +70,7 @@ _COUNTRY_LOC_ON_DISK: DiskAnalysis[dict[str, dict[str, str]]] = DiskAnalysis(
 )
 
 
-class _DuplicateIdentifierError(RuntimeError):
+class _DuplicateIdentifierError(LoadError):
     pass
 
 
@@ -97,7 +98,7 @@ class LoadingLayer(CountriesLayer):
         )
         self._add_load_diagnostic(diagnostic)
         if self.strict_loading:
-            raise RuntimeError(
+            raise LoadError(
                 f"Failed to load {section} file {path}: {type(error).__name__}: {error}"
             ) from error
 
@@ -148,7 +149,7 @@ class LoadingLayer(CountriesLayer):
             f"'{diagnostic.identifier or '<unknown>'}'"
             for diagnostic in conflicts
         )
-        raise RuntimeError(
+        raise SaveRefusedError(
             f"Refusing to rewrite {path}: duplicate definitions skipped during loading "
             f"would be lost ({definitions}). Resolve the duplicate diagnostics first or "
             "reopen the mod with strict_loading=True to fail during loading."

@@ -60,6 +60,7 @@ _INTERNAL_FIELDS = frozenset(
         "source_index",
         "paths",
         "is_vanilla",
+        "raw_text",
     }
 )
 

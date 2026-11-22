@@ -24,7 +24,7 @@ from ..textio import read_text
 from ..types import (
     State,
 )
-from ..errors import NotFoundError, not_found
+from ..errors import NotFoundError, already_exists, not_found
 from ._countries import CountriesLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -309,7 +309,9 @@ class StatesLayer(CountriesLayer):
         """Give one state or several to ``tag`` in their history (``owner = TAG``).
 
         ``add_core`` also adds ``tag`` to the cores. For a runtime change in
-        an event or focus, use ``effects.transfer_state()`` instead.
+        an event or focus, use ``effects.transfer_state()`` instead. A state
+        that already has this owner (and this core, with ``add_core``) is left
+        alone: nothing is staged for it.
 
         Raises:
             NotFoundError: A state does not exist (nothing changes then), or a
@@ -318,13 +320,18 @@ class StatesLayer(CountriesLayer):
         ids = [state_ids] if isinstance(state_ids, int) else list(state_ids)
         tag = self._require_country_reference(tag)
         states = [self.get_state(state_id) for state_id in ids]
+        changed = False
         for state in states:
+            has_core = tag.upper() in {core.upper() for core in state.cores}
+            if state.owner == tag and (has_core or not add_core):
+                continue
             self._materialize_state_override(state)
             state.owner = tag
-            if add_core and tag not in state.cores:
+            if add_core and not has_core:
                 state.cores.append(tag)
             self._dirty_states.add(state.id)
-        if states:
+            changed = True
+        if changed:
             self._dirty.add("states")
 
     def update_state(
@@ -338,7 +345,11 @@ class StatesLayer(CountriesLayer):
         """Set fields of a state; list fields such as ``cores`` are replaced.
 
         ``add_cores`` and ``remove_cores`` change single cores and keep the
-        rest. Only the statements that change are rewritten on save.
+        rest. Only the statements that change are rewritten on save. A call
+        that changes nothing stages nothing (an explicit ``victory_points``
+        always counts as a change: it rewrites the points one pair per block).
+        ``history`` is the script inside the state's ``history = { }`` block;
+        setting it replaces that block.
 
         Returns:
             The updated state.
@@ -361,6 +372,18 @@ class StatesLayer(CountriesLayer):
             values["owner"] = self._require_country_reference(values["owner"])
         if "cores" in values:
             values["cores"] = [self._require_country_reference(tag) for tag in values["cores"]]
+        current_cores = {core.upper() for core in values.get("cores", state.cores)}
+        if (
+            "victory_points" not in values
+            # A loaded state keeps the file's spelling ("1"), a caller may pass 1.
+            and all(
+                getattr(state, key) == value or str(getattr(state, key)) == str(value)
+                for key, value in values.items()
+            )
+            and not (removed & current_cores)
+            and all(tag.upper() in current_cores for tag in added)
+        ):
+            return state
         self._materialize_state_override(state)
         _set_fields(state, values, method="update_state")
         if removed:
@@ -383,12 +406,15 @@ class StatesLayer(CountriesLayer):
         Raises:
             NotFoundError: The state does not exist, or a game install is
                 configured and no one defines ``tag``.
+            AlreadyExistsError: ``tag`` is a core of the state already.
+                Nothing is copied into the mod then.
         """
         tag = self._require_country_reference(tag)
         state = self.get_state(state_id)
+        if tag.upper() in {core.upper() for core in state.cores}:
+            raise already_exists("core", tag, hint=f"State {state_id} has it.")
         self._materialize_state_override(state)
-        if tag not in state.cores:
-            state.cores.append(tag)
+        state.cores.append(tag)
         self._dirty.add("states")
         self._dirty_states.add(state_id)
         return state

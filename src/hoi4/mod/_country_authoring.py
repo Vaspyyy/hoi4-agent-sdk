@@ -87,9 +87,10 @@ class CountryAuthoringLayer(CharactersLayer):
             The new country.
 
         Raises:
-            AlreadyExistsError: The mod defines ``tag`` and ``overwrite`` is
-                false, or the game or a base mod does and
-                ``overwrite_vanilla`` is false.
+            AlreadyExistsError: The mod defines ``tag`` or the character
+                ``<TAG>_leader_1`` and ``overwrite`` is false, or the game or
+                a base mod defines ``tag`` and ``overwrite_vanilla`` is false.
+                Nothing is staged then.
             FileExistsError: Files of ``tag`` are on disk although no tag
                 file registers it, and ``overwrite`` is false.
             ValueError: ``tag`` is not a valid tag.
@@ -123,6 +124,16 @@ class CountryAuthoringLayer(CharactersLayer):
                 f"Country tag '{tag}' is already used by vanilla HOI4. "
                 "Choose an unused tag or pass overwrite_vanilla=True intentionally."
             )
+        leader_id = f"{tag}_leader_1"
+        if not overwrite and leader_id in self._characters:
+            # Checked here, not only in create_character() below, so a call
+            # that raises leaves nothing staged.
+            raise AlreadyExistsError(
+                f"Character '{leader_id}' already exists. "
+                "Use overwrite=True only for deliberate replacement.",
+                kind="character",
+                id=leader_id,
+            )
         if leader_ideology is None:
             leader_ideology = self._default_leader_ideology_for_party(ruling_party)
 
@@ -139,7 +150,7 @@ class CountryAuthoringLayer(CharactersLayer):
 
         leader = Leader(
             name=leader_name,
-            character_id=f"{tag}_leader_1",
+            character_id=leader_id,
             ideology=leader_ideology,
             portrait_slug="leader_1",
         )

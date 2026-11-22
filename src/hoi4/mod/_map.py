@@ -464,9 +464,9 @@ class MapLayer(StatesLayer, CatalogsLayer):
         return self.get_strategic_region(new_id)
 
     def list_supply_nodes(self) -> list[int]:
-        """Return the provinces with a supply node in the effective ``map/supply_nodes.txt``, in file order."""
+        """Return the sorted provinces with a supply node in the effective ``map/supply_nodes.txt``, each once."""
         text = self._map_text(SUPPLY_NODES_FILE)
-        return [] if text is None else [province for _, province in parse_supply_nodes(text)]
+        return [] if text is None else sorted({province for _, province in parse_supply_nodes(text)})
 
     def add_supply_node(self, province: int) -> int:
         """Queue a ``map/supply_nodes.txt`` entry for a land province.

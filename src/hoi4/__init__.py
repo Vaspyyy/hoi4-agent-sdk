@@ -1,14 +1,36 @@
-"""
-HOI4 Agent SDK - Python SDK for AI agents to mod Hearts of Iron 4.
+"""HOI4 Agent SDK: a Python SDK for AI agents to mod Hearts of Iron IV.
 
-Usage:
-    from hoi4 import Mod, Focus, Country
+Usage (the quick start of ``README.md``)::
 
-    mod = Mod("/path/to/my_mod", hoi4_install="/opt/steam/hoi4")
-    mod.create_country("WST", "Westralia", color=(59, 130, 246))
-    tree = mod.get_focus_tree("german_focus")
-    mod.add_focus("german_focus", Focus(id="GER_new_focus", x=5, y=3))
-    mod.save()
+    from hoi4 import Focus, Mod
+
+    mod = Mod("/path/to/my_mod", hoi4_install="/path/to/Hearts of Iron IV")
+
+    with mod.transaction():
+        mod.create_focus_tree("ger_extra_focus", "GER")
+        mod.add_focus(
+            "ger_extra_focus",
+            Focus(
+                id="GER_expand_industry",
+                x=3,
+                y=2,
+                completion_reward="add_political_power = 50",
+            ),
+        )
+        mod.set_focus_loc("GER_expand_industry", "Expand Industry", "More factories.")
+        print(mod.preview_summary())
+        print(mod.preview())
+        issues = mod.validate()
+        for issue in issues:
+            print(f"[{issue.severity}] {issue.message}")
+        if any(issue.severity == "error" for issue in issues):
+            raise RuntimeError("Validation failed")
+
+    # This dry run discards its changes on exit. After reviewing the output,
+    # rerun the block with mod.transaction(save=True) to apply and save the edits.
+
+A focus tree the game ships is not visible to ``get_focus_tree()`` until its
+file is copied into the mod with ``mod.load_inherited_content(path)``.
 """
 
 import importlib.metadata as _metadata
@@ -52,7 +74,14 @@ from .content_graph import ContentLivenessReport
 from .country_package import CountryPackageReport
 from .definitions import DEFINITION_KINDS, DefinitionKind, ScriptDefinition
 from .dynamic_modifiers import DynamicModifier
-from .errors import AlreadyExistsError, Hoi4Error, NotFoundError, ReadOnlyError
+from .errors import (
+    AlreadyExistsError,
+    Hoi4Error,
+    LoadError,
+    NotFoundError,
+    ReadOnlyError,
+    SaveRefusedError,
+)
 from .game_log import (
     GameLogEntry,
     GameLogReport,
@@ -157,6 +186,8 @@ __all__ = [
     "NotFoundError",
     "AlreadyExistsError",
     "ReadOnlyError",
+    "SaveRefusedError",
+    "LoadError",
     "ExternalModificationError",
     "__version__",
     "Config",
