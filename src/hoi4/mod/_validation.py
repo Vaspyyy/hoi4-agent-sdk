@@ -741,7 +741,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         errors.extend(
             validate_tag_definition_targets(
                 self.mod_root,
-                exists=lambda relative: self.content_source(relative) is not None,
+                exists=lambda relative: self.resolve_content_path(relative) is not None,
             )
         )
         errors.extend(

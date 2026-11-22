@@ -43,7 +43,7 @@ only the ones it does not already reach through another base.
 * ``_on_actions``: On-action authoring. Uses only ``_core``.
 * ``_decisions``: Decision and decision-category authoring. Uses ``_effects``,
   ``_localisation``.
-* ``_ideas``: Idea (national spirit) authoring. Uses only ``_core``.
+* ``_ideas``: Idea (national spirit) authoring. Uses ``_countries``.
 * ``_ideologies``: Ideology authoring. Uses only ``_core``.
 * ``_dynamic_modifiers``: Dynamic modifier authoring. Uses only ``_core``.
 * ``_bookmarks``: Bookmark authoring. Uses only ``_core``.

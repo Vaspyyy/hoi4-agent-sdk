@@ -111,8 +111,8 @@ class MapLayer(StatesLayer, CatalogsLayer):
         allow_empty_source: bool = False,
         delete_empty_states: bool = False,
         reassign_map_buildings: bool = True,
-    ) -> int:
-        """Queue a new state made of ``provinces`` and return its ID.
+    ) -> State:
+        """Queue a new state made of ``provinces`` and return it.
 
         Provinces leave their current states together with their victory
         points and province-level history buildings. ``owner``/``cores`` left
@@ -196,7 +196,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
             raise
         for message in report.warnings:
             warnings.warn(message, RuntimeWarning, stacklevel=2)
-        return new_id
+        return self.get_state(new_id)
 
     def move_provinces(
         self,
@@ -239,8 +239,15 @@ class MapLayer(StatesLayer, CatalogsLayer):
         provinces: Sequence[int],
         /,
         **create_state_kwargs: Any,
-    ) -> int:
-        """Create a new state from some of ``state_id``'s provinces."""
+    ) -> State:
+        """Create a new state from some of ``state_id``'s provinces and return it.
+
+        ``create_state_kwargs`` are the keyword arguments of ``create_state()``.
+
+        Raises:
+            NotFoundError: The state does not exist.
+            ValueError: A province does not belong to the state.
+        """
 
         province_list = self._normalize_province_ids(provinces)
         state = self.get_state(state_id)
@@ -251,8 +258,16 @@ class MapLayer(StatesLayer, CatalogsLayer):
             )
         return self.create_state(province_list, **create_state_kwargs)
 
-    def list_strategic_regions(self) -> list[StrategicRegion]:
-        """Return effective strategic regions (mod files override base files)."""
+    def list_strategic_regions(self) -> list[int]:
+        """Return the sorted ids of the effective strategic regions.
+
+        Mod files override base files; ``get_strategic_region(id)`` returns one.
+        """
+
+        return sorted({region.id for region in self._effective_strategic_regions()})
+
+    def _effective_strategic_regions(self) -> list[StrategicRegion]:
+        """Every effective strategic region, sorted by id and file."""
 
         regions: list[StrategicRegion] = []
         for relative in self._strategic_region_files():
@@ -277,7 +292,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         Raises:
             NotFoundError: No strategic region has this id.
         """
-        for region in self.list_strategic_regions():
+        for region in self._effective_strategic_regions():
             if region.id == region_id:
                 return region
         if default is not MISSING:
@@ -285,7 +300,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         raise not_found(
             "strategic region",
             region_id,
-            (region.id for region in self.list_strategic_regions()),
+            self.list_strategic_regions(),
         )
 
     def move_provinces_to_strategic_region(
@@ -297,7 +312,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
         province_list = self._normalize_province_ids(provinces)
         self._require_known_provinces(province_list)
-        regions = self.list_strategic_regions()
+        regions = self._effective_strategic_regions()
         target = next((region for region in regions if region.id == region_id), None)
         if target is None:
             raise not_found("strategic region", region_id, (region.id for region in regions))
@@ -318,8 +333,8 @@ class MapLayer(StatesLayer, CatalogsLayer):
         region_id: int | None = None,
         weather: str | None = None,
         loc_path: str | Path | None = None,
-    ) -> int:
-        """Queue a new strategic region and return its ID.
+    ) -> StrategicRegion:
+        """Queue a new strategic region and return it.
 
         ``weather`` may be a ``weather = { ... }`` assignment or its body. When
         omitted, the weather block of the region currently holding most of the
@@ -330,7 +345,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
             raise ValueError("create_strategic_region() requires a non-empty name")
         province_list = self._normalize_province_ids(provinces)
         self._require_known_provinces(province_list)
-        regions = self.list_strategic_regions()
+        regions = self._effective_strategic_regions()
         existing = {region.id for region in regions}
         if region_id is None:
             new_id = max(existing, default=0) + 1
@@ -376,7 +391,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         self.set_loc(f"STRATEGICREGION_{new_id}", name.strip(), path=loc_path)
         for path, text in texts.items():
             self._queue_map_text(path, text)
-        return new_id
+        return self.get_strategic_region(new_id)
 
     def list_supply_nodes(self) -> list[int]:
         text = self._map_text(SUPPLY_NODES_FILE)
@@ -595,7 +610,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
         if relative in self._map_file_updates:
             return compute(self._map_file_updates[relative])
-        source = self.content_source(relative)
+        source = self.resolve_content_path(relative)
         if source is None or (
             not source.is_relative_to(self.mod_root)
             and self._mod_hides_inherited(Path(relative))
@@ -608,7 +623,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
         if relative in self._map_file_updates:
             return self._map_file_updates[relative]
-        source = self.content_source(relative)
+        source = self.resolve_content_path(relative)
         if source is None or (
             not source.is_relative_to(self.mod_root)
             and self._mod_hides_inherited(Path(relative))

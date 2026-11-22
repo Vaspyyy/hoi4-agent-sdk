@@ -2066,13 +2066,13 @@ class TestModIdeas:
         idea = tmp_mod.mod.create_idea("generic_spirit", modifier={"x": 1})
         assert idea.path == tmp_mod.root / "common" / "ideas" / "mod_ideas.txt"
 
-    def test_set_idea_path_routes(self, tmp_mod):
+    def test_set_default_idea_file_routes(self, tmp_mod):
         target = tmp_mod.root / "common" / "ideas" / "custom.txt"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("ideas = {\n}\n")
         tmp_mod.mod.discard()
 
-        tmp_mod.mod.set_idea_path("LUX", target)
+        tmp_mod.mod.set_default_idea_file("LUX", target)
         idea = tmp_mod.mod.create_idea("LUX_spirit", modifier={"x": 1})
         assert idea.path == target
 

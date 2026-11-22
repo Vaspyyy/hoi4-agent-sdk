@@ -499,7 +499,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         """Return whether ``content`` only repeats the file ``path`` would shadow."""
 
         try:
-            shadowed = self.content_source(path.relative_to(self.mod_root))
+            shadowed = self.resolve_content_path(path.relative_to(self.mod_root))
         except ValueError:
             return False
         if shadowed is None or not shadowed.is_file() or shadowed == path:
@@ -517,7 +517,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         if path.exists():
             return content
         try:
-            shadowed = self.content_source(path.relative_to(self.mod_root))
+            shadowed = self.resolve_content_path(path.relative_to(self.mod_root))
         except ValueError:
             return content
         if shadowed is None or not shadowed.is_file() or shadowed == path:
@@ -544,7 +544,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 before = len(parse(self._read_current_text(path)).problems)
             else:
                 try:
-                    shadowed = self.content_source(path.relative_to(self.mod_root))
+                    shadowed = self.resolve_content_path(path.relative_to(self.mod_root))
                 except ValueError:
                     shadowed = None
                 before = (
@@ -619,7 +619,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         if current is not None:
             return encode_text(content, like=current, bom=bom)
         try:
-            shadowed = self.content_source(path.relative_to(self.mod_root))
+            shadowed = self.resolve_content_path(path.relative_to(self.mod_root))
         except ValueError:
             shadowed = None
         if shadowed is not None and shadowed.is_file() and shadowed != path:

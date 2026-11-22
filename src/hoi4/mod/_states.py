@@ -69,7 +69,7 @@ class StatesLayer(CountriesLayer):
                 if self._content_layers is not None:
                     relative = base.relative(Path(item["path"]))
                     assert relative is not None
-                    original = self.content_source(relative)
+                    original = self.resolve_content_path(relative)
                     item["source_path"] = str(original) if original else item["path"]
                     item["source_layer"] = (
                         "mod" if original and original.is_relative_to(self.mod_root)

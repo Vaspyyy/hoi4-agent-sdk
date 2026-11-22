@@ -95,6 +95,11 @@ say what you got, no duplicate entry points, and the script builders moved to
 | `mod.patch_state_history(id, owner=, add_cores=, remove_cores=)` | `mod.update_state(id, owner=, add_cores=, remove_cores=)`; a core in `remove_cores` that is not there raises `NotFoundError` | Same mechanism as the other setters |
 | `mod.set_state_properties(id, **fields)` returning `True`, appending to list fields such as `cores` | `mod.update_state(id, **fields)` returns the `State` and replaces list fields; `add_cores=[...]` appends | A `set` that appended was surprising; `update_*` returns the object |
 | `set_state_properties(id, _victory_points_requested=...)` | not accepted | Bookkeeping, not content |
+| `mod.set_idea_path(tag, path)` | `mod.set_default_idea_file(tag, path)`; with a game install an undefined tag raises `NotFoundError` | Says what it does |
+| `mod.ensure_country_states_in_mod(tag)` | `mod.copy_country_states_to_mod(tag)` | Says what it does; it is not an `ensure_*` |
+| `mod.content_source(relative)` | `mod.resolve_content_path(relative)` (still returns `None` when no layer has the file) | A path resolver, not a lookup of content |
+| `new_id = mod.create_state(...)`, `mod.create_strategic_region(...)`, `mod.split_state(...)` returning the id | return the `State` / `StrategicRegion`; use `.id` | `create_*` returns the object |
+| `for region in mod.list_strategic_regions(): region.id` (objects) | `mod.list_strategic_regions()` returns sorted ids; `mod.get_strategic_region(id)` returns one | `list_*` returns ids |
 | `hoi4.bookmarks.load_bookmarks`, `hoi4.decisions.write_decisions_file`, `hoi4.focus.write_focus_tree`, `hoi4.ideologies.load_ideologies`, `hoi4.localisation.delete_localization_keys`, `hoi4.on_actions.write_on_actions_file`, `hoi4.states.ensure_state_in_mod`, `hoi4.states.patch_state_history_owner_cores`, `hoi4.tags.load_all_tags`, `hoi4.validation.collect_character_ids` | the matching `Mod` method (`mod.list_bookmarks()`, `mod.save()`, ...) | Unused module functions that bypassed the `Mod` staging |
 
 ### Added

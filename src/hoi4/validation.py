@@ -627,7 +627,7 @@ def validate_tag_definition_targets(
     A declared path such as ``countries/Germany.txt`` is read below
     ``common/``. ``exists(relative)`` says whether the game will find a file
     such as ``common/countries/Germany.txt``; pass one that knows the game
-    install and base mods (``Mod.content_source``), because a mod inherits
+    install and base mods (``Mod.resolve_content_path``), because a mod inherits
     their country files. Without it only the mod's own folder counts.
     """
 

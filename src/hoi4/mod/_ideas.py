@@ -9,7 +9,6 @@ from ..idea_icons import (
     normalize_idea_icon,
 )
 from ..paths import (
-    require_country_tag,
     require_script_id,
     resolve_mod_output_path,
 )
@@ -17,7 +16,7 @@ from ..types import (
     Idea,
 )
 from ..errors import AlreadyExistsError, not_found
-from ._core import CoreLayer
+from ._countries import CountriesLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_field_names,
@@ -27,7 +26,7 @@ from ._shared import (
 )
 
 
-class IdeasLayer(CoreLayer):
+class IdeasLayer(CountriesLayer):
     """Idea (national spirit) authoring."""
 
     # ── Ideas ───────────────────────────────────────────────────
@@ -185,6 +184,12 @@ class IdeasLayer(CoreLayer):
         self._dirty.add("ideas")
         self._dirty_ideas.discard(idea_id)
 
-    def set_idea_path(self, tag: str, path: str | Path) -> None:
-        tag = require_country_tag(tag)
+    def set_default_idea_file(self, tag: str, path: str | Path) -> None:
+        """Make ``path`` the file that new ideas named ``<tag>_...`` go to.
+
+        Raises:
+            NotFoundError: A game install is configured and no one defines ``tag``.
+            ValueError: ``tag`` is invalid or ``path`` is outside the mod.
+        """
+        tag = self._require_country_reference(tag)
         self._cached_idea_file[tag] = resolve_mod_output_path(self.mod_root, path)

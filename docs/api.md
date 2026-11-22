@@ -400,7 +400,7 @@ The first mutating state call queues an equivalent override under the mod; it is
 shown by `preview()` and created only by `save()`. Validation and other reads
 therefore do not change the filesystem. To deliberately queue all owned/core
 states for copying, use `get_country_context(tag, copy_states=True)` or
-`ensure_country_states_in_mod(tag)` and then call `save()`.
+`copy_country_states_to_mod(tag)` and then call `save()`.
 
 ### Methods
 
@@ -456,12 +456,12 @@ Province-list edits remove or append the affected IDs in place.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `create_state(provinces, *, name, owner=None, cores=None, state_category="rural", manpower=0, state_id=None, resources=None, buildings="", impassable=False, loc_path=None, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True)` | `int` | New `history/states/<id>-<name>.txt` (ID defaults to the highest effective ID + 1) plus `STATE_<id>` localisation. Provinces leave their states with their victory points and `history.buildings` province blocks. `owner`/`cores` set to `None` copy the source state that contributes the most provinces. Report warnings are issued as `RuntimeWarning`. |
+| `create_state(provinces, *, name, owner=None, cores=None, state_category="rural", manpower=0, state_id=None, resources=None, buildings="", impassable=False, loc_path=None, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True) -> State` | `State` | New `history/states/<id>-<name>.txt` (ID defaults to the highest effective ID + 1) plus `STATE_<id>` localisation. Provinces leave their states with their victory points and `history.buildings` province blocks. `owner`/`cores` set to `None` copy the source state that contributes the most provinces. Report warnings are issued as `RuntimeWarning`. |
 | `move_provinces(provinces, to_state, *, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True)` | `MapEditReport` | Same data-moving rules. Emptying a source raises `ValueError` unless `delete_empty_states=True` (the file is deleted, or shadowed by an empty override when inherited) or `allow_empty_source=True` (kept empty, with a warning). |
-| `split_state(state_id, provinces, **create_state_kwargs)` | `int` | `create_state()` for provinces that must all belong to `state_id` |
-| `list_strategic_regions()` / `get_strategic_region(region_id)` | `StrategicRegion` | `id`, `name`, `provinces`, `path`, `has_weather` |
+| `split_state(state_id, provinces, **create_state_kwargs) -> State` | `State` | `create_state()` for provinces that must all belong to `state_id` |
+| `list_strategic_regions()` / `get_strategic_region(region_id, *, default=...)` | `list[int]` / `StrategicRegion` | `id`, `name`, `provinces`, `path`, `has_weather` |
 | `move_provinces_to_strategic_region(provinces, region_id)` | `StrategicRegion` | Moves land or sea provinces; refuses to empty a region |
-| `create_strategic_region(name, provinces, *, region_id=None, weather=None, loc_path=None)` | `int` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
+| `create_strategic_region(name, provinces, *, region_id=None, weather=None, loc_path=None) -> StrategicRegion` | `StrategicRegion` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
 | `list_supply_nodes()` / `add_supply_node(province)` / `remove_supply_node(province)` | `list[int]` / `int` / `None` | Land provinces only; adding an existing node raises `AlreadyExistsError`, removing a missing one `NotFoundError` |
 | `list_railways()` / `add_railway(level, provinces, *, check_adjacency=True)` | `Railway` | Levels 1-5. Consecutive provinces must be adjacent when the province map and the `map` extra are available. |
 | `remove_railway(railway)` / `set_railway_level(railway, level)` | `None` | Select a listed `Railway`, or a province route matched in either direction; no match raises `NotFoundError` |
@@ -481,7 +481,7 @@ other than the highest ID also warns, because HOI4 expects contiguous state IDs.
 
 ```python
 with mod.transaction():
-    new_id = mod.split_state(42, [3001, 3002], name="Upper Valley")
+    new_id = mod.split_state(42, [3001, 3002], name="Upper Valley").id
     report = mod.move_provinces([3003], new_id)
     mod.move_provinces_to_strategic_region([3001, 3002, 3003], 17)
     mod.add_supply_node(3002)
@@ -1935,7 +1935,7 @@ Relative configuration paths resolve beside `.hoi4.json`. The public
 **game → ordered base mods → writable mod**, with each mod's explicit
 `descriptor.mod` `replace_path` declarations removing matching lower files.
 Use directory-backed dependencies; packed DLC archives are not expanded.
-Without base mods, `content_source()` and `content_files()` apply the writable
+Without base mods, `resolve_content_path()` and `content_files()` apply the writable
 descriptor's replacement paths to vanilla fallback files as well. Writable
 files remain visible within replaced directories. In this unlayered mode,
 these two discovery methods reread `descriptor.mod` on each call; with base
@@ -1946,7 +1946,7 @@ changing one.
 `generate_mod_descriptor` wrapper) writes dependency names into both descriptors;
 this does not infer filesystem paths or replacement policy.
 
-- `mod.content_source("map/definition.csv")` returns the original winning file,
+- `mod.resolve_content_path("map/definition.csv")` returns the original winning file,
   or `None` when absent/suppressed.
 - `mod.content_files("history/states")` returns effective relative filenames
   mapped to original source paths. `state_index()` additionally reports

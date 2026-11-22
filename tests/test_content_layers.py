@@ -63,15 +63,15 @@ def test_content_discovery_filters_replaced_vanilla_without_hiding_writable_file
     put(top, "descriptor.mod", f'replace_path="{replacement}"')
     mod = Mod(top, hoi4_install=game, base_mod_paths=[base] if layered else [])
 
-    assert mod.content_source(hidden.relative_to(game)) is None
-    assert mod.content_source(override.relative_to(game)) == writable
-    assert mod.content_source(sibling.relative_to(game)) == (
+    assert mod.resolve_content_path(hidden.relative_to(game)) is None
+    assert mod.resolve_content_path(override.relative_to(game)) == writable
+    assert mod.resolve_content_path(sibling.relative_to(game)) == (
         sibling if replacement == "common/scripted_triggers" else None
     )
     if not layered:
         # ContentLayers inventories only its configured runtime content roots.
-        assert mod.content_source(root_sibling.relative_to(game)) == root_sibling
-    assert mod.content_source(ordinary.relative_to(game)) == ordinary
+        assert mod.resolve_content_path(root_sibling.relative_to(game)) == root_sibling
+    assert mod.resolve_content_path(ordinary.relative_to(game)) == ordinary
     assert mod.content_files("common/scripted_triggers") == {
         "common/scripted_triggers/override.txt": writable
     }
@@ -83,7 +83,7 @@ def test_content_discovery_filters_replaced_vanilla_without_hiding_writable_file
         assert mod.content_files("common_extra") == {"common_extra/visible.txt": root_sibling}
     assert mod.content_files("events") == {"events/visible.txt": ordinary}
     with pytest.raises(ValueError, match="Unsafe content path"):
-        mod.content_source("../escape.txt")
+        mod.resolve_content_path("../escape.txt")
     with pytest.raises(ValueError, match="Unsafe content path"):
         mod.content_files("../escape")
 
@@ -93,7 +93,7 @@ def test_empty_replacement_directory_and_ordinary_fallback(tmp_path, layered):
     game, base, _, top = roots(tmp_path)
     source = put(game, "common/scripted_triggers/old.txt", "old = yes")
     mod = Mod(top, hoi4_install=game, base_mod_paths=[base] if layered else [])
-    assert mod.content_source("common/scripted_triggers/old.txt") == source
+    assert mod.resolve_content_path("common/scripted_triggers/old.txt") == source
     assert mod.content_files("common/scripted_triggers") == {
         "common/scripted_triggers/old.txt": source
     }
@@ -101,7 +101,7 @@ def test_empty_replacement_directory_and_ordinary_fallback(tmp_path, layered):
     put(top, "descriptor.mod", 'replace_path="common/scripted_triggers"')
     if layered:
         mod.discard()
-    assert mod.content_source("common/scripted_triggers/old.txt") is None
+    assert mod.resolve_content_path("common/scripted_triggers/old.txt") is None
     assert mod.content_files("common/scripted_triggers") == {}
     assert not (top / "common/scripted_triggers").exists()
 
@@ -113,7 +113,7 @@ def test_unlayered_discovery_rejects_unsafe_descriptor_replacement(tmp_path):
     put(top, "descriptor.mod", 'replace_path="../events"')
     mod = Mod(top, hoi4_install=game)
     with pytest.raises(ValueError, match="Unsafe content path"):
-        mod.content_source("events/local.txt")
+        mod.resolve_content_path("events/local.txt")
     with pytest.raises(ValueError, match="Unsafe content path"):
         mod.content_files("events")
 
@@ -157,7 +157,7 @@ def test_state_fallback_save_and_reload_do_not_write_bases(tmp_path):
     assert mod.hoi4_install == game
     assert mod.get_state(1).owner == "ITA"
     assert mod.find_state("Latium")[0]["id"] == 1
-    assert mod.content_source("history/states/1.txt") == source
+    assert mod.resolve_content_path("history/states/1.txt") == source
     mod.set_state_owner(1, "ROM")
     result = mod.save(require_changes=True)
     assert result.written_files

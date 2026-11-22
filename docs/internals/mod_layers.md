@@ -92,7 +92,7 @@ The calls, all with paths relative to the content root:
 | `relative(source)` | a source file's relative path, or `None` |
 
 `ContentLayers` adds `source(relative)` (the winner including the mod's own
-files, for `content_source()`) and `inherited(relative)` (the lower file a mod
+files, for `resolve_content_path()`) and `inherited(relative)` (the lower file a mod
 file hides, used to decide whether deleting the mod's file would expose one).
 
 What the view reads is never kept, so it always matches the disk. The

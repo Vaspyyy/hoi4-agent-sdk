@@ -853,8 +853,12 @@ class CoreLayer:
             else None
         )
 
-    def content_source(self, relative_path: str | Path) -> Path | None:
-        """The winning file of the game, the base mods or the mod, where it is on disk."""
+    def resolve_content_path(self, relative_path: str | Path) -> Path | None:
+        """The winning file of the game, the base mods or the mod, where it is on disk.
+
+        A path resolver, not a lookup of content: it returns ``None`` when
+        no layer has the file.
+        """
         relative = relative_content_path(relative_path)
         if self._content_layers is not None:
             return self._content_layers.source(relative)
@@ -907,7 +911,7 @@ class CoreLayer:
         before any trees are installed, regardless of ``strict_loading``.
         """
         relative = relative_content_path(relative_path)
-        source = self.content_source(relative)
+        source = self.resolve_content_path(relative)
         if source is None:
             raise FileNotFoundError(relative)
         if source.is_relative_to(self.mod_root):
@@ -1018,7 +1022,7 @@ class CoreLayer:
         if path.exists():
             return False
         try:
-            source = self.content_source(path.relative_to(self.mod_root))
+            source = self.resolve_content_path(path.relative_to(self.mod_root))
         except ValueError:
             return False
         return source is not None and source != path

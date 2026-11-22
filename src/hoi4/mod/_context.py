@@ -172,7 +172,17 @@ class ContextLayer(StatesLayer, CatalogsLayer):
             self._country_context_cache[tag] = copy.deepcopy(context)
         return context
 
-    def ensure_country_states_in_mod(self, tag: str) -> list[State]:
+    def copy_country_states_to_mod(self, tag: str) -> list[State]:
+        """Queue overrides of the game's state files of every state ``tag`` owns or cores.
+
+        Nothing is written until ``save()``.
+
+        Returns:
+            The states, now backed by files in the mod.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+        """
         context = self.get_country_context(tag, copy_states=True)
         return [self.get_state(state["id"]) for state in context["states"]]
 
