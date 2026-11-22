@@ -154,3 +154,33 @@ def test_inherited_on_actions_compose(tmp_path: Path) -> None:
         mod.update_on_action("on_startup", effect="log = test")
     mod.create_on_action("on_startup", effect="log = test")
     assert len(mod.get_on_action_occurrences("on_startup")) == 2
+
+
+def test_country_state_and_character_reads_do_not_stage(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/country_tags/00.txt", 'GER = "countries/Germany.txt"\n')
+    write(game, "common/countries/Germany.txt", "color = { 1 2 3 }\n")
+    write(game, "history/countries/GER - Germany.txt", "capital = 1\n")
+    write(game, "history/states/1.txt", 'state = { id = 1 name = "STATE_1" history = { owner = GER } }')
+    write(game, "common/characters/GER.txt", "characters = { GER_leader = { name = GER_leader } }")
+    mod = Mod(root, hoi4_install=game)
+    before = (mod.preview(), mod.validate(stage="build"))
+    country = mod.get_country("GER")
+    country.capital = 99
+    state = mod.get_state(1)
+    state.owner = "FRA"
+    character = mod.get_character("GER_leader")
+    character.name = "changed"
+    assert mod.get_country("GER").capital == 1
+    assert mod.get_state(1).owner == "GER"
+    assert mod.get_character("GER_leader").name == "GER_leader"
+    assert mod.list_countries() == mod.list_states() == mod.list_characters() == []
+    assert "GER" in mod.list_countries(include_vanilla=True)
+    assert mod.list_states(include_vanilla=True) == [1]
+    assert mod.list_characters(include_vanilla=True) == ["GER_leader"]
+    assert (mod.preview(), mod.validate(stage="build")) == before
+    mod.set_state_owner(1, "GER", add_core=True)
+    assert mod.list_states() == [1]
+    mod.update_character("GER_leader", name="new")
+    assert mod.list_characters() == ["GER_leader"]

@@ -15,6 +15,8 @@ say what you got, no duplicate entry points, and the script builders moved to
 
 | Old call (0.6) | New call (0.7) | Why |
 |---|---|---|
+| `list_characters()` | `list_characters(include_vanilla=True)` | The default lists only the mod's characters |
+| `list_ideologies()` | `list_ideologies(include_vanilla=True)` | The default lists only the mod's ideologies |
 | `except KeyError` / `except IndexError` around a lookup | `except hoi4.NotFoundError` (still a `KeyError`, no longer an `IndexError`) | One error for "not there"; the message names close matches instead of every id |
 | `get_on_action(..., occurrence=n)`, `update_on_action(..., occurrence=n)`, `delete_on_action(..., occurrence=n)` out of range: `IndexError` | `NotFoundError` | One error for "not there" |
 | `add_character_role(..., instance_occurrence=n)` and the other role methods with a missing instance: `IndexError` | `NotFoundError` | One error for "not there" |

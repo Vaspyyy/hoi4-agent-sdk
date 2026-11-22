@@ -43,10 +43,13 @@ class StatesLayer(CountriesLayer):
 
     # ── States ──────────────────────────────────────────────────
 
-    def list_states(self) -> list[int]:
-        """Return the sorted ids of the effective states: the mod's, the base mods' and the game's."""
-        all_ids = set(self._state_ids) | set(self._states.keys())
-        return sorted(all_ids)
+    def list_states(self, *, include_vanilla: bool = False) -> list[int]:
+        """Return the mod's state IDs, or all effective IDs when requested."""
+        ids = set(self._state_ids)
+        ids.update(self._dirty_states)
+        if include_vanilla and self._base_content is not None:
+            ids.update(self._inherited_state_paths())
+        return sorted(ids - set(self._deleted_state_ids))
 
     def state_index(self, *, include_vanilla: bool = True) -> list[dict[str, Any]]:
         """Return one summary per state file, sorted by id, without loading whole states.
@@ -195,7 +198,7 @@ class StatesLayer(CountriesLayer):
         )
         return entries
 
-    def get_state(self, state_id: int, *, default: _D | _Missing = MISSING) -> State | _D:
+    def get_state(self, state_id: int, *, include_vanilla: bool = True, default: _D | _Missing = MISSING) -> State | _D:
         """Load a state without changing the mod directory.
 
         Vanilla fallback states remain backed by their vanilla source until a
@@ -236,9 +239,13 @@ class StatesLayer(CountriesLayer):
         f = self._state_source_paths.get(state_id)
         if f is not None and not f.exists():
             f = None
-        if f is None and self._base_content is not None:
+        if f is None and include_vanilla and self._base_content is not None:
             f = self._inherited_state_paths().get(state_id)
         if f:
+            if not f.is_relative_to(self.mod_root):
+                state = self._inherited_copy("state", state_id, lambda: read_state(f))
+                assert state is not None
+                return state
             state = read_state(f)
             self._states[state_id] = state
             self._state_source_paths.setdefault(state_id, f)
@@ -299,6 +306,7 @@ class StatesLayer(CountriesLayer):
             # mod's own copy well formed.
             state.raw_text = repair(state.raw_text)
         state.path = target
+        self._states[state.id] = state
         self._state_source_paths[state.id] = target
         self._original_files.setdefault(target, self._read_noted_text(target))
         return True

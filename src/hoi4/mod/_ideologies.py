@@ -26,8 +26,8 @@ class IdeologiesLayer(CoreLayer):
 
     # ── Ideologies ───────────────────────────────────────────────
 
-    def list_ideologies(self, *, include_vanilla: bool = True) -> list[str]:
-        """Return the sorted ids of the mod's ideologies, and the game's unless ``include_vanilla`` is false."""
+    def list_ideologies(self, *, include_vanilla: bool = False) -> list[str]:
+        """Return the mod's ideology IDs, or all visible IDs when requested."""
         ids = set(self._ideologies)
         if include_vanilla:
             ids.update(self._vanilla_ideologies)
@@ -51,7 +51,7 @@ class IdeologiesLayer(CoreLayer):
         """
         ideology = self._ideologies.get(ideology_id)
         if ideology is None and include_vanilla:
-            ideology = self._vanilla_ideologies.get(ideology_id)
+            ideology = copy.deepcopy(self._vanilla_ideologies.get(ideology_id))
         if ideology is None:
             if default is not MISSING:
                 return default

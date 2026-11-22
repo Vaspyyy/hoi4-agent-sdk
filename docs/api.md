@@ -186,11 +186,11 @@ history, characters, and localization.
 
 | Method | Description |
 |--------|-------------|
-| `list_countries() -> list[str]` | All loaded country tags |
+| `list_countries(*, include_vanilla=False) -> list[str]` | All loaded country tags |
 | `is_country_tag_available(tag) -> bool` | False if the tag exists in the mod or vanilla install |
 | `country_tag_conflicts(tag) -> list[str]` | Returns conflict details such as `"mod: TAG (Name)"` or `"vanilla: TAG (Name)"` |
 | `suggest_tags(name, *, count=5) -> list[str]` | Return available tag candidates |
-| `get_country(tag, *, default=...) -> Country` | Cached or reads from disk. Tries mod then vanilla install. A tag no one defines raises `NotFoundError` (or returns `default`); it is never invented. |
+| `get_country(tag, *, include_vanilla=True, default=...) -> Country` | Cached or reads from disk. Tries mod then vanilla install. A tag no one defines raises `NotFoundError` (or returns `default`); it is never invented. |
 | `create_country(tag, name, *, adjective="", color=(128, 128, 128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, overwrite_vanilla=False) -> Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. A tag the mod has, or a character `<TAG>_leader_1` the mod has, raises `AlreadyExistsError` unless `overwrite=True` (nothing is staged then); a tag the game uses raises `ValueError` unless `overwrite_vanilla=True`; an invalid tag raises `ValueError`. |
 | `update_country(tag, **fields) -> Country` | Update modeled country fields, including `color` and `color_ui`. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
 | `delete_country(tag) -> None` | Stage deletion of a mod-owned country and its generated localization. Raises `NotFoundError` for an unknown tag and `ReadOnlyError` for a game or base-mod country (that needs an explicit total-conversion strategy). |
@@ -255,7 +255,7 @@ ordering, and untouched variants.
 
 | Method | Description |
 |--------|-------------|
-| `list_characters(tag=None, *, include_vanilla=True) -> list[str]` | List character IDs, optionally limited to one country |
+| `list_characters(tag=None, *, include_vanilla=False) -> list[str]` | List character IDs, optionally limited to one country |
 | `get_character(character_id, *, include_vanilla=True, default=...) -> Character` | Load a mod or vanilla character |
 | `create_character(tag, character, *, recruit=True, overwrite=False, path=None) -> Character` | Define a character, create localization, and normally add `recruit_character` to country history. `recruit=False` is for source-managed recruitment, never a runtime event effect. |
 | `update_character(character_id, **fields) -> Character` | Patch top-level `name` or `portraits` |
@@ -463,11 +463,11 @@ states for copying, use `get_country_context(tag, copy_states=True)` or
 
 | Method | Description |
 |--------|-------------|
-| `list_states() -> list[int]` | All loaded state IDs |
+| `list_states(*, include_vanilla=False) -> list[int]` | All loaded state IDs |
 | `state_index(*, include_vanilla=True) -> list[dict[str, Any]]` | Cached state metadata with `id`, raw loc `name`, localized `display_name`, `file_name`, `owner`, `path`, and `source` |
 | `get_state_name_map(*, include_vanilla=True) -> dict[int, str]` | State ID to display name |
 | `find_state(query, *, include_vanilla=True, limit=10) -> list[dict[str, Any]]` | Search by ID or localized state name, with stale filename fallback. Each result includes `matched`. |
-| `get_state(state_id, *, default=...) -> State` | Cached or reads from mod/vanilla without writing. Raises `NotFoundError`. |
+| `get_state(state_id, *, include_vanilla=True, default=...) -> State` | Cached or reads from mod/vanilla without writing. Raises `NotFoundError`. |
 | `set_state_owner(state_ids, tag, *, add_core=True) -> None` | Change the owner of one state or several, optionally add a core. A missing state raises `NotFoundError` before anything changes. |
 | `update_state(state_id, *, add_cores=(), remove_cores=(), **fields) -> State` | Set any State field. List fields such as `cores` and `provinces` are replaced; `add_cores` / `remove_cores` change single cores (a core to remove that is not there raises `NotFoundError`). |
 | `add_state_core(state_id, tag) -> State` | Append a core without replacing existing cores; a core the state has raises `AlreadyExistsError` and nothing is copied into the mod; with a game install, an undefined tag raises `NotFoundError` |
@@ -1525,7 +1525,7 @@ atomic-save lifecycle as the original content model:
 
 | Method | Description |
 |--------|-------------|
-| `list_ideologies(*, include_vanilla=True) -> list[str]` | Lists mod ideologies and, by default, configured vanilla ideologies. |
+| `list_ideologies(*, include_vanilla=False) -> list[str]` | Lists mod ideologies and, by default, configured vanilla ideologies. |
 | `get_ideology(ideology_id, *, include_vanilla=True, default=...) -> Ideology` | Gets a mod or vanilla ideology definition. |
 | `create_ideology(ideology_id, *, color=(128, 128, 128), types=None, rules=None, modifiers=None, hidden_modifiers=None, faction_modifiers=None, dynamic_faction_names=None, ai_behavior="", can_host_government_in_exile=False, can_collaborate=False, effects=None, path=None, overwrite=False) -> Ideology` | Creates a mod ideology definition. |
 | `update_ideology(ideology_id, **fields) -> Ideology` | Source-patches a mod ideology or materializes a vanilla definition as a mod override. |

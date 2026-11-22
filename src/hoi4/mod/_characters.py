@@ -61,7 +61,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         self,
         tag: str | None = None,
         *,
-        include_vanilla: bool = True,
+        include_vanilla: bool = False,
     ) -> list[str]:
         """Return the sorted ids of the known characters, optionally of one country.
 
@@ -74,13 +74,17 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             ValueError: ``tag`` is not a valid country tag.
         """
         normalized = require_country_tag(tag) if tag is not None else None
-        if include_vanilla and self._base_content is not None:
-            self._load_vanilla_characters(normalized)
-        return sorted(
+        own = {
             character_id
             for character_id, character in self._characters.items()
             if normalized is None or character.country_tag == normalized
-        )
+        }
+        if include_vanilla:
+            for character_id in self._inherited_ids("character"):
+                character = self._inherited_definition("character", character_id)
+                if character is not None and (normalized is None or character.country_tag == normalized):
+                    own.add(character_id)
+        return sorted(own)
 
     def get_character(
         self,
@@ -104,19 +108,12 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         """
         # Look up before validating: the game accepts ids the SDK would not
         # generate, such as ``COL_alfonso_lópez_pumarejo`` in vanilla.
-        character = self._characters.get(str(character_id))
+        character: Character | None = self._characters.get(str(character_id))
         if character is not None:
             return character
         character_id = _require_character_lookup_id(character_id)
         if include_vanilla and self._base_content is not None:
-            prefix = character_id.split("_", 1)[0]
-            tag = (
-                prefix
-                if len(prefix) == 3 and prefix.isalnum() and prefix.upper() == prefix
-                else None
-            )
-            self._load_vanilla_characters(tag)
-            character = self._characters.get(character_id)
+            character = self._inherited_definition("character", character_id)
         if character is None:
             if default is not MISSING:
                 return default
@@ -602,6 +599,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             self._read_noted_text(target) or source_text,
         )
         character.path = target
+        self._characters[character.id] = character
         self._dirty_character_files.add(target)
 
     def _load_vanilla_characters(self, tag: str | None) -> None:
