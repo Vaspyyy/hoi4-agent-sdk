@@ -826,6 +826,23 @@ def country_file_paths(mod_root: Path, country: Country) -> list[Path]:
     return paths
 
 
+def country_history_target(
+    mod_root: Path, country: Country, *, keep_history_path: bool = False
+) -> Path:
+    """The history file a save writes for ``country``.
+
+    A name change renames the file to ``TAG - Name.txt`` unless
+    ``keep_history_path`` is true (see :func:`serialize_country_files`).
+    """
+
+    tag = require_country_tag(country.tag)
+    renamed = {"*", "name"} & country.touched_fields and not keep_history_path
+    if country.history_path is not None and not renamed:
+        return country.history_path
+    safe_name = safe_file_stem(country.name or tag, fallback=tag)
+    return mod_root / f"history/countries/{tag} - {safe_name}.txt"
+
+
 def serialize_country_files(
     mod_root: Path,
     country: Country,
@@ -867,13 +884,7 @@ def serialize_country_files(
             definition = set_color(definition, "color", (r, g, b))
     files[def_path] = definition
 
-    safe_name = safe_file_stem(country.name or tag, fallback=tag)
-    hist_path = (
-        mod_root / f"history/countries/{tag} - {safe_name}.txt"
-        if country.history_path is None
-        or ({"*", "name"} & country.touched_fields and not keep_history_path)
-        else country.history_path
-    )
+    hist_path = country_history_target(mod_root, country, keep_history_path=keep_history_path)
     leader = country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1")
     recruited_characters = list(
         dict.fromkeys(

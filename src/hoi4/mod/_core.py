@@ -1194,6 +1194,17 @@ class CoreLayer:
         self._note_read(path, text)
         return text
 
+    def _overrides_inherited(self, path: Path | None) -> bool:
+        """Return whether a mod path shadows a file from the game or a base mod."""
+
+        if path is None or self._base_content is None:
+            return False
+        try:
+            relative = path.resolve(strict=False).relative_to(self.mod_root.resolve(strict=False))
+        except ValueError:
+            return False
+        return self._base_content.file(relative) is not None
+
     def _shadows_inherited(self, path: Path) -> bool:
         """Whether a NEW mod file at ``path`` would replace a game or base-mod file.
 

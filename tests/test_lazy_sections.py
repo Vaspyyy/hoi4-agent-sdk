@@ -673,6 +673,26 @@ def test_a_section_that_failed_to_load_takes_the_repaired_file(mod_root: Path) -
     assert "repaired" in saved and "0.2" in saved
 
 
+@pytest.mark.parametrize("ending", ["discard", "save of something else"])
+def test_a_redirected_idea_file_does_not_outlive_discard_or_save(
+    country_root: Path, ending: str
+) -> None:
+    """``set_idea_path`` changes loaded data without an edit to save: it is forgotten
+    with the section, as a full reload used to forget it."""
+
+    mod = Mod(country_root)
+    mod.set_idea_path("TST", "common/ideas/custom.txt")
+    assert mod._cached_idea_file["TST"].name == "custom.txt"
+
+    if ending == "discard":
+        mod.discard()  # with HOI4_VERIFY_RELOAD=1 this also compares with a fresh Mod
+    else:
+        mod.update_event("test.1", title="mine")
+        mod.save()
+
+    assert mod._cached_idea_file == Mod(country_root)._cached_idea_file
+
+
 def test_a_plain_value_of_a_section_is_staged_like_the_rest(
     mod_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

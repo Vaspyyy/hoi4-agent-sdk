@@ -488,17 +488,6 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 f"{displayed}. Call reload() and reapply the intended edit."
             )
 
-    def _overrides_inherited(self, path: Path | None) -> bool:
-        """Return whether a mod path shadows a file from the game or a base mod."""
-
-        if path is None or self._base_content is None:
-            return False
-        try:
-            relative = path.resolve(strict=False).relative_to(self.mod_root.resolve(strict=False))
-        except ValueError:
-            return False
-        return self._base_content.file(relative) is not None
-
     def _same_as_inherited(self, path: Path, content: str) -> bool:
         """Return whether ``content`` only repeats the file ``path`` would shadow."""
 

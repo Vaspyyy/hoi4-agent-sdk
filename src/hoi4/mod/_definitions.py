@@ -76,7 +76,7 @@ class DefinitionsLayer(CoreLayer):
         source_bytes = source.read_bytes()
         text = decode_text(source_bytes)
         parsed = parse_pdx(text)
-        target = self._output_path(relative)
+        target = resolve_mod_output_path(self.mod_root, relative)
         if (target.exists() or target in self._script_file_updates) and not overwrite:
             raise FileExistsError(f"Script target already exists: {relative}")
         ideas: list[Idea] = []
