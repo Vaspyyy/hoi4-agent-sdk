@@ -291,6 +291,7 @@ _MATRIX = {
     "focus": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} }}", "get_focus", "list_focus_trees"),
     "idea": ("common/ideas", "ideas = {{ country = {{ {id} = {{ picture = {marker} }} }} }}", "get_idea", "list_ideas"),
     "decision": ("common/decisions", "matrix_category = {{ {id} = {{ cost = 1 }} }}", "get_decision", "list_decisions"),
+    "decision_category": ("common/decisions/categories", "{id} = {{ icon = {marker} }}", "get_decision_category", "list_decision_categories"),
 }
 
 
@@ -318,21 +319,21 @@ def layered_content(request, tmp_path: Path):
 def test_matrix_game_only(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     obj = mod.get_focus_tree(ids["game"]) if kind == "focus" else get("game")
-    assert obj.path.is_relative_to(game)
+    assert (obj.definition_path if kind == "decision_category" else obj.path).is_relative_to(game)
     assert get("game") is not None
 
 
 def test_matrix_base_only(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     obj = mod.get_focus_tree(ids["base"]) if kind == "focus" else get("base")
-    assert obj.path.is_relative_to(base)
+    assert (obj.definition_path if kind == "decision_category" else obj.path).is_relative_to(base)
     assert get("base") is not None
 
 
 def test_matrix_base_precedence(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     obj = mod.get_focus_tree(ids["both"]) if kind == "focus" else get("both")
-    assert obj.path.is_relative_to(base)
+    assert (obj.definition_path if kind == "decision_category" else obj.path).is_relative_to(base)
     assert get("both") is not None
 
 
@@ -343,7 +344,7 @@ def test_matrix_mod_precedence(layered_content) -> None:
     args = (ids["both"], ids["both"] + "_focus") if kind == "focus" else (ids["both"],)
     found = getattr(new, _MATRIX[kind][2])(*args)
     origin = new.get_focus_tree(ids["both"]) if kind == "focus" else found
-    assert origin.path.is_relative_to(root)
+    assert (origin.definition_path if kind == "decision_category" else origin.path).is_relative_to(root)
 
 
 def test_matrix_mod_only_and_default(layered_content) -> None:
@@ -526,3 +527,42 @@ def test_matrix_decision_cache_clears(layered_content, action: str) -> None:
     else:
         getattr(mod, action)()
     assert get("game").cost == 7
+
+
+@pytest.mark.parametrize("layered_content", ["decision_category"], indirect=True)
+def test_matrix_category_edit_requires_staged_file(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError) as error:
+        mod.update_decision_category(ids["game"], icon="changed")
+    assert 'mod.load_inherited_content("common/decisions/categories/game.txt")' in str(error.value)
+    assert mod.preview() == before
+    mod.load_inherited_content("common/decisions/categories/game.txt")
+    mod.update_decision_category(ids["game"], icon="changed")
+    assert mod.save(require_changes=True).written_files
+    assert (root / "common/decisions/categories/game.txt").exists()
+
+
+@pytest.mark.parametrize("layered_content", ["decision_category"], indirect=True)
+@pytest.mark.parametrize("action", ["discard", "save", "reload"])
+def test_matrix_category_cache_clears(layered_content, action: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert get("game").icon == "game"
+    put(game, "game", "game", "changed")
+    if action == "save":
+        with pytest.warns(RuntimeWarning):
+            mod.save(require_changes=False)
+    else:
+        getattr(mod, action)()
+    assert get("game").icon == "changed"
+
+
+def test_inherited_category_combines_decision_files(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/decisions/categories/c.txt", "joined = { icon = category_icon }")
+    write(game, "common/decisions/a.txt", "joined = { first_decision = { cost = 1 } }")
+    write(game, "common/decisions/b.txt", "joined = { second_decision = { cost = 2 } }")
+    category = Mod(root, hoi4_install=game).get_decision_category("joined")
+    assert category.icon == "category_icon"
+    assert [decision.id for decision in category.decisions] == ["first_decision", "second_decision"]
