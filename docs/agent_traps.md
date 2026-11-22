@@ -42,10 +42,10 @@ Good pre-game history edit:
 mod.set_state_owner(52, "BAY")
 ```
 
-Both state edits change only the statements they touch, so unrelated vanilla text such as unusual `victory_points` formatting stays as it was. To set the owner and several cores in one call, queue `patch_state_history()` and save with the same `Mod` instance:
+State edits change only the statements they touch, so unrelated vanilla text such as unusual `victory_points` formatting stays as it was. To set the owner and several cores in one call, queue `update_state()` and save with the same `Mod` instance:
 
 ```python
-mod.patch_state_history(52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"])
+mod.update_state(52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"])
 mod.save(require_changes=True)
 ```
 

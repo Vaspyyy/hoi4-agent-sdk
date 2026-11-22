@@ -488,7 +488,7 @@ RECIPES: list[Recipe] = [
     Recipe(
         "state",
         _fields(State),
-        update=lambda mod, field, value: mod.set_state_properties(1, **{field: value}),
+        update=lambda mod, field, value: mod.update_state(1, **{field: value}),
         make_mod=_map_mod,
     ),
     Recipe(

@@ -273,7 +273,7 @@ fails as `missing_country_activation`.
 mod = Mod("/path/to/my_mod", hoi4_install="/opt/steam/hoi4")
 
 mod.set_state_owner(52, "GER")
-mod.set_state_properties(52, cores=["GER", "AUT"])
+mod.update_state(52, add_cores=["GER", "AUT"])
 
 print(mod.preview())
 mod.save()
@@ -343,7 +343,7 @@ mod.save()
 mod = Mod("/path/to/my_mod", hoi4_install="/opt/steam/hoi4")
 
 states_to_transfer = [1, 2, 3, 4, 5, 6]
-mod.batch_set_owner(states_to_transfer, "SOV", add_core=True)
+mod.set_state_owner(states_to_transfer, "SOV", add_core=True)
 
 print(mod.preview())
 mod.save()

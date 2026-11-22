@@ -90,6 +90,11 @@ say what you got, no duplicate entry points, and the script builders moved to
 | `mod.create_state(..., localisation_file=...)`, `mod.create_strategic_region(..., localisation_file=...)` | `loc_path=` | One name per concept |
 | `mod.create_country(..., allow_vanilla_override=True)`, `mod.import_flag_to_mod(tag, src, True)` / `vanilla_override=True` (also `hoi4.assets.import_flag_to_mod`), `mod.set_loc(..., replace=True)` | `overwrite_vanilla=True` (keyword-only) | One name for "override the game's content" |
 | `except ValueError` around `create_x(id, ...)` for an existing id (country, character, bookmark, decision, decision category, dynamic modifier, event, focus tree, idea, ideology, on-action, OOB, state, strategic region, equipment variant) | `except hoi4.AlreadyExistsError` (still a `ValueError`) | One error for "already there" |
+| `state = mod.set_state_owner(id, tag, True)` returning the `State` | `mod.set_state_owner(id, tag, add_core=True)` returns `None`; it takes one id or a list; `mod.get_state(id)` returns the state | One setter for one or many states |
+| `mod.batch_set_owner(ids, tag, add_core)` | `mod.set_state_owner(ids, tag, add_core=...)` | A loop over `set_state_owner` |
+| `mod.patch_state_history(id, owner=, add_cores=, remove_cores=)` | `mod.update_state(id, owner=, add_cores=, remove_cores=)`; a core in `remove_cores` that is not there raises `NotFoundError` | Same mechanism as the other setters |
+| `mod.set_state_properties(id, **fields)` returning `True`, appending to list fields such as `cores` | `mod.update_state(id, **fields)` returns the `State` and replaces list fields; `add_cores=[...]` appends | A `set` that appended was surprising; `update_*` returns the object |
+| `set_state_properties(id, _victory_points_requested=...)` | not accepted | Bookkeeping, not content |
 | `hoi4.bookmarks.load_bookmarks`, `hoi4.decisions.write_decisions_file`, `hoi4.focus.write_focus_tree`, `hoi4.ideologies.load_ideologies`, `hoi4.localisation.delete_localization_keys`, `hoi4.on_actions.write_on_actions_file`, `hoi4.states.ensure_state_in_mod`, `hoi4.states.patch_state_history_owner_cores`, `hoi4.tags.load_all_tags`, `hoi4.validation.collect_character_ids` | the matching `Mod` method (`mod.list_bookmarks()`, `mod.save()`, ...) | Unused module functions that bypassed the `Mod` staging |
 
 ### Added

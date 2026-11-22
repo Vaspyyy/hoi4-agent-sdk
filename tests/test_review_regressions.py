@@ -222,7 +222,7 @@ def test_state_patch_is_transactional_and_preserves_dated_history(tmp_path: Path
 """
     path.write_text(original, encoding="utf-8")
     mod = Mod(tmp_path)
-    mod.patch_state_history(1, owner="TST", add_cores=["TST"], remove_cores=["GER"])
+    mod.update_state(1, owner="TST", add_cores=["TST"], remove_cores=["GER"])
     assert path.read_text(encoding="utf-8") == original
     preview = mod.preview()
     assert "owner = TST" in preview

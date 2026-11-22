@@ -427,8 +427,7 @@ def _probe_state(mod: Mod) -> str | None:
         return None
     state_id_text, state = selected
     state_id = int(state_id_text)
-    if not mod.set_state_properties(state_id, manpower=_increment_number(state.manpower)):
-        raise RuntimeError(f"Could not update state {state_id}")
+    mod.update_state(state_id, manpower=_increment_number(state.manpower))
     return f"{state_id}.manpower"
 
 

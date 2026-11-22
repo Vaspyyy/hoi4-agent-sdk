@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Sequence
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Any
 
 from ..localisation import (
     parse_localization_files,
@@ -26,16 +28,9 @@ from ..errors import NotFoundError, not_found
 from ._countries import CountriesLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
-
-
-def _append_unique(existing: list, values: list) -> list:
-    out = list(existing)
-    for value in values:
-        if value not in out:
-            out.append(value)
-    return out
 
 
 def _fold_search_text(value: object) -> str:
@@ -274,29 +269,75 @@ class StatesLayer(CountriesLayer):
         self._original_files.setdefault(target, self._read_current_text(target))
         return True
 
-    def set_state_owner(self, state_id: int, tag: str, add_core: bool = True) -> State:
-        tag = self._require_country_reference(tag)
-        state = self.get_state(state_id)
-        self._materialize_state_override(state)
-        state.owner = tag
-        if add_core and tag not in state.cores:
-            state.cores.append(tag)
-        self._dirty.add("states")
-        self._dirty_states.add(state_id)
-        return state
+    def set_state_owner(
+        self, state_ids: int | Sequence[int], tag: str, *, add_core: bool = True
+    ) -> None:
+        """Give one state or several to ``tag`` in their history (``owner = TAG``).
 
-    def set_state_properties(self, state_id: int, **kwargs) -> bool:
+        ``add_core`` also adds ``tag`` to the cores. For a runtime change in
+        an event or focus, use ``effects.transfer_state()`` instead.
+
+        Raises:
+            NotFoundError: A state does not exist (nothing changes then), or a
+                game install is configured and no one defines ``tag``.
+        """
+        ids = [state_ids] if isinstance(state_ids, int) else list(state_ids)
+        tag = self._require_country_reference(tag)
+        states = [self.get_state(state_id) for state_id in ids]
+        for state in states:
+            self._materialize_state_override(state)
+            state.owner = tag
+            if add_core and tag not in state.cores:
+                state.cores.append(tag)
+            self._dirty_states.add(state.id)
+        if states:
+            self._dirty.add("states")
+
+    def update_state(
+        self,
+        state_id: int,
+        *,
+        add_cores: Sequence[str] = (),
+        remove_cores: Sequence[str] = (),
+        **fields: Any,
+    ) -> State:
+        """Set fields of a state; list fields such as ``cores`` are replaced.
+
+        ``add_cores`` and ``remove_cores`` change single cores and keep the
+        rest. Only the statements that change are rewritten on save.
+
+        Returns:
+            The updated state.
+
+        Raises:
+            NotFoundError: The state does not exist, a core in
+                ``remove_cores`` is not one of its cores, or (with a game
+                install) a tag no one defines is set as owner or core.
+            TypeError: A field name is unknown; nothing changed.
+        """
         state = self.get_state(state_id)
+        _check_fields("update_state", state, fields)
+        added = [self._require_country_reference(tag) for tag in add_cores]
+        removed = {require_country_tag(tag) for tag in remove_cores}
+        for tag in sorted(removed):
+            if tag not in {core.upper() for core in state.cores}:
+                raise not_found("core", tag, state.cores, where=f"state {state_id}")
+        if fields.get("owner"):
+            fields["owner"] = self._require_country_reference(fields["owner"])
+        if "cores" in fields:
+            fields["cores"] = [self._require_country_reference(tag) for tag in fields["cores"]]
         self._materialize_state_override(state)
-        for list_key in ("cores", "provinces"):
-            if list_key in kwargs and isinstance(kwargs[list_key], list):
-                kwargs[list_key] = _append_unique(getattr(state, list_key), kwargs[list_key])
-        _set_fields(state, kwargs)
-        if "victory_points" in kwargs:
+        _set_fields(state, fields, method="update_state")
+        if removed:
+            state.cores = [core for core in state.cores if core.upper() not in removed]
+        for tag in added:
+            if tag not in state.cores:
+                state.cores.append(tag)
+        if "victory_points" in fields:
             state._victory_points_requested = True
         self._dirty.add("states")
         self._dirty_states.add(state_id)
-        return True
+        return state
 
     def add_state_core(self, state_id: int, tag: str) -> State:
         """Add ``tag`` to a state's history cores.
@@ -326,7 +367,7 @@ class StatesLayer(CountriesLayer):
         """
         tag = require_country_tag(tag)
         state = self.get_state(state_id)
-        if tag not in state.cores:
+        if tag not in {core.upper() for core in state.cores}:
             raise not_found(
                 "core",
                 tag,
@@ -334,42 +375,9 @@ class StatesLayer(CountriesLayer):
                 where=f"state {state_id}",
             )
         self._materialize_state_override(state)
-        state.cores = [core for core in state.cores if core != tag]
+        state.cores = [core for core in state.cores if core.upper() != tag]
         self._dirty.add("states")
         self._dirty_states.add(state_id)
-
-    def patch_state_history(
-        self,
-        state_id: int,
-        *,
-        owner: str | None = None,
-        add_cores: list[str] | None = None,
-        remove_cores: list[str] | None = None,
-    ) -> State:
-        """Queue a minimal owner/core history patch for the next ``save()``.
-
-        Repeated patches and other state setters compose in call order on the
-        same pending State. Serialization patches its original source text.
-        """
-        state = self.get_state(state_id)
-        self._materialize_state_override(state)
-        removed = {tag.upper() for tag in (remove_cores or [])}
-        state.cores = [core for core in state.cores if core.upper() not in removed]
-        for core in add_cores or []:
-            normalized = require_country_tag(core)
-            if normalized not in state.cores:
-                state.cores.append(normalized)
-        if owner is not None:
-            state.owner = require_country_tag(owner)
-        self._dirty.add("states")
-        self._dirty_states.add(state_id)
-        return state
-
-    def batch_set_owner(self, state_ids: list[int], tag: str, add_core: bool = True) -> list[State]:
-        results = []
-        for sid in state_ids:
-            results.append(self.set_state_owner(sid, tag, add_core))
-        return results
 
     def _effective_states(self) -> list[State]:
         result: list[State] = []

@@ -74,7 +74,7 @@ def test_a_new_portrait_path_with_spaces_is_quoted(tmp_path: Path) -> None:
 def test_a_state_name_may_hold_spaces_and_quotes(tmp_path: Path, name: str) -> None:
     _write(tmp_path, "history/states/1-Test.txt", STATE)
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, name=name)
+    mod.update_state(1, name=name)
     mod.save()
     assert Mod(tmp_path).get_state(1).name == name
 
@@ -144,7 +144,7 @@ def test_an_icon_with_quote_characters_survives_an_unrelated_edit(tmp_path: Path
 def test_a_state_name_with_quote_characters_reads_back(tmp_path: Path, source_name: str) -> None:
     _write(tmp_path, "history/states/1-Test.txt", STATE.replace('"STATE_1"', source_name))
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, name='"Big"')
+    mod.update_state(1, name='"Big"')
     mod.save()
     assert Mod(tmp_path).get_state(1).name == '"Big"'
 
@@ -178,12 +178,12 @@ def test_victory_points_have_to_be_numbers(tmp_path: Path) -> None:
     path = _write(tmp_path, "history/states/1-Test.txt", STATE)
     mod = Mod(tmp_path)
     with pytest.raises(ValueError, match="have to be numbers"):
-        mod.set_state_properties(1, victory_points="1 10}}}zz_breakout=1{state={history={1")
+        mod.update_state(1, victory_points="1 10}}}zz_breakout=1{state={history={1")
         mod.preview()
     assert path.read_text(encoding="utf-8") == STATE
 
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, victory_points="1 10")
+    mod.update_state(1, victory_points="1 10")
     mod.save()
     assert Mod(tmp_path).get_state(1).victory_points == "1 10"
 
@@ -227,7 +227,7 @@ def test_a_state_edit_that_only_adds_quotes_or_spaces_is_written(
 ) -> None:
     path = _write(tmp_path, "history/states/1-Test.txt", STATE)
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, **{field: value})
+    mod.update_state(1, **{field: value})
     mod.save()
     assert path.read_text(encoding="utf-8") != STATE
     assert getattr(Mod(tmp_path).get_state(1), field) == value
@@ -237,7 +237,7 @@ def test_a_resource_value_keeps_a_space_at_its_end(tmp_path: Path) -> None:
     source = STATE.replace("manpower = 1\n", "manpower = 1\n\tresources = { steel = 10 }\n")
     path = _write(tmp_path, "history/states/1-Test.txt", source)
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, resources={"steel": "10 "})
+    mod.update_state(1, resources={"steel": "10 "})
     mod.save()
     # Written as given. (The reader turns text that is a number into a number,
     # so it reads back as 10.)
@@ -248,7 +248,7 @@ def test_a_state_number_spelled_another_way_is_no_change(tmp_path: Path) -> None
     source = STATE.replace("manpower = 1\n", "manpower = 2000.0\n\tresources = { steel = 10 }\n")
     path = _write(tmp_path, "history/states/1-Test.txt", source)
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, manpower=2000, resources={"steel": 10.0})
+    mod.update_state(1, manpower=2000, resources={"steel": 10.0})
     assert mod.preview() == ""
     mod.save()
     assert path.read_text(encoding="utf-8") == source
@@ -271,7 +271,7 @@ def test_every_spelling_of_one_number_is_no_change(
     )
     path = _write(tmp_path, "history/states/1-Test.txt", source)
     mod = Mod(tmp_path)
-    mod.set_state_properties(
+    mod.update_state(
         1, local_supplies=given, buildings_max_level_factor=given, resources={"steel": given}
     )
     assert mod.preview() == ""
@@ -286,7 +286,7 @@ def test_a_state_name_that_looks_like_a_number_is_text(
     path = _write(tmp_path, "history/states/1-Test.txt", STATE.replace('"STATE_1"', in_file))
     mod = Mod(tmp_path)
     assert mod.get_state(1).name == in_file
-    mod.set_state_properties(1, name=given)
+    mod.update_state(1, name=given)
     mod.save()
     assert f"name = {given}\n" in path.read_text(encoding="utf-8")
     assert Mod(tmp_path).get_state(1).name == given
@@ -296,7 +296,7 @@ def test_a_resource_value_with_quote_characters_is_written(tmp_path: Path) -> No
     source = STATE.replace("manpower = 1\n", "manpower = 1\n\tresources = { steel = 10 }\n")
     path = _write(tmp_path, "history/states/1-Test.txt", source)
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, resources={"steel": '"10"'})
+    mod.update_state(1, resources={"steel": '"10"'})
     mod.save()
     assert 'steel = "\\"10\\""' in path.read_text(encoding="utf-8")
     assert Mod(tmp_path).get_state(1).resources == {"steel": '"10"'}
@@ -308,7 +308,7 @@ def test_victory_points_take_every_number_spelling_and_script_constants(
 ) -> None:
     path = _write(tmp_path, "history/states/1-Test.txt", STATE)
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, victory_points=points)
+    mod.update_state(1, victory_points=points)
     mod.save()
     province, value = points.split()
     assert f"victory_points = {{ {province} {value} }}" in path.read_text(encoding="utf-8")

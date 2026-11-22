@@ -335,7 +335,7 @@ def test_rollback_keeps_unsaved_edits_made_before(mod_root: Path) -> None:
 
     with mod.transaction():
         mod.update_event("test.1", title="inside_title")
-        mod.set_state_properties(1, manpower=5)
+        mod.update_state(1, manpower=5)
 
     assert mod.get_event("test.1").title == "before_title"
     assert mod.get_state(1).manpower == "100"

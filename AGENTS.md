@@ -151,7 +151,7 @@ with mod.transaction():
 
 19. Use `preview_summary()` alongside `preview()` in long scripts so the agent log contains a compact semantic change list.
 
-20. State edits (`set_state_owner()`, `add_state_core()`, `set_state_properties()`, `patch_state_history()`) change only the statements they touch; `patch_state_history()` sets the owner and several cores in one call. A state is identified by the `id` directly inside its own `state = { }` block, not by its file name.
+20. State edits (`set_state_owner()`, `add_state_core()`, `remove_state_core()`, `update_state()`) change only the statements they touch; `update_state(id, owner=..., add_cores=[...], remove_cores=[...])` sets the owner and several cores in one call, and `set_state_owner()` takes one state id or a list. A state is identified by the `id` directly inside its own `state = { }` block, not by its file name.
 
 21. Avoid bare `add_to_faction = TAG`. Use `effect_add_target_to_faction(leader, target)` or `effect_join_faction(actor, leader)` so faction direction is explicit.
 

@@ -579,7 +579,7 @@ class TestPass2Fixes:
     def test_set_state_properties_rejects_unknown_kwargs(self, tmp_mod):
         mod = tmp_mod.with_states()
         with pytest.raises(TypeError, match="Unknown fields"):
-            mod.set_state_properties(1, nonexistent="bad")
+            mod.update_state(1, nonexistent="bad")
 
     def test_mod_on_empty_dir(self, tmp_path):
         mod = Mod(tmp_path)
@@ -1029,7 +1029,7 @@ class TestAgentFacingApis:
             "}\n",
             encoding="utf-8",
         )
-        state = tmp_mod.mod.patch_state_history(
+        state = tmp_mod.mod.update_state(
             52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"]
         )
         assert "owner = BAY" in tmp_mod.mod.preview()
@@ -1549,7 +1549,8 @@ class TestModStates:
         vanilla_state.write_text(original, encoding="utf-8")
 
         mod = Mod(mod_root, hoi4_install=hoi4_root)
-        state = mod.set_state_owner(115, "GER")
+        assert mod.set_state_owner(115, "GER") is None
+        state = mod.get_state(115)
         target = mod_root / "history" / "states" / "115-Sicily.txt"
 
         assert state.path == target
@@ -1564,19 +1565,21 @@ class TestModStates:
 
     def test_set_state_owner(self, tmp_mod):
         mod = tmp_mod.with_states()
-        state = mod.set_state_owner(1, "SOV")
+        mod.set_state_owner(1, "SOV")
+        state = mod.get_state(1)
         assert state.owner == "SOV"
         assert "SOV" in state.cores
 
     def test_set_state_owner_no_core(self, tmp_mod):
         mod = tmp_mod.with_states()
-        state = mod.set_state_owner(1, "SOV", add_core=False)
+        mod.set_state_owner(1, "SOV", add_core=False)
+        state = mod.get_state(1)
         assert state.owner == "SOV"
         assert "SOV" not in state.cores
 
-    def test_set_state_properties(self, tmp_mod):
+    def test_update_state(self, tmp_mod):
         mod = tmp_mod.with_states()
-        mod.set_state_properties(1, manpower="9999999")
+        mod.update_state(1, manpower="9999999")
         state = mod.get_state(1)
         assert state.manpower == "9999999"
 
@@ -1609,10 +1612,10 @@ class TestModStates:
         assert matches[0]["matched"] == "display_name"
         assert matches[0]["source"] == "vanilla"
 
-    def test_set_state_properties_appends_cores(self, tmp_mod):
+    def test_update_state_add_cores_appends(self, tmp_mod):
         mod = tmp_mod.with_states()
         original = list(mod.get_state(1).cores)
-        mod.set_state_properties(1, cores=["SOV"])
+        mod.update_state(1, add_cores=["SOV"])
         state = mod.get_state(1)
         assert all(core in state.cores for core in original)
         assert "SOV" in state.cores
@@ -1624,10 +1627,9 @@ class TestModStates:
         mod.remove_state_core(1, "SOV")
         assert "SOV" not in mod.get_state(1).cores
 
-    def test_batch_set_owner(self, tmp_mod):
+    def test_set_state_owner_takes_many_states(self, tmp_mod):
         mod = tmp_mod.with_states()
-        results = mod.batch_set_owner([1, 2], "USA")
-        assert len(results) == 2
+        assert mod.set_state_owner([1, 2], "USA") is None
         assert mod.get_state(1).owner == "USA"
         assert mod.get_state(2).owner == "USA"
 

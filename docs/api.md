@@ -347,7 +347,7 @@ disconnected owned land, and detects foreign landlocked components whose
 entire boundary belongs to the target country. Use `allowed_state_ids` for
 deliberate islands or enclaves; do not suppress accidental missed transfers.
 
-`set_state_owner()` and `batch_set_owner()` patch state history files. In event options, event immediate blocks, decisions, and focus rewards, use the runtime effect helper instead:
+`set_state_owner()`, `add_state_core()`, `remove_state_core()` and `update_state()` patch state history files. In event options, event immediate blocks, decisions, and focus rewards, use the runtime effect helper instead:
 
 ```python
 Mod.effect_transfer_state(115, "SCL")  # SCL = { transfer_state = 115 }
@@ -411,12 +411,10 @@ states for copying, use `get_country_context(tag, copy_states=True)` or
 | `get_state_name_map(*, include_vanilla=True) -> dict[int, str]` | `dict[int,str]` | State ID to display name |
 | `find_state(query: str, *, include_vanilla=True, limit=10) -> list[dict]` | `list[dict]` | Search by ID or localized state name, with stale filename fallback. Each result includes `matched`. |
 | `get_state(state_id: int, *, default=...) -> State` | `State` | Cached or reads from mod/vanilla without writing. Raises `NotFoundError`. |
-| `set_state_owner(state_id: int, tag: str, add_core: bool = True) -> State` | `State` | Change owner, optionally add core |
-| `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field. List fields such as `cores` and `provinces` append unique values instead of replacing. |
+| `set_state_owner(state_ids: int \| Sequence[int], tag: str, *, add_core=True) -> None` | `None` | Change the owner of one state or several, optionally add a core. A missing state raises `NotFoundError` before anything changes. |
+| `update_state(state_id: int, *, add_cores=(), remove_cores=(), **fields) -> State` | `State` | Set any State field. List fields such as `cores` and `provinces` are replaced; `add_cores` / `remove_cores` change single cores (a core to remove that is not there raises `NotFoundError`). |
 | `add_state_core(state_id: int, tag: str) -> State` | `State` | Append a core without replacing existing cores; with a game install, an undefined tag raises `NotFoundError` |
 | `remove_state_core(state_id: int, tag: str) -> None` | `None` | Remove a core; raises `NotFoundError` when `tag` is not a core (nothing is copied into the mod) |
-| `patch_state_history(state_id, owner=None, add_cores=None, remove_cores=None) -> State` | `State` | Queue a text-preserving owner/core patch for the next `save()` |
-| `batch_set_owner(state_ids: list[int], tag: str, add_core: bool = True) -> list[State]` | `list[State]` | Batch owner change |
 
 A state is identified by the `id` directly inside its own top-level
 `state = { }` block, not by its file name. A commented-out or nested
@@ -427,24 +425,24 @@ A state is identified by the `id` directly inside its own top-level
 ```python
 mod.set_state_owner(52, "GER")
 mod.add_state_core(52, "AUT")
-mod.batch_set_owner([1, 2, 3], "SOV", add_core=True)
-mod.set_state_properties(52, manpower="5000000", victory_points="3620 1")
-mod.patch_state_history(52, owner="GER", add_cores=["GER"], remove_cores=["FRA"])
+mod.set_state_owner([1, 2, 3], "SOV", add_core=True)
+mod.update_state(52, manpower="5000000", victory_points="3620 1")
+mod.update_state(52, owner="GER", add_cores=["GER"], remove_cores=["FRA"])
 print(mod.find_state("Sicily")[0]["id"])
 ```
 
-Repeated `patch_state_history()` calls and ordinary state setters compose in call order within the same pending batch; preview and save render the accumulated state.
+Repeated `update_state()` calls and ordinary state setters compose in call order within the same pending batch; preview and save render the accumulated state.
 
 Loaded state files are patched in place. Updating owner, cores, manpower, resources, buildings, or other modeled fields changes only those statements and preserves unrelated vanilla data such as buildings, resources, local supplies, history bookmarks, resistance, and compliance blocks. A resource edit changes only the lines that differ.
 
 New statements go on their own line, indented like their siblings with the file's own indentation step (a tab, or its smallest space indent). An empty or one-line block is spread over lines first. A new owner goes first in `history`, new cores after the existing cores, and new victory points or buildings before the first dated history block (`1939.1.1 = { ... }`).
 
 `State.impassable: bool` represents the state-level `impassable = yes` flag.
-Use `mod.set_state_properties(state_id, impassable=True)` to queue it; setting
+Use `mod.update_state(state_id, impassable=True)` to queue it; setting
 `False` removes the flag while preserving unrelated state text. This changes
 traversability only: ownership, cores, and population remain separate fields.
 
-`patch_state_history()` sets the owner and adds or removes several cores in one call. Like the other state setters it changes only those statements, so unusual vanilla `victory_points` formatting stays as written. The change remains in memory for `preview()` and is written transactionally by `save()`.
+`update_state(id, owner=..., add_cores=[...], remove_cores=[...])` sets the owner and adds or removes several cores in one call. Like the other state setters it changes only those statements, so unusual vanilla `victory_points` formatting stays as written. The change remains in memory for `preview()` and is written transactionally by `save()`.
 
 ### Map editing
 

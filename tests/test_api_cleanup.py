@@ -648,3 +648,55 @@ def test_creating_an_existing_id_raises_already_exists(full_mod: Mod, call) -> N
     with pytest.raises(AlreadyExistsError):
         call(full_mod)
     assert full_mod.preview() == before
+
+
+# ── state setters ───────────────────────────────────────────────────
+
+
+@pytest.fixture
+def state_game(tmp_path, game):
+    for state_id in (1, 2):
+        _write(
+            game,
+            f"history/states/{state_id}-S.txt",
+            f"state = {{ id = {state_id} name = STATE_{state_id} manpower = 1 "
+            f"history = {{ owner = GER add_core_of = GER add_core_of = POL }} provinces = {{ {state_id} }} }}\n",
+        )
+    _write(game, "common/country_tags/00_countries.txt", 'GER = "countries/Germany.txt"\nPOL = "countries/Poland.txt"\nSOV = "countries/Soviet.txt"\n')
+    return game
+
+
+def test_set_state_owner_takes_one_state_or_many_and_is_atomic(tmp_path, state_game) -> None:
+    mod = Mod(tmp_path / "mod", hoi4_install=state_game)
+    assert mod.set_state_owner(1, "SOV") is None
+    assert mod.get_state(1).owner == "SOV"
+    assert mod.set_state_owner([1, 2], "POL", add_core=False) is None
+    assert [mod.get_state(i).owner for i in (1, 2)] == ["POL", "POL"]
+    before = mod.preview()
+    with pytest.raises(NotFoundError, match="State 99 not found"):
+        mod.set_state_owner([2, 99], "SOV")
+    assert mod.get_state(2).owner == "POL"
+    assert mod.preview() == before
+
+
+def test_update_state_sets_lists_and_adds_or_removes_cores(tmp_path, state_game) -> None:
+    from hoi4 import State
+
+    mod = Mod(tmp_path / "mod", hoi4_install=state_game)
+    state = mod.update_state(1, cores=["SOV"])
+    assert isinstance(state, State)
+    assert state.cores == ["SOV"]  # a list field is replaced, not appended to
+    state = mod.update_state(2, add_cores=["SOV"], remove_cores=["POL"], manpower=5)
+    assert state.cores == ["GER", "SOV"] and state.manpower == 5
+    before = mod.preview()
+    with pytest.raises(NotFoundError, match="Core 'POL' not found in state 2"):
+        mod.update_state(2, remove_cores=["POL"], manpower=9)
+    with pytest.raises(TypeError, match=r"update_state\(\): Unknown fields: \['zz'\]"):
+        mod.update_state(2, zz=1)
+    with pytest.raises(TypeError):
+        mod.update_state(2, _victory_points_requested=True)
+    with pytest.raises(NotFoundError, match="Country 'ZZX' not found"):
+        mod.update_state(2, owner="ZZX")
+    assert mod.preview() == before
+    for name in ("set_state_properties", "patch_state_history", "batch_set_owner"):
+        assert not hasattr(mod, name)

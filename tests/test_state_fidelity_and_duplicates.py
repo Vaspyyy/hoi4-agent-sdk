@@ -54,7 +54,7 @@ def test_manpower_edit_changes_only_manpower_and_preserves_history(tmp_path: Pat
     )
     mod = Mod(tmp_path)
 
-    mod.set_state_properties(52, manpower="11")
+    mod.update_state(52, manpower="11")
     assert mod.preview().count("victory_points") == 0
     mod.save(require_changes=True)
 
