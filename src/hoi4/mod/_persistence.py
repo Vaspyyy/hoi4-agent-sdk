@@ -151,6 +151,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             OSError: Writing a file failed.
         """
         if not self._dirty:
+            self._drop_inherited_lookups()
             message = "No changes written: save() was called with no dirty changes"
             warnings.warn(message, RuntimeWarning, stacklevel=2)
             if require_changes:
@@ -172,6 +173,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             if self._pending_asset_baselines[path] != content
         }
         if not changed and not changed_assets:
+            self._drop_inherited_lookups()
             message = "No files written after processing dirty sections"
             if require_changes:
                 raise SaveRefusedError(message)
