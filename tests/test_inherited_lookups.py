@@ -294,6 +294,8 @@ _MATRIX = {
     "decision_category": ("common/decisions/categories", "{id} = {{ icon = {marker} }}", "get_decision_category", "list_decision_categories"),
     "bookmark": ("common/bookmarks", "bookmarks = {{ bookmark = {{ name = {id} desc = {marker} date = 1936.1.1.12 GER = {{ history = old }} }} }}", "get_bookmark", "list_bookmarks"),
     "dynamic_modifier": ("common/dynamic_modifiers", "{id} = {{ icon = {marker} }}", "get_dynamic_modifier", "list_dynamic_modifiers"),
+    "on_action": ("common/on_actions", "on_actions = {{ {id} = {{ effect = {{ log = {marker} }} }} }}", "get_on_action", "list_on_actions"),
+    "on_action_occurrences": ("common/on_actions", "on_actions = {{ {id} = {{ effect = {{ log = {marker} }} }} }}", "get_on_action_occurrences", "list_on_actions"),
 }
 
 
@@ -321,6 +323,8 @@ def layered_content(request, tmp_path: Path):
 def test_matrix_game_only(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     obj = mod.get_focus_tree(ids["game"]) if kind == "focus" else get("game")
+    if kind == "on_action_occurrences":
+        obj = obj[0]
     assert (obj.definition_path if kind == "decision_category" else obj.path).is_relative_to(game)
     assert get("game") is not None
 
@@ -328,6 +332,8 @@ def test_matrix_game_only(layered_content) -> None:
 def test_matrix_base_only(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     obj = mod.get_focus_tree(ids["base"]) if kind == "focus" else get("base")
+    if kind == "on_action_occurrences":
+        obj = obj[0]
     assert (obj.definition_path if kind == "decision_category" else obj.path).is_relative_to(base)
     assert get("base") is not None
 
@@ -335,6 +341,8 @@ def test_matrix_base_only(layered_content) -> None:
 def test_matrix_base_precedence(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     obj = mod.get_focus_tree(ids["both"]) if kind == "focus" else get("both")
+    if kind == "on_action_occurrences":
+        obj = obj[0]
     assert (obj.definition_path if kind == "decision_category" else obj.path).is_relative_to(base)
     assert get("both") is not None
 
@@ -346,6 +354,8 @@ def test_matrix_mod_precedence(layered_content) -> None:
     args = (ids["both"], ids["both"] + "_focus") if kind == "focus" else (ids["both"],)
     found = getattr(new, _MATRIX[kind][2])(*args)
     origin = new.get_focus_tree(ids["both"]) if kind == "focus" else found
+    if kind == "on_action_occurrences":
+        origin = origin[0]
     assert (origin.definition_path if kind == "decision_category" else origin.path).is_relative_to(root)
 
 
@@ -380,10 +390,15 @@ def test_matrix_lookup_does_not_stage(layered_content) -> None:
 def test_matrix_inherited_object_is_a_copy(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     obj = get("game")
+    if kind == "on_action_occurrences":
+        obj = obj[0]
     field = "name" if kind == "bookmark" else "id"
     old = getattr(obj, field)
     setattr(obj, field, "changed")
-    assert getattr(get("game"), field) == old
+    second = get("game")
+    if kind == "on_action_occurrences":
+        second = second[0]
+    assert getattr(second, field) == old
 
 
 @pytest.mark.parametrize("edit", ["update", "delete", "add_option", "update_option", "namespace"])
@@ -638,3 +653,47 @@ def test_matrix_modifier_cache_clears(layered_content, action: str) -> None:
     else:
         getattr(mod, action)()
     assert get("game").icon == "changed"
+
+
+@pytest.mark.parametrize("layered_content", ["on_action"], indirect=True)
+@pytest.mark.parametrize("edit", ["update", "delete"])
+def test_matrix_on_action_edit_requires_own_hook(layered_content, edit: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    operations = {
+        "update": lambda: mod.update_on_action(ids["game"], effect="log = changed"),
+        "delete": lambda: mod.delete_on_action(ids["game"]),
+    }
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError) as error:
+        operations[edit]()
+    assert "common/on_actions/game.txt" in str(error.value)
+    assert "create_on_action()" in str(error.value)
+    assert mod.preview() == before
+    mod.load_inherited_content("common/on_actions/game.txt")
+    operations[edit]()
+    assert mod.save(require_changes=True).written_files
+    assert (root / "common/on_actions/game.txt").exists()
+
+
+@pytest.mark.parametrize("layered_content", ["on_action"], indirect=True)
+@pytest.mark.parametrize("action", ["discard", "save", "reload"])
+def test_matrix_on_action_cache_clears(layered_content, action: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert "game" in get("game").effect
+    put(game, "game", "game", "changed")
+    if action == "save":
+        with pytest.warns(RuntimeWarning):
+            mod.save(require_changes=False)
+    else:
+        getattr(mod, action)()
+    assert "changed" in get("game").effect
+
+
+@pytest.mark.parametrize("layered_content", ["on_action"], indirect=True)
+def test_inherited_on_action_occurrences_compose_layers(layered_content) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    occurrences = mod.get_on_action_occurrences(ids["both"])
+    assert len(occurrences) == 2
+    assert occurrences[0].path.is_relative_to(base)
+    assert occurrences[1].path.is_relative_to(game)
+    assert mod.get_on_action_occurrences(ids["both"], include_vanilla=False, default=None) is None
