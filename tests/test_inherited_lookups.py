@@ -287,6 +287,8 @@ def test_delete_and_update_inherited_characters_preserves_file(tmp_path: Path) -
 # The same layered lookup checks run for each supported kind.
 _MATRIX = {
     "event": ("events", "country_event = {{ id = {id} title = {marker} }}", "get_event", "list_events"),
+    "focus_tree": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} }}", "get_focus_tree", "list_focus_trees"),
+    "focus": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} }}", "get_focus", "list_focus_trees"),
 }
 
 
@@ -313,17 +315,23 @@ def layered_content(request, tmp_path: Path):
 
 def test_matrix_game_only(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
-    assert get("game").path.is_relative_to(game)
+    obj = mod.get_focus_tree(ids["game"]) if kind == "focus" else get("game")
+    assert obj.path.is_relative_to(game)
+    assert get("game") is not None
 
 
 def test_matrix_base_only(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
-    assert get("base").path.is_relative_to(base)
+    obj = mod.get_focus_tree(ids["base"]) if kind == "focus" else get("base")
+    assert obj.path.is_relative_to(base)
+    assert get("base") is not None
 
 
 def test_matrix_base_precedence(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
-    assert get("both").path.is_relative_to(base)
+    obj = mod.get_focus_tree(ids["both"]) if kind == "focus" else get("both")
+    assert obj.path.is_relative_to(base)
+    assert get("both") is not None
 
 
 def test_matrix_mod_precedence(layered_content) -> None:
@@ -331,7 +339,9 @@ def test_matrix_mod_precedence(layered_content) -> None:
     put(root, "mod_both", "both", "mod")
     new = Mod(root, hoi4_install=game, base_mod_paths=[base])
     args = (ids["both"], ids["both"] + "_focus") if kind == "focus" else (ids["both"],)
-    assert getattr(new, _MATRIX[kind][2])(*args).path.is_relative_to(root)
+    found = getattr(new, _MATRIX[kind][2])(*args)
+    origin = new.get_focus_tree(ids["both"]) if kind == "focus" else found
+    assert origin.path.is_relative_to(root)
 
 
 def test_matrix_mod_only_and_default(layered_content) -> None:
@@ -365,12 +375,13 @@ def test_matrix_lookup_does_not_stage(layered_content) -> None:
 def test_matrix_inherited_object_is_a_copy(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     obj = get("game")
-    old = obj.path
-    obj.path = root / "changed"
-    assert get("game").path == old
+    old = obj.id
+    obj.id = "changed"
+    assert get("game").id == old
 
 
 @pytest.mark.parametrize("edit", ["update", "delete", "add_option"])
+@pytest.mark.parametrize("layered_content", ["event"], indirect=True)
 def test_matrix_event_edit_requires_staged_file(layered_content, edit: str) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     if kind != "event":
@@ -392,6 +403,7 @@ def test_matrix_event_edit_requires_staged_file(layered_content, edit: str) -> N
 
 
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
+@pytest.mark.parametrize("layered_content", ["event"], indirect=True)
 def test_matrix_event_cache_clears(layered_content, action: str) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     if kind != "event":
@@ -404,3 +416,42 @@ def test_matrix_event_cache_clears(layered_content, action: str) -> None:
     else:
         getattr(mod, action)()
     assert get("game").title == "changed"
+
+
+@pytest.mark.parametrize("layered_content", ["focus_tree", "focus"], indirect=True)
+@pytest.mark.parametrize("edit", ["update_tree", "delete_tree", "add", "remove", "update"])
+def test_matrix_focus_edit_requires_staged_file(layered_content, edit: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    focus_id = ids["game"] + "_focus"
+    operations = {
+        "update_tree": lambda: mod.update_focus_tree(ids["game"], default=True),
+        "delete_tree": lambda: mod.delete_focus_tree(ids["game"]),
+        "add": lambda: mod.add_focus(ids["game"], Focus(id="new_focus", x=1, y=1)),
+        "remove": lambda: mod.remove_focus(ids["game"], focus_id),
+        "update": lambda: mod.update_focus(ids["game"], focus_id, x=2),
+    }
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError) as error:
+        operations[edit]()
+    assert 'mod.load_inherited_content("common/national_focus/game.txt")' in str(error.value)
+    assert mod.preview() == before
+    mod.load_inherited_content("common/national_focus/game.txt")
+    operations[edit]()
+    assert mod.save(require_changes=True).written_files
+    assert (root / "common/national_focus/game.txt").exists()
+
+
+@pytest.mark.parametrize("layered_content", ["focus_tree", "focus"], indirect=True)
+@pytest.mark.parametrize("action", ["discard", "save", "reload"])
+def test_matrix_focus_cache_clears(layered_content, action: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert get("game") is not None
+    path = game / "common/national_focus/game.txt"
+    path.write_text(f"focus_tree = {{ id = {ids['game']} focus = {{ id = {ids['game']}_focus x = 7 y = 0 }} }}")
+    if action == "save":
+        with pytest.warns(RuntimeWarning):
+            mod.save(require_changes=False)
+    else:
+        getattr(mod, action)()
+    focus = get("game") if kind == "focus" else get("game").focuses[0]
+    assert focus.x == 7
