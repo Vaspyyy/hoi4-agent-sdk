@@ -41,7 +41,7 @@ from ._script_corpus import script_blocks
 from .script_scopes import ScriptStatement, walk_script
 from .syntax import Assignment, Block, Tagged, parse
 from .textio import read_text
-from .types import ValidationError
+from .types import ValidationIssue
 
 ScriptTokenKind = Literal["effect", "trigger", "modifier"]
 
@@ -939,7 +939,7 @@ def validate_script_sources(
     mod_root: str | Path | None = None,
     custom_tokens: Mapping[ScriptTokenKind, set[str]] | None = None,
     allowlist: Iterable[str] = (),
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Report names the game does not know and names used in a scope they do not support.
 
     Codes (all with a file and a line when the source has them):
@@ -967,7 +967,7 @@ def validate_script_sources(
         kind: {name.lower() for name in names} for kind, names in custom.items()
     }
     characters = vocabulary.characters
-    findings: list[ValidationError] = []
+    findings: list[ValidationIssue] = []
     seen: set[tuple[str, str, str, int | None]] = set()
     for source in sources:
         if source.block is None and not source.text.strip():
@@ -1009,7 +1009,7 @@ def check_statement(
     vocabulary: GameScriptVocabulary,
     custom: Mapping[ScriptTokenKind, set[str]],
     allowed: tuple[str, ...],
-) -> ValidationError | None:
+) -> ValidationIssue | None:
     """Check one statement found by the walker; ``None`` when it is fine.
 
     ``custom`` holds extra names per kind in lower case, ``allowed`` the
@@ -1103,10 +1103,10 @@ def check_statement(
 
 def _finding(
     source: ScriptSource, line: int, *, code: str, severity: str, message: str
-) -> ValidationError:
+) -> ValidationIssue:
     owner_kind = source.owner_kind
     owner_id = source.owner_id or None
-    return ValidationError(
+    return ValidationIssue(
         message=message,
         severity=severity,
         code=code,

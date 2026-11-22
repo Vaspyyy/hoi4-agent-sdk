@@ -31,7 +31,7 @@ from ..oob import (
 from ..syntax import parse
 from ..types import (
     State,
-    ValidationError,
+    ValidationIssue,
 )
 from ._equipment import EquipmentLayer, _ScriptCondition
 from ._states import StatesLayer
@@ -280,11 +280,11 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
 
     # ── The validation phase ───────────────────────────────────
 
-    def _validate_country_oobs(self) -> list[ValidationError]:
+    def _validate_country_oobs(self) -> list[ValidationIssue]:
         """Check every OOB file and every country assignment of one."""
 
         data = self._oob_check_data()
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         references = {
             tag: self._country_oob_references(country)
             for tag, country in self._countries.items()
@@ -302,7 +302,7 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
             except (OSError, ValueError) as error:
                 unreadable.add(name)
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Could not read {kind} OOB '{name}' of country "
                             f"'{tag}': {error}"
@@ -386,9 +386,9 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
         *,
         active: bool,
         file_path: str | None,
-    ) -> ValidationError:
+    ) -> ValidationIssue:
         if active:
-            return ValidationError(
+            return ValidationIssue(
                 message=(
                     f"Country '{tag}' references missing {reference.kind} OOB "
                     f"'{reference.name}'"
@@ -398,7 +398,7 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
                 country_tag=tag,
                 file_path=file_path,
             )
-        return ValidationError(
+        return ValidationIssue(
             message=(
                 f"Country '{tag}' references missing {reference.kind} OOB "
                 f"'{reference.name}'. The country owns no state at the "
@@ -436,7 +436,7 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
         reference: OOBReference | None = None,
         *,
         structure: bool = False,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Check one OOB's contents and its use by ``country_tag``.
 
         ``structure`` also runs the file's own checks (``validate_oob``),
@@ -453,7 +453,7 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
                 oob.excluded_dlc,
             )
         view = self._oob_assignment_copy(oob, country_tag, reference)
-        findings: list[ValidationError] = []
+        findings: list[ValidationIssue] = []
         if structure:
             known_templates = set(data.script_templates)
             country = self._countries.get(country_tag)
@@ -479,10 +479,10 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
         self,
         oob: OrderOfBattle,
         data: _OobCheckData,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Checks that only depend on the file and the game data."""
 
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         lines = _oob_lines(oob)
         file_path = str(oob.path) if oob.path is not None else None
         tag = oob.country_tag or None
@@ -495,7 +495,7 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
             state_id: int | None = None,
         ) -> None:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"OOB '{oob.name}' {message}",
                     severity="error",
                     code=code,
@@ -643,10 +643,10 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
         country_tag: str,
         reference: OOBReference,
         data: _OobCheckData,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Checks that depend on which country loads the file, and when."""
 
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         lines = _oob_lines(oob)
         file_path = str(oob.path) if oob.path is not None else None
         required = set(reference.required_dlc)
@@ -661,7 +661,7 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
             state_id: int | None = None,
         ) -> None:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"OOB '{oob.name}' {message}",
                     severity=severity,
                     code=code,

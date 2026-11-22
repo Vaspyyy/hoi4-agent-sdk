@@ -13,7 +13,7 @@ from ..paths import (
     resolve_mod_output_path,
 )
 from ..types import (
-    ValidationError,
+    ValidationIssue,
 )
 
 
@@ -165,11 +165,11 @@ def _decision_category_definition_path(
 
 
 def _filter_validation_errors(
-    errors: list[ValidationError],
+    errors: list[ValidationIssue],
     *,
     suppress: Iterable[str] | None = None,
     advice: bool = True,
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Apply the severity model and the caller's suppressions to findings.
 
     * Every finding gets the severity its code is registered with.
@@ -187,7 +187,7 @@ def _filter_validation_errors(
     from ..validation import suppression_entries, validation_suppressions
 
     rules = validation_suppressions(suppression_entries(suppress))
-    kept: list[ValidationError] = []
+    kept: list[ValidationIssue] = []
     for error in errors:
         error = _with_registered_severity(error)
         if error.severity == "info" and not advice:
@@ -199,7 +199,7 @@ def _filter_validation_errors(
     return kept
 
 
-def _with_registered_severity(error: ValidationError) -> ValidationError:
+def _with_registered_severity(error: ValidationIssue) -> ValidationIssue:
     from ..validation import VALIDATION_SEVERITIES
 
     severity = VALIDATION_SEVERITIES.get(error.code)
@@ -208,7 +208,7 @@ def _with_registered_severity(error: ValidationError) -> ValidationError:
     return dataclasses.replace(error, severity=severity)
 
 
-def _finding_ids(error: ValidationError) -> set[str]:
+def _finding_ids(error: ValidationIssue) -> set[str]:
     values = (
         error.focus_id,
         error.event_id,

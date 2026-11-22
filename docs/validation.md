@@ -1,6 +1,6 @@
 # Validation codes and severities
 
-`Mod.validate()` returns a list of `ValidationError` findings. Every finding
+`Mod.validate()` returns a list of `ValidationIssue` findings. Every finding
 has a stable `code` and the `severity` of that code. This page describes the
 severity model, how to hide findings, and every code the SDK can produce.
 

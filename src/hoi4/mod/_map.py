@@ -64,7 +64,7 @@ from ..paths import (
 )
 from ..types import (
     State,
-    ValidationError,
+    ValidationIssue,
 )
 from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._catalogs import CatalogsLayer
@@ -979,12 +979,12 @@ class MapLayer(StatesLayer, CatalogsLayer):
             ]
         return []
 
-    def _validate_map_editing(self) -> list[ValidationError]:
+    def _validate_map_editing(self) -> list[ValidationIssue]:
         """Map-geometry reference checks (states, regions, supply, rails, buildings)."""
 
         province_types = self._effective_province_types()
         state_provinces, state_paths = self._effective_state_provinces()
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         region_files = self._strategic_region_files()
         regions: list[StrategicRegion] | None = None
         if region_files:
@@ -1002,7 +1002,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
                     regions.extend(found)
                 except ParseError as error:
                     errors.append(
-                        ValidationError(
+                        ValidationIssue(
                             message=f"Could not parse strategic region file {relative}: {error}",
                             severity="error",
                             code="strategic_region_parse_error",

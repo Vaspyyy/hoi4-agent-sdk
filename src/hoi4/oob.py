@@ -23,7 +23,7 @@ from .patching import (
 from .script import pdx_string, pdx_value
 from .syntax import as_scalar, parse, require_entry, require_key
 from .textio import read_text
-from .types import ValidationError
+from .types import ValidationIssue
 
 _T = TypeVar("_T")
 AssignedOOBKind = Literal["land", "naval", "air"]
@@ -671,7 +671,7 @@ def validate_oob(
     oob: OrderOfBattle,
     *,
     known_templates: set[str] | None = None,
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Check one OOB file on its own.
 
     ``known_templates`` names division templates defined outside this file
@@ -680,7 +680,7 @@ def validate_oob(
     use a template of this file.
     """
 
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     inferred_kind = _infer_oob_kind(
         oob.templates,
         oob.divisions,
@@ -1895,8 +1895,8 @@ def _issue(
     code: str,
     *,
     severity: str = "error",
-) -> ValidationError:
-    return ValidationError(
+) -> ValidationIssue:
+    return ValidationIssue(
         message=f"OOB '{oob.name}': {message}",
         severity=severity,
         code=code,

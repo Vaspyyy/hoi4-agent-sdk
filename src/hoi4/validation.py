@@ -24,7 +24,7 @@ from .syntax import parse as parse_script
 from .script import validate_script_syntax
 from .syntax import Assignment, Block, Tagged, parse
 from .textio import read_text
-from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationError
+from .types import Country, Decision, Event, FocusTree, Idea, State, ValidationIssue
 
 TAG_RE = re.compile(r"^[A-Z0-9]{3}$")
 _UNSET = object()
@@ -621,7 +621,7 @@ def validation_suppressions(entries: Iterable[str]) -> dict[str, set[str]]:
 
 def validate_tag_definition_targets(
     mod_root: Path, exists: Callable[[str], bool] | None = None
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Report mod tag declarations whose country definition file is absent.
 
     A declared path such as ``countries/Germany.txt`` is read below
@@ -631,7 +631,7 @@ def validate_tag_definition_targets(
     their country files. Without it only the mod's own folder counts.
     """
 
-    issues: list[ValidationError] = []
+    issues: list[ValidationIssue] = []
     tags_dir = mod_root / "common" / "country_tags"
     if not tags_dir.is_dir():
         return issues
@@ -649,7 +649,7 @@ def validate_tag_definition_targets(
             if exists(relative):
                 continue
             issues.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"Tag {tag} references {declared_path} but file does not exist"
                     ),
@@ -684,14 +684,14 @@ def validate_country_history_references(
     known_state_ids: set[int],
     known_character_ids: set[str],
     pending: Mapping[Path, str | None] | None = None,
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Validate capital and recruited-character references in mod histories.
 
     ``pending`` maps a file to the text an unsaved edit gives it (``None``
     deletes it); such a file is read from there instead of from disk.
     """
 
-    issues: list[ValidationError] = []
+    issues: list[ValidationIssue] = []
     histories_dir = mod_root / "history" / "countries"
     paths = set(histories_dir.glob("*.txt")) if histories_dir.is_dir() else set()
     pending = pending or {}
@@ -719,7 +719,7 @@ def validate_country_history_references(
                 if state_id in known_state_ids:
                     continue
                 issues.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=f"Capital state {state_id} does not exist",
                         severity="error",
                         code="capital_ref",
@@ -732,7 +732,7 @@ def validate_country_history_references(
                 if value in known_character_ids:
                     continue
                 issues.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=f"Character {value} is not defined",
                         severity="warning",
                         code="character_ref",
@@ -749,7 +749,7 @@ def _script_warnings(
     file_path: str | None = None,
     focus_id: str | None = None,
     event_id: str | None = None,
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Shape hints for one effect script, read from its syntax tree.
 
     Hints that depend on the scope a statement runs in (core effects, faction
@@ -758,12 +758,12 @@ def _script_warnings(
     the scope.
     """
 
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     if not script:
         return errors
 
-    def finding(message: str, severity: str, code: str) -> ValidationError:
-        return ValidationError(
+    def finding(message: str, severity: str, code: str) -> ValidationIssue:
+        return ValidationIssue(
             message=message,
             severity=severity,
             code=code,
@@ -864,7 +864,7 @@ def validate_country(
     has_localisation: Callable[[str], bool] | None = None,
     leader_ideologies: Sequence[str] | None = None,
     dynamic_tag: bool = False,
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Check one country's history values.
 
     ``has_localisation`` tells whether a localisation key exists. The game
@@ -876,12 +876,12 @@ def validate_country(
     the country that spawns it.
     """
 
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     file_path = str(country.history_path) if country.history_path is not None else None
 
     if not TAG_RE.match(country.tag):
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Invalid country tag '{country.tag}' (must be 3 alphanumeric characters)",
                 severity="error",
                 code="invalid_country_tag",
@@ -900,7 +900,7 @@ def validate_country(
         has_localisation is not None and any(has_localisation(key) for key in name_keys)
     ):
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Country '{country.tag}' has no name: none of "
                     f"{country.tag}, {country.tag}_DEF or "
@@ -916,7 +916,7 @@ def validate_country(
     total_pop = sum(country.popularities.values())
     if total_pop > 0 and total_pop != 100:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Country '{country.tag}' popularities sum to {total_pop}, expected 100",
                 severity="warning",
                 code="country_popularity_sum",
@@ -927,7 +927,7 @@ def validate_country(
 
     if country.ruling_party not in valid_parties:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Country '{country.tag}' has invalid ruling party '{country.ruling_party}'",
                 severity="error",
                 code="invalid_ruling_party",
@@ -957,7 +957,7 @@ def validate_country(
         and country.ruling_party not in parties
     ):
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Country '{country.tag}' ruling party '{country.ruling_party}' has no "
                     f"recruited leader (leader ideologies: {', '.join(sorted(set(ideologies)))}), "
@@ -984,7 +984,7 @@ def validate_country(
     if written is not None and any(not 0 <= channel <= 255 for channel in written[0]):
         shown = " ".join(f"{channel:g}" for channel in written[0])
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Country '{country.tag}' has the color {{ {shown} }} in its definition "
                     "file; every channel has to be between 0 and 255"
@@ -1001,7 +1001,7 @@ def validate_country(
         r, g, b = country.color
         if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255):
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"Country '{country.tag}' has invalid color {country.color}",
                     severity="error",
                     code="invalid_country_color",
@@ -1010,7 +1010,7 @@ def validate_country(
             )
     except (TypeError, ValueError):
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Country '{country.tag}' has malformed color {country.color!r}",
                 severity="error",
                 code="invalid_country_color",
@@ -1106,7 +1106,7 @@ def validate_focus_tree(
     known_search_filters: Collection[str] | None = None,
     shared_focus_parents: Mapping[str, Collection[str]] | None = None,
     shared_focus_conditions: Mapping[str, str | None] | None = None,
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Check one focus tree.
 
     ``known_search_filters`` are the filter names that have a ``GFX_<filter>``
@@ -1126,7 +1126,7 @@ def validate_focus_tree(
     a prerequisite outside the tree counts as always drawn.
     """
 
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     local_ids = {f.id for f in tree.focuses}
     all_known = local_ids | (known_focus_ids or set())
 
@@ -1156,7 +1156,7 @@ def validate_focus_tree(
                 if anchor in canvas:
                     continue
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Focus '{focus_id}' position unresolved: {reason}",
                 severity="warning",
                 code="unresolved_focus_position",
@@ -1175,7 +1175,7 @@ def validate_focus_tree(
     for focus in tree.focuses:
         if not focus.id:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message="Focus has no ID",
                     severity="error",
                     code="missing_focus_id",
@@ -1186,7 +1186,7 @@ def validate_focus_tree(
 
         if focus.id in seen_ids:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"Duplicate focus ID '{focus.id}'",
                     severity="error",
                     code="duplicate_focus_id",
@@ -1204,7 +1204,7 @@ def validate_focus_tree(
             "focus", "shared_focus", "joint_focus"
         ):
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"Focus '{focus.id}' has kind '{focus.kind}', which is not allowed "
                         f"in {tree.kind} '{tree.id}'"
@@ -1236,7 +1236,7 @@ def validate_focus_tree(
             )
             if clash is not None:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Focus '{focus.id}' shares position ({pos[0]}, {pos[1]}) "
                             f"with '{clash}', and both can be shown at once"
@@ -1253,7 +1253,7 @@ def validate_focus_tree(
             for ref in group:
                 if ref not in all_known:
                     errors.append(
-                        ValidationError(
+                        ValidationIssue(
                             message=f"Focus '{focus.id}' prerequisite '{ref}' not found",
                             severity="error",
                             code="missing_focus_prerequisite",
@@ -1266,7 +1266,7 @@ def validate_focus_tree(
             for ref in group:
                 if ref not in all_known:
                     errors.append(
-                        ValidationError(
+                        ValidationIssue(
                             message=f"Focus '{focus.id}' mutually_exclusive '{ref}' not found",
                             severity="error",
                             code="missing_focus_mutually_exclusive",
@@ -1278,7 +1278,7 @@ def validate_focus_tree(
         for focus_filter in focus.search_filters:
             if focus_filter not in valid_filters:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Focus '{focus.id}' has unknown search filter '{focus_filter}': "
                             f"no sprite 'GFX_{focus_filter}' is declared"
@@ -1314,7 +1314,7 @@ def validate_focus_tree(
                 sid = int(item.name)
                 if sid not in known_state_ids:
                     errors.append(
-                        ValidationError(
+                        ValidationIssue(
                             message=f"Focus '{focus.id}' references unknown state ID {sid}",
                             severity="warning",
                             code="unknown_state_reference",
@@ -1335,7 +1335,7 @@ def validate_focus_tree(
     continuous = continuous_focus_position_issue(tree, layout)
     if continuous:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Focus tree '{tree.id}': {continuous}",
                 severity="info",
                 code="continuous_focus_position_high",
@@ -1347,7 +1347,7 @@ def validate_focus_tree(
     cycle_root = _focus_prerequisite_cycle_root(tree)
     if cycle_root is not None:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Focus prerequisite cycle detected involving {cycle_root}",
                 severity="error",
                 code="focus_cycle",
@@ -1394,14 +1394,14 @@ def _focus_prerequisite_cycle_root(tree: FocusTree) -> str | None:
 def validate_state(
     state: State,
     known_tags: set[str] | None = None,
-) -> list[ValidationError]:
-    errors: list[ValidationError] = []
+) -> list[ValidationIssue]:
+    errors: list[ValidationIssue] = []
     source_path = state.source_path or state.path
     file_path = str(source_path) if source_path else None
 
     if not state.id:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message="State has no ID",
                 severity="error",
                 code="missing_state_id",
@@ -1412,7 +1412,7 @@ def validate_state(
 
     if not state.owner and known_tags is not None:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"State {state.id} has no owner",
                 severity="warning",
                 code="missing_state_owner",
@@ -1423,7 +1423,7 @@ def validate_state(
 
     if state.owner and known_tags and state.owner not in known_tags:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"State {state.id} owner '{state.owner}' is not a known country tag",
                 severity="warning",
                 code="unknown_state_owner",
@@ -1435,7 +1435,7 @@ def validate_state(
     for core in state.cores:
         if known_tags and core not in known_tags:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"State {state.id} core '{core}' is not a known country tag",
                     severity="warning",
                     code="unknown_state_core",
@@ -1461,7 +1461,7 @@ def validate_state(
                 state_body = state.raw_text[state_span.body_start : state_span.body_end]
                 if any(span.key == "buildings" for span in top_level_assignments(state_body)):
                     errors.append(
-                        ValidationError(
+                        ValidationIssue(
                             message=(
                                 f"State {state.id} declares buildings at state scope; "
                                 "move the buildings block inside history"
@@ -1485,7 +1485,7 @@ def validate_event(
     namespace: str | None | object = _UNSET,
     *,
     namespaces: Collection[str] | None = None,
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Check one event.
 
     The namespace check runs when ``namespaces`` (every namespace declared by
@@ -1495,12 +1495,12 @@ def validate_event(
     by events of every file.
     """
 
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     file_path = str(event.path) if event.path else None
 
     if not event.id:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message="Event has no ID",
                 severity="error",
                 code="missing_event_id",
@@ -1516,7 +1516,7 @@ def validate_event(
 
     if not hidden and not event.title and not event.conditional_titles:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Event '{event.id}' has no title",
                 severity="warning",
                 code="missing_event_title",
@@ -1527,7 +1527,7 @@ def validate_event(
 
     if not hidden and not event.description and not event.conditional_descriptions:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Event '{event.id}' has no description",
                 severity="warning",
                 code="missing_event_description",
@@ -1547,7 +1547,7 @@ def validate_event(
     for label, entry in conditional_texts:
         if not entry.text:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"Event '{event.id}' has a conditional {label} without text",
                     severity="warning",
                     code="event_conditional_text_missing",
@@ -1558,7 +1558,7 @@ def validate_event(
 
     if not hidden and not event.options:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Event '{event.id}' has no options; a visible event needs at "
                     "least one option to close its window"
@@ -1572,7 +1572,7 @@ def validate_event(
 
     if event.event_type not in VALID_EVENT_TYPES:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Event '{event.id}' has invalid type '{event.event_type}'",
                 severity="error",
                 code="invalid_event_type",
@@ -1590,7 +1590,7 @@ def validate_event(
     if declared is not None and prefix:
         if prefix.lower() not in {name.lower() for name in declared}:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"Event '{event.id}' uses namespace '{prefix}', but no "
                         f"add_namespace = {prefix} is declared; dotted event IDs "
@@ -1605,7 +1605,7 @@ def validate_event(
 
     if event.is_triggered_only and event.mean_time_to_happen:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Event '{event.id}' is_triggered_only but also has "
                     "mean_time_to_happen, which the game ignores"
@@ -1634,7 +1634,7 @@ def validate_event(
         item.name.lower() == "declare_war_on" for item, _ in parse(event.immediate).root.walk()
     ):
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Event '{event.id}' declares war in immediate; immediate runs before "
                     "the option is chosen. Put war effects in an option unless that is "
@@ -1651,7 +1651,7 @@ def validate_event(
         for option in event.options:
             if not option.effect.strip():
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Event '{event.id}' option '{option.name or '<unnamed>'}' "
                             "has no gameplay effect"
@@ -1712,13 +1712,13 @@ def idea_categories_from_script(text: str) -> set[str]:
     return categories
 
 
-def validate_idea_category(idea: Idea, known_categories: Collection[str]) -> list[ValidationError]:
+def validate_idea_category(idea: Idea, known_categories: Collection[str]) -> list[ValidationIssue]:
     """Report an idea whose category no ``common/idea_tags`` file declares."""
 
     if not idea.id or not idea.category or idea.category in known_categories:
         return []
     return [
-        ValidationError(
+        ValidationIssue(
             message=(
                 f"Idea '{idea.id}' is in category '{idea.category}', which no "
                 "common/idea_tags file declares as a category or slot"
@@ -1744,12 +1744,12 @@ _IDEA_EFFECT_KEYS = frozenset({
 })
 
 
-def validate_idea(idea: Idea) -> list[ValidationError]:
-    errors: list[ValidationError] = []
+def validate_idea(idea: Idea) -> list[ValidationIssue]:
+    errors: list[ValidationIssue] = []
 
     if not idea.id:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message="Idea has no ID",
                 severity="error",
                 code="missing_idea_id",
@@ -1768,7 +1768,7 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
     )
     if not has_effect:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Idea '{idea.id}' has no modifiers or other effects",
                 severity="info",
                 code="idea_without_effect",
@@ -1779,7 +1779,7 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
 
     if any(item.op == "=" and item.key.value == "icon" for item in statements):
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Idea '{idea.id}' uses 'icon ='. HOI4 ideas require "
                     "'picture = <bare_stem>'; the matching interface sprite is "
@@ -1805,7 +1805,7 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
         )
         if prefixed_picture is not None:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"Idea '{idea.id}' picture value is prefixed with "
                         "'GFX_idea_'. The game accepts it, but the convention is the "
@@ -1823,7 +1823,7 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
         for item in statements
     ):
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Idea '{idea.id}' uses unsupported 'desc ='. HOI4 resolves "
                     f"its description from localization key '{idea.id}_desc'."
@@ -1838,9 +1838,9 @@ def validate_idea(idea: Idea) -> list[ValidationError]:
     return errors
 
 
-def validate_decision(decision: Decision) -> list[ValidationError]:
+def validate_decision(decision: Decision) -> list[ValidationIssue]:
     """Light structural checks for missions and targeted decisions."""
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     file_path = str(decision.path) if decision.path else None
     is_mission = decision_has_mission_timeout(decision)
     # A selectable mission is started by the player, who pays its cost.
@@ -1850,7 +1850,7 @@ def validate_decision(decision: Decision) -> list[ValidationError]:
         and (decision_has_cost(decision) or decision.custom_cost_trigger.strip())
     ):
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Decision '{decision.id}' is a mission (days_mission_timeout) but "
                     "also has a cost; missions start from activation and are never "
@@ -1864,7 +1864,7 @@ def validate_decision(decision: Decision) -> list[ValidationError]:
         )
     if decision.activation.strip() and not is_mission:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Decision '{decision.id}' has an activation trigger but no "
                     "days_mission_timeout; the game ignores activation outside missions"

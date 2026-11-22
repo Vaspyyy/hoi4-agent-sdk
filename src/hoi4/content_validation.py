@@ -15,14 +15,14 @@ from .ideologies import Ideology, VANILLA_AI_BEHAVIORS
 from .parser import ParseError
 from .patching import top_level_assignments
 from .script import validate_script_syntax
-from .types import ValidationError
+from .types import ValidationIssue
 
 
 _SCRIPT_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]*$")
 
 
-def validate_ideology(ideology: Ideology) -> list[ValidationError]:
-    issues: list[ValidationError] = []
+def validate_ideology(ideology: Ideology) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
     location = str(ideology.path) if ideology.path else None
     if not _SCRIPT_ID.fullmatch(ideology.id):
         issues.append(_error(f"Invalid ideology ID '{ideology.id}'", "invalid_ideology_id", location))
@@ -74,8 +74,8 @@ def validate_ideology(ideology: Ideology) -> list[ValidationError]:
 
 def validate_dynamic_modifier(
     modifier: DynamicModifier,
-) -> list[ValidationError]:
-    issues: list[ValidationError] = []
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
     location = str(modifier.path) if modifier.path else None
     if not _SCRIPT_ID.fullmatch(modifier.id):
         issues.append(
@@ -97,8 +97,8 @@ def validate_dynamic_modifier(
     return issues
 
 
-def validate_bookmark(bookmark: Bookmark) -> list[ValidationError]:
-    issues: list[ValidationError] = []
+def validate_bookmark(bookmark: Bookmark) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
     location = str(bookmark.path) if bookmark.path else None
     date_error = _validate_date(bookmark.date)
     if date_error:
@@ -149,7 +149,7 @@ def validate_bookmark(bookmark: Bookmark) -> list[ValidationError]:
             )
     if bookmark.default_country and bookmark.default_country not in tags:
         issues.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Bookmark '{bookmark.name}' defaults to '{bookmark.default_country}', "
                     "which has no country entry"
@@ -179,7 +179,7 @@ def validate_bookmark(bookmark: Bookmark) -> list[ValidationError]:
         )
         if identity in variants:
             issues.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"Bookmark '{bookmark.name}' repeats an indistinguishable "
                         f"'{country.tag}' country variant"
@@ -209,5 +209,5 @@ def _validate_date(value: str) -> str | None:
     return None
 
 
-def _error(message: str, code: str, file_path: str | None) -> ValidationError:
-    return ValidationError(message=message, severity="error", code=code, file_path=file_path)
+def _error(message: str, code: str, file_path: str | None) -> ValidationIssue:
+    return ValidationIssue(message=message, severity="error", code=code, file_path=file_path)

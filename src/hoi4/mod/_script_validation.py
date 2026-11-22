@@ -36,7 +36,7 @@ from ..types import (
     Event,
     EventOption,
     State,
-    ValidationError,
+    ValidationIssue,
 )
 from ..validation import (
     validate_event,
@@ -265,7 +265,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         scope: str | None = "COUNTRY",
         advice: bool = True,
         suppress: Sequence[str] = (),
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Check one piece of effect script and return what is wrong with it.
 
         The script is read as an event option's effect that starts in
@@ -367,7 +367,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         self,
         *,
         allowlist: Sequence[str] = (),
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Report unknown effect, trigger and modifier names and names in a scope they do not support."""
 
         return validate_script_sources(
@@ -481,7 +481,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         known_focus_trees: set[str],
         entries: list[tuple[str, str, str | None, str | None]] | None = None,
         entry_scope: str = COUNTRY,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Check what the mod's script names against what exists.
 
         The ``known_*`` sets are what the caller already has; a name missing
@@ -489,7 +489,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         before it is reported.
         """
 
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         owners = self._reference_owners(entries, entry_scope)
         catalogs = _LazyCatalogs(
             self,
@@ -634,7 +634,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
 
     def _idea_tooltip_findings(
         self, owner: ScriptOwner, file_path: str | None
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Advice: one effect that visibly removes several ideas and adds one."""
 
         removed: dict[int, list[ScriptRef]] = {}
@@ -649,7 +649,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 removed.setdefault(ref.root, []).append(ref)
             elif ref.key == "add_ideas":
                 added[ref.root] = added.get(ref.root, 0) + 1
-        findings: list[ValidationError] = []
+        findings: list[ValidationIssue] = []
         for root, removals in removed.items():
             if len(removals) < 2 or not added.get(root) or root in swapped:
                 continue
@@ -668,14 +668,14 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         self,
         *,
         entries: list[tuple[str, str, str | None, str | None]] | None = None,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Advice about state effects that may not do what they seem to.
 
         Both findings are ``info``: the state's owner and cores at scenario
         start say little about the moment the effect runs.
         """
 
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         for owner, file_path in self._reference_owners(entries):
             kind, obj_id = owner.kind, owner.id
             for ref in owner.refs:
@@ -728,7 +728,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                     return None
         return None
 
-    def _validate_localization_references(self) -> list[ValidationError]:
+    def _validate_localization_references(self) -> list[ValidationIssue]:
         """Report shown text whose localisation key exists nowhere.
 
         Keys are looked up the way the game resolves them, in the mod, its
@@ -752,7 +752,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         from ..syntax import parse
         from ..validation import event_is_hidden
 
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
 
         def add_missing(
             message: str,
@@ -765,7 +765,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             file_path: str | None = None,
         ) -> None:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=message,
                     severity="info" if optional else "warning",
                     code="missing_optional_localization" if optional else "missing_localization",
@@ -869,7 +869,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                     )
         return errors
 
-    def _validate_localization_languages(self) -> list[ValidationError]:
+    def _validate_localization_languages(self) -> list[ValidationIssue]:
         """Warn about authored English keys missing from a shipped language.
 
         Header/folder agreement is a source-tree check; see
@@ -877,7 +877,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         not reported: HOI4 then falls back to raw keys everywhere, which is a
         packaging choice rather than a gap.
         """
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         shipped = self._shipped_loc_languages()
         if not shipped:
             return errors
@@ -889,7 +889,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 continue
             preview = ", ".join(missing[:10]) + (", ..." if len(missing) > 10 else "")
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"{len(missing)} English localization key(s) have no {language} "
                         f"translation: {preview}. Players see raw keys; call "
@@ -903,7 +903,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             )
         return errors
 
-    def _validate_idea_mutation_collisions(self) -> list[ValidationError]:
+    def _validate_idea_mutation_collisions(self) -> list[ValidationIssue]:
         focus_mutations: dict[str, set[str]] = {}
         runtime_mutations: dict[str, set[str]] = {}
         for source in self._semantic_script_sources():
@@ -937,7 +937,7 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
                 file_path, line = owner_path, ref.line
                 break
         return [
-            ValidationError(
+            ValidationIssue(
                 message=(
                     "Focuses and runtime events/decisions mutate the same idea IDs "
                     f"({', '.join(collisions)}). Check delayed events cannot downgrade a staged spirit."
@@ -962,8 +962,8 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         severity: Severity = "warning",
         line: int | None = None,
         column: int | None = None,
-    ) -> ValidationError:
-        return ValidationError(
+    ) -> ValidationIssue:
+        return ValidationIssue(
             message=message,
             severity=severity,
             code=code,

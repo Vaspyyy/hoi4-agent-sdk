@@ -22,7 +22,7 @@ from ..parser import (
 )
 from ..types import (
     Country,
-    ValidationError,
+    ValidationIssue,
 )
 from ..validation import validate_country
 from ._characters import CharactersLayer
@@ -107,10 +107,10 @@ def _runtime_activation_of(
 class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, CharactersLayer):
     """Country package completeness validation."""
 
-    def _validate_countries(self, known_parties: set[str]) -> list[ValidationError]:
+    def _validate_countries(self, known_parties: set[str]) -> list[ValidationIssue]:
         """Check every country's history values and its variant unlocks."""
 
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         dynamic_tags = self._dynamic_country_tags()
         for country in list(self._countries.values()):
             errors.extend(
@@ -302,7 +302,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                 "lifecycle must be 'auto', 'starting', or 'runtime'"
             )
         country = self.get_country(tag)
-        findings: list[ValidationError] = []
+        findings: list[ValidationIssue] = []
         recruited = set(country.recruited_characters)
         roster = {
             character.id: character
@@ -319,7 +319,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
             severity: str = "error",
         ) -> None:
             findings.append(
-                ValidationError(
+                ValidationIssue(
                     message=message,
                     severity=severity,
                     code=code,

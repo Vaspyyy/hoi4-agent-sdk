@@ -100,6 +100,7 @@ say what you got, no duplicate entry points, and the script builders moved to
 | `mod.content_source(relative)` | `mod.resolve_content_path(relative)` (still returns `None` when no layer has the file) | A path resolver, not a lookup of content |
 | `new_id = mod.create_state(...)`, `mod.create_strategic_region(...)`, `mod.split_state(...)` returning the id | return the `State` / `StrategicRegion`; use `.id` | `create_*` returns the object |
 | `for region in mod.list_strategic_regions(): region.id` (objects) | `mod.list_strategic_regions()` returns sorted ids; `mod.get_strategic_region(id)` returns one | `list_*` returns ids |
+| `hoi4.ValidationError` (also `hoi4.types.ValidationError`) | `hoi4.ValidationIssue` (no alias) | It is a finding, not an exception; `except ValidationError` read like a bug |
 | `hoi4.bookmarks.load_bookmarks`, `hoi4.decisions.write_decisions_file`, `hoi4.focus.write_focus_tree`, `hoi4.ideologies.load_ideologies`, `hoi4.localisation.delete_localization_keys`, `hoi4.on_actions.write_on_actions_file`, `hoi4.states.ensure_state_in_mod`, `hoi4.states.patch_state_history_owner_cores`, `hoi4.tags.load_all_tags`, `hoi4.validation.collect_character_ids` | the matching `Mod` method (`mod.list_bookmarks()`, `mod.save()`, ...) | Unused module functions that bypassed the `Mod` staging |
 
 ### Added

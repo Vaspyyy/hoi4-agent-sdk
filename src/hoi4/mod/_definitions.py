@@ -14,7 +14,7 @@ from ..paths import (
 )
 from ..types import (
     Idea,
-    ValidationError,
+    ValidationIssue,
 )
 from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._core import CoreLayer
@@ -351,11 +351,11 @@ class DefinitionsLayer(CoreLayer):
             relative, remove_definition(original, resolved, definition_id), original,
         )
 
-    def _validate_definitions(self) -> list[ValidationError]:
+    def _validate_definitions(self) -> list[ValidationIssue]:
         """Report duplicate mod definitions and character traits nobody defines."""
 
         from ..definitions import DEFINITION_KINDS
-        issues: list[ValidationError] = []
+        issues: list[ValidationIssue] = []
         for kind in DEFINITION_KINDS.values():
             directory = self.mod_root / kind.directory
             if not directory.is_dir() and not any(
@@ -371,7 +371,7 @@ class DefinitionsLayer(CoreLayer):
                 if not (definition.source_path.is_relative_to(self.mod_root)
                         or self.mod_root.joinpath(first).exists()):
                     continue
-                issues.append(ValidationError(
+                issues.append(ValidationIssue(
                     message=(f"Duplicate {kind.name} {definition.id!r} in "
                              + (f"{first} (twice)" if first == definition.relative_path
                                 else f"{first} and {definition.relative_path}")),
@@ -399,7 +399,7 @@ class DefinitionsLayer(CoreLayer):
             for role in roles:
                 for trait in getattr(role, "traits", []):
                     if trait not in known_traits:
-                        issues.append(ValidationError(
+                        issues.append(ValidationIssue(
                             message=(f"Character {character.id!r} uses trait {trait!r}, "
                                      "which no country_leader or unit_leader file defines"),
                             severity="warning",

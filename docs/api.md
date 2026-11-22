@@ -1117,7 +1117,7 @@ mod.validate(
     stage="package", script_token_allowlist=(), liveness_flag_allowlist=(),
     liveness_localization_allowlist=(), progress=None, cancelled=None,
     advice=False, suppress=(),
-) -> list[ValidationError]
+) -> list[ValidationIssue]
 ```
 
 `mod.validate()` runs all validators and returns their findings. It does
@@ -1158,7 +1158,7 @@ deliberately unknown. Explicit nested scopes are still checked with
 mod.validate_effect(
     script,
     *, script_token_allowlist=(), scope="COUNTRY", advice=True, suppress=(),
-) -> list[ValidationError]
+) -> list[ValidationIssue]
 ```
 
 `validate_effect()` looks at one script, so it returns advice together with
@@ -1219,11 +1219,11 @@ except OperationCancelled:
 | **Focus tree** | No duplicate IDs, two focuses on one position only when the game never draws both there (an `offset` block, or each behind its own `allow_branch` focus; mutually exclusive focuses are both drawn), prerequisite and mutually_exclusive references exist, no prerequisite cycles, search filters have a `GFX_<filter>` sprite, core effects at country scope, invalid tech categories, optional focus icon existence. Advice: continuous focus panel above the last row |
 | **Cross-cut** | Every focus has name and description localization (in the mod, base mods or game), optional strict localization, effect references, installed-game effect/trigger/modifier vocabulary, tooltip and scope hints, and release-stage content liveness |
 
-### ValidationError Fields
+### ValidationIssue Fields
 
 ```python
 @dataclass
-class ValidationError:
+class ValidationIssue:
     message: str                      # Human-readable description
     severity: str = "error"           # "error", "warning" or "info" (advice)
     code: str = ""                    # Stable registered code, see validation.md
@@ -1585,7 +1585,7 @@ final = parse_hoi4_error_log(log_path, mod_root, start_offset=report.next_offset
 
 `Mod.validate_game_log(..., incremental=True)` applies the same buffering when
 returning validation errors. Use the public parser when you need the report's
-resume offset; the facade continues to return only `list[ValidationError]`.
+resume offset; the facade continues to return only `list[ValidationIssue]`.
 
 The stricter installed-game compatibility audit is:
 

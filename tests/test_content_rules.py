@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from hoi4 import Mod, ReadOnlyError
-from hoi4.types import Event, EventOption, Focus, FocusTree, Idea, ValidationError
+from hoi4.types import Event, EventOption, Focus, FocusTree, Idea, ValidationIssue
 from hoi4.validation import (
     validate_event,
     validate_focus_tree,
@@ -27,7 +27,7 @@ def write(root: Path, relative: str, text: str, *, bom: bool = False) -> Path:
     return path
 
 
-def codes(findings: list[ValidationError], code: str) -> list[ValidationError]:
+def codes(findings: list[ValidationIssue], code: str) -> list[ValidationIssue]:
     return [finding for finding in findings if finding.code == code]
 
 

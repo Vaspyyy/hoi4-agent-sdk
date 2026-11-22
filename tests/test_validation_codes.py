@@ -1,7 +1,7 @@
 """Every finding the SDK can produce has a registered, documented code.
 
 The test reads the Python source of ``src/hoi4`` through its syntax tree
-(``ast``) and looks at every ``ValidationError(...)`` call. The ``code`` and
+(``ast``) and looks at every ``ValidationIssue(...)`` call. The ``code`` and
 ``severity`` arguments are followed back to string constants:
 
 * a constant is used as it is;
@@ -292,7 +292,7 @@ def _resolve_one(
 
 
 def _pairs(call: ast.Call, module: _Module) -> set[tuple[str, str]]:
-    """Return every ``(code, severity)`` pair a ``ValidationError`` call can build.
+    """Return every ``(code, severity)`` pair a ``ValidationIssue`` call can build.
 
     ``code`` and ``severity`` are followed together (see ``_resolve_together``),
     so a helper called once with an error code and once with a warning code
@@ -314,7 +314,7 @@ def _constructions() -> list[tuple[ast.Call, _Module]]:
         (node, module)
         for module in MODULES
         for node in ast.walk(module.tree)
-        if isinstance(node, ast.Call) and _call_name(node) == "ValidationError"
+        if isinstance(node, ast.Call) and _call_name(node) == "ValidationIssue"
     ]
 
 

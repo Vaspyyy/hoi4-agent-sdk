@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .types import ValidationError
+from .types import ValidationIssue
 
 _RECORD_RE = re.compile(
     r"^\[(?P<time>\d{2}:\d{2}:\d{2})\]"
@@ -64,12 +64,12 @@ class GameLogReport:
         return dict(sorted(Counter(entry.error_class for entry in self.entries).items()))
 
     @property
-    def validation_errors(self) -> tuple[ValidationError, ...]:
-        issues: list[ValidationError] = []
+    def validation_errors(self) -> tuple[ValidationIssue, ...]:
+        issues: list[ValidationIssue] = []
         if not self.is_fresh:
             assert self.fresh_after is not None
             issues.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"HOI4 error log predates the audited mod: {self.log_mtime.isoformat()} "
                         f"< {self.fresh_after.isoformat()}"
@@ -83,7 +83,7 @@ class GameLogReport:
             relative_path = entry.relative_path
             assert relative_path is not None
             issues.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"HOI4 [{entry.error_class}] {entry.message}",
                     severity="error",
                     code="game_log_error",

@@ -131,7 +131,7 @@ from .types import (
     OnAction,
     SaveResult,
     State,
-    ValidationError,
+    ValidationIssue,
 )
 from .validation import (
     COUNTRY_PACKAGE_REQUIREMENT_CODES,
@@ -196,7 +196,7 @@ __all__ = [
     "OnAction",
     "SaveResult",
     "State",
-    "ValidationError",
+    "ValidationIssue",
     "Bookmark",
     "BookmarkCountry",
     "DynamicModifier",

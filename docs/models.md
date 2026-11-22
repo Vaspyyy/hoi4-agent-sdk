@@ -267,7 +267,7 @@ variable arithmetic.
 
 ```python
 CountryPackageReport(tag: str,
-                     findings: tuple[ValidationError, ...] = (),
+                     findings: tuple[ValidationIssue, ...] = (),
                      lifecycle: str = "starting",
                      advisor_count: int = 0,
                      commander_count: int = 0,
@@ -295,10 +295,10 @@ structural and do not prove a runtime threshold chain can fire.
 `find_enclosed_foreign_states()` represent disconnected owned land or enclosed
 foreign land after threshold and allowlist filtering.
 
-### ValidationError
+### ValidationIssue
 
 ```python
-ValidationError(message: str,
+ValidationIssue(message: str,
                 severity: str = "error",
                 code: str = "",
                 file_path: str | None = None,

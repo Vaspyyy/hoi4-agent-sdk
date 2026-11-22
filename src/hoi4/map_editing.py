@@ -20,7 +20,7 @@ from .errors import NotFoundError
 from .patching import AssignmentSpan, append_assignment, replace_assignment, top_level_assignments
 from .syntax import Assignment, Block, Scalar, parse, require_statement, require_well_formed
 from .textio import read_text
-from .types import ValidationError
+from .types import ValidationIssue
 
 SUPPLY_NODES_FILE = "map/supply_nodes.txt"
 RAILWAYS_FILE = "map/railways.txt"
@@ -614,7 +614,7 @@ def validate_map_consistency(
     railway_path: str | None = None,
     supply_path: str | None = None,
     buildings_path: str | None = None,
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Check state, strategic-region, supply, railway, and building references.
 
     ``None`` for an input means that file is absent from the effective map and
@@ -622,7 +622,7 @@ def validate_map_consistency(
     ``definition.csv``) skips province-existence and coverage checks.
     """
 
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     known = {province for province in province_types if province > 0}
     land = {
         province for province, kind in province_types.items()
@@ -640,7 +640,7 @@ def validate_map_consistency(
     for province, owners in sorted(province_states.items()):
         if len(owners) > 1:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"Province {province} belongs to multiple states: "
                         + ", ".join(str(owner) for owner in owners)
@@ -658,7 +658,7 @@ def validate_map_consistency(
             non_land = sorted({p for p in provinces if p in sea})
             if unknown:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"State {state_id} references provinces missing from "
                             f"definition.csv: {_preview(unknown)}"
@@ -671,7 +671,7 @@ def validate_map_consistency(
                 )
             if non_land:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"State {state_id} contains sea provinces: "
                             f"{_preview(non_land)}"
@@ -685,7 +685,7 @@ def validate_map_consistency(
         missing = sorted(land - set(province_states))
         if missing:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"{len(missing)} land province(s) belong to no state: "
                         f"{_preview(missing)}"
@@ -702,7 +702,7 @@ def validate_map_consistency(
             first = seen_regions.get(region.id)
             if first is not None:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=f"Strategic region ID {region.id} is defined more than once",
                         severity="error",
                         code="duplicate_strategic_region_id",
@@ -714,7 +714,7 @@ def validate_map_consistency(
             seen_regions[region.id] = region
             if not region.provinces:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=f"Strategic region {region.id} has no provinces",
                         severity="warning",
                         code="empty_strategic_region",
@@ -726,7 +726,7 @@ def validate_map_consistency(
         for province, region_ids in sorted(province_regions.items()):
             if len(region_ids) > 1:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Province {province} belongs to multiple strategic regions: "
                             + ", ".join(str(region_id) for region_id in region_ids)
@@ -740,7 +740,7 @@ def validate_map_consistency(
             unknown_region_provinces = sorted(set(province_regions) - known)
             if unknown_region_provinces:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             "Strategic regions reference provinces missing from "
                             f"definition.csv: {_preview(unknown_region_provinces)}"
@@ -752,7 +752,7 @@ def validate_map_consistency(
             missing_regions = sorted((land | sea) - set(province_regions))
             if missing_regions:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"{len(missing_regions)} province(s) belong to no strategic "
                             f"region: {_preview(missing_regions)}"
@@ -766,7 +766,7 @@ def validate_map_consistency(
         invalid = sorted({province for province in supply_nodes if province not in land})
         if invalid:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         "Supply nodes reference unknown or non-land provinces: "
                         f"{_preview(invalid)}"
@@ -781,7 +781,7 @@ def validate_map_consistency(
         parsed_railways, malformed_railways = railways
         for index in malformed_railways:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"railways.txt line {index + 1} is malformed",
                     severity="error",
                     code="malformed_railway",
@@ -805,7 +805,7 @@ def validate_map_consistency(
                         problems.append(f"provinces {left} and {right} are not adjacent")
             if problems:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=f"Railway on line {railway.index + 1}: " + "; ".join(problems),
                         severity="error",
                         code="invalid_railway",
@@ -818,7 +818,7 @@ def validate_map_consistency(
         parsed_buildings, malformed_buildings = buildings
         for index in malformed_buildings:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"buildings.txt line {index + 1} is malformed",
                     severity="error",
                     code="malformed_map_building",
@@ -842,7 +842,7 @@ def validate_map_consistency(
                 bad_sea.setdefault(entry.adjacent_sea_province, entry.index)
         for state_id, index in sorted(unknown_states.items()):
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"buildings.txt references missing state {state_id}",
                     severity="error",
                     code="map_building_unknown_state",
@@ -853,7 +853,7 @@ def validate_map_consistency(
             )
         for province, index in sorted(bad_sea.items()):
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"buildings.txt references unknown or wrong-type adjacent province {province}",
                     severity="error",
                     code="map_building_unknown_province",

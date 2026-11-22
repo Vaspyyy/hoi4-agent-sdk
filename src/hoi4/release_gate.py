@@ -22,7 +22,7 @@ from typing import Callable, Literal, TypeVar, cast
 from .mod import Mod
 from .idea_icons import DEFAULT_IDEA_ICON
 from .game_log import GameLogReport, parse_hoi4_error_log
-from .types import Focus, LoadDiagnostic, ValidationError
+from .types import Focus, LoadDiagnostic, ValidationIssue
 from .validation import COUNTRY_PACKAGE_REQUIREMENT_CODES
 
 ProbeStatus = Literal["passed", "failed", "skipped"]
@@ -84,7 +84,7 @@ class GateReport:
     load_seconds: float
     validation_seconds: float
     load_diagnostics: tuple[LoadDiagnostic, ...]
-    validation_issues: tuple[ValidationError, ...]
+    validation_issues: tuple[ValidationIssue, ...]
     probes: tuple[ProbeResult, ...]
     filesystem_changes: tuple[str, ...]
     game_log: GameLogReport | None = None
@@ -514,7 +514,7 @@ DEFAULT_PROBES: tuple[_Probe, ...] = (
 )
 
 
-def _validation_signature(issue: ValidationError) -> tuple[object, ...]:
+def _validation_signature(issue: ValidationIssue) -> tuple[object, ...]:
     return (
         issue.severity,
         issue.code,
@@ -538,7 +538,7 @@ def _run_probe(
     probe: _Probe,
     budget: DiffBudget,
     *,
-    baseline_validation: tuple[ValidationError, ...],
+    baseline_validation: tuple[ValidationIssue, ...],
     validate_icons: bool,
     strict_localization: bool,
 ) -> ProbeResult:

@@ -700,3 +700,11 @@ def test_update_state_sets_lists_and_adds_or_removes_cores(tmp_path, state_game)
     assert mod.preview() == before
     for name in ("set_state_properties", "patch_state_history", "batch_set_owner"):
         assert not hasattr(mod, name)
+
+
+def test_validation_issue_is_a_record_and_the_old_name_is_gone() -> None:
+    import hoi4
+
+    assert "ValidationIssue" in hoi4.__all__
+    assert not hasattr(hoi4, "ValidationError")
+    assert not issubclass(hoi4.ValidationIssue, BaseException)

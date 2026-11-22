@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hoi4 import Mod
-from hoi4.types import ValidationError
+from hoi4.types import ValidationIssue
 
 
 def write(root: Path, relative: str, text: str) -> Path:
@@ -21,7 +21,7 @@ def write(root: Path, relative: str, text: str) -> Path:
     return path
 
 
-def codes(findings: list[ValidationError], code: str) -> list[ValidationError]:
+def codes(findings: list[ValidationIssue], code: str) -> list[ValidationIssue]:
     return [finding for finding in findings if finding.code == code]
 
 
@@ -177,7 +177,7 @@ def test_an_unsaved_focus_deletion_is_not_undone_by_the_file_scan(tmp_path):
 # ── Unsaved API edits reach a second validate() ─────────────────────
 
 
-def references(findings: list[ValidationError], code: str) -> list[str]:
+def references(findings: list[ValidationIssue], code: str) -> list[str]:
     return sorted(f.message for f in codes(findings, code))
 
 
@@ -401,7 +401,7 @@ def test_cached_own_references_follow_the_character_names(tmp_path):
     assert mod.validate(stage="release") == first
 
 
-def fresh_validate(root: Path, *, delete: str) -> list[ValidationError]:
+def fresh_validate(root: Path, *, delete: str) -> list[ValidationIssue]:
     mod = Mod(root)
     mod.delete_character(delete)
     return mod.validate(stage="release")

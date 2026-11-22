@@ -146,7 +146,13 @@ class Country:
 
 
 @dataclass
-class ValidationError:
+class ValidationIssue:
+    """One finding of ``Mod.validate()``: a record, not an exception.
+
+    ``severity`` is ``"error"``, ``"warning"`` or ``"info"`` and ``code`` a
+    registered validation code (see ``docs/validation.md``).
+    """
+
     message: str
     severity: str = "error"
     code: str = ""
