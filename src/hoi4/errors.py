@@ -90,7 +90,34 @@ class AlreadyExistsError(Hoi4Error, ValueError):
 
 
 class ReadOnlyError(Hoi4Error, ValueError):
-    """The target is game content that this call cannot change or delete."""
+    """The target is game content that this call cannot change or delete.
+
+    The message says who defines it, in which file, and the call that makes
+    it editable when there is one (such as
+    ``mod.load_inherited_content("events/Germany.txt")``).
+
+    Attributes:
+        kind: What kind of thing it is, in words (``"event"``); may be empty.
+        id: Its id; may be ``None``.
+        path: The inherited file that defines it, relative to the game or
+            base-mod folder; may be empty.
+        call: The call that copies that file into the mod; may be empty.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = "",
+        id: Any = None,
+        path: str = "",
+        call: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.id = id
+        self.path = path
+        self.call = call
 
 
 class SaveRefusedError(Hoi4Error, RuntimeError):

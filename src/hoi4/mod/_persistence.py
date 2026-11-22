@@ -858,6 +858,9 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         """
 
         self._scan_cache.clear()
+        # What lookups read from the game and the base mods: a written or
+        # changed mod file may now hide an inherited one.
+        self._drop_inherited_lookups()
         if unloaded is None:
             self._own_reference_cache.clear()
             self._sprite_text_parse_cache.clear()

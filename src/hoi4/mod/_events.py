@@ -71,25 +71,44 @@ class EventsLayer(CoreLayer):
 
     # ── Events ──────────────────────────────────────────────────
 
-    def list_events(self) -> list[str]:
-        """Return the sorted ids of the mod's events."""
-        return sorted(self._events.keys())
-
-    def get_event(self, event_id: str, *, default: _D | _Missing = MISSING) -> Event | _D:
-        """Return the event ``event_id``.
+    def list_events(self, *, include_vanilla: bool = False) -> list[str]:
+        """Return the sorted ids of the mod's events.
 
         Args:
+            include_vanilla: Also list the events of the base mods and the
+                game: every id that ``get_event()`` finds.
+        """
+        return self._listed("event", self._events, include_vanilla=include_vanilla)
+
+    def get_event(
+        self,
+        event_id: str,
+        *,
+        include_vanilla: bool = True,
+        default: _D | _Missing = MISSING,
+    ) -> Event | _D:
+        """Return the event ``event_id``: the mod's, else a base mod's, else the game's.
+
+        An event of a base mod or the game is a copy to read: changing it
+        changes nothing. To edit one, copy its file into the mod with
+        ``load_inherited_content()`` (the edit's ``ReadOnlyError`` names it).
+
+        Args:
+            include_vanilla: Look at the base mods and the game too. With
+                ``False`` only the mod's events count.
             default: Returned instead of raising ``NotFoundError`` when it
                 does not exist. Without it, a missing id raises.
 
         Raises:
             NotFoundError: No event has this id.
         """
-        if event_id not in self._events:
-            if default is not MISSING:
-                return default
-            raise not_found("event", event_id, self.list_events())
-        return self._events[event_id]
+        return self._lookup(
+            "event", self._events, event_id, include_vanilla=include_vanilla, default=default
+        )
+
+    def _mod_event(self, event_id: str) -> Event:
+        """The mod's event ``event_id``, which an edit may change."""
+        return self._mod_definition("event", self._events, event_id)
 
     def create_event(
         self,
@@ -184,7 +203,7 @@ class EventsLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        existing = self.get_event(event_id, default=None)
+        existing = self.get_event(event_id, include_vanilla=False, default=None)
         if existing is not None:
             _check_fields("ensure_event", existing, kwargs, allow_path=True)
             return self.update_event(event_id, **kwargs)
@@ -209,7 +228,7 @@ class EventsLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        event = self.get_event(event_id)
+        event = self._mod_event(event_id)
         if "id" in kwargs:
             raise ValueError("Event IDs are immutable; create a new event instead")
         _check_fields("update_event", event, kwargs, allow_path=True)
@@ -247,7 +266,7 @@ class EventsLayer(CoreLayer):
         Raises:
             NotFoundError: No event has this id.
         """
-        event = self.get_event(event_id)
+        event = self._mod_event(event_id)
         old_path = (
             event.path
             or self.mod_root
@@ -267,7 +286,7 @@ class EventsLayer(CoreLayer):
             NotFoundError: No event has this id.
             ValueError: ``namespace`` is not a valid namespace.
         """
-        event = self.get_event(event_id)
+        event = self._mod_event(event_id)
         namespace = require_event_namespace(namespace)
         old_path = (
             event.path
@@ -292,7 +311,7 @@ class EventsLayer(CoreLayer):
             NotFoundError: No event has this id.
             AlreadyExistsError: The event already has an option with this name.
         """
-        event = self.get_event(event_id)
+        event = self._mod_event(event_id)
         if option.name and any(existing.name == option.name for existing in event.options):
             raise already_exists(
                 "event option",
@@ -318,7 +337,7 @@ class EventsLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        event = self.get_event(event_id)
+        event = self._mod_event(event_id)
         event_option: EventOption | None
         if isinstance(option, int):
             if option < 0 or option >= len(event.options):
