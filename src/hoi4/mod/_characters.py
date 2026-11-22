@@ -219,7 +219,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
 
         Raises:
             NotFoundError: No character has this id.
-            TypeError: A field name is unknown; nothing changed.
+            TypeError: A field name is unknown, or ``portraits`` holds something
+                that is not a ``CharacterPortrait``; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
         character = self.get_character(character_id)
@@ -248,7 +249,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         remove_recruitment: bool = True,
     ) -> None:
-        """Stage the deletion of a loaded character and its localisation.
+        """Stage the deletion of a character and the localisation the mod holds for it.
 
         ``remove_recruitment`` also removes it from its country's
         ``recruit_character`` list. A character of the game or a base mod

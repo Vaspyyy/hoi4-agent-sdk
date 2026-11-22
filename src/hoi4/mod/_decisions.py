@@ -731,7 +731,9 @@ class DecisionsLayer(LocalisationLayer):
         previous_flag = ""
         for index, raw_step in enumerate(steps, start=1):
             step = {"id": raw_step} if isinstance(raw_step, str) else dict(raw_step)
-            _check_field_names(f"create_decision_chain() step {index}", step, _CHAIN_STEP_KEYS)
+            _check_field_names(
+                "create_decision_chain", step, _CHAIN_STEP_KEYS, where=f" in step {index}"
+            )
             decision_id = str(step.get("id") or (f"{prefix}_{index}" if prefix else ""))
             if not decision_id:
                 raise ValueError("Decision chain steps need an id or a prefix")
@@ -839,6 +841,7 @@ class DecisionsLayer(LocalisationLayer):
             The new mission.
 
         Raises:
+            TypeError: A keyword is not one of ``create_decision()``'s; nothing changed.
             TypeError: ``days_mission_timeout`` is not a whole number.
             ValueError: ``days_mission_timeout`` is not positive, or a cost
                 was given.
@@ -908,6 +911,7 @@ class DecisionsLayer(LocalisationLayer):
             The new decision.
 
         Raises:
+            TypeError: A keyword is not one of ``create_decision()``'s; nothing changed.
             ValueError: No targeting field is set, or a target is not valid.
             AlreadyExistsError: The id exists and ``overwrite`` is false.
             NotFoundError: With a game install configured, the category is

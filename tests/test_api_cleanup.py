@@ -970,8 +970,12 @@ def test_update_country_sets_the_ui_colour_of_a_game_country(tmp_path, state_gam
 
 def test_a_decision_chain_refuses_a_misspelled_step_key(tmp_path) -> None:
     mod = Mod(tmp_path)
-    with pytest.raises(TypeError, match=r"create_decision_chain\(\) step 2\(\): Unknown fields: \['cots'\]"):
+    with pytest.raises(
+        TypeError, match=r"create_decision_chain\(\): Unknown fields in step 2: \['cots'\]\. Valid: "
+    ):
         mod.create_decision_chain("zz_cat", [{"id": "zz_s1"}, {"id": "zz_s2", "cots": 7}])
+    with pytest.raises(TypeError, match=r"Unknown fields in step 1: \[1, 'zz'\]"):
+        mod.create_decision_chain("zz_cat", [{"id": "zz_s1", "zz": 1, 1: 2}])
     assert mod.list_decisions() == []
     assert mod.list_decision_categories() == []
     assert mod.preview() == ""
@@ -1132,3 +1136,27 @@ def test_preview_lists_the_files_in_path_order(tmp_path) -> None:
     headers = [line[6:] for line in mod.preview().splitlines() if line.startswith("+++ b/")]
     assert headers == sorted(headers)
     assert len(headers) >= 4
+
+
+def test_a_generator_of_models_is_read_once_and_kept(tmp_path) -> None:
+    """Round 2: the check read a generator, and the call then found it empty."""
+    from hoi4.oob import Battalion, DivisionTemplate
+
+    mod = Mod(tmp_path)
+    mod.create_event("zz.1", options=(hoi4.EventOption(name=name) for name in ("zz.1.a", "zz.1.b")))
+    assert [option.name for option in mod.get_event("zz.1").options] == ["zz.1.a", "zz.1.b"]
+    mod.update_event("zz.1", options=(hoi4.EventOption(name=name) for name in ("zz.1.c",)))
+    assert [option.name for option in mod.get_event("zz.1").options] == ["zz.1.c"]
+    mod.create_ideology("zz_i", types=(hoi4.SubIdeology(name) for name in ("zz_s",)))
+    assert [sub.name for sub in mod.get_ideology("zz_i").types] == ["zz_s"]
+    mod.update_ideology("zz_i", types=iter([hoi4.SubIdeology("zz_t")]))
+    assert [sub.name for sub in mod.get_ideology("zz_i").types] == ["zz_t"]
+    mod.create_bookmark("ZZ", countries=(hoi4.BookmarkCountry(tag=tag) for tag in ("GER",)))
+    assert [entry.tag for entry in mod.get_bookmark("ZZ").countries] == ["GER"]
+    mod.create_country("ABC", "Abcland")
+    template = DivisionTemplate(name="Inf", battalions=[Battalion("infantry", 0, 0)])
+    mod.create_oob("ABC_x", "ABC", templates=(item for item in [template]))
+    assert [item.name for item in mod.get_oob("ABC_x").templates] == ["Inf"]
+    mod.update_oob("ABC_x", templates=iter([DivisionTemplate(name="Mot", battalions=[Battalion("infantry", 0, 0)])]))
+    assert [item.name for item in mod.get_oob("ABC_x").templates] == ["Mot"]
+    assert "Mot" in mod.preview()

@@ -127,6 +127,7 @@ class CountryAuthoringLayer(CharactersLayer):
             The new country.
 
         Raises:
+            TypeError: ``ideas``, ``popularities`` or ``technologies`` is not a list or a dict as described; nothing changed.
             AlreadyExistsError: The mod defines ``tag`` or the character
                 ``<TAG>_leader_1`` and ``overwrite`` is false, or the game or
                 a base mod defines ``tag`` and ``overwrite_vanilla`` is false.
@@ -325,10 +326,11 @@ class CountryAuthoringLayer(CharactersLayer):
         _check_country_values("update_country", other_kwargs, allow_none=False)
         if other_kwargs.get("color_ui") is not None and not self._has_color_table_entry(tag):
             raise ValueError(
-                f"update_country(): color_ui of '{tag}' cannot be set. A country the mod "
-                "adds has its colour in its own file under common/countries/, which has "
-                "no color_ui: the game uses the map colour there. Only a country in the "
-                "colour table common/countries/colors.txt has a UI colour of its own."
+                f"update_country(): color_ui of '{tag}' cannot be set: a save would not "
+                "write it. A UI colour is written for a country of the game's colour "
+                "table and for one the mod's saved common/countries/colors.txt lists. "
+                "A country the mod adds takes its map colour from its own file, which "
+                "has no color_ui."
             )
         self._materialize_country_override(country)
         if other_kwargs:

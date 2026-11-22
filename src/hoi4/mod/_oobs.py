@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import re
 from pathlib import Path
-from typing import Literal, Protocol, TypeVar, cast
+from typing import Any, Literal, Protocol, TypeVar, cast
 from collections.abc import Sequence
 
 from ..oob import (
@@ -264,6 +264,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             The new order of battle.
 
         Raises:
+            TypeError: ``templates``, ``divisions``, ``fleets`` or ``air_wings`` holds something of another class; nothing changed.
             AlreadyExistsError: The name exists and ``overwrite`` is false.
             NotFoundError: With a game install configured, no one defines
                 ``tag``; or ``assign`` is true and the country is unknown.
@@ -273,12 +274,13 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 other OOBs.
         """
         name = require_script_id(name, label="OOB name")
-        _check_model_lists(
-            "create_oob",
-            OrderOfBattle,
-            {"templates": templates, "divisions": divisions, "fleets": fleets,
-             "air_wings": air_wings},
-        )
+        lists: dict[str, Any] = {
+            "templates": templates, "divisions": divisions, "fleets": fleets,
+            "air_wings": air_wings,
+        }
+        _check_model_lists("create_oob", OrderOfBattle, lists)
+        templates, divisions = lists["templates"], lists["divisions"]
+        fleets, air_wings = lists["fleets"], lists["air_wings"]
         country_tag = self._require_country_reference(tag)
         existing = self._oobs.get(name)
         if existing is not None and not overwrite:
@@ -399,17 +401,19 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             The updated OOB.
 
         Raises:
+            TypeError: ``templates``, ``divisions``, ``fleets`` or ``air_wings`` holds something of another class; nothing changed.
             NotFoundError: No OOB file has this name.
             ValueError: The update would mix land, naval and air content, or
                 the kind does not match the content.
         """
         oob = self.get_oob(name)
-        _check_model_lists(
-            "update_oob",
-            OrderOfBattle,
-            {"templates": templates, "divisions": divisions, "fleets": fleets,
-             "air_wings": air_wings},
-        )
+        lists: dict[str, Any] = {
+            "templates": templates, "divisions": divisions, "fleets": fleets,
+            "air_wings": air_wings,
+        }
+        _check_model_lists("update_oob", OrderOfBattle, lists)
+        templates, divisions = lists["templates"], lists["divisions"]
+        fleets, air_wings = lists["fleets"], lists["air_wings"]
         existing_content_kind = _oob_content_kind(
             oob.templates,
             oob.divisions,

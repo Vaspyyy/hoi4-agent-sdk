@@ -102,11 +102,15 @@ def _check_fields(
     _check_model_lists(method, type(obj), kwargs)
 
 
-def _check_model_lists(method: str, model: type, values: Mapping[str, Any]) -> None:
-    """Raise ``TypeError`` when a list field of ``model`` is given items of another class."""
+def _check_model_lists(method: str, model: type, values: dict[str, Any]) -> None:
+    """Raise ``TypeError`` when a list field of ``model`` is given items of another class.
+
+    Each checked value is put back into ``values`` as a list, so a generator
+    is read once and its items are kept for the caller.
+    """
     for name, classes in _model_list_fields(model).items():
         if values.get(name) is not None:
-            _require_items(method, name, values[name], classes)
+            values[name] = _require_items(method, name, values[name], classes)
 
 
 _MODEL_LIST_FIELDS: dict[type, dict[str, tuple[type, ...]]] = {}
@@ -146,18 +150,25 @@ def _model_list_fields(model: type) -> dict[str, tuple[type, ...]]:
     return found
 
 
-def _require_items(method: str, name: str, values: object, classes: tuple[type, ...]) -> None:
-    """Raise ``TypeError`` naming ``method`` unless ``values`` is a list of ``classes`` objects."""
+def _require_items(
+    method: str, name: str, values: object, classes: tuple[type, ...]
+) -> list[Any]:
+    """Return ``values`` as a list, or raise ``TypeError`` unless it holds ``classes`` objects.
+
+    Use the returned list, not ``values``: a generator can be read only once.
+    """
     wanted = " or ".join(cls.__name__ for cls in classes)
     if isinstance(values, (str, bytes)) or not isinstance(values, Iterable):
         raise TypeError(
             f"{method}(): {name} must be a list of {wanted} objects, got {type(values).__name__}"
         )
-    for item in values:
+    items = list(values)
+    for item in items:
         if not isinstance(item, classes):
             raise TypeError(
                 f"{method}(): {name} must hold {wanted} objects, got {type(item).__name__}"
             )
+    return items
 
 
 def _typed_dict_keys(options: type) -> frozenset[str]:
@@ -165,13 +176,20 @@ def _typed_dict_keys(options: type) -> frozenset[str]:
     return frozenset(options.__required_keys__ | options.__optional_keys__)  # type: ignore[attr-defined]
 
 
-def _check_field_names(method: str, kwargs: dict[str, Any], valid: Iterable[str]) -> None:
-    """Raise ``TypeError`` naming ``method`` and ``valid`` for a name not in ``valid``."""
+def _check_field_names(
+    method: str, kwargs: Mapping[Any, Any], valid: Iterable[str], *, where: str = ""
+) -> None:
+    """Raise ``TypeError`` naming ``method`` and ``valid`` for a name not in ``valid``.
+
+    ``where`` says which part of the call holds the name (``" in step 2"``).
+    """
     allowed = set(valid)
     unknown = set(kwargs) - allowed
     if unknown:
+        # A mapping the caller built can have keys that are not strings.
+        names = sorted(unknown, key=str)
         raise TypeError(
-            f"{method}(): Unknown fields: {sorted(unknown)}. Valid: {sorted(allowed)}"
+            f"{method}(): Unknown fields{where}: {names}. Valid: {sorted(allowed)}"
         )
 
 
