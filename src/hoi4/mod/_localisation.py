@@ -248,6 +248,9 @@ class LocalisationLayer(CoreLayer):
             sources[key] = target
         elif key not in sources:
             sources[key] = self._default_loc_file_for(language)
+        # The file the key goes to may be one the loader did not read (the
+        # default file behind a linked folder, which the loader skips).
+        self._note_target(sources[key])
         self._dirty.add("localization")
         dirty_keys.add(key)
         if old_source is not None:

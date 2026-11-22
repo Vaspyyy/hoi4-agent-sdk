@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 from hoi4 import ExternalModificationError, Mod
-from hoi4.mod._core import SECTIONS, Section, SectionRegistry
+from hoi4.mod._core import SECTIONS, Section, SectionRegistry, _noting_failure
+from hoi4.mod._events import EventsLayer
 
 EVENTS = """add_namespace = test
 country_event = {
@@ -783,3 +784,204 @@ def test_game_content_a_lookup_cached_is_gone_after_save_and_discard(
     mod.update_event("test.1", title="another_title")
     mod.discard()
     assert listed(mod) == expected
+
+
+# ── An edit call that fails ──────────────────────────────────────
+
+
+def test_a_failed_edit_makes_the_next_discard_read_everything_again(
+    mod_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It may have changed loaded data before it failed, without a dirty mark."""
+
+    def update_event(self: Mod, event_id: str, **fields: object) -> bool:
+        del self._events[event_id]  # half an edit
+        raise ValueError("the rest of the edit is not possible")
+
+    # A layer wraps its edit methods when its class is made; one put in by
+    # hand is wrapped by hand.
+    monkeypatch.setattr(EventsLayer, "update_event", _noting_failure(update_event))
+    mod = Mod(mod_root)
+    assert mod.list_events() == ["test.1"]
+    with pytest.raises(ValueError, match="not possible"):
+        mod.update_event("test.1", title="x")
+    assert mod.list_events() == []
+    assert mod._edit_failed
+
+    mod.discard()
+
+    assert mod.list_events() == ["test.1"]
+    assert not mod._edit_failed
+
+
+def test_a_failed_edit_is_forgotten_by_a_save_of_something_else(
+    mod_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def update_event(self: Mod, event_id: str, **fields: object) -> bool:
+        del self._events[event_id]
+        raise ValueError("the rest of the edit is not possible")
+
+    mod = Mod(mod_root)
+    assert mod.list_events() == ["test.1"]
+    with monkeypatch.context() as patch:
+        patch.setattr(EventsLayer, "update_event", _noting_failure(update_event))
+        with pytest.raises(ValueError, match="not possible"):
+            mod.update_event("test.1", title="x")
+
+    mod.set_state_properties(1, state_category="city")
+    mod.save()
+
+    assert mod.list_events() == ["test.1"]
+
+
+def test_only_the_outermost_edit_call_answers_for_a_failure(
+    mod_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An edit that calls another one, catches its error and finishes is not a failed edit."""
+
+    def update_event(self: Mod, event_id: str, **fields: object) -> bool:
+        raise ValueError("no such field")
+
+    def ensure_event(self: Mod, event_id: str, **fields: object) -> object:
+        try:
+            self.update_event(event_id, **fields)
+        except ValueError:
+            pass
+        return self._events[event_id]
+
+    monkeypatch.setattr(EventsLayer, "update_event", _noting_failure(update_event))
+    monkeypatch.setattr(EventsLayer, "ensure_event", _noting_failure(ensure_event))
+    mod = Mod(mod_root)
+
+    assert mod.ensure_event("test.1").id == "test.1"
+
+    assert not mod._edit_failed
+
+
+def test_a_lookup_that_fails_is_not_a_failed_edit(mod_root: Path) -> None:
+    mod = Mod(mod_root)
+
+    with pytest.raises(KeyError):
+        mod.get_event("no.such.event")
+
+    assert not mod._edit_failed
+
+
+def test_a_rollback_undoes_a_failed_edit_with_the_rest(mod_root: Path) -> None:
+    mod = Mod(mod_root)
+    mod.list_events()
+
+    with pytest.raises(TypeError):
+        with mod.transaction():
+            mod.update_event("test.1", no_such_field=1)
+
+    assert not mod._edit_failed
+
+
+def test_the_wrapped_edit_methods_keep_their_signature_and_docstring() -> None:
+    import inspect
+
+    assert list(inspect.signature(Mod.update_event).parameters)[:2] == ["self", "event_id"]
+    assert Mod.set_loc.__doc__ and Mod.set_loc.__qualname__ == "LocalisationLayer.set_loc"
+    # Every edit a layer defines is wrapped; lookups and save() are not.
+    assert hasattr(Mod.set_loc, "__wrapped__") and hasattr(Mod.create_event, "__wrapped__")
+    assert not hasattr(Mod.get_event, "__wrapped__") and not hasattr(Mod.save, "__wrapped__")
+
+
+# ── Rejected calls leave things as they were ─────────────────────
+
+
+def test_a_rejected_decision_category_move_changes_nothing(mod_root: Path) -> None:
+    _write(mod_root, "common/decisions/categories/cats.txt", "xyz = { }\n")
+    _write(mod_root, "common/decisions/mod.txt", "xyz = { first = { cost = 2 } }\n")
+    mod = Mod(mod_root)
+    before = mod.get_decision_category("xyz").definition_path
+
+    with pytest.raises(ValueError, match="categories"):
+        mod.update_decision_category("xyz", category_path="common/decisions/wrong.txt")
+
+    assert mod.get_decision_category("xyz").definition_path == before
+    mod.discard()
+    assert mod.get_decision_category("xyz").definition_path == before
+
+
+def test_a_rejected_country_update_changes_nothing(tmp_path: Path, game_root: Path) -> None:
+    """A country whose definition is the game's: a typo must not retarget it into the mod."""
+
+    root = tmp_path / "mod"
+    _write(root, "history/countries/GER - Germany.txt", "capital = 1\n")
+    mod = Mod(root, hoi4_install=game_root)
+    before = mod.get_country("GER").definition_path
+    assert before is not None and before.is_relative_to(game_root)
+
+    with pytest.raises(TypeError, match="typo"):
+        mod.update_country("GER", typo=1)
+
+    assert mod.get_country("GER").definition_path == before
+    mod.discard()
+    assert mod.get_country("GER").definition_path == Mod(root, hoi4_install=game_root).get_country(
+        "GER"
+    ).definition_path
+
+
+# ── Targets that can move between the edit and the save ──────────
+
+
+@pytest.mark.parametrize("outside", ["touch", "change, old time set back"])
+def test_a_renamed_history_file_is_noted_under_both_names_it_can_get(
+    tmp_path: Path, game_root: Path, outside: str
+) -> None:
+    """Whether the history file keeps its name depends on the game having one of that
+    name. That is asked again at save time, so the edit notes both candidates."""
+
+    root = tmp_path / "mod"
+    _write(root, "history/countries/GER - Germany.txt", "capital = 7\n")
+    leftover = _write(root, "history/countries/GER - Reich.txt", "capital = 12\n")
+    for file in root.rglob("*.txt"):
+        _age(file)
+    mod = Mod(root, hoi4_install=game_root)
+    mod.update_country("GER", name="Reich")
+    # The game's file goes away: the save now moves the history to "GER - Reich.txt".
+    (game_root / "history/countries/GER - Germany.txt").unlink()
+
+    if outside == "touch":
+        os.utime(leftover, None)
+        mod.save()
+        assert "capital = 7" in leftover.read_text(encoding="utf-8")
+    else:
+        before = leftover.stat()
+        leftover.write_text("capital = 99\n", encoding="utf-8")
+        os.utime(leftover, ns=(before.st_atime_ns, before.st_mtime_ns))
+        with pytest.raises(ExternalModificationError, match="Reich"):
+            mod.save()
+        assert leftover.read_text(encoding="utf-8") == "capital = 99\n"
+
+
+@pytest.mark.parametrize("outside", [None, "touch", "change, old time set back"])
+def test_the_default_replace_file_behind_a_linked_folder_is_noted(
+    mod_root: Path, outside: str | None
+) -> None:
+    """The loader does not follow a linked folder, so it never read the file."""
+
+    backing = _write(
+        mod_root, "backing/mod_replace_l_english.yml", '\ufeffl_english:\n old: "12"\n'
+    )
+    _age(backing)
+    (mod_root / "localisation/english").mkdir(parents=True)
+    (mod_root / "localisation/english/replace").symlink_to(mod_root / "backing")
+    mod = Mod(mod_root)
+    mod.set_loc("new", "edited", replace=True)
+
+    if outside is None:
+        mod.save()
+    elif outside == "touch":
+        os.utime(backing, None)
+        mod.save()
+    else:
+        before = backing.stat()
+        changed = backing.read_text(encoding="utf-8").replace("12", "99")
+        backing.write_text(changed, encoding="utf-8")
+        os.utime(backing, ns=(before.st_atime_ns, before.st_mtime_ns))
+        with pytest.raises(ExternalModificationError, match="mod_replace"):
+            mod.save()
+        assert backing.read_text(encoding="utf-8") == changed

@@ -67,6 +67,15 @@ reads `_countries`). The rest of the code reads `self._events` as before.
    reload check");
 4. every section that depends on one of these.
 
+One case reads everything again, as `reload()` does: an edit call raised
+since the last save or discard (`_edit_failed`). Such a call may have
+changed loaded data before it failed, without getting to its dirty mark,
+so there is nothing to find the change by. Every public method of `Mod`
+that can change something is wrapped for this in `mod/__init__.py`; only
+the outermost call counts, so an edit that calls another one, catches its
+error and finishes properly is not a failed edit. A `transaction()` that
+rolls back undoes the failed edit with the rest. Lookups are not wrapped.
+
 All edit buffers are emptied and `_original_files` keeps only the texts owned
 by sections that are still loaded. Derived caches built from several files
 (`_scan_cache`, the sprite and state indexes, the country context cache, ...)
@@ -117,14 +126,18 @@ Who notes a read:
   made (`_note_target`): `import_script_file(overwrite=True)`,
   `rebuild_country_color_table()`, `set_country_name_pool()`, the map files.
 - An edit that names its target file, when the edit is made
-  (`_output_path`, which every `path=` argument goes through). The file may
-  be one that no loader reads: loaders read the files directly in their
-  folder, not in subfolders.
+  (`_output_path`, which a `path=` argument goes through; `set_loc` and
+  `import_script_file` check their arguments first and note the file they
+  end up with, with `_note_target`). The file may be one that no loader
+  reads: loaders read the files directly in their folder, not in
+  subfolders, and do not follow a linked folder.
 - An edit whose target follows from a name, when the edit is made
   (`_note_country_files`): `create_country` for the files of its tag, which
   may be on disk although no tag file registers them, and `update_country`
   for the history file that a new name moves to (`TAG - Name.txt`; the
-  save and the note ask the same function, `country_history_target`).
+  save and the note ask the same function, `country_history_target`, and
+  the note takes both names the file can get, because the save decides
+  between them only when it renders).
 - Not the reads made while a save is rendered (`_read_current_text`). They
   happen a moment before the check below and must not become what that
   check compares with.

@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
+import inspect
 import os
 import threading
 import time
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Optional, Self, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Self, Sequence, TypeVar
 
 from .._disk_cache import DiskAnalysis
 from .._file_cache import cached_file_result
@@ -429,10 +431,66 @@ def _changed_files(
     return sorted(changed)
 
 
+# ── A failed edit ───────────────────────────────────────────────────────────
+#
+# save() and discard() read again only the sections that carry a dirty mark.
+# An edit call that raises may have changed loaded data before it got to its
+# mark. When every save() and discard() read everything again, that did not
+# matter. So every public method of a layer that can change the Mod is
+# wrapped: if it raises, the next save() or discard() reads everything again.
+
+# Methods that only read, and the ones that manage the whole state themselves.
+_NOT_AN_EDIT_PREFIXES = (
+    "get_", "list_", "find_", "search_", "is_", "has_", "suggest_", "validate",
+    "preview", "available_", "all_", "analyze_", "assert_", "content_",
+)
+_NOT_AN_EDIT = frozenset({
+    "country_tag_conflicts", "definition_kinds", "focus_tree_bounds",
+    "game_script_vocabulary", "state_index",
+    "save", "discard", "reload", "transaction",
+})
+
+
+def _is_edit_name(name: str) -> bool:
+    return not (
+        name.startswith("_") or name in _NOT_AN_EDIT or name.startswith(_NOT_AN_EDIT_PREFIXES)
+    )
+
+
+def _noting_failure(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap an edit method so that a call of it that raises is remembered."""
+
+    @functools.wraps(method)
+    def edit(self: CoreLayer, *args: Any, **kwargs: Any) -> Any:
+        if self._edit_depth:
+            # Called by another edit: that one answers for the outcome. It
+            # may catch the error and finish properly.
+            return method(self, *args, **kwargs)
+        self._edit_depth = 1
+        try:
+            return method(self, *args, **kwargs)
+        except BaseException:
+            self._edit_failed = True
+            raise
+        finally:
+            self._edit_depth = 0
+
+    return edit
+
+
 class CoreLayer:
     """Shared state, content-layer lookup, raw readers and transaction snapshots."""
 
     _sections: ClassVar[SectionRegistry] = SECTIONS
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Wrap the edit methods a layer defines (see ``_noting_failure``)."""
+
+        super().__init_subclass__(**kwargs)
+        for name, member in list(vars(cls).items()):
+            # Plain functions only: not properties, static or class methods.
+            if _is_edit_name(name) and inspect.isfunction(member):
+                setattr(cls, name, _noting_failure(member))
 
     # Section data: set when the section loads (see ``SECTIONS``), so these
     # are declared here instead of assigned in ``__init__``.
@@ -552,6 +610,11 @@ class CoreLayer:
         # text. ``stat`` may not show such a change (same size, time set
         # back), so the next discard() is told about them.
         self._seen_changed: set[Path] = set()
+        # An edit call that raised may have changed loaded data before it
+        # failed, without a dirty mark. The next discard() or save() then
+        # reads everything again (see ``Mod`` in ``mod/__init__.py``).
+        self._edit_failed = False
+        self._edit_depth = 0
         # The same for the base mods' text files, so discard() can tell
         # whether the inherited content changed (the game is not watched).
         self._base_fingerprints: dict[Path, _Fingerprint] = {}
@@ -830,6 +893,7 @@ class CoreLayer:
         self._fingerprints, self._scan_digests = self._scan_fingerprints()
         self._read_digests = {}
         self._seen_changed = set()
+        self._edit_failed = False
         self._base_fingerprints, self._base_digests = self._scan_fingerprints(self.base_mod_paths)
 
     def _base_mods_changed(self) -> bool:

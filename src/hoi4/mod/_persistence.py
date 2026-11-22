@@ -678,14 +678,19 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         ``save=True`` is passed. On exceptions, in-memory state is restored.
         """
         snapshot = self._snapshot()
+        # A rollback puts back everything an edit inside it changed, so an
+        # edit that failed inside it is undone with the rest.
+        edit_failed = self._edit_failed
         try:
             yield self
             if save:
                 self.save()
             else:
                 self._restore(snapshot)
+                self._edit_failed = edit_failed
         except Exception:
             self._restore(snapshot)
+            self._edit_failed = edit_failed
             raise
 
     def discard(self) -> None:
@@ -724,6 +729,12 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         files on disk.
         """
 
+        if self._edit_failed:
+            # An edit call raised after it may have changed loaded data,
+            # without a dirty mark to find it by. Read everything again, as
+            # every save() and discard() used to.
+            self.reload()
+            return
         staged = [*self._script_file_updates, *self._pending_asset_writes]
         fingerprints, digests = self._scan_fingerprints()
         known_digests = {**self._scan_digests, **self._read_digests}

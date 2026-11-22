@@ -25,6 +25,7 @@ from ..types import (
 )
 from ._characters import CharactersLayer
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
 
@@ -180,7 +181,6 @@ class CountryAuthoringLayer(CharactersLayer):
             country = self.get_country(tag)
         if country is None:
             return False
-        self._materialize_country_override(country)
         leader_kwargs = {}
         other_kwargs = {}
         for key, value in kwargs.items():
@@ -190,6 +190,15 @@ class CountryAuthoringLayer(CharactersLayer):
                 leader_kwargs[key.removeprefix("leader_")] = value
             else:
                 other_kwargs[key] = value
+        # Check the names before anything changes: a rejected call must not
+        # leave the country pointing at mod files that do not exist.
+        _check_fields(country, other_kwargs)
+        if leader_kwargs:
+            _check_fields(
+                country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1"),
+                leader_kwargs,
+            )
+        self._materialize_country_override(country)
         if other_kwargs:
             _set_fields(country, other_kwargs)
             if "color" in other_kwargs and "color_ui" not in other_kwargs:
@@ -224,12 +233,12 @@ class CountryAuthoringLayer(CharactersLayer):
         """
 
         targets = country_file_paths(self.mod_root, country)
-        targets.append(
-            country_history_target(
-                self.mod_root,
-                country,
-                keep_history_path=self._overrides_inherited(country.history_path),
-            )
+        # Both names the history file can get. Which one the save takes
+        # depends on whether the file overrides an inherited one, and that
+        # is asked again when the save renders: it can have changed by then.
+        targets.extend(
+            country_history_target(self.mod_root, country, keep_history_path=keep)
+            for keep in (False, True)
         )
         for target in targets:
             self._note_target(target)

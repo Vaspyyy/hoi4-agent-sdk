@@ -22,8 +22,8 @@ class ExternalModificationError(RuntimeError):
     """A source file changed on disk after this ``Mod`` instance loaded it."""
 
 
-def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False) -> None:
-    from ..types import _ensure_nested
+def _check_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False) -> None:
+    """Raise ``TypeError`` for a field name ``obj`` does not take. Changes nothing."""
 
     internal = {
         "id",
@@ -51,6 +51,12 @@ def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False
     unknown = set(kwargs) - valid
     if unknown:
         raise TypeError(f"Unknown fields: {sorted(unknown)}. Valid: {sorted(valid)}")
+
+
+def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False) -> None:
+    from ..types import _ensure_nested
+
+    _check_fields(obj, kwargs, allow_path=allow_path)
     for key, value in kwargs.items():
         if key in ("prerequisites", "mutually_exclusive") and isinstance(value, list):
             value = _ensure_nested(value)
