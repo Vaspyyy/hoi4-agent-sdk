@@ -286,10 +286,11 @@ def test_delete_and_update_inherited_characters_preserves_file(tmp_path: Path) -
 
 # The same layered lookup checks run for each supported kind.
 _MATRIX = {
-    "event": ("events", "country_event = {{ id = {id} title = {marker} }}", "get_event", "list_events"),
+    "event": ("events", "country_event = {{ id = {id} title = {marker} option = {{ name = choice }} }}", "get_event", "list_events"),
     "focus_tree": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} }}", "get_focus_tree", "list_focus_trees"),
     "focus": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} }}", "get_focus", "list_focus_trees"),
     "idea": ("common/ideas", "ideas = {{ country = {{ {id} = {{ picture = {marker} }} }} }}", "get_idea", "list_ideas"),
+    "decision": ("common/decisions", "matrix_category = {{ {id} = {{ cost = 1 }} }}", "get_decision", "list_decisions"),
 }
 
 
@@ -381,7 +382,7 @@ def test_matrix_inherited_object_is_a_copy(layered_content) -> None:
     assert get("game").id == old
 
 
-@pytest.mark.parametrize("edit", ["update", "delete", "add_option"])
+@pytest.mark.parametrize("edit", ["update", "delete", "add_option", "update_option", "namespace"])
 @pytest.mark.parametrize("layered_content", ["event"], indirect=True)
 def test_matrix_event_edit_requires_staged_file(layered_content, edit: str) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
@@ -390,7 +391,9 @@ def test_matrix_event_edit_requires_staged_file(layered_content, edit: str) -> N
     operations = {
         "update": lambda: mod.update_event(ids["game"], title="changed"),
         "delete": lambda: mod.delete_event(ids["game"]),
-        "add_option": lambda: mod.add_event_option(ids["game"], EventOption(name="choice")),
+        "add_option": lambda: mod.add_event_option(ids["game"], EventOption(name="second")),
+        "update_option": lambda: mod.update_event_option(ids["game"], "choice", name="changed"),
+        "namespace": lambda: mod.set_event_namespace(ids["game"], "new_namespace"),
     }
     before = mod.preview()
     with pytest.raises(ReadOnlyError) as error:
@@ -489,3 +492,37 @@ def test_matrix_idea_cache_clears(layered_content, action: str) -> None:
     else:
         getattr(mod, action)()
     assert get("game").icon == "changed"
+
+
+@pytest.mark.parametrize("layered_content", ["decision"], indirect=True)
+@pytest.mark.parametrize("edit", ["update", "delete"])
+def test_matrix_decision_edit_requires_staged_file(layered_content, edit: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    operations = {
+        "update": lambda: mod.update_decision(ids["game"], cost=2),
+        "delete": lambda: mod.delete_decision(ids["game"]),
+    }
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError) as error:
+        operations[edit]()
+    assert 'mod.load_inherited_content("common/decisions/game.txt")' in str(error.value)
+    assert mod.preview() == before
+    mod.load_inherited_content("common/decisions/game.txt")
+    operations[edit]()
+    assert mod.save(require_changes=True).written_files
+    assert (root / "common/decisions/game.txt").exists()
+
+
+@pytest.mark.parametrize("layered_content", ["decision"], indirect=True)
+@pytest.mark.parametrize("action", ["discard", "save", "reload"])
+def test_matrix_decision_cache_clears(layered_content, action: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert get("game").cost == 1
+    path = game / "common/decisions/game.txt"
+    path.write_text(f"matrix_category = {{ {ids['game']} = {{ cost = 7 }} }}")
+    if action == "save":
+        with pytest.warns(RuntimeWarning):
+            mod.save(require_changes=False)
+    else:
+        getattr(mod, action)()
+    assert get("game").cost == 7
