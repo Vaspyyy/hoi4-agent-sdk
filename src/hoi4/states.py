@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from collections.abc import Callable, Iterable, Sequence
+from typing import Any
 
 from .map_editing import list_ints, patch_int_list_body
 from .parser import PdxNode, parse_pdx, serialize_pdx
@@ -911,7 +912,7 @@ def build_state_index(
     states_dir: Path | Iterable[Path],
     *,
     header: Callable[[Path], tuple[int, str, str | None] | None] | None = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Return one entry per state file, identified by the file's own ``id``.
 
     ``states_dir`` is a folder, or its state files sorted by name. ``header``
@@ -919,7 +920,7 @@ def build_state_index(
     does); pass one that remembers its answers.
     """
 
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for f in _state_files(states_dir):
         found = header(f) if header is not None else state_index_header(read_text(f))
         if found is None:

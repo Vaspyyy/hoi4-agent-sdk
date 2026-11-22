@@ -472,7 +472,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             self.assign_country_oob(
                 oob.country_tag,
                 oob.name,
-                kind=cast(Literal["land", "naval", "air"], oob.kind),
+                kind=oob.kind,
                 required_dlc=oob.required_dlc,
                 excluded_dlc=oob.excluded_dlc,
             )

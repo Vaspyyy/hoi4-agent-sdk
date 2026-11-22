@@ -194,9 +194,7 @@ def add_bunker(state_id: int, level: int = 1, province: int | None = None) -> st
     return add_state_building(state_id, "bunker", level, province=province)
 
 
-def add_coastal_bunker(
-    cls, state_id: int, level: int = 1, province: int | None = None
-) -> str:
+def add_coastal_bunker(state_id: int, level: int = 1, province: int | None = None) -> str:
     """Return a state-scoped effect that builds coastal forts, optionally in one province."""
     return add_state_building(state_id, "coastal_bunker", level, province=province)
 

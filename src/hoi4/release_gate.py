@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Literal, TypeVar, cast
+from typing import Literal, TypeVar
 from collections.abc import Callable
 
 from .mod import Mod
@@ -468,10 +468,7 @@ def _probe_dynamic_modifier(mod: Mod) -> str | None:
     values = dict(dynamic_modifier.modifier)
     if values:
         key = sorted(values)[0]
-        values[key] = cast(
-            str | int | float | bool,
-            _increment_number(values[key]),
-        )
+        values[key] = _increment_number(values[key])
         mod.update_dynamic_modifier(modifier_id, modifier=values)
         return f"{modifier_id}.modifier.{key}"
     mod.update_dynamic_modifier(modifier_id, enable="always = yes")

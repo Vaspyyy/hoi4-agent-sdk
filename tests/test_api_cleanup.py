@@ -922,3 +922,10 @@ def test_the_module_docstrings_show_the_readme_quick_start() -> None:
         doc = module.__doc__ or ""
         assert "german_focus" not in doc and "/opt/steam" not in doc
         assert example in doc
+
+
+def test_add_coastal_bunker_takes_the_state_first() -> None:
+    # It kept a stray ``cls`` parameter from its time as a ``Mod`` method.
+    assert effects.add_coastal_bunker(115, 2) == effects.add_bunker(115, 2).replace(
+        "bunker", "coastal_bunker"
+    )

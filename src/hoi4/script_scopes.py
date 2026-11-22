@@ -597,7 +597,7 @@ class _Walker:
         if control.body == "weighted":
             self.weighted(body, control.arguments, kind, stack)
             return
-        inner: Literal["effect", "trigger"] = kind if control.body == "same" else control.body  # type: ignore[assignment]
+        inner: Literal["effect", "trigger"] = kind if control.body == "same" else control.body
         self.arguments_and_body(
             body, inner, stack, control.arguments, control.trigger_arguments
         )

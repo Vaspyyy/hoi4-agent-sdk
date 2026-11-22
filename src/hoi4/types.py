@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
-from typing import cast
 
 from .idea_icons import DEFAULT_IDEA_ICON
 
@@ -13,8 +12,8 @@ def _ensure_nested(value: str | list[str] | list[list[str]] | None) -> list[list
     if isinstance(value, str):
         return [[value]]
     if isinstance(value[0], str):
-        return [list(cast(list[str], value))]
-    return [list(group) for group in cast(list[list[str]], value)]
+        return [list(value)]
+    return [list(group) for group in value]
 
 
 @dataclass
@@ -63,7 +62,7 @@ class Focus:
     # also be a ``shared_focus`` or a ``joint_focus``.
     kind: str = "focus"
 
-    def __post_init__(self, requires) -> None:
+    def __post_init__(self, requires: str | list[str] | list[list[str]] | None) -> None:
         if requires:
             self.prerequisites.extend(_ensure_nested(requires))
         self.prerequisites = _ensure_nested(self.prerequisites)
@@ -162,7 +161,7 @@ class Country:
     # UI colour from ``common/countries/colors.txt``; ``None`` means "same as color".
     color_ui: tuple[int, int, int] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.popularities:
             self.popularities = {
                 "democratic": 100,

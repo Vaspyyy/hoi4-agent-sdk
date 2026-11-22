@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np  # type: ignore[import-not-found]
 from PIL import Image  # type: ignore[import-not-found]
-from scipy.ndimage import label as ndlabel  # type: ignore[import-not-found,import-untyped]
+from scipy.ndimage import label as ndlabel  # type: ignore[import-untyped]
 
 from . import config
 from .numb_gen import NumberSeries

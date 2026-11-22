@@ -5,12 +5,12 @@ from typing import Any
 
 import numpy as np  # type: ignore[import-not-found]
 from PIL import Image  # type: ignore[import-not-found]
-from scipy.ndimage import (  # type: ignore[import-not-found,import-untyped]
+from scipy.ndimage import (  # type: ignore[import-untyped]
     binary_dilation,
     distance_transform_edt,
     label as ndlabel,
 )
-from scipy.spatial import cKDTree  # type: ignore[import-not-found,import-untyped]
+from scipy.spatial import cKDTree  # type: ignore[import-untyped]
 
 from . import config
 from .numb_gen import NumberSeries

@@ -274,7 +274,7 @@ def find_enclosed_foreign_components(
 _Topology = tuple[frozenset[int], dict[int, set[int]], frozenset[int]]
 
 
-def _encode_topology(topology: _Topology) -> dict[str, list]:
+def _encode_topology(topology: _Topology) -> dict[str, list[Any]]:
     land, graph, coastal = topology
     return {
         "land": sorted(land),

@@ -638,9 +638,9 @@ class CoreLayer:
         self._sprite_text_parse_cache: dict[str, dict[str, str]] = {}
         self._runtime_activation_parse_cache: dict[str, PdxNode | None] = {}
         self._script_trigger_index_cache: dict[str, dict[str, PdxNode]] = {}
-        self._state_index_cache: dict[bool, list[dict]] = {}
+        self._state_index_cache: dict[bool, list[dict[str, Any]]] = {}
         self._vanilla_state_loc_entries: dict[str, str] | None = None
-        self._country_context_cache: dict[str, dict] = {}
+        self._country_context_cache: dict[str, dict[str, Any]] = {}
 
     # ── Sections ─────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np  # type: ignore[import-not-found]
 from PIL import Image  # type: ignore[import-not-found]
-from scipy.ndimage import binary_dilation  # type: ignore[import-not-found,import-untyped]
+from scipy.ndimage import binary_dilation  # type: ignore[import-untyped]
 
 from .progress import CancelCallback, Progress, ProgressCallback, check_cancelled
 

@@ -34,7 +34,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 
 from ._disk_cache import cache_root, disk_cache_enabled
@@ -445,7 +445,7 @@ def _cache_key(root: Path) -> str:
     return digest.hexdigest()[:32]
 
 
-def _cached_install_data(root: Path) -> dict | None:
+def _cached_install_data(root: Path) -> dict[str, Any] | None:
     try:
         path = _cache_dir() / f"{_cache_key(root)}.json"
         with path.open(encoding="utf-8") as handle:
@@ -458,7 +458,7 @@ def _cached_install_data(root: Path) -> dict | None:
     return data
 
 
-def _store_install_data(root: Path, data: dict) -> None:
+def _store_install_data(root: Path, data: dict[str, Any]) -> None:
     directory = _cache_dir()
     try:
         directory.mkdir(parents=True, exist_ok=True)
@@ -476,7 +476,7 @@ def _store_install_data(root: Path, data: dict) -> None:
         return
 
 
-def _install_data(root: Path) -> dict:
+def _install_data(root: Path) -> dict[str, Any]:
     """Everything the vocabulary needs from an install, as plain JSON data."""
 
     documentation = root / "documentation"
@@ -510,14 +510,14 @@ def _install_data(root: Path) -> dict:
     }
 
 
-def _vocabulary_from_data(root: Path, data: dict) -> GameScriptVocabulary:
-    usage: dict[str, list] = data.get("usage", {})
+def _vocabulary_from_data(root: Path, data: dict[str, Any]) -> GameScriptVocabulary:
+    usage: dict[str, list[Any]] = data.get("usage", {})
     templates = tuple(
         ModifierTemplate(
             pattern=str(pattern),
             placeholder=str(placeholder),
-            documented_members=tuple(cast(list, members)),
-            categories=tuple(cast(list, categories)),
+            documented_members=tuple(cast(list[str], members)),
+            categories=tuple(cast(list[str], categories)),
         )
         for pattern, placeholder, members, categories in data.get("templates", [])
     )
@@ -1023,7 +1023,7 @@ def check_statement(
     allowlist patterns (``effect:my_effect``).
     """
 
-    kind = cast(ScriptTokenKind, statement.kind)
+    kind = statement.kind
     name = statement.name
     folded = name.lower()
     if not vocabulary.tokens(kind):

@@ -29,6 +29,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from collections.abc import Collection, Iterable, Iterator
+from typing import Any
 
 from ._disk_cache import DiskAnalysis, string_list, string_map
 from ._script_corpus import split_file
@@ -721,7 +722,7 @@ def encode_file_references(found: FileReferences) -> dict[str, object]:
     }
 
 
-def decode_file_references(data: dict) -> FileReferences:
+def decode_file_references(data: dict[str, Any]) -> FileReferences:
     """The :class:`FileReferences` that :func:`encode_file_references` was given."""
 
     owners = [
