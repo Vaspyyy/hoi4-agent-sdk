@@ -440,7 +440,11 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     modifiers,
                     original=self._original_files.get(path, ""),
                 )
-                rendered[path] = dynamic_text if dynamic_text.strip() else None
+                inherited = (
+                    self._base_content is not None
+                    and self._base_content.file(path.relative_to(self.mod_root)) is not None
+                )
+                rendered[path] = dynamic_text if dynamic_text.strip() or inherited else None
 
         if "bookmarks" in self._dirty:
             for path in self._dirty_bookmark_files:

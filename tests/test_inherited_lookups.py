@@ -293,6 +293,7 @@ _MATRIX = {
     "decision": ("common/decisions", "matrix_category = {{ {id} = {{ cost = 1 }} }}", "get_decision", "list_decisions"),
     "decision_category": ("common/decisions/categories", "{id} = {{ icon = {marker} }}", "get_decision_category", "list_decision_categories"),
     "bookmark": ("common/bookmarks", "bookmarks = {{ bookmark = {{ name = {id} desc = {marker} date = 1936.1.1.12 GER = {{ history = old }} }} }}", "get_bookmark", "list_bookmarks"),
+    "dynamic_modifier": ("common/dynamic_modifiers", "{id} = {{ icon = {marker} }}", "get_dynamic_modifier", "list_dynamic_modifiers"),
 }
 
 
@@ -604,3 +605,36 @@ def test_matrix_bookmark_cache_clears(layered_content, action: str) -> None:
     else:
         getattr(mod, action)()
     assert get("game").description == "changed"
+
+
+@pytest.mark.parametrize("layered_content", ["dynamic_modifier"], indirect=True)
+@pytest.mark.parametrize("edit", ["update", "delete"])
+def test_matrix_modifier_edit_requires_staged_file(layered_content, edit: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    operations = {
+        "update": lambda: mod.update_dynamic_modifier(ids["game"], icon="changed"),
+        "delete": lambda: mod.delete_dynamic_modifier(ids["game"]),
+    }
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError) as error:
+        operations[edit]()
+    assert 'mod.load_inherited_content("common/dynamic_modifiers/game.txt")' in str(error.value)
+    assert mod.preview() == before
+    mod.load_inherited_content("common/dynamic_modifiers/game.txt")
+    operations[edit]()
+    assert mod.save(require_changes=True).written_files
+    assert (root / "common/dynamic_modifiers/game.txt").exists()
+
+
+@pytest.mark.parametrize("layered_content", ["dynamic_modifier"], indirect=True)
+@pytest.mark.parametrize("action", ["discard", "save", "reload"])
+def test_matrix_modifier_cache_clears(layered_content, action: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert get("game").icon == "game"
+    put(game, "game", "game", "changed")
+    if action == "save":
+        with pytest.warns(RuntimeWarning):
+            mod.save(require_changes=False)
+    else:
+        getattr(mod, action)()
+    assert get("game").icon == "changed"
