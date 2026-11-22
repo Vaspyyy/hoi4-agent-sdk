@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import re
 from pathlib import Path
 from typing import Literal, Protocol, TypeVar, cast
@@ -208,7 +209,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             if not path.resolve(strict=False).is_relative_to(self.mod_root):
                 inherited_oob = self._inherited_copy(
                     "oob", name,
-                    lambda: load_oob_file(
+                    functools.partial(load_oob_file,
                         path, name=name, country_tag=country_tag,
                         kind=reference.kind if reference is not None else None,
                         required_dlc=reference.required_dlc if reference is not None else (),

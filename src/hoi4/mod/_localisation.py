@@ -95,6 +95,7 @@ class LocalisationLayer(CoreLayer):
         key: str,
         *,
         language: str = DEFAULT_LOCALISATION_LANGUAGE,
+        include_vanilla: bool = True,
         default: _D | _Missing = MISSING,
     ) -> str | _D:
         """Return one language's text for ``key``; no cross-language fallback.
@@ -113,7 +114,7 @@ class LocalisationLayer(CoreLayer):
         language, entries, _, _ = self._loc_tables(language)
         key = self._normalize_loc_key(key)
         value = entries.get(key)
-        if value is None:
+        if value is None and include_vanilla:
             value = self._game_loc(language).get(key)
         if value is None:
             if default is not MISSING:

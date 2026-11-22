@@ -52,8 +52,7 @@ from hoi4 import Focus, Mod
 
 mod = Mod.from_config()
 
-# Inspect existing data. A focus tree the game ships is not visible to the
-# lookups until its file is copied into the mod (this stages the copy).
+# Stage the game file before editing its focus tree.
 mod.load_inherited_content("common/national_focus/germany.txt")
 anchor = mod.get_focus("german_focus", "GER_anschluss")
 

@@ -311,11 +311,16 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
         return sorted({region.id for region in self._effective_strategic_regions()})
 
-    def _effective_strategic_regions(self) -> list[StrategicRegion]:
+    def _effective_strategic_regions(self, *, include_vanilla: bool = True) -> list[StrategicRegion]:
         """Every effective strategic region, sorted by id and file."""
 
         regions: list[StrategicRegion] = []
         for relative in self._strategic_region_files():
+            source = self.resolve_content_path(relative)
+            if not include_vanilla and relative not in self._map_file_updates and (
+                source is None or not source.is_relative_to(self.mod_root)
+            ):
+                continue
             text = self._map_text(relative)
             if text is None:
                 continue
@@ -326,7 +331,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         return sorted(regions, key=lambda region: (region.id, region.path))
 
     def get_strategic_region(
-        self, region_id: int, *, default: _D | _Missing = MISSING
+        self, region_id: int, *, include_vanilla: bool = True, default: _D | _Missing = MISSING
     ) -> StrategicRegion | _D:
         """Return the effective strategic region ``region_id``.
 
@@ -337,7 +342,10 @@ class MapLayer(StatesLayer, CatalogsLayer):
         Raises:
             NotFoundError: No strategic region has this id.
         """
-        for region in self._effective_strategic_regions():
+        for region in self._effective_strategic_regions(include_vanilla=False):
+            if region.id == region_id:
+                return region
+        for region in self._effective_strategic_regions() if include_vanilla else ():
             if region.id == region_id:
                 return region
         if default is not MISSING:

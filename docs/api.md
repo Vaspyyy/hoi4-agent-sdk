@@ -128,12 +128,13 @@ field name) and `ValueError` (a value the call cannot use, such as an invalid
 tag) are raised as Python's own classes. So is `RuntimeError` when an
 optional extra is not installed (the map renderer needs the `map` extra).
 
-What is not visible to lookups: a focus tree, event, idea or on-action that
-only the game or a base mod defines is not loaded, so `get_focus_tree()`,
-`get_event()` and the other lookups raise `NotFoundError` for it. Copy its file
-into the mod first with `mod.load_inherited_content(relative_path)`. Countries,
-states, characters, OOBs, ideologies, localisation and definitions read the
-game's content directly.
+Lookups read the mod first, then base mods and the game. Pass
+`include_vanilla=False` to restrict a lookup to the mod. Lists normally show
+the mod's content; pass `include_vanilla=True` to include inherited content.
+Map lists describe the effective map. Inherited objects are read-only copies.
+To edit a focus, event, idea, decision, bookmark or dynamic modifier defined
+only in inherited content, stage its file with `load_inherited_content()`.
+On-actions compose across files; add a hook with `create_on_action()`.
 
 ### Return values and field checks
 
@@ -518,7 +519,7 @@ Province-list edits remove or append the affected IDs in place.
 | `move_provinces(provinces, to_state, *, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True) -> MapEditReport` | Same data-moving rules. Emptying a source raises `ValueError` unless `delete_empty_states=True` (the file is deleted, or shadowed by an empty override when inherited) or `allow_empty_source=True` (kept empty, with a warning). |
 | `split_state(state_id, provinces, /, **fields) -> State` | `create_state()` for provinces that must all belong to `state_id` |
 | `list_strategic_regions() -> list[int]` | Sorted ids of the effective strategic regions |
-| `get_strategic_region(region_id, *, default=...) -> StrategicRegion` | One region: `id`, `name`, `provinces`, `path`, `has_weather`. Raises `NotFoundError` (or returns `default`). |
+| `get_strategic_region(region_id, *, include_vanilla=True, default=...) -> StrategicRegion` | One region: `id`, `name`, `provinces`, `path`, `has_weather`. Raises `NotFoundError` (or returns `default`). |
 | `move_provinces_to_strategic_region(provinces, region_id) -> StrategicRegion` | Moves land or sea provinces; refuses to empty a region |
 | `create_strategic_region(name, provinces, *, region_id=None, weather=None, loc_path=None) -> StrategicRegion` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
 | `list_supply_nodes() -> list[int]` | Provinces with a supply node, sorted, each once |
@@ -1074,7 +1075,7 @@ uncovers the game's text again).
 
 | Method | Description |
 |--------|-------------|
-| `get_loc(key, *, language="english", default=...) -> str` | Get one language's localized string: the mod's entry, else the game's. A key with no text raises `NotFoundError`; pass `default=None` to get `None` instead |
+| `get_loc(key, *, language="english", include_vanilla=True, default=...) -> str` | Get one language's localized string: the mod's entry, else the game's. A key with no text raises `NotFoundError`; pass `default=None` to get `None` instead |
 | `set_loc(key, value, *, path=None, language="english", overwrite_vanilla=False) -> None` | Set entry. Routes to its existing file, an explicit `path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `overwrite_vanilla=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `path` inside `replace/`), which is how a mod overrides base-game keys. |
 | `delete_loc(key, *, language="english") -> None` | Remove one language's entry; raises `NotFoundError`, or `ReadOnlyError` for a key only the game defines |
 | `search_loc(query, *, language="english") -> dict[str, str]` | Case-insensitive substring search in one language's keys and values, the game's included |
@@ -2177,8 +2178,8 @@ identifier is a field (for example `defined_text = { name = GetFoo ... }`).
 | Method | Description |
 |--------|-------------|
 | `definition_kinds() -> dict[str, DefinitionKind]` | Supported domains. |
-| `list_definitions(kind) -> list[str]` | Sorted ids of the effective definitions from the mod, base mods and the game, including pending edits. |
-| `get_definition(kind, definition_id, *, default=...) -> ScriptDefinition` | One definition (missing raises `NotFoundError`, or returns `default`); `body` omits outer braces and entry identifier fields. |
+| `list_definitions(kind, *, include_vanilla=False) -> list[str]` | Sorted ids of the effective definitions from the mod, base mods and the game, including pending edits. |
+| `get_definition(kind, definition_id, *, include_vanilla=True, default=...) -> ScriptDefinition` | One definition (missing raises `NotFoundError`, or returns `default`); `body` omits outer braces and entry identifier fields. |
 | `create_definition(kind, definition_id, body, *, path=None, overwrite=False) -> ScriptDefinition` | Queue a definition and return it (`source_path` is the file it goes to). Containers are created or reused; identifiers must be unique across the effective domain (`AlreadyExistsError` otherwise). `overwrite=True` patches an existing definition in its current file. |
 | `update_definition(kind, definition_id, body) -> ScriptDefinition` | Replace an existing body in place and return the definition; raises `NotFoundError`. Inherited files are copied into the mod first. |
 | `delete_definition(kind, definition_id) -> None` | Remove one definition and keep every sibling; raises `NotFoundError`. |

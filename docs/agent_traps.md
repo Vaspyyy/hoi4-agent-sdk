@@ -50,11 +50,10 @@ Deleting game content (a game country, ideology, OOB or localisation key)
 raises `ReadOnlyError`. Override it instead: `set_loc()` for a text,
 `update_country()` for a country.
 
-## Game Focus Trees Are Not Visible to Lookups
+## Editing Game Content
 
-`get_focus_tree("german_focus")` raises `NotFoundError` even with the game
-configured, because the game's focus files are not loaded. Copy the file into
-the mod first; the copy is staged until `save()`:
+Lookups can read game content. To edit a focus tree, stage its file first.
+The `ReadOnlyError` names the call and path; the copy is staged until `save()`:
 
 ```python
 mod.load_inherited_content("common/national_focus/germany.txt")

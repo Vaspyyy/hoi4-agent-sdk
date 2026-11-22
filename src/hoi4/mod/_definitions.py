@@ -156,7 +156,7 @@ class DefinitionsLayer(CoreLayer):
         from ..definitions import DEFINITION_KINDS
         return dict(DEFINITION_KINDS)
 
-    def _definition_texts(self, kind: DefinitionKind) -> dict[str, tuple[Path, str, bool]]:
+    def _definition_texts(self, kind: DefinitionKind, *, include_vanilla: bool = True) -> dict[str, tuple[Path, str, bool]]:
         """Map effective relative files of ``kind`` to (source, text, pending)."""
 
         from ..definitions import in_domain
@@ -168,6 +168,8 @@ class DefinitionsLayer(CoreLayer):
             pending = self._script_file_updates.get(target)
             if pending is not None:
                 files[relative] = (target, pending, True)
+                continue
+            if not include_vanilla and not source.is_relative_to(self.mod_root):
                 continue
             try:
                 # What is read here is what an edit of the file builds on.
@@ -182,7 +184,7 @@ class DefinitionsLayer(CoreLayer):
                 files[str(relative_path)] = (target, text, True)
         return dict(sorted(files.items()))
 
-    def list_definitions(self, kind: str | DefinitionKind) -> list[str]:
+    def list_definitions(self, kind: str | DefinitionKind, *, include_vanilla: bool = False) -> list[str]:
         """List the ids of the effective definitions of one domain, sorted.
 
         Pending edits count. Inherited base-game and base-mod files are read
@@ -193,15 +195,15 @@ class DefinitionsLayer(CoreLayer):
             ValueError: ``kind`` is not a definition kind.
         """
 
-        return sorted({definition.id for definition in self._effective_definitions(kind)})
+        return sorted({definition.id for definition in self._effective_definitions(kind, include_vanilla=include_vanilla)})
 
-    def _effective_definitions(self, kind: str | DefinitionKind) -> list[ScriptDefinition]:
+    def _effective_definitions(self, kind: str | DefinitionKind, *, include_vanilla: bool = True) -> list[ScriptDefinition]:
         """Every effective definition of one domain in load order, duplicates included."""
 
         from ..definitions import get_definition_kind, read_definitions
         resolved = get_definition_kind(kind)
         result: list[ScriptDefinition] = []
-        for relative, (source, text, pending) in self._definition_texts(resolved).items():
+        for relative, (source, text, pending) in self._definition_texts(resolved, include_vanilla=include_vanilla).items():
             try:
                 result.extend(read_definitions(
                     text, resolved, relative_path=relative, source_path=source, pending=pending,
@@ -215,6 +217,7 @@ class DefinitionsLayer(CoreLayer):
         kind: str | DefinitionKind,
         definition_id: str,
         *,
+        include_vanilla: bool = True,
         default: _D | _Missing = MISSING,
     ) -> ScriptDefinition | _D:
         """Return the first effective definition of ``kind`` with ``definition_id``.
@@ -231,7 +234,10 @@ class DefinitionsLayer(CoreLayer):
 
         from ..definitions import get_definition_kind
         resolved = get_definition_kind(kind)
-        for definition in self._effective_definitions(resolved):
+        for definition in self._effective_definitions(resolved, include_vanilla=False):
+            if definition.id == definition_id:
+                return definition
+        for definition in self._effective_definitions(resolved) if include_vanilla else ():
             if definition.id == definition_id:
                 return definition
         if default is not MISSING:
@@ -242,7 +248,7 @@ class DefinitionsLayer(CoreLayer):
         return not_found(
             kind.name.replace("_", " "),
             definition_id,
-            self.list_definitions(kind),
+            self.list_definitions(kind, include_vanilla=True),
         )
 
     def _queue_definition_text(self, relative: Path, text: str, original: str) -> Path:
@@ -408,7 +414,7 @@ class DefinitionsLayer(CoreLayer):
         known_traits = {
             definition_id
             for kind in ("country_leader_trait", "unit_leader_trait")
-            for definition_id in self.list_definitions(kind)
+                for definition_id in self.list_definitions(kind, include_vanilla=True)
         }
         if not known_traits:
             return issues

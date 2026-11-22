@@ -196,3 +196,27 @@ def test_inherited_oob_is_a_copy(tmp_path: Path) -> None:
     assert len(mod.get_oob("GER_1936").templates) == 1
     assert mod.list_oobs() == []
     assert mod.list_oobs(include_vanilla=True) == ["GER_1936"]
+
+
+def test_definition_lookup_and_list_scope(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/opinion_modifiers/game.txt", "opinion_modifiers = { game_value = { value = 10 } }")
+    mod = Mod(root, hoi4_install=game)
+    assert mod.list_definitions("opinion_modifier") == []
+    assert mod.list_definitions("opinion_modifier", include_vanilla=True) == ["game_value"]
+    assert mod.get_definition("opinion_modifier", "game_value").id == "game_value"
+    assert mod.get_definition("opinion_modifier", "game_value", include_vanilla=False, default=None) is None
+
+
+def test_localisation_and_region_scope(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "localisation/english/game_l_english.yml", 'l_english:\n test_key:0 "Game"\n')
+    write(game, "map/strategicregions/1.txt", "strategic_region = { id = 1 name = X provinces = { 1 } }")
+    mod = Mod(root, hoi4_install=game)
+    assert mod.get_loc("test_key") == "Game"
+    assert mod.get_loc("test_key", include_vanilla=False, default=None) is None
+    assert mod.get_strategic_region(1).id == 1
+    assert mod.get_strategic_region(1, include_vanilla=False, default=None) is None
+    assert mod.list_strategic_regions() == [1]
