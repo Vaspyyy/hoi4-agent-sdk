@@ -287,8 +287,8 @@ def test_delete_and_update_inherited_characters_preserves_file(tmp_path: Path) -
 # The same layered lookup checks run for each supported kind.
 _MATRIX = {
     "event": ("events", "country_event = {{ id = {id} title = {marker} option = {{ name = choice }} }}", "get_event", "list_events"),
-    "focus_tree": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} }}", "get_focus_tree", "list_focus_trees"),
-    "focus": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} }}", "get_focus", "list_focus_trees"),
+    "focus_tree": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} focus = {{ id = {id}_second x = 1 y = 0 }} }}", "get_focus_tree", "list_focus_trees"),
+    "focus": ("common/national_focus", "focus_tree = {{ id = {id} focus = {{ id = {id}_focus x = 0 y = 0 }} focus = {{ id = {id}_second x = 1 y = 0 }} }}", "get_focus", "list_focus_trees"),
     "idea": ("common/ideas", "ideas = {{ country = {{ {id} = {{ picture = {marker} }} }} }}", "get_idea", "list_ideas"),
     "decision": ("common/decisions", "matrix_category = {{ {id} = {{ cost = 1 }} }}", "get_decision", "list_decisions"),
     "decision_category": ("common/decisions/categories", "{id} = {{ icon = {marker} }}", "get_decision_category", "list_decision_categories"),
@@ -446,7 +446,7 @@ def test_matrix_event_cache_clears(layered_content, action: str) -> None:
 
 
 @pytest.mark.parametrize("layered_content", ["focus_tree", "focus"], indirect=True)
-@pytest.mark.parametrize("edit", ["update_tree", "delete_tree", "add", "remove", "update"])
+@pytest.mark.parametrize("edit", ["update_tree", "delete_tree", "add", "remove", "update", "insert", "branch", "append_reward", "exclusive"])
 def test_matrix_focus_edit_requires_staged_file(layered_content, edit: str) -> None:
     _kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
     focus_id = ids["game"] + "_focus"
@@ -456,6 +456,10 @@ def test_matrix_focus_edit_requires_staged_file(layered_content, edit: str) -> N
         "add": lambda: mod.add_focus(ids["game"], Focus(id="new_focus", x=1, y=1)),
         "remove": lambda: mod.remove_focus(ids["game"], focus_id),
         "update": lambda: mod.update_focus(ids["game"], focus_id, x=2),
+        "insert": lambda: mod.insert_focus_after(ids["game"], focus_id, Focus(id="new_focus", x=1, y=1)),
+        "branch": lambda: mod.insert_branch(ids["game"], focus_id, [Focus(id="new_focus", x=1, y=1)]),
+        "append_reward": lambda: mod.append_to_focus_reward(ids["game"], focus_id, "add_political_power = 1"),
+        "exclusive": lambda: mod.set_focuses_mutually_exclusive(ids["game"], focus_id, ids["game"] + "_second"),
     }
     before = mod.preview()
     with pytest.raises(ReadOnlyError) as error:
