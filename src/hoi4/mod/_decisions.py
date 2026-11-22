@@ -86,16 +86,16 @@ class DecisionsLayer(LocalisationLayer):
 
     # ── Decisions ────────────────────────────────────────────────
 
-    def list_decision_categories(self) -> list[str]:
+    def list_decision_categories(self, *, include_vanilla: bool = False) -> list[str]:
         """Return the sorted ids of the mod's decision categories."""
-        return sorted(self._decision_categories.keys())
+        return self._listed("decision_category", self._decision_categories, include_vanilla=include_vanilla)
 
-    def list_decisions(self) -> list[str]:
+    def list_decisions(self, *, include_vanilla: bool = False) -> list[str]:
         """Return the sorted ids of the mod's decisions."""
-        return sorted(self._decisions.keys())
+        return self._listed("decision", self._decisions, include_vanilla=include_vanilla)
 
     def get_decision(
-        self, decision_id: str, *, default: _D | _Missing = MISSING
+        self, decision_id: str, *, include_vanilla: bool = True, default: _D | _Missing = MISSING
     ) -> Decision | _D:
         """Return the decision ``decision_id``.
 
@@ -106,14 +106,10 @@ class DecisionsLayer(LocalisationLayer):
         Raises:
             NotFoundError: No decision has this id.
         """
-        if decision_id not in self._decisions:
-            if default is not MISSING:
-                return default
-            raise not_found("decision", decision_id, self.list_decisions())
-        return self._decisions[decision_id]
+        return self._lookup("decision", self._decisions, decision_id, include_vanilla=include_vanilla, default=default)
 
     def get_decision_category(
-        self, category_id: str, *, default: _D | _Missing = MISSING
+        self, category_id: str, *, include_vanilla: bool = True, default: _D | _Missing = MISSING
     ) -> DecisionCategory | _D:
         """Return the decision category ``category_id`` that the mod holds.
 
@@ -124,16 +120,7 @@ class DecisionsLayer(LocalisationLayer):
         Raises:
             NotFoundError: No such category is loaded.
         """
-        if category_id not in self._decision_categories:
-            if default is not MISSING:
-                return default
-            raise not_found(
-                "decision category",
-                category_id,
-                self.list_decision_categories(),
-                plural="decision categories",
-            )
-        return self._decision_categories[category_id]
+        return self._lookup("decision_category", self._decision_categories, category_id, include_vanilla=include_vanilla, default=default)
 
     def create_decision_category(
         self,
@@ -259,7 +246,7 @@ class DecisionsLayer(LocalisationLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        existing = self.get_decision_category(category_id, default=None)
+        existing = self.get_decision_category(category_id, include_vanilla=False, default=None)
         if existing is not None:
             _check_fields(
                 "ensure_decision_category", existing, kwargs, extra={"path", "category_path"}
@@ -286,7 +273,7 @@ class DecisionsLayer(LocalisationLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        category = self.get_decision_category(category_id)
+        category = self._mod_definition("decision_category", self._decision_categories, category_id)
         if "id" in kwargs:
             raise ValueError("Decision category IDs are immutable")
         if "paths" in kwargs:
@@ -559,7 +546,7 @@ class DecisionsLayer(LocalisationLayer):
             ValueError: The decision exists in another category.
         """
         kwargs: dict[str, Any] = dict(fields)
-        existing = self.get_decision(decision_id, default=None)
+        existing = self.get_decision(decision_id, include_vanilla=False, default=None)
         if existing is not None:
             if existing.category != category_id:
                 raise ValueError(
@@ -586,7 +573,7 @@ class DecisionsLayer(LocalisationLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        decision = self.get_decision(decision_id)
+        decision = self._mod_definition("decision", self._decisions, decision_id)
         if "id" in kwargs or "category" in kwargs:
             raise ValueError(
                 "Decision identity/category are immutable; recreate the decision to move it"
@@ -613,7 +600,7 @@ class DecisionsLayer(LocalisationLayer):
         Raises:
             NotFoundError: No decision has this id.
         """
-        decision = self.get_decision(decision_id)
+        decision = self._mod_definition("decision", self._decisions, decision_id)
         del self._decisions[decision_id]
         if decision.path is not None:
             self._dirty_decision_files.add(decision.path)
@@ -680,7 +667,7 @@ class DecisionsLayer(LocalisationLayer):
             if not decision_id:
                 raise ValueError("Decision chain steps need an id or a prefix")
             decision_id = require_script_id(decision_id, label="decision ID")
-            existing = self.get_decision(decision_id, default=None)
+            existing = self.get_decision(decision_id, include_vanilla=False, default=None)
             if existing is not None and not overwrite and existing.category != category_id:
                 raise ValueError(
                     f"Decision '{decision_id}' is in category '{existing.category}', "

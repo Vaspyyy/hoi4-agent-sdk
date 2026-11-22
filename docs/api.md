@@ -667,9 +667,9 @@ once in one file. The SDK retains every occurrence.
 
 | Method | Description |
 |--------|-------------|
-| `list_on_actions() -> list[str]` | Loaded on-action IDs |
-| `get_on_action(action_id, *, occurrence=0, source_path=None, default=...) -> OnAction` | Returns one occurrence in deterministic load order; optionally filter by source file. |
-| `get_on_action_occurrences(action_id, *, default=...) -> tuple[OnAction, ...]` | Returns every compositional occurrence |
+| `list_on_actions(*, include_vanilla=False) -> list[str]` | Loaded on-action IDs |
+| `get_on_action(action_id, *, occurrence=0, source_path=None, include_vanilla=True, default=...) -> OnAction` | Returns one occurrence in deterministic load order; optionally filter by source file. |
+| `get_on_action_occurrences(action_id, *, include_vanilla=True, default=...) -> tuple[OnAction, ...]` | Returns every compositional occurrence |
 | `create_on_action(action_id, *, effect="", events=None, random_events=None, path=None, overwrite=False) -> OnAction` | Creates an occurrence. The same hook may be extended in another file; an existing occurrence in the target file requires `overwrite=True`. |
 | `ensure_on_action(action_id, **fields) -> OnAction` | Ensures the only occurrence or the one identified by `path`. |
 | `update_on_action(action_id, *, occurrence=None, source_path=None, **fields) -> OnAction` | Patches one occurrence; ambiguous calls must provide an occurrence or source file. |
@@ -746,10 +746,10 @@ patches those files separately.
 
 | Method | Description |
 |--------|-------------|
-| `list_decision_categories() -> list[str]` | Loaded decision categories |
-| `list_decisions() -> list[str]` | Loaded decisions |
-| `get_decision(decision_id, *, default=...) -> Decision` | Get a decision |
-| `get_decision_category(category_id, *, default=...) -> DecisionCategory` | Get a category |
+| `list_decision_categories(*, include_vanilla=False) -> list[str]` | Loaded decision categories |
+| `list_decisions(*, include_vanilla=False) -> list[str]` | Loaded decisions |
+| `get_decision(decision_id, *, include_vanilla=True, default=...) -> Decision` | Get a decision |
+| `get_decision_category(category_id, *, include_vanilla=True, default=...) -> DecisionCategory` | Get a category |
 | `create_decision_category(category_id, *, icon="", allowed="", visible="", path=None, category_path=None, overwrite=False) -> DecisionCategory` | Create or route a category. `path` targets decision content; optional `category_path` must be under `common/decisions/categories`. Raises if it exists unless `overwrite=True`. |
 | `create_decision(category_id, decision_id, *, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, days_mission_timeout=None, activation="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", allowed="", days_re_enable=None, war_with_on_remove="", custom_cost_trigger="", custom_cost_text="", cancel_if_not_visible=None, modifier="", remove_trigger="", highlight_states="", priority=None) -> Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. A category the mod does not define is extended in the mod's decisions file without writing a category definition (that would replace the game's); with a game install, a category that no one defines raises `NotFoundError` (create it with `create_decision_category()` first). Also accepts every mission, targeted, and general field listed below by keyword. |
 | `ensure_decision_category(category_id, **fields) -> DecisionCategory` | Idempotent create-or-update wrapper |
@@ -1543,8 +1543,8 @@ hidden by the saved override.
 
 | Method | Description |
 |--------|-------------|
-| `list_dynamic_modifiers() -> list[str]` | Lists loaded dynamic modifiers. |
-| `get_dynamic_modifier(modifier_id, *, default=...) -> DynamicModifier` | Gets one dynamic modifier. |
+| `list_dynamic_modifiers(*, include_vanilla=False) -> list[str]` | Lists loaded dynamic modifiers. |
+| `get_dynamic_modifier(modifier_id, *, include_vanilla=True, default=...) -> DynamicModifier` | Gets one dynamic modifier. |
 | `create_dynamic_modifier(modifier_id, *, icon="", enable="", remove_trigger="", attacker_modifier=None, modifier=None, path=None, overwrite=False) -> DynamicModifier` | Creates a native top-level entry under `common/dynamic_modifiers`. |
 | `update_dynamic_modifier(modifier_id, **fields) -> DynamicModifier` | Source-patches modeled fields or the direct modifier mapping. |
 | `delete_dynamic_modifier(modifier_id) -> None` | Stages deletion while preserving unrelated file content; raises `NotFoundError`. |
@@ -1562,8 +1562,8 @@ sibling definitions. All non-reserved scalar assignments belong to the modeled
 
 | Method | Description |
 |--------|-------------|
-| `list_bookmarks() -> list[str]` | The names of the loaded bookmarks, sorted, each once. |
-| `get_bookmark(name, *, default=...) -> Bookmark` | Gets one bookmark by name. |
+| `list_bookmarks(*, include_vanilla=False) -> list[str]` | The names of the loaded bookmarks, sorted, each once. |
+| `get_bookmark(name, *, include_vanilla=True, default=...) -> Bookmark` | Gets one bookmark by name. |
 | `create_bookmark(name, *, description="", date="1936.1.1.12", picture="GFX_select_date_1936", default_country="", default=None, filters="", effect="randomize_weather = 22345", countries=None, path=None, overwrite=False) -> Bookmark` | Creates a bookmark; its default effect randomizes weather. |
 | `update_bookmark(name, **fields) -> Bookmark` | Source-patches modeled bookmark fields. |
 | `add_bookmark_country(bookmark_name, country) -> BookmarkCountry` | Appends one ordered country entry; a second entry for the same tag and DLC raises `AlreadyExistsError`. |

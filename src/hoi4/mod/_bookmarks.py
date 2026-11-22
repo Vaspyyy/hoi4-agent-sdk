@@ -22,7 +22,7 @@ from ..paths import (
 from ..script import (
     normalize_block_body,
 )
-from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
+from ..errors import AlreadyExistsError, NotFoundError, already_exists
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -47,11 +47,11 @@ class BookmarksLayer(CoreLayer):
 
     # ── Bookmarks ────────────────────────────────────────────────
 
-    def list_bookmarks(self) -> list[str]:
+    def list_bookmarks(self, *, include_vanilla: bool = False) -> list[str]:
         """Return the sorted names of the mod's bookmarks, each once."""
-        return sorted({bookmark.name for bookmark in self._bookmarks})
+        return self._listed("bookmark", (bookmark.name for bookmark in self._bookmarks), include_vanilla=include_vanilla)
 
-    def get_bookmark(self, name: str, *, default: _D | _Missing = MISSING) -> Bookmark | _D:
+    def get_bookmark(self, name: str, *, include_vanilla: bool = True, default: _D | _Missing = MISSING) -> Bookmark | _D:
         """Return the bookmark called ``name``.
 
         Args:
@@ -61,12 +61,12 @@ class BookmarksLayer(CoreLayer):
         Raises:
             NotFoundError: No bookmark has this name.
         """
-        bookmark = next((item for item in self._bookmarks if item.name == name), None)
-        if bookmark is None:
-            if default is not MISSING:
-                return default
-            raise not_found("bookmark", name, self.list_bookmarks())
-        return bookmark
+        own = {item.name: item for item in reversed(self._bookmarks)}
+        return self._lookup("bookmark", own, name, include_vanilla=include_vanilla, default=default)
+
+    def _mod_bookmark(self, name: str) -> Bookmark:
+        own = {item.name: item for item in reversed(self._bookmarks)}
+        return self._mod_definition("bookmark", own, name)
 
     def create_bookmark(
         self,
@@ -150,7 +150,7 @@ class BookmarksLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        bookmark = self.get_bookmark(name)
+        bookmark = self._mod_bookmark(name)
         forbidden = {"raw_block", "source_index", "touched_fields"} & set(kwargs)
         if forbidden:
             raise ValueError(f"Internal bookmark fields: {sorted(forbidden)}")
@@ -183,7 +183,7 @@ class BookmarksLayer(CoreLayer):
             AlreadyExistsError: The bookmark already has an entry for this tag
                 with the same ``required_dlc``; use ``update_bookmark_country()``.
         """
-        bookmark = self.get_bookmark(bookmark_name)
+        bookmark = self._mod_bookmark(bookmark_name)
         tag = require_bookmark_country_key(country.tag)
         required_dlc = normalize_required_dlc(country.required_dlc)
         if any(
@@ -223,7 +223,7 @@ class BookmarksLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        bookmark = self.get_bookmark(bookmark_name)
+        bookmark = self._mod_bookmark(bookmark_name)
         tag = require_bookmark_country_key(tag)
         matches = [country for country in bookmark.countries if country.tag == tag]
         if occurrence < 0 or occurrence >= len(matches):
@@ -260,7 +260,7 @@ class BookmarksLayer(CoreLayer):
             NotFoundError: The bookmark, or that occurrence of ``tag`` in it,
                 does not exist.
         """
-        bookmark = self.get_bookmark(bookmark_name)
+        bookmark = self._mod_bookmark(bookmark_name)
         tag = require_bookmark_country_key(tag)
         indices = [index for index, country in enumerate(bookmark.countries) if country.tag == tag]
         if occurrence < 0 or occurrence >= len(indices):
@@ -277,7 +277,7 @@ class BookmarksLayer(CoreLayer):
         Raises:
             NotFoundError: No bookmark is called ``name``.
         """
-        bookmark = self.get_bookmark(name)
+        bookmark = self._mod_bookmark(name)
         self._bookmarks.remove(bookmark)
         if bookmark.path is not None:
             self._dirty_bookmark_files.add(bookmark.path)
