@@ -10,6 +10,7 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
+from ..errors import not_found
 from ._core import CoreLayer
 from ._shared import (
     _set_fields,
@@ -32,8 +33,10 @@ class IdeologiesLayer(CoreLayer):
         if ideology is None and include_vanilla:
             ideology = self._vanilla_ideologies.get(ideology_id)
         if ideology is None:
-            raise KeyError(
-                f"Ideology '{ideology_id}' not found. Available: {self.list_ideologies(include_vanilla=include_vanilla)}"
+            raise not_found(
+                "ideology",
+                ideology_id,
+                self.list_ideologies(include_vanilla=include_vanilla),
             )
         return ideology
 

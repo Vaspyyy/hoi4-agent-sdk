@@ -17,6 +17,7 @@ from ..types import (
     EventOption,
     EventText,
 )
+from ..errors import not_found
 from ._core import CoreLayer
 from ._shared import (
     _set_fields,
@@ -69,7 +70,7 @@ class EventsLayer(CoreLayer):
 
     def get_event(self, event_id: str) -> Event:
         if event_id not in self._events:
-            raise KeyError(f"Event '{event_id}' not found. Available: {self.list_events()}")
+            raise not_found("event", event_id, self.list_events())
         return self._events[event_id]
 
     def create_event(

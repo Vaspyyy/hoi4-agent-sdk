@@ -19,6 +19,7 @@ from ..paths import (
 from ..script import (
     normalize_block_body,
 )
+from ..errors import not_found
 from ._core import CoreLayer
 from ._shared import (
     _set_fields,
@@ -36,7 +37,7 @@ class BookmarksLayer(CoreLayer):
     def get_bookmark(self, name: str) -> Bookmark:
         bookmark = next((item for item in self._bookmarks if item.name == name), None)
         if bookmark is None:
-            raise KeyError(f"Bookmark '{name}' not found. Available: {self.list_bookmarks()}")
+            raise not_found("bookmark", name, self.list_bookmarks())
         return bookmark
 
     def create_bookmark(

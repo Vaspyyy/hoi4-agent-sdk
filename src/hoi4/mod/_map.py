@@ -66,6 +66,7 @@ from ..types import (
     State,
     ValidationError,
 )
+from ..errors import NotFoundError, not_found
 from ._catalogs import CatalogsLayer
 from ._states import StatesLayer
 from ..textio import read_text
@@ -81,6 +82,12 @@ _REGIONS_ON_DISK = DiskAnalysis(
     "strategic_regions", encode_strategic_regions, decode_strategic_regions
 )
 _BUILDINGS_ON_DISK = DiskAnalysis("map_buildings", encode_map_buildings, decode_map_buildings)
+
+
+def _unknown_province(province: int) -> NotFoundError:
+    return NotFoundError(
+        f"Province {province} is not in definition.csv.", kind="province", id=province
+    )
 
 
 class MapLayer(StatesLayer, CatalogsLayer):
@@ -261,7 +268,11 @@ class MapLayer(StatesLayer, CatalogsLayer):
         for region in self.list_strategic_regions():
             if region.id == region_id:
                 return region
-        raise KeyError(f"Strategic region {region_id} not found")
+        raise not_found(
+            "strategic region",
+            region_id,
+            (region.id for region in self.list_strategic_regions()),
+        )
 
     def move_provinces_to_strategic_region(
         self,
@@ -275,7 +286,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         regions = self.list_strategic_regions()
         target = next((region for region in regions if region.id == region_id), None)
         if target is None:
-            raise KeyError(f"Strategic region {region_id} not found")
+            raise not_found("strategic region", region_id, (region.id for region in regions))
         texts = self._strategic_region_removals(regions, province_list, skip=target)
         additions = [province for province in province_list if province not in target.provinces]
         if additions:
@@ -370,7 +381,9 @@ class MapLayer(StatesLayer, CatalogsLayer):
         text = self._map_text(SUPPLY_NODES_FILE)
         updated, removed = remove_supply_node_text(text or "", province)
         if not removed:
-            raise KeyError(f"Province {province} has no supply node")
+            raise NotFoundError(
+                f"Province {province} has no supply node.", kind="supply node", id=province
+            )
         self._queue_map_text(SUPPLY_NODES_FILE, updated)
 
     def list_railways(self) -> list[Railway]:
@@ -463,7 +476,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         if adjacent_sea_province:
             kind = self._effective_province_types().get(adjacent_sea_province)
             if self._effective_province_types() and kind is None:
-                raise KeyError(f"Province {adjacent_sea_province} is not in definition.csv")
+                raise _unknown_province(adjacent_sea_province)
             # Floating harbors reference their coastal land province instead.
             expected = "land" if building == "floating_harbor" else "sea"
             if kind is not None and kind != expected:
@@ -500,9 +513,11 @@ class MapLayer(StatesLayer, CatalogsLayer):
             current = set(parsed)
             stale = [entry for entry in entries if entry not in current]
             if stale:
-                raise KeyError(
+                raise NotFoundError(
                     "Map building entries are stale or missing: "
-                    + ", ".join(f"line {entry.index + 1}" for entry in stale)
+                    + ", ".join(f"line {entry.index + 1}" for entry in stale),
+                    kind="map building",
+                    id=stale[0].index,
                 )
             indices = {entry.index for entry in entries}
         else:
@@ -614,8 +629,10 @@ class MapLayer(StatesLayer, CatalogsLayer):
             return
         unknown = [province for province in provinces if province not in types]
         if unknown:
-            raise KeyError(
-                f"Province(s) {', '.join(map(str, unknown))} are not in definition.csv"
+            raise NotFoundError(
+                f"Province(s) {', '.join(map(str, unknown))} are not in definition.csv.",
+                kind="province",
+                id=unknown[0],
             )
 
     def _require_land_province(self, province: int) -> int:
@@ -624,7 +641,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         if types:
             kind = types.get(province)
             if kind is None:
-                raise KeyError(f"Province {province} is not in definition.csv")
+                raise _unknown_province(province)
             if kind != "land":
                 raise ValueError(f"Province {province} is a {kind} province, not land")
         return province
@@ -647,7 +664,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 if item.provinces == route or item.provinces == route[::-1]
             ]
         if text is None or not matches:
-            raise KeyError(f"No railway matches {railway!r}")
+            raise NotFoundError(f"No railway matches {railway!r}.", kind="railway", id=railway)
         return text, matches
 
     def _effective_state_provinces(self) -> tuple[dict[int, tuple[int, ...]], dict[int, str]]:
@@ -683,7 +700,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         for province in provinces:
             kind = types.get(province)
             if types and kind is None:
-                raise KeyError(f"Province {province} is not in definition.csv")
+                raise _unknown_province(province)
             if kind is not None and kind != "land":
                 raise ValueError(
                     f"Province {province} is a {kind} province; only land provinces belong to states"
@@ -694,9 +711,11 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 if target_id in current:
                     raise ValueError(f"Province {province} already belongs to state {target_id}")
                 if not types:
-                    raise KeyError(
+                    raise NotFoundError(
                         f"Province {province} belongs to no state and no definition.csv "
-                        "is available to confirm it exists"
+                        "is available to confirm it exists.",
+                        kind="province",
+                        id=province,
                     )
             for state_id in sources:
                 plan.setdefault(state_id, []).append(province)

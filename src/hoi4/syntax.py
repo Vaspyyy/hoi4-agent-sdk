@@ -29,6 +29,7 @@ from bisect import bisect_right
 from collections.abc import Iterator
 from functools import lru_cache
 
+from .errors import Hoi4Error
 from ._scalar import needs_quotes
 
 __all__ = [
@@ -82,7 +83,7 @@ _SPACES = frozenset(" \t\r\n\f\v\ufeff")
 _TAGS = frozenset({"rgb", "hsv", "hsv360"})
 
 
-class ParseError(ValueError):
+class ParseError(Hoi4Error, ValueError):
     """Raised when Paradox script cannot be parsed without losing structure."""
 
 

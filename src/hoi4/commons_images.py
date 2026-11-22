@@ -19,6 +19,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from .errors import Hoi4Error
 
 _API = "https://commons.wikimedia.org/w/api.php"
 _MEDIA_HOSTS = frozenset({"upload.wikimedia.org", "thumb.wikimedia.org"})
@@ -32,7 +33,7 @@ _RASTER = {
 }
 
 
-class CommonsImageError(RuntimeError):
+class CommonsImageError(Hoi4Error, RuntimeError):
     """Commons discovery, transfer, validation, or provenance failure."""
 
 

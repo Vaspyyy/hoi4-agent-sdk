@@ -55,6 +55,7 @@ from .content_graph import ContentLivenessReport
 from .country_package import CountryPackageReport
 from .definitions import DEFINITION_KINDS, DefinitionKind, ScriptDefinition
 from .dynamic_modifiers import DynamicModifier
+from .errors import AlreadyExistsError, Hoi4Error, NotFoundError, ReadOnlyError
 from .game_log import (
     GameLogEntry,
     GameLogReport,
@@ -160,6 +161,10 @@ except PackageNotFoundError:  # pragma: no cover - source tree without installat
 
 __all__ = [
     "Mod",
+    "Hoi4Error",
+    "NotFoundError",
+    "AlreadyExistsError",
+    "ReadOnlyError",
     "ExternalModificationError",
     "__version__",
     "Config",

@@ -16,6 +16,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from .errors import Hoi4Error
 from .patching import (
     AssignmentSpan,
     append_assignment,
@@ -68,15 +69,15 @@ _EXPORT_FORMATS: dict[str, str] = {
 }
 
 
-class ImageBackendUnavailableError(RuntimeError):
+class ImageBackendUnavailableError(Hoi4Error, RuntimeError):
     """Raised when an image operation needs the optional Pillow dependency."""
 
 
-class UnsupportedImageFormatError(ValueError):
+class UnsupportedImageFormatError(Hoi4Error, ValueError):
     """Raised when an input or requested output is not supported safely."""
 
 
-class DDSExportUnsupportedError(RuntimeError):
+class DDSExportUnsupportedError(Hoi4Error, RuntimeError):
     """Raised when the active Pillow build cannot encode the requested DDS."""
 
 

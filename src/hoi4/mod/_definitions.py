@@ -22,6 +22,7 @@ from ..types import (
     Idea,
     ValidationError,
 )
+from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
 from ..textio import decode_text, read_text
 
@@ -275,6 +276,13 @@ class DefinitionsLayer(CoreLayer):
                 return definition
         return None
 
+    def _definition_not_found(self, kind: DefinitionKind, definition_id: str) -> NotFoundError:
+        return not_found(
+            kind.name.replace("_", " "),
+            definition_id,
+            (definition.id for definition in self.list_definitions(kind)),
+        )
+
     def _queue_definition_text(self, relative: Path, text: str, original: str) -> Path:
         target = resolve_mod_output_path(self.mod_root, relative)
         if text == original and target not in self._script_file_updates:
@@ -345,7 +353,7 @@ class DefinitionsLayer(CoreLayer):
         from ..definitions import get_definition_kind
         resolved = get_definition_kind(kind)
         if self.get_definition(resolved, definition_id) is None:
-            raise KeyError(f"Unknown {resolved.name}: {definition_id}")
+            raise self._definition_not_found(resolved, definition_id)
         return self.create_definition(resolved, definition_id, body, overwrite=True)
 
     def delete_definition(self, kind: str | DefinitionKind, definition_id: str) -> Path:
@@ -355,7 +363,7 @@ class DefinitionsLayer(CoreLayer):
         resolved = get_definition_kind(kind)
         existing = self.get_definition(resolved, definition_id)
         if existing is None:
-            raise KeyError(f"Unknown {resolved.name}: {definition_id}")
+            raise self._definition_not_found(resolved, definition_id)
         relative = Path(existing.relative_path)
         original = self._definition_texts(resolved)[existing.relative_path][1]
         return self._queue_definition_text(

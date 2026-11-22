@@ -70,6 +70,36 @@ Saving keeps each file's encoding, byte-order mark and line endings, and an
 edit replaces only the text of the statements that changed. See
 [the parser internals](internals/parser.md) for how this works.
 
+## Errors
+
+Every error the SDK raises on purpose derives from `hoi4.Hoi4Error`. The three
+common cases have their own classes, all importable from `hoi4`:
+
+| Class | Also a | Raised when |
+|---|---|---|
+| `NotFoundError` | `KeyError` | An id, tag, state, file entry or occurrence does not exist |
+| `AlreadyExistsError` | `ValueError` | `create_x` or `add_x` meets an id that already exists |
+| `ReadOnlyError` | `ValueError` | The target is game content the call cannot change or delete |
+
+`NotFoundError` carries `kind`, `id` and `suggestions` (up to five close
+matches). Its message names those matches and how many ids of that kind are
+known, never the whole list:
+
+```python
+from hoi4 import Mod, NotFoundError
+
+mod = Mod("/path/to/my_mod")
+try:
+    mod.get_event("my_mod.12")
+except NotFoundError as error:
+    print(error)              # Event 'my_mod.12' not found. Did you mean: my_mod.1? (3 events known)
+    print(error.suggestions)  # ('my_mod.1',)
+```
+
+The older error classes (`ParseError`, `ExternalModificationError`, the image
+and Gemini errors, `OperationCancelled`, `MapRenderCancelled`) keep their names
+and derive from `Hoi4Error` too.
+
 ## Countries
 
 Country data spans tag registration, definition and `colors.txt` files,
@@ -354,7 +384,7 @@ states for copying, use `get_country_context(tag, copy_states=True)` or
 | `state_index(include_vanilla=True) -> list[dict]` | `list[dict]` | Cached state metadata with `id`, raw loc `name`, localized `display_name`, `file_name`, `owner`, `path`, and `source` |
 | `get_state_name_map(include_vanilla=True) -> dict[int, str]` | `dict[int,str]` | State ID to display name |
 | `find_state(query: str, include_vanilla=True, limit=10) -> list[dict]` | `list[dict]` | Search by ID or localized state name, with stale filename fallback. Each result includes `matched`. |
-| `get_state(state_id: int) -> State` | `State` | Cached or reads from mod/vanilla without writing. Raises `KeyError`. |
+| `get_state(state_id: int) -> State` | `State` | Cached or reads from mod/vanilla without writing. Raises `NotFoundError`. |
 | `set_state_owner(state_id: int, tag: str, add_core: bool = True) -> State` | `State` | Change owner, optionally add core |
 | `set_state_properties(state_id: int, **kwargs) -> bool` | `bool` | Set any State field. List fields such as `cores` and `provinces` append unique values instead of replacing. |
 | `add_state_core(state_id: int, tag: str) -> State` | `State` | Append a core without replacing existing cores |
@@ -451,7 +481,7 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `list_events() -> list[str]` | Sorted event IDs | All loaded events |
-| `get_event(event_id: str) -> Event` | `Event` | Raises `KeyError` with available IDs if not found |
+| `get_event(event_id: str) -> Event` | `Event` | Raises `NotFoundError` with close matches if not found |
 | `create_event(event_id, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | `Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer the namespace: the text before the last dot. Conditional titles and descriptions are written before the plain fallback. |
 | `ensure_event(event_id: str, **kwargs) -> Event` | `Event` | Idempotent create-or-update wrapper |
 | `update_event(event_id: str, **kwargs) -> bool` | `bool` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
@@ -734,7 +764,7 @@ SDK output as an error and removes it when the idea is edited.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `list_ideas() -> list[str]` | Sorted idea IDs | All loaded ideas |
-| `get_idea(idea_id: str) -> Idea` | `Idea` | Raises `KeyError` if not found |
+| `get_idea(idea_id: str) -> Idea` | `Idea` | Raises `NotFoundError` if not found |
 | `create_idea(idea_id, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, *, desc="", removal_cost=None) -> Idea` | `Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
 | `ensure_idea(idea_id, *, merge_modifier=False, **kwargs) -> Idea` | `Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
 | `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> bool` | `bool` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |
@@ -815,7 +845,7 @@ static checks do not establish the layout displayed by the game.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `list_focus_trees() -> list[str]` | Sorted tree IDs | All loaded tree IDs |
-| `get_focus_tree(tree_id: str) -> FocusTree` | `FocusTree` | Raises `KeyError` if not found |
+| `get_focus_tree(tree_id: str) -> FocusTree` | `FocusTree` | Raises `NotFoundError` if not found |
 | `create_focus_tree(tree_id: str, country_tag: str, overwrite=False) -> FocusTree` | `FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
 | `ensure_focus_tree(tree_id: str, country_tag: str, **kwargs) -> FocusTree` | `FocusTree` | Idempotent create-or-update for tree-level fields; `country_tag` is used only at creation |
 | `update_focus_tree(tree_id: str, **kwargs) -> bool` | `bool` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |

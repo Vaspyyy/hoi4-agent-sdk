@@ -15,6 +15,7 @@ from ..types import (
     Decision,
     DecisionCategory,
 )
+from ..errors import not_found
 from ._effects import EffectsLayer
 from ._localisation import LocalisationLayer
 from ._shared import (
@@ -87,15 +88,16 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
 
     def get_decision(self, decision_id: str) -> Decision:
         if decision_id not in self._decisions:
-            raise KeyError(
-                f"Decision '{decision_id}' not found. Available: {self.list_decisions()}"
-            )
+            raise not_found("decision", decision_id, self.list_decisions())
         return self._decisions[decision_id]
 
     def get_decision_category(self, category_id: str) -> DecisionCategory:
         if category_id not in self._decision_categories:
-            raise KeyError(
-                f"Decision category '{category_id}' not found. Available: {self.list_decision_categories()}"
+            raise not_found(
+                "decision category",
+                category_id,
+                self.list_decision_categories(),
+                plural="decision categories",
             )
         return self._decision_categories[category_id]
 

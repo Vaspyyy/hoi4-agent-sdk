@@ -29,6 +29,7 @@ from ..textio import read_text
 from ..types import (
     Country,
 )
+from ..errors import not_found
 from ._core import CoreLayer
 
 
@@ -331,7 +332,12 @@ class LocalisationLayer(CoreLayer):
             )
             missing = [key for key in source_keys if key not in self._loc_entries]
             if missing:
-                raise KeyError(f"No English localization for: {', '.join(missing)}")
+                raise not_found(
+                    "English localisation key",
+                    missing[0],
+                    self._loc_entries,
+                    hint=f"Missing keys: {', '.join(missing)}.",
+                )
         written: dict[str, list[str]] = {}
         for language in targets:
             _, entries, sources, _ = self._loc_tables(language)

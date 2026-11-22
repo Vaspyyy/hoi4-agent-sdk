@@ -15,6 +15,7 @@ from ..paths import (
 from ..script import (
     normalize_block_body,
 )
+from ..errors import not_found
 from ._core import CoreLayer
 from ._shared import (
     _set_fields,
@@ -30,13 +31,9 @@ class DynamicModifiersLayer(CoreLayer):
         return sorted(self._dynamic_modifiers)
 
     def get_dynamic_modifier(self, modifier_id: str) -> DynamicModifier:
-        try:
-            return self._dynamic_modifiers[modifier_id]
-        except KeyError as error:
-            raise KeyError(
-                f"Dynamic modifier '{modifier_id}' not found. "
-                f"Available: {self.list_dynamic_modifiers()}"
-            ) from error
+        if modifier_id not in self._dynamic_modifiers:
+            raise not_found("dynamic modifier", modifier_id, self.list_dynamic_modifiers())
+        return self._dynamic_modifiers[modifier_id]
 
     def create_dynamic_modifier(
         self,

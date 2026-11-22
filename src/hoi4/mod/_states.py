@@ -22,6 +22,7 @@ from ..textio import read_text
 from ..types import (
     State,
 )
+from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
 from ._shared import (
     _set_fields,
@@ -180,7 +181,9 @@ class StatesLayer(CoreLayer):
         if state_id in self._states:
             return self._states[state_id]
         if state_id in self._deleted_state_ids:
-            raise KeyError(f"State {state_id} is queued for deletion")
+            raise NotFoundError(
+                f"State {state_id} is queued for deletion.", kind="state", id=state_id
+            )
         # Scan inherited content once, never once per missing filename prefix.
         # Writable directory additions retain existing live-discovery behavior;
         # directory timestamps avoid scanning unchanged files for every state.
@@ -207,7 +210,14 @@ class StatesLayer(CoreLayer):
             self._original_files.setdefault(f, text)
             self._note_read(f, text, adopt=True)
             return state
-        raise KeyError(f"State {state_id} not found")
+        raise not_found("state", state_id, self._known_state_ids())
+
+    def _known_state_ids(self) -> set[int]:
+        """Every state id the mod or inherited content defines, minus queued deletions."""
+        ids = set(self._states) | set(self._state_source_paths)
+        if self._base_content is not None:
+            ids.update(self._inherited_state_paths())
+        return ids - set(self._deleted_state_ids)
 
     def _inherited_state_paths(self) -> dict[int, Path]:
         """State id to inherited state file, scanned once until the next reload."""

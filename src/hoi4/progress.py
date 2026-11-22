@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from .errors import Hoi4Error
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ ProgressCallback = Callable[[ProgressEvent], None]
 CancelCallback = Callable[[], bool]
 
 
-class OperationCancelled(RuntimeError):
+class OperationCancelled(Hoi4Error, RuntimeError):
     """Raised when a caller asks an interruptible SDK operation to stop."""
 
 

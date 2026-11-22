@@ -20,9 +20,6 @@ from ..parser import (
     PdxNode,
     parse_pdx,
 )
-from ..paths import (
-    require_country_tag,
-)
 from ..types import (
     Country,
     ValidationError,
@@ -299,9 +296,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
         trigger arithmetic are achievable in play.
         """
 
-        tag = require_country_tag(tag)
-        if not self._is_known_country_tag(tag):
-            raise KeyError(f"Country '{tag}' is not defined")
+        tag = self._require_known_country(tag)
         if lifecycle not in {"auto", "starting", "runtime"}:
             raise ValueError(
                 "lifecycle must be 'auto', 'starting', or 'runtime'"

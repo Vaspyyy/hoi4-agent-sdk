@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Sequence, cast
 
+from ..errors import Hoi4Error
 from ..paths import (
     resolve_mod_output_path,
 )
@@ -15,7 +16,7 @@ from ..types import (
 )
 
 
-class ExternalModificationError(RuntimeError):
+class ExternalModificationError(Hoi4Error, RuntimeError):
     """A source file changed on disk after this ``Mod`` instance loaded it."""
 
 

@@ -20,6 +20,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, cast
 
+from .errors import Hoi4Error
 from .assets import _write_bytes_atomically
 
 
@@ -72,7 +73,7 @@ _PORTRAIT_TECHNICAL_CONSTRAINTS = (
 )
 
 
-class GeminiImageError(RuntimeError):
+class GeminiImageError(Hoi4Error, RuntimeError):
     """Base exception for optional Gemini image generation failures."""
 
 

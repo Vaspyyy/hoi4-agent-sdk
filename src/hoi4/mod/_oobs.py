@@ -35,6 +35,7 @@ from ..textio import read_text
 from ..types import (
     Country,
 )
+from ..errors import not_found
 from ._countries import CountriesLayer
 from ._equipment import EquipmentLayer
 
@@ -204,7 +205,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                     read_text(path),
                 )
             return oob
-        raise KeyError(f"OOB '{name}' not found")
+        raise not_found("OOB", name, self.list_oobs(include_vanilla=include_vanilla))
 
     def create_oob(
         self,

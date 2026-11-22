@@ -215,9 +215,7 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
         optional ``map`` extra only when it is called.
         """
 
-        tag = require_country_tag(tag)
-        if not self._is_known_country_tag(tag):
-            raise KeyError(f"Country '{tag}' is not defined")
+        tag = self._require_known_country(tag)
         country = self.get_country(tag)
         states, ownership = self._territory_map()
         return find_country_territory_components(
@@ -240,9 +238,7 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
     ) -> tuple[TerritoryComponent, ...]:
         """Find foreign land components entirely enclosed by ``tag``."""
 
-        tag = require_country_tag(tag)
-        if not self._is_known_country_tag(tag):
-            raise KeyError(f"Country '{tag}' is not defined")
+        tag = self._require_known_country(tag)
         states, ownership = self._territory_map()
         return find_enclosed_foreign_components(
             self.mod_root,

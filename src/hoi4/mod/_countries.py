@@ -34,6 +34,7 @@ from ..textio import read_text
 from ..types import (
     Country,
 )
+from ..errors import not_found
 from ._core import CoreLayer
 
 
@@ -328,6 +329,20 @@ class CountriesLayer(CoreLayer):
         if available:
             return available[0]
         return self.default_leader_ideology(ruling_party)
+
+    def _country_tag_candidates(self) -> set[str]:
+        """Every tag the mod, a base mod or the game defines."""
+        tags = set(self._countries) | set(self._vanilla_tags)
+        for mapping in self._country_tag_mappings.values():
+            tags.update(mapping)
+        return tags
+
+    def _require_known_country(self, tag: str) -> str:
+        """Return the normalized tag, or raise ``NotFoundError`` if no one defines it."""
+        tag = require_country_tag(tag)
+        if not self._is_known_country_tag(tag):
+            raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
+        return tag
 
     def _is_known_country_tag(self, tag: str) -> bool:
         return (

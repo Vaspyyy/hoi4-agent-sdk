@@ -14,6 +14,7 @@ from ..script import (
 from ..types import (
     OnAction,
 )
+from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
 from ._shared import (
     _set_fields,
@@ -33,9 +34,7 @@ class OnActionsLayer(CoreLayer):
 
         occurrences = self._on_action_occurrences.get(action_id)
         if not occurrences:
-            raise KeyError(
-                f"On-action '{action_id}' not found. Available: {self.list_on_actions()}"
-            )
+            raise not_found("on-action", action_id, self.list_on_actions())
         return tuple(occurrences)
 
     def _select_on_action_occurrence(
@@ -48,9 +47,7 @@ class OnActionsLayer(CoreLayer):
     ) -> tuple[int, OnAction]:
         actions = self._on_action_occurrences.get(action_id)
         if not actions:
-            raise KeyError(
-                f"On-action '{action_id}' not found. Available: {self.list_on_actions()}"
-            )
+            raise not_found("on-action", action_id, self.list_on_actions())
         candidates = list(enumerate(actions))
         if source_path is not None:
             target = resolve_mod_output_path(self.mod_root, source_path)
@@ -62,8 +59,10 @@ class OnActionsLayer(CoreLayer):
                 == target
             ]
             if not candidates:
-                raise KeyError(
-                    f"On-action '{action_id}' has no occurrence in {target}"
+                raise NotFoundError(
+                    f"On-action '{action_id}' has no occurrence in {target}.",
+                    kind="on-action occurrence",
+                    id=action_id,
                 )
         if occurrence is None:
             if require_unique and len(candidates) != 1:
@@ -78,9 +77,11 @@ class OnActionsLayer(CoreLayer):
                 )
             occurrence = 0
         if occurrence < 0 or occurrence >= len(candidates):
-            raise IndexError(
+            raise NotFoundError(
                 f"On-action '{action_id}' occurrence {occurrence} is out of range "
-                f"for {len(candidates)} matching occurrence(s)"
+                f"for {len(candidates)} matching occurrence(s).",
+                kind="on-action occurrence",
+                id=occurrence,
             )
         return candidates[occurrence]
 

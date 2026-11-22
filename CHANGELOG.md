@@ -6,8 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed (breaking, 0.7.0)
+
+The public API of `hoi4.Mod` was cleaned up: one error hierarchy, lookups and
+changes that raise instead of returning `False` or `None`, return values that
+say what you got, no duplicate entry points, and the script builders moved to
+`hoi4.effects`. Every row below is one old call and what to write instead.
+
+| Old call (0.6) | New call (0.7) | Why |
+|---|---|---|
+| `except KeyError` / `except IndexError` around a lookup | `except hoi4.NotFoundError` (still a `KeyError`, no longer an `IndexError`) | One error for "not there"; the message names close matches instead of every id |
+| `get_on_action(..., occurrence=n)`, `update_on_action(..., occurrence=n)`, `delete_on_action(..., occurrence=n)` out of range: `IndexError` | `NotFoundError` | One error for "not there" |
+| `add_character_role(..., instance_occurrence=n)` and the other role methods with a missing instance: `IndexError` | `NotFoundError` | One error for "not there" |
+
 ### Added
 
+- `hoi4.errors` with `Hoi4Error` (the base of every SDK error),
+  `NotFoundError` (also a `KeyError`), `AlreadyExistsError` and
+  `ReadOnlyError` (both also a `ValueError`), exported from `hoi4`.
+  `NotFoundError` has `kind`, `id` and `suggestions`, and its message names up
+  to five close matches and the number of known ids instead of the whole list.
+  `ParseError`, `ExternalModificationError`, the image, Commons and Gemini
+  errors, `OperationCancelled`, `MapRenderCancelled` and `GenerationCancelled`
+  derive from `Hoi4Error` now.
 - A disk cache of what validation reads out of the game's own files (and
   base mods): references, division templates, sprites, characters, states,
   map data and localisation. A new process reads the stored results instead

@@ -16,6 +16,7 @@ from ..paths import (
 from ..types import (
     Idea,
 )
+from ..errors import not_found
 from ._core import CoreLayer
 from ._shared import (
     _set_fields,
@@ -32,7 +33,7 @@ class IdeasLayer(CoreLayer):
 
     def get_idea(self, idea_id: str) -> Idea:
         if idea_id not in self._ideas:
-            raise KeyError(f"Idea '{idea_id}' not found. Available: {self.list_ideas()}")
+            raise not_found("idea", idea_id, self.list_ideas())
         return self._ideas[idea_id]
 
     def create_idea(

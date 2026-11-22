@@ -20,6 +20,7 @@ from ..paths import (
     resolve_mod_output_path,
 )
 from ..textio import read_text
+from ..errors import NotFoundError, not_found
 from ._countries import CountriesLayer
 from ._localisation import LocalisationLayer
 
@@ -78,7 +79,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             self._load_vanilla_characters(tag)
             character = self._characters.get(character_id)
         if character is None:
-            raise KeyError(f"Character '{character_id}' not found")
+            raise not_found("character", character_id, self._characters)
         return character
 
     def create_character(
@@ -93,10 +94,15 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         tag = require_country_tag(tag)
         character_id = require_script_id(character.id, label="character ID")
         if recruit and not self._is_known_country_tag(tag):
-            raise KeyError(
-                f"Cannot recruit character '{character_id}': country '{tag}' "
-                "is not defined. Create or load the country first, or pass "
-                "recruit=False for an event-unlocked definition."
+            raise not_found(
+                "country",
+                tag,
+                self._country_tag_candidates(),
+                plural="countries",
+                hint=(
+                    f"Cannot recruit character '{character_id}'. Create or load the "
+                    "country first, or pass recruit=False for an event-unlocked definition."
+                ),
             )
         existing = self._characters.get(character_id)
         if existing is not None and not overwrite:
@@ -367,9 +373,11 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         if instance_occurrence is None:
             return character.roles, character
         if instance_occurrence < 0 or instance_occurrence >= len(character.instances):
-            raise IndexError(
+            raise NotFoundError(
                 f"Character '{character.id}' has no instance occurrence "
-                f"{instance_occurrence}"
+                f"{instance_occurrence} ({len(character.instances)} instances).",
+                kind="character instance",
+                id=instance_occurrence,
             )
         instance = character.instances[instance_occurrence]
         return instance.roles, instance

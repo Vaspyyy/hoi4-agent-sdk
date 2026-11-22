@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .errors import Hoi4Error
 from .countries import read_color
 from .layers import replace_paths
 from .progress import ProgressCallback as EventProgressCallback
@@ -29,7 +30,7 @@ CancelCallback = Callable[[], bool]
 _COUNTRY_TAG = re.compile(r"^[A-Z0-9]{3}$")
 
 
-class MapRenderCancelled(RuntimeError):
+class MapRenderCancelled(Hoi4Error, RuntimeError):
     """Raised when a caller-provided cancellation callback requests a stop."""
 
 

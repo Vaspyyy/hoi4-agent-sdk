@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from ..errors import Hoi4Error
 
 ProgressCallback = Callable[[int], None]
 CancelCallback = Callable[[], bool]
 
 
-class GenerationCancelled(RuntimeError):
+class GenerationCancelled(Hoi4Error, RuntimeError):
     """Raised when a map generation or export cancellation callback returns true."""
 
 

@@ -16,6 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from .errors import NotFoundError
 from .patching import AssignmentSpan, append_assignment, replace_assignment, top_level_assignments
 from .syntax import Assignment, Block, Scalar, parse, require_statement, require_well_formed
 from .textio import read_text
@@ -537,7 +538,11 @@ def patch_region_provinces(
                     inner_body = append_list_tokens(inner_body, add)
                 body = body[: inner.body_start] + inner_body + body[inner.body_end :]
         return text[: span.body_start] + body + text[span.body_end :]
-    raise KeyError(f"Strategic region {region_id} not found")
+    raise NotFoundError(
+        f"Strategic region {region_id} not found in this file.",
+        kind="strategic region",
+        id=region_id,
+    )
 
 
 def region_weather_assignment(text: str, region_id: int) -> str | None:

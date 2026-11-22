@@ -18,6 +18,7 @@ from ..types import (
     Focus,
     FocusTree,
 )
+from ..errors import not_found
 from ._context import ContextLayer
 from ._effects import EffectsLayer
 from ._shared import (
@@ -49,9 +50,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
 
     def get_focus_tree(self, tree_id: str) -> FocusTree:
         if tree_id not in self._focus_trees:
-            raise KeyError(
-                f"Focus tree '{tree_id}' not found. Available: {self.list_focus_trees()}"
-            )
+            raise not_found("focus tree", tree_id, self.list_focus_trees())
         return self._focus_trees[tree_id]
 
     def create_focus_tree(
@@ -302,7 +301,13 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 self._dirty.add("focus")
                 self._dirty_focus_trees.add(tree_id)
                 return
-        raise KeyError(f"Focus '{anchor_focus_id}' not found in tree '{tree_id}'")
+        raise not_found(
+            "focus",
+            anchor_focus_id,
+            (existing.id for existing in tree.focuses),
+            where=f"focus tree '{tree_id}'",
+            plural="focuses",
+        )
 
     def insert_branch(
         self,

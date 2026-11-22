@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from hoi4 import (
+    NotFoundError,
     AdvisorRole,
     AirWing,
     ArmyCommanderRole,
@@ -543,9 +544,9 @@ def test_character_role_mutation_requires_occurrence_when_ambiguous(
 def test_recruiting_character_requires_a_defined_country(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
 
-    with pytest.raises(KeyError, match="not defined"):
+    with pytest.raises(NotFoundError, match="Country 'ABC' not found"):
         mod.validate_country_package("ABC")
-    with pytest.raises(KeyError, match="Create or load the country first"):
+    with pytest.raises(NotFoundError, match="Create or load the country first"):
         mod.create_character("ABC", Character(id="ABC_orphan"))
 
     assert mod.create_character(
