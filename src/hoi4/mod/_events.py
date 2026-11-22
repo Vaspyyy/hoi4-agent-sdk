@@ -19,6 +19,7 @@ from ..types import (
 )
 from ..errors import NotFoundError, already_exists, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
     _set_fields,
@@ -69,8 +70,19 @@ class EventsLayer(CoreLayer):
     def list_events(self) -> list[str]:
         return sorted(self._events.keys())
 
-    def get_event(self, event_id: str) -> Event:
+    def get_event(self, event_id: str, *, default: _D | _Missing = MISSING) -> Event | _D:
+        """Return the event ``event_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No event has this id.
+        """
         if event_id not in self._events:
+            if default is not MISSING:
+                return default
             raise not_found("event", event_id, self.list_events())
         return self._events[event_id]
 

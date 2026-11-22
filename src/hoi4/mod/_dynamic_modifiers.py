@@ -17,6 +17,7 @@ from ..script import (
 )
 from ..errors import not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
     _set_fields,
@@ -31,8 +32,21 @@ class DynamicModifiersLayer(CoreLayer):
     def list_dynamic_modifiers(self) -> list[str]:
         return sorted(self._dynamic_modifiers)
 
-    def get_dynamic_modifier(self, modifier_id: str) -> DynamicModifier:
+    def get_dynamic_modifier(
+        self, modifier_id: str, *, default: _D | _Missing = MISSING
+    ) -> DynamicModifier | _D:
+        """Return the dynamic modifier ``modifier_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No dynamic modifier has this id.
+        """
         if modifier_id not in self._dynamic_modifiers:
+            if default is not MISSING:
+                return default
             raise not_found("dynamic modifier", modifier_id, self.list_dynamic_modifiers())
         return self._dynamic_modifiers[modifier_id]
 

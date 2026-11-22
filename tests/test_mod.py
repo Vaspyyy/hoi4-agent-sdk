@@ -52,7 +52,8 @@ class TestModFocusTrees:
     def test_remove_focus(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         mod.remove_focus("german_focus", "GER_anschluss")
-        assert mod.get_focus("german_focus", "GER_anschluss") is None
+        with pytest.raises(NotFoundError):
+            mod.get_focus("german_focus", "GER_anschluss")
 
     def test_update_focus(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
@@ -120,7 +121,8 @@ class TestModLocalization:
         mod = tmp_mod.mod
         mod.set_loc("TEST_KEY", "Test Value")
         mod.delete_loc("TEST_KEY")
-        assert mod.get_loc("TEST_KEY") is None
+        with pytest.raises(NotFoundError):
+            mod.get_loc("TEST_KEY")
 
     def test_search_loc(self, tmp_mod):
         mod = tmp_mod.mod
@@ -187,7 +189,8 @@ class TestModSave:
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         mod.add_focus("german_focus", Focus(id="GER_temp", x=1, y=1))
         mod.discard()
-        assert mod.get_focus("german_focus", "GER_temp") is None
+        with pytest.raises(NotFoundError):
+            mod.get_focus("german_focus", "GER_temp")
 
 
 class TestValidation:
@@ -513,7 +516,8 @@ class TestPass1Fixes:
 
     def test_get_focus_not_found(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.get_focus("german_focus", "NONEXISTENT") is None
+        with pytest.raises(NotFoundError):
+            mod.get_focus("german_focus", "NONEXISTENT")
 
     def test_delete_loc_nonexistent(self, tmp_mod):
         with pytest.raises(NotFoundError):

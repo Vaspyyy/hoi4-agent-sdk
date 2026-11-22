@@ -9,6 +9,7 @@ from hoi4 import EventOption, Focus, Mod, ParseError, parse_pdx, serialize_pdx
 from hoi4.focus import load_focus_trees, serialize_focus_file
 from hoi4.localisation import parse_localization_file, serialize_localization_file
 from hoi4.script import pdx_string, validate_script_syntax
+from hoi4.errors import NotFoundError
 
 
 def test_output_paths_and_script_identifiers_reject_injection(tmp_path: Path) -> None:
@@ -199,7 +200,8 @@ def test_save_deletes_all_supported_objects_and_reports_files(tmp_path: Path) ->
     assert "tst.1" not in final.list_events()
     assert "TST_spirit" not in final.list_ideas()
     assert "tst_focus" not in final.list_focus_trees()
-    assert final.get_loc("TST_start") is None
+    with pytest.raises(NotFoundError):
+        final.get_loc("TST_start")
 
 
 def test_state_patch_is_transactional_and_preserves_dated_history(tmp_path: Path) -> None:

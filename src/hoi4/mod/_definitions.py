@@ -24,6 +24,7 @@ from ..types import (
 )
 from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ..textio import decode_text, read_text
 
 
@@ -268,13 +269,33 @@ class DefinitionsLayer(CoreLayer):
                 continue
         return result
 
-    def get_definition(self, kind: str | DefinitionKind, definition_id: str) -> ScriptDefinition | None:
-        """Return the first effective definition with ``definition_id``."""
+    def get_definition(
+        self,
+        kind: str | DefinitionKind,
+        definition_id: str,
+        *,
+        default: _D | _Missing = MISSING,
+    ) -> ScriptDefinition | _D:
+        """Return the first effective definition of ``kind`` with ``definition_id``.
 
-        for definition in self.list_definitions(kind):
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when no
+                effective definition has this id.
+
+        Raises:
+            NotFoundError: No effective definition of that kind has this id
+                and no default was given.
+            ValueError: ``kind`` is not a definition kind.
+        """
+
+        from ..definitions import get_definition_kind
+        resolved = get_definition_kind(kind)
+        for definition in self.list_definitions(resolved):
             if definition.id == definition_id:
                 return definition
-        return None
+        if default is not MISSING:
+            return default
+        raise self._definition_not_found(resolved, definition_id)
 
     def _definition_not_found(self, kind: DefinitionKind, definition_id: str) -> NotFoundError:
         return not_found(
@@ -322,7 +343,7 @@ class DefinitionsLayer(CoreLayer):
         )
         resolved = get_definition_kind(kind)
         body = check_definition_body(resolved, definition_id, body)
-        existing = self.get_definition(resolved, definition_id)
+        existing = self.get_definition(resolved, definition_id, default=None)
         if existing is not None:
             if not overwrite:
                 raise ValueError(
@@ -352,8 +373,7 @@ class DefinitionsLayer(CoreLayer):
 
         from ..definitions import get_definition_kind
         resolved = get_definition_kind(kind)
-        if self.get_definition(resolved, definition_id) is None:
-            raise self._definition_not_found(resolved, definition_id)
+        self.get_definition(resolved, definition_id)
         return self.create_definition(resolved, definition_id, body, overwrite=True)
 
     def delete_definition(self, kind: str | DefinitionKind, definition_id: str) -> None:
@@ -369,8 +389,6 @@ class DefinitionsLayer(CoreLayer):
         from ..definitions import get_definition_kind, remove_definition
         resolved = get_definition_kind(kind)
         existing = self.get_definition(resolved, definition_id)
-        if existing is None:
-            raise self._definition_not_found(resolved, definition_id)
         relative = Path(existing.relative_path)
         original = self._definition_texts(resolved)[existing.relative_path][1]
         self._queue_definition_text(

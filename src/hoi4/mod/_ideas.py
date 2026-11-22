@@ -18,6 +18,7 @@ from ..types import (
 )
 from ..errors import not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
     _set_fields,
@@ -32,8 +33,19 @@ class IdeasLayer(CoreLayer):
     def list_ideas(self) -> list[str]:
         return sorted(self._ideas.keys())
 
-    def get_idea(self, idea_id: str) -> Idea:
+    def get_idea(self, idea_id: str, *, default: _D | _Missing = MISSING) -> Idea | _D:
+        """Return the idea ``idea_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No idea has this id.
+        """
         if idea_id not in self._ideas:
+            if default is not MISSING:
+                return default
             raise not_found("idea", idea_id, self.list_ideas())
         return self._ideas[idea_id]
 

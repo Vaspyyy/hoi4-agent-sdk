@@ -18,6 +18,7 @@ from ..types import (
 )
 from ..errors import not_found
 from ._effects import EffectsLayer
+from ._shared import MISSING, _D, _Missing
 from ._localisation import LocalisationLayer
 from ._shared import (
     _decision_category_definition_path,
@@ -88,13 +89,39 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
     def list_decisions(self) -> list[str]:
         return sorted(self._decisions.keys())
 
-    def get_decision(self, decision_id: str) -> Decision:
+    def get_decision(
+        self, decision_id: str, *, default: _D | _Missing = MISSING
+    ) -> Decision | _D:
+        """Return the decision ``decision_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No decision has this id.
+        """
         if decision_id not in self._decisions:
+            if default is not MISSING:
+                return default
             raise not_found("decision", decision_id, self.list_decisions())
         return self._decisions[decision_id]
 
-    def get_decision_category(self, category_id: str) -> DecisionCategory:
+    def get_decision_category(
+        self, category_id: str, *, default: _D | _Missing = MISSING
+    ) -> DecisionCategory | _D:
+        """Return the decision category ``category_id`` that the mod holds.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No such category is loaded.
+        """
         if category_id not in self._decision_categories:
+            if default is not MISSING:
+                return default
             raise not_found(
                 "decision category",
                 category_id,

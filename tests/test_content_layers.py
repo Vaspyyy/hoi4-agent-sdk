@@ -6,6 +6,7 @@ from hoi4 import Mod
 from hoi4.config import Config, find_config
 from hoi4.layers import ContentLayers
 from hoi4.project import write_mod_descriptors
+from hoi4.errors import NotFoundError
 
 
 def put(root, relative, text):
@@ -309,15 +310,18 @@ def test_delete_last_inherited_localization_preserves_empty_override(tmp_path, e
     originals = {p: p.read_bytes() for p in (game_source, source)}
     mod = Mod(top, hoi4_install=game, base_mod_paths=[a, b])
     mod.delete_loc("ancient")
-    assert mod.get_loc("ancient") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
     assert mod.preview()
     result = mod.save(require_changes=True)
     print(result)
     assert target in result.written_files
     assert target.read_text(encoding="utf-8-sig") == f"# {comment}\nl_english:\n"
-    assert mod.get_loc("ancient") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
     mod.discard()
-    assert mod.get_loc("ancient") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
     assert not mod.preview()
     assert all(p.read_bytes() == original for p, original in originals.items())
     # The retained header/comment baseline also survives adding a new entry.
@@ -327,7 +331,8 @@ def test_delete_last_inherited_localization_preserves_empty_override(tmp_path, e
     assert target in result.written_files
     assert comment in target.read_text(encoding="utf-8-sig")
     assert mod.get_loc("new_key") == "New"
-    assert mod.get_loc("ancient") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
 
 
 @pytest.mark.parametrize("mode", ["standalone", "top_only", "top_replace", "base_replace"])
@@ -345,7 +350,8 @@ def test_delete_last_localization_without_fallback_removes_file(tmp_path, mode):
     print(result)
     assert not target.exists()
     mod.discard()
-    assert mod.get_loc("ancient") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
     assert not mod.preview()
 
 

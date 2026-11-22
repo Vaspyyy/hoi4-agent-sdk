@@ -112,7 +112,8 @@ def test_set_loc_other_language_writes_its_own_file(tmp_path: Path) -> None:
     assert reloaded.get_loc("KEY") == "English"
     assert reloaded.get_loc("KEY", language="german") == "Deutsch"
     assert reloaded.get_loc("KEY", language="polish") == "Polski"
-    assert reloaded.get_loc("KEY", language="french") is None
+    with pytest.raises(NotFoundError):
+        reloaded.get_loc("KEY", language="french")
 
 
 def test_loading_keeps_languages_separate(tmp_path: Path) -> None:
@@ -128,7 +129,8 @@ def test_loading_keeps_languages_separate(tmp_path: Path) -> None:
     }
     assert mod.search_loc("hal", language="german") == {"SHARED": "Hallo"}
     assert mod.search_loc("hal") == {}
-    assert mod.get_loc("DE_ONLY") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("DE_ONLY")
 
 
 def test_set_loc_destination_must_match_language(tmp_path: Path) -> None:
@@ -185,7 +187,8 @@ def test_delete_loc_is_language_scoped(tmp_path: Path) -> None:
     assert mod.get_loc("K") == "en"
     mod.save()
     reloaded = Mod(tmp_path)
-    assert reloaded.get_loc("K", language="german") is None
+    with pytest.raises(NotFoundError):
+        reloaded.get_loc("K", language="german")
     assert reloaded.get_loc("OTHER", language="german") == "x"
     assert reloaded.get_loc("K") == "en"
 
@@ -228,7 +231,8 @@ def test_layered_languages_are_inherited_without_mixing(tmp_path: Path) -> None:
     assert mod.get_loc("GAME", language="german") == "Spiel"
     assert mod.get_loc("BASE", language="german") == "Basis"
     assert mod.get_loc("TOP", language="german") == "Oben"
-    assert mod.get_loc("BASE") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("BASE")
     mod.set_loc("TOP", "Neu", language="german")
     mod.save()
     assert parse_localization_file(top / "localisation/german/top_l_german.yml") == {"TOP": "Neu"}
@@ -333,8 +337,10 @@ def test_delete_character_removes_shipped_translations(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     assert mod.get_loc("ABC_hero", language="german") == "Hero"
     mod.delete_character("ABC_hero")
-    assert mod.get_loc("ABC_hero", language="german") is None
-    assert mod.get_loc("ABC_hero_desc", language="german") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ABC_hero", language="german")
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ABC_hero_desc", language="german")
 
 
 def test_liveness_still_reports_english_only(tmp_path: Path) -> None:

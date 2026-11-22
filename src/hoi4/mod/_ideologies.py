@@ -12,6 +12,7 @@ from ..paths import (
 )
 from ..errors import ReadOnlyError, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
     _set_fields,
@@ -29,11 +30,28 @@ class IdeologiesLayer(CoreLayer):
             ids.update(self._vanilla_ideologies)
         return sorted(ids)
 
-    def get_ideology(self, ideology_id: str, *, include_vanilla: bool = True) -> Ideology:
+    def get_ideology(
+        self,
+        ideology_id: str,
+        *,
+        include_vanilla: bool = True,
+        default: _D | _Missing = MISSING,
+    ) -> Ideology | _D:
+        """Return the ideology ``ideology_id``; ``include_vanilla`` also looks at the game's.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No ideology has this id.
+        """
         ideology = self._ideologies.get(ideology_id)
         if ideology is None and include_vanilla:
             ideology = self._vanilla_ideologies.get(ideology_id)
         if ideology is None:
+            if default is not MISSING:
+                return default
             raise not_found(
                 "ideology",
                 ideology_id,

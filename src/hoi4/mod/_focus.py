@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Sequence
 
 from ..focus import FOCUS_KINDS
 from ..focus_layout import resolve_focus_positions, visual_overlap_issues
@@ -17,8 +17,9 @@ from ..types import (
     Focus,
     FocusTree,
 )
-from ..errors import already_exists, not_found
+from ..errors import NotFoundError, already_exists, not_found
 from ._context import ContextLayer
+from ._shared import MISSING, _D, _Missing
 from ._effects import EffectsLayer
 from ._shared import (
     _check_fields,
@@ -62,8 +63,21 @@ class FocusLayer(ContextLayer, EffectsLayer):
     def list_focus_trees(self) -> list[str]:
         return sorted(self._focus_trees.keys())
 
-    def get_focus_tree(self, tree_id: str) -> FocusTree:
+    def get_focus_tree(
+        self, tree_id: str, *, default: _D | _Missing = MISSING
+    ) -> FocusTree | _D:
+        """Return the focus tree ``tree_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+        """
         if tree_id not in self._focus_trees:
+            if default is not MISSING:
+                return default
             raise not_found("focus tree", tree_id, self.list_focus_trees())
         return self._focus_trees[tree_id]
 
@@ -189,12 +203,24 @@ class FocusLayer(ContextLayer, EffectsLayer):
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
 
-    def get_focus(self, tree_id: str, focus_id: str) -> Optional[Focus]:
-        tree = self.get_focus_tree(tree_id)
-        for f in tree.focuses:
-            if f.id == focus_id:
-                return f
-        return None
+    def get_focus(
+        self, tree_id: str, focus_id: str, *, default: _D | _Missing = MISSING
+    ) -> Focus | _D:
+        """Return the focus ``focus_id`` of the tree ``tree_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: The tree or the focus does not exist.
+        """
+        try:
+            return self._require_focus(self.get_focus_tree(tree_id), focus_id)
+        except NotFoundError:
+            if default is not MISSING:
+                return default
+            raise
 
     def update_focus(self, tree_id: str, focus_id: str, **kwargs) -> Focus:
         """Patch fields of one focus.
@@ -236,7 +262,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
 
     def upsert_focus(self, tree_id: str, focus: Focus) -> Focus:
         """Add a focus if missing, otherwise replace its modeled fields."""
-        existing = self.get_focus(tree_id, focus.id)
+        existing = self.get_focus(tree_id, focus.id, default=None)
         if existing is None:
             self.add_focus(tree_id, focus)
             return focus
@@ -246,8 +272,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
             # ``kind`` is where the block lives, not content to replace.
             if field.name not in {"id", "raw_block", "touched", "kind"}
         }
-        self.update_focus(tree_id, focus.id, **updates)
-        return self.get_focus(tree_id, focus.id) or focus
+        return self.update_focus(tree_id, focus.id, **updates)
 
     def focus_tree_bounds(self, tree_id: str) -> dict[str, int]:
         tree = self.get_focus_tree(tree_id)
@@ -483,7 +508,9 @@ class FocusLayer(ContextLayer, EffectsLayer):
             if tree_id in self._focus_trees
             else self.create_focus_tree(tree_id, tag)
         )
-        context = self.get_country_context(tag)
+        # Without a country (or a game install that defines it) there is no
+        # capital to build in; state 1 stands in, as before.
+        context = self.get_country_context(tag, default={})
         target_state = (
             state_id or context.get("capital") or (context.get("states") or [{}])[0].get("id") or 1
         )

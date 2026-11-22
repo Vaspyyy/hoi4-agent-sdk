@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from hoi4 import Mod
+from hoi4.errors import NotFoundError
 
 
 def write(root: Path, relative: str, text: str) -> Path:
@@ -54,8 +55,10 @@ def test_a_key_the_mod_lacks_comes_from_the_game(game: Path, mod_root: Path) -> 
     assert mod.get_loc("GER_ADJ") == "Germanic"  # a replace folder wins
     assert mod.get_loc("STATE_1") == "Free Corsica"  # the mod's entry wins
     assert mod.get_loc("MOD_key") == "Mine"
-    assert mod.get_loc("STATE_1", language="german") is None  # no language mixing
-    assert mod.get_loc("NOT_A_KEY") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("STATE_1", language="german")
+    with pytest.raises(NotFoundError):
+        mod.get_loc("NOT_A_KEY")
 
 
 def test_an_unsaved_edit_wins_over_the_game(game: Path, mod_root: Path) -> None:
@@ -119,14 +122,16 @@ def test_saving_never_writes_the_games_entries(game: Path, mod_root: Path) -> No
 def test_a_hidden_game_folder_is_not_read(game: Path, mod_root: Path) -> None:
     write(mod_root, "descriptor.mod", 'name = "test"\nreplace_path = "localisation/english"\n')
     mod = Mod(mod_root, hoi4_install=game)
-    assert mod.get_loc("GER") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("GER")
     assert mod.get_loc("STATE_1") == "Free Corsica"
     assert mod.get_loc("GER", language="german") == "Deutschland"
 
 
 def test_without_an_install_only_the_mod_is_read(mod_root: Path) -> None:
     mod = Mod(mod_root)
-    assert mod.get_loc("GER") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("GER")
     assert mod.get_loc("STATE_1") == "Free Corsica"
 
 
@@ -151,7 +156,8 @@ def test_a_mod_file_saved_over_a_game_file_hides_it(game: Path, mod_root: Path) 
     write(mod_root, "localisation/english/countries_l_english.yml", 'l_english:\n ITA: "Italy"\n')
     mod.discard()
     assert "localisation" not in mod._section_loaded
-    assert mod.get_loc("GER") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("GER")
     assert mod.get_loc("ITA") == "Italy"
     assert mod.get_loc("GER", language="german") == "Deutschland"
 

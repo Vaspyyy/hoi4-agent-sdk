@@ -470,3 +470,63 @@ def test_create_decision_never_invents_a_category_definition(tmp_path, game) -> 
     no_game = Mod(tmp_path / "plain")
     no_game.create_decision("political_actions", "zz_dec")
     assert "categories" not in no_game.preview()
+
+
+# ── get_* ───────────────────────────────────────────────────────────
+
+
+def _missing_lookups(mod: Mod) -> dict[str, object]:
+    return {
+        "get_bookmark": lambda **kw: mod.get_bookmark("zz_missing", **kw),
+        "get_character": lambda **kw: mod.get_character("ABC_missing", **kw),
+        "get_country": lambda **kw: mod.get_country("ZZX", **kw),
+        "get_country_context": lambda **kw: mod.get_country_context("ZZX", **kw),
+        "get_decision": lambda **kw: mod.get_decision("zz_missing", **kw),
+        "get_decision_category": lambda **kw: mod.get_decision_category("zz_missing", **kw),
+        "get_definition": lambda **kw: mod.get_definition("scripted_effect", "zz_missing", **kw),
+        "get_dynamic_modifier": lambda **kw: mod.get_dynamic_modifier("zz_missing", **kw),
+        "get_event": lambda **kw: mod.get_event("zz.9", **kw),
+        "get_focus": lambda **kw: mod.get_focus("zz_tree", "ABC_missing", **kw),
+        "get_focus missing tree": lambda **kw: mod.get_focus("zz_missing", "ABC_f", **kw),
+        "get_focus_tree": lambda **kw: mod.get_focus_tree("zz_missing", **kw),
+        "get_idea": lambda **kw: mod.get_idea("zz_missing", **kw),
+        "get_ideology": lambda **kw: mod.get_ideology("zz_missing", **kw),
+        "get_loc": lambda **kw: mod.get_loc("ZZ_MISSING", **kw),
+        "get_on_action": lambda **kw: mod.get_on_action("on_zz_missing", **kw),
+        "get_on_action occurrence": lambda **kw: mod.get_on_action("on_startup", occurrence=4, **kw),
+        "get_on_action_occurrences": lambda **kw: mod.get_on_action_occurrences("on_zz_missing", **kw),
+        "get_oob": lambda **kw: mod.get_oob("ABC_missing", **kw),
+        "get_state": lambda **kw: mod.get_state(99999, **kw),
+        "get_strategic_region": lambda **kw: mod.get_strategic_region(99999, **kw),
+    }
+
+
+@pytest.mark.parametrize("case", sorted(_missing_lookups(Mod.__new__(Mod))))
+def test_every_lookup_raises_or_returns_the_default(full_mod: Mod, case: str) -> None:
+    lookup = _missing_lookups(full_mod)[case]
+    with pytest.raises(NotFoundError):
+        lookup()
+    sentinel = object()
+    assert lookup(default=sentinel) is sentinel
+    assert lookup(default=None) is None
+
+
+def test_a_found_lookup_ignores_the_default(full_mod: Mod) -> None:
+    assert full_mod.get_event("zz.1", default=None).id == "zz.1"
+    assert full_mod.get_focus("zz_tree", "ABC_f", default=None).id == "ABC_f"
+
+
+def test_get_country_never_invents_or_caches_a_phantom(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    with pytest.raises(NotFoundError):
+        mod.get_country("ZZX")
+    assert "ZZX" not in mod.list_countries()
+    assert mod.is_country_tag_available("ZZX")
+    assert mod.get_country("ZZX", default=None) is None
+    assert "ZZX" not in mod.list_countries()
+
+
+def test_get_country_reads_a_game_country(tmp_path, game) -> None:
+    mod = Mod(tmp_path / "mod", hoi4_install=game)
+    assert mod.get_country("GER").tag == "GER"
+    assert mod.get_country_context("GER")["tag"] == "GER"

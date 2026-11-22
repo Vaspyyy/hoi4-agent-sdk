@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import enum
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, Sequence, TypeVar, cast
 
 from ..errors import Hoi4Error
 from ..paths import (
@@ -18,6 +19,19 @@ from ..types import (
 
 class ExternalModificationError(Hoi4Error, RuntimeError):
     """A source file changed on disk after this ``Mod`` instance loaded it."""
+
+
+class _Missing(enum.Enum):
+    """Marks "no ``default=`` given", so ``default=None`` is a real default."""
+
+    MISSING = enum.auto()
+
+
+#: The default of every lookup's ``default`` keyword.
+MISSING = _Missing.MISSING
+
+#: The type of a lookup's ``default``.
+_D = TypeVar("_D")
 
 
 #: Model fields that identify an object or record where it came from. No

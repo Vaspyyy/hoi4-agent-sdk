@@ -16,6 +16,7 @@ from ..types import (
 )
 from ..errors import NotFoundError, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
     _set_fields,
@@ -30,11 +31,24 @@ class OnActionsLayer(CoreLayer):
     def list_on_actions(self) -> list[str]:
         return sorted(self._on_actions.keys())
 
-    def get_on_action_occurrences(self, action_id: str) -> tuple[OnAction, ...]:
-        """Return every compositional occurrence of an on-action hook."""
+    def get_on_action_occurrences(
+        self, action_id: str, *, default: _D | _Missing = MISSING
+    ) -> tuple[OnAction, ...] | _D:
+        """Return every compositional occurrence of an on-action hook.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when the
+                hook has no occurrence.
+
+        Raises:
+            NotFoundError: The mod has no occurrence of this hook and no
+                default was given.
+        """
 
         occurrences = self._on_action_occurrences.get(action_id)
         if not occurrences:
+            if default is not MISSING:
+                return default
             raise not_found("on-action", action_id, self.list_on_actions())
         return tuple(occurrences)
 
@@ -92,15 +106,30 @@ class OnActionsLayer(CoreLayer):
         *,
         occurrence: int = 0,
         source_path: str | Path | None = None,
-    ) -> OnAction:
-        """Return one hook occurrence, defaulting to the first in load order."""
+        default: _D | _Missing = MISSING,
+    ) -> OnAction | _D:
+        """Return one hook occurrence, defaulting to the first in load order.
 
-        _, action = self._select_on_action_occurrence(
-            action_id,
-            occurrence=occurrence,
-            source_path=source_path,
-            require_unique=False,
-        )
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when the
+                hook or the chosen occurrence does not exist.
+
+        Raises:
+            NotFoundError: The hook, or the chosen occurrence, does not exist
+                and no default was given.
+        """
+
+        try:
+            _, action = self._select_on_action_occurrence(
+                action_id,
+                occurrence=occurrence,
+                source_path=source_path,
+                require_unique=False,
+            )
+        except NotFoundError:
+            if default is not MISSING:
+                return default
+            raise
         return action
 
     def create_on_action(

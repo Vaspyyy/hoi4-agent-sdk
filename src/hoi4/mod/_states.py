@@ -24,6 +24,7 @@ from ..types import (
 )
 from ..errors import NotFoundError, not_found
 from ._countries import CountriesLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _set_fields,
 )
@@ -172,15 +173,24 @@ class StatesLayer(CountriesLayer):
         )
         return entries
 
-    def get_state(self, state_id: int) -> State:
+    def get_state(self, state_id: int, *, default: _D | _Missing = MISSING) -> State | _D:
         """Load a state without changing the mod directory.
 
         Vanilla fallback states remain backed by their vanilla source until a
         mutating state API explicitly materializes an override under the mod.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when the
+                state does not exist or is queued for deletion.
+
+        Raises:
+            NotFoundError: The state does not exist and no default was given.
         """
         if state_id in self._states:
             return self._states[state_id]
         if state_id in self._deleted_state_ids:
+            if default is not MISSING:
+                return default
             raise NotFoundError(
                 f"State {state_id} is queued for deletion.", kind="state", id=state_id
             )
@@ -210,6 +220,8 @@ class StatesLayer(CountriesLayer):
             self._original_files.setdefault(f, text)
             self._note_read(f, text, adopt=True)
             return state
+        if default is not MISSING:
+            return default
         raise not_found("state", state_id, self._known_state_ids())
 
     def _known_state_ids(self) -> set[int]:

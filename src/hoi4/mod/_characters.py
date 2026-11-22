@@ -22,7 +22,7 @@ from ..paths import (
 from ..textio import read_text
 from ..errors import NotFoundError, not_found
 from ._countries import CountriesLayer
-from ._shared import _check_field_names
+from ._shared import MISSING, _D, _Missing, _check_field_names
 from ._localisation import LocalisationLayer
 
 
@@ -75,7 +75,21 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         character_id: str,
         *,
         include_vanilla: bool = True,
-    ) -> Character:
+        default: _D | _Missing = MISSING,
+    ) -> Character | _D:
+        """Return the character ``character_id``.
+
+        ``include_vanilla`` also loads the game's and base mods' characters
+        of the tag in the id's prefix.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when no
+                character has this id.
+
+        Raises:
+            NotFoundError: No character has this id and no default was given.
+            ValueError: ``character_id`` is not a valid id.
+        """
         # Look up before validating: the game accepts ids the SDK would not
         # generate, such as ``COL_alfonso_lópez_pumarejo`` in vanilla.
         character = self._characters.get(str(character_id))
@@ -92,6 +106,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             self._load_vanilla_characters(tag)
             character = self._characters.get(character_id)
         if character is None:
+            if default is not MISSING:
+                return default
             raise not_found("character", character_id, self._characters)
         return character
 
@@ -468,6 +484,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         recruited: bool,
     ) -> None:
+        if not recruited and not self._is_known_country_tag(tag):
+            return  # no country, so no recruitment list to remove it from
         country = self.get_country(tag)
         self._materialize_country_override(country)
         values = list(country.recruited_characters)

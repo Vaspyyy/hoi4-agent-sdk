@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable
 
 from .._disk_cache import NAMES_ON_DISK
 from ..characters import (
@@ -31,6 +31,7 @@ from ..types import (
 )
 from ..errors import ReadOnlyError, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 
 
 class LocalisationLayer(CoreLayer):
@@ -88,18 +89,34 @@ class LocalisationLayer(CoreLayer):
     # ── Localization ─────────────────────────────────────────────
 
     def get_loc(
-        self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
-    ) -> Optional[str]:
+        self,
+        key: str,
+        *,
+        language: str = DEFAULT_LOCALISATION_LANGUAGE,
+        default: _D | _Missing = MISSING,
+    ) -> str | _D:
         """Return one language's text for ``key``; no cross-language fallback.
 
         The mod's entry (with unsaved edits) wins; a key the mod does not
         define comes from the game's own files of that language.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when the
+                key has no text in that language.
+
+        Raises:
+            NotFoundError: ``key`` has no text in that language and no
+                default was given.
         """
         language, entries, _, _ = self._loc_tables(language)
         key = self._normalize_loc_key(key)
         value = entries.get(key)
         if value is None:
             value = self._game_loc(language).get(key)
+        if value is None:
+            if default is not MISSING:
+                return default
+            raise not_found(f"{language} localisation key", key, entries)
         return value
 
     def _game_loc(self, language: str) -> dict[str, str]:

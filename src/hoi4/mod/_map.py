@@ -68,6 +68,7 @@ from ..types import (
 )
 from ..errors import NotFoundError, already_exists, not_found
 from ._catalogs import CatalogsLayer
+from ._shared import MISSING, _D, _Missing
 from ._states import StatesLayer
 from ..textio import read_text
 
@@ -264,10 +265,23 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 continue
         return sorted(regions, key=lambda region: (region.id, region.path))
 
-    def get_strategic_region(self, region_id: int) -> StrategicRegion:
+    def get_strategic_region(
+        self, region_id: int, *, default: _D | _Missing = MISSING
+    ) -> StrategicRegion | _D:
+        """Return the effective strategic region ``region_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No strategic region has this id.
+        """
         for region in self.list_strategic_regions():
             if region.id == region_id:
                 return region
+        if default is not MISSING:
+            return default
         raise not_found(
             "strategic region",
             region_id,

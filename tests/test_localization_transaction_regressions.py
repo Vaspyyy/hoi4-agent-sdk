@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from hoi4 import Mod
+from hoi4.errors import NotFoundError
 
 
 def test_unrelated_edit_preserves_prefixed_localization(tmp_path: Path) -> None:
@@ -16,7 +17,8 @@ def test_unrelated_edit_preserves_prefixed_localization(tmp_path: Path) -> None:
     path.write_bytes(original.encode("utf-8"))
     mod = Mod(tmp_path)
     assert mod.get_loc("l_custom_title") == "Title"
-    assert mod.get_loc("l_english") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("l_english")
     mod.set_loc("OTHER", "Updated")
     result = mod.save(require_changes=True)
     assert result.written_files == [path]

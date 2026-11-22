@@ -1421,7 +1421,17 @@ def test_create_oob_same_reference_overwrite_succeeds(tmp_path: Path, kind: str)
     assert serialize_oob(Mod(tmp_path).get_oob("ABC_old")) == serialize_oob(replacement)
 
 
-def test_create_oob_preserves_unknown_country_defaults(tmp_path: Path) -> None:
+def test_create_oob_never_invents_the_country_it_assigns_to(tmp_path: Path) -> None:
+    # Assigning writes the country's history, so the country must exist; an
+    # empty one is no longer invented (it would replace the game's history).
     mod = Mod(tmp_path)
-    mod.create_oob("ABC_new", "ABC", **_atomic_oob_content("land", "Accepted"))
+    with pytest.raises(NotFoundError, match="Country 'ABC' not found"):
+        mod.create_oob("ABC_new", "ABC", **_atomic_oob_content("land", "Accepted"))
+    assert mod.list_oobs() == []
+    assert mod.list_countries() == []
+    assert mod.preview() == ""
+    # Without assigning, the tag is only a label (it may be the game's).
+    mod.create_oob("ABC_new", "ABC", assign=False, **_atomic_oob_content("land", "Accepted"))
+    mod.create_country("ABC", "Abcland")
+    mod.assign_country_oob("ABC", "ABC_new")
     assert mod.get_country("ABC").oob == "ABC_new"

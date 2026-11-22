@@ -31,7 +31,9 @@ from ..textio import read_text
 from ..types import (
     State,
 )
+from ..errors import not_found
 from ._catalogs import CatalogsLayer
+from ._shared import MISSING, _D, _Missing
 from ._states import StatesLayer
 
 COMMON_FOCUS_ICONS: tuple[str, ...] = (
@@ -55,8 +57,31 @@ COMMON_FOCUS_ICONS: tuple[str, ...] = (
 class ContextLayer(StatesLayer, CatalogsLayer):
     """Country context reports, icon suggestions and territory checks."""
 
-    def get_country_context(self, tag: str, *, copy_states: bool = False) -> dict:
+    def get_country_context(
+        self,
+        tag: str,
+        *,
+        copy_states: bool = False,
+        default: _D | _Missing = MISSING,
+    ) -> dict | _D:
+        """Report what the mod and the game hold for one country.
+
+        Basics, owned and core states, matching ideas, advisors, designers,
+        localisation and focus trees. ``copy_states=True`` also queues
+        overrides of the country's states.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when no one
+                defines ``tag``.
+
+        Raises:
+            NotFoundError: No one defines ``tag`` and no default was given.
+        """
         tag = require_country_tag(tag)
+        if not self._is_known_country_tag(tag):
+            if default is not MISSING:
+                return default
+            raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
         if not copy_states and not self._dirty and tag in self._country_context_cache:
             return copy.deepcopy(self._country_context_cache[tag])
         country = self.get_country(tag)

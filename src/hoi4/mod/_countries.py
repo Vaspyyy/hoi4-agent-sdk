@@ -36,6 +36,7 @@ from ..types import (
 )
 from ..errors import not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 
 
 def _normalize_name_token(name: str) -> str:
@@ -110,10 +111,27 @@ class CountriesLayer(CoreLayer):
                         return candidates[:count]
         return candidates[:count]
 
-    def get_country(self, tag: str) -> Country:
+    def get_country(self, tag: str, *, default: _D | _Missing = MISSING) -> Country | _D:
+        """Return the country ``tag`` of the mod, a base mod or the game.
+
+        A country of the game or a base mod is read on first use. A tag that
+        no one defines is never invented.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when no one
+                defines ``tag``.
+
+        Raises:
+            NotFoundError: No one defines ``tag`` and no default was given.
+            ValueError: ``tag`` is not a valid tag.
+        """
         tag = require_country_tag(tag)
         if tag in self._countries:
             return self._countries[tag]
+        if not self._is_known_country_tag(tag):
+            if default is not MISSING:
+                return default
+            raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
         country = read_country(
             self.mod_root,
             tag,

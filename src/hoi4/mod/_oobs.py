@@ -37,6 +37,7 @@ from ..types import (
 )
 from ..errors import NotFoundError, ReadOnlyError, not_found
 from ._countries import CountriesLayer
+from ._shared import MISSING, _D, _Missing
 from ._equipment import EquipmentLayer
 
 
@@ -157,7 +158,20 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         name: str,
         *,
         include_vanilla: bool = True,
-    ) -> OrderOfBattle:
+        default: _D | _Missing = MISSING,
+    ) -> OrderOfBattle | _D:
+        """Return the OOB ``name`` (``history/units/<name>.txt``).
+
+        ``include_vanilla`` also looks at the game's and base mods' files.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when no
+                OOB file has this name.
+
+        Raises:
+            NotFoundError: No OOB file has this name and no default was given.
+            ValueError: ``name`` is not a valid OOB name.
+        """
         name = require_script_id(name, label="OOB name")
         cached = self._oobs.get(name)
         if cached is not None:
@@ -205,6 +219,8 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                     read_text(path),
                 )
             return oob
+        if default is not MISSING:
+            return default
         raise not_found("OOB", name, self.list_oobs(include_vanilla=include_vanilla))
 
     def create_oob(

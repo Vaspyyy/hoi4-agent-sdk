@@ -21,6 +21,7 @@ from ..script import (
 )
 from ..errors import NotFoundError, already_exists, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
     _set_fields,
@@ -46,9 +47,20 @@ class BookmarksLayer(CoreLayer):
     def list_bookmarks(self) -> list[str]:
         return [bookmark.name for bookmark in self._bookmarks]
 
-    def get_bookmark(self, name: str) -> Bookmark:
+    def get_bookmark(self, name: str, *, default: _D | _Missing = MISSING) -> Bookmark | _D:
+        """Return the bookmark called ``name``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No bookmark has this name.
+        """
         bookmark = next((item for item in self._bookmarks if item.name == name), None)
         if bookmark is None:
+            if default is not MISSING:
+                return default
             raise not_found("bookmark", name, self.list_bookmarks())
         return bookmark
 
