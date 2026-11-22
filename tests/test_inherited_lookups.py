@@ -321,7 +321,7 @@ def layered_content(request, tmp_path: Path):
 
 
 def test_matrix_game_only(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    kind, mod, game, _base, _root, ids, get, _listing, _put = layered_content
     obj = mod.get_focus_tree(ids["game"]) if kind == "focus" else get("game")
     if kind == "on_action_occurrences":
         obj = obj[0]
@@ -330,7 +330,7 @@ def test_matrix_game_only(layered_content) -> None:
 
 
 def test_matrix_base_only(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    kind, mod, _game, base, _root, ids, get, _listing, _put = layered_content
     obj = mod.get_focus_tree(ids["base"]) if kind == "focus" else get("base")
     if kind == "on_action_occurrences":
         obj = obj[0]
@@ -339,7 +339,7 @@ def test_matrix_base_only(layered_content) -> None:
 
 
 def test_matrix_base_precedence(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    kind, mod, _game, base, _root, ids, get, _listing, _put = layered_content
     obj = mod.get_focus_tree(ids["both"]) if kind == "focus" else get("both")
     if kind == "on_action_occurrences":
         obj = obj[0]
@@ -348,7 +348,7 @@ def test_matrix_base_precedence(layered_content) -> None:
 
 
 def test_matrix_mod_precedence(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    kind, _mod, game, base, root, ids, _get, _listing, put = layered_content
     put(root, "mod_both", "both", "mod")
     new = Mod(root, hoi4_install=game, base_mod_paths=[base])
     args = (ids["both"], ids["both"] + "_focus") if kind == "focus" else (ids["both"],)
@@ -360,27 +360,27 @@ def test_matrix_mod_precedence(layered_content) -> None:
 
 
 def test_matrix_mod_only(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, _mod, _game, _base, _root, _ids, get, _listing, _put = layered_content
     with pytest.raises(NotFoundError):
         get("game", include_vanilla=False)
     assert get("mod", include_vanilla=False) is not None
 
 
 def test_matrix_missing_default(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    kind, mod, _game, _base, _root, _ids, _get, _listing, _put = layered_content
     missing_args = ("missing", "missing_focus") if kind == "focus" else ("missing",)
     sentinel = object()
     assert getattr(mod, _MATRIX[kind][2])(*missing_args, default=sentinel) is sentinel
 
 
 def test_matrix_lists_are_sorted_and_mod_only(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, _mod, _game, _base, _root, ids, _get, listing, _put = layered_content
     assert listing() == [ids["mod"]]
     assert listing(include_vanilla=True) == sorted(ids.values())
 
 
 def test_matrix_lookup_does_not_stage(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, _game, _base, root, _ids, get, listing, _put = layered_content
     before = (listing(), mod.preview(), mod.validate())
     files = sorted(p.relative_to(root) for p in root.rglob("*") if p.is_file())
     get("game")
@@ -392,7 +392,7 @@ def test_matrix_lookup_does_not_stage(layered_content) -> None:
 
 
 def test_matrix_inherited_object_is_a_copy(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    kind, _mod, _game, _base, _root, _ids, get, _listing, _put = layered_content
     obj = get("game")
     if kind == "on_action_occurrences":
         obj = obj[0]
@@ -408,7 +408,7 @@ def test_matrix_inherited_object_is_a_copy(layered_content) -> None:
 @pytest.mark.parametrize("edit", ["update", "delete", "add_option", "update_option", "namespace"])
 @pytest.mark.parametrize("layered_content", ["event"], indirect=True)
 def test_matrix_event_edit_requires_staged_file(layered_content, edit: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
     if kind != "event":
         pytest.skip("event edit applies to events")
     operations = {
@@ -432,7 +432,7 @@ def test_matrix_event_edit_requires_staged_file(layered_content, edit: str) -> N
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
 @pytest.mark.parametrize("layered_content", ["event"], indirect=True)
 def test_matrix_event_cache_clears(layered_content, action: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    kind, mod, game, _base, _root, _ids, get, _listing, put = layered_content
     if kind != "event":
         pytest.skip("event cache uses event title")
     assert get("game").title == "game"
@@ -448,7 +448,7 @@ def test_matrix_event_cache_clears(layered_content, action: str) -> None:
 @pytest.mark.parametrize("layered_content", ["focus_tree", "focus"], indirect=True)
 @pytest.mark.parametrize("edit", ["update_tree", "delete_tree", "add", "remove", "update"])
 def test_matrix_focus_edit_requires_staged_file(layered_content, edit: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
     focus_id = ids["game"] + "_focus"
     operations = {
         "update_tree": lambda: mod.update_focus_tree(ids["game"], default=True),
@@ -471,7 +471,7 @@ def test_matrix_focus_edit_requires_staged_file(layered_content, edit: str) -> N
 @pytest.mark.parametrize("layered_content", ["focus_tree", "focus"], indirect=True)
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
 def test_matrix_focus_cache_clears(layered_content, action: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    kind, mod, game, _base, _root, ids, get, _listing, _put = layered_content
     assert get("game") is not None
     path = game / "common/national_focus/game.txt"
     path.write_text(f"focus_tree = {{ id = {ids['game']} focus = {{ id = {ids['game']}_focus x = 7 y = 0 }} }}")
@@ -487,7 +487,7 @@ def test_matrix_focus_cache_clears(layered_content, action: str) -> None:
 @pytest.mark.parametrize("layered_content", ["idea"], indirect=True)
 @pytest.mark.parametrize("edit", ["update", "delete"])
 def test_matrix_idea_edit_requires_staged_file(layered_content, edit: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
     operations = {
         "update": lambda: mod.update_idea(ids["game"], icon="changed"),
         "delete": lambda: mod.delete_idea(ids["game"]),
@@ -506,7 +506,7 @@ def test_matrix_idea_edit_requires_staged_file(layered_content, edit: str) -> No
 @pytest.mark.parametrize("layered_content", ["idea"], indirect=True)
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
 def test_matrix_idea_cache_clears(layered_content, action: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, game, _base, _root, _ids, get, _listing, put = layered_content
     assert get("game").icon == "game"
     put(game, "game", "game", "changed")
     if action == "save":
@@ -520,7 +520,7 @@ def test_matrix_idea_cache_clears(layered_content, action: str) -> None:
 @pytest.mark.parametrize("layered_content", ["decision"], indirect=True)
 @pytest.mark.parametrize("edit", ["update", "delete"])
 def test_matrix_decision_edit_requires_staged_file(layered_content, edit: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
     operations = {
         "update": lambda: mod.update_decision(ids["game"], cost=2),
         "delete": lambda: mod.delete_decision(ids["game"]),
@@ -539,7 +539,7 @@ def test_matrix_decision_edit_requires_staged_file(layered_content, edit: str) -
 @pytest.mark.parametrize("layered_content", ["decision"], indirect=True)
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
 def test_matrix_decision_cache_clears(layered_content, action: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, game, _base, _root, ids, get, _listing, _put = layered_content
     assert get("game").cost == 1
     path = game / "common/decisions/game.txt"
     path.write_text(f"matrix_category = {{ {ids['game']} = {{ cost = 7 }} }}")
@@ -553,7 +553,7 @@ def test_matrix_decision_cache_clears(layered_content, action: str) -> None:
 
 @pytest.mark.parametrize("layered_content", ["decision_category"], indirect=True)
 def test_matrix_category_edit_requires_staged_file(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
     before = mod.preview()
     with pytest.raises(ReadOnlyError) as error:
         mod.update_decision_category(ids["game"], icon="changed")
@@ -568,7 +568,7 @@ def test_matrix_category_edit_requires_staged_file(layered_content) -> None:
 @pytest.mark.parametrize("layered_content", ["decision_category"], indirect=True)
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
 def test_matrix_category_cache_clears(layered_content, action: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, game, _base, _root, _ids, get, _listing, put = layered_content
     assert get("game").icon == "game"
     put(game, "game", "game", "changed")
     if action == "save":
@@ -593,7 +593,7 @@ def test_inherited_category_combines_decision_files(tmp_path: Path) -> None:
 @pytest.mark.parametrize("layered_content", ["bookmark"], indirect=True)
 @pytest.mark.parametrize("edit", ["update", "delete", "add_country", "update_country", "delete_country"])
 def test_matrix_bookmark_edit_requires_staged_file(layered_content, edit: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
     operations = {
         "update": lambda: mod.update_bookmark(ids["game"], description="changed"),
         "delete": lambda: mod.delete_bookmark(ids["game"]),
@@ -615,7 +615,7 @@ def test_matrix_bookmark_edit_requires_staged_file(layered_content, edit: str) -
 @pytest.mark.parametrize("layered_content", ["bookmark"], indirect=True)
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
 def test_matrix_bookmark_cache_clears(layered_content, action: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, game, _base, _root, _ids, get, _listing, put = layered_content
     assert get("game").description == "game"
     put(game, "game", "game", "changed")
     if action == "save":
@@ -629,7 +629,7 @@ def test_matrix_bookmark_cache_clears(layered_content, action: str) -> None:
 @pytest.mark.parametrize("layered_content", ["dynamic_modifier"], indirect=True)
 @pytest.mark.parametrize("edit", ["update", "delete"])
 def test_matrix_modifier_edit_requires_staged_file(layered_content, edit: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
     operations = {
         "update": lambda: mod.update_dynamic_modifier(ids["game"], icon="changed"),
         "delete": lambda: mod.delete_dynamic_modifier(ids["game"]),
@@ -648,7 +648,7 @@ def test_matrix_modifier_edit_requires_staged_file(layered_content, edit: str) -
 @pytest.mark.parametrize("layered_content", ["dynamic_modifier"], indirect=True)
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
 def test_matrix_modifier_cache_clears(layered_content, action: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, game, _base, _root, _ids, get, _listing, put = layered_content
     assert get("game").icon == "game"
     put(game, "game", "game", "changed")
     if action == "save":
@@ -662,7 +662,7 @@ def test_matrix_modifier_cache_clears(layered_content, action: str) -> None:
 @pytest.mark.parametrize("layered_content", ["on_action"], indirect=True)
 @pytest.mark.parametrize("edit", ["update", "delete"])
 def test_matrix_on_action_edit_requires_own_hook(layered_content, edit: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, _game, _base, root, ids, _get, _listing, _put = layered_content
     operations = {
         "update": lambda: mod.update_on_action(ids["game"], effect="log = changed"),
         "delete": lambda: mod.delete_on_action(ids["game"]),
@@ -682,7 +682,7 @@ def test_matrix_on_action_edit_requires_own_hook(layered_content, edit: str) -> 
 @pytest.mark.parametrize("layered_content", ["on_action"], indirect=True)
 @pytest.mark.parametrize("action", ["discard", "save", "reload"])
 def test_matrix_on_action_cache_clears(layered_content, action: str) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, game, _base, _root, _ids, get, _listing, put = layered_content
     assert "game" in get("game").effect
     put(game, "game", "game", "changed")
     if action == "save":
@@ -695,7 +695,7 @@ def test_matrix_on_action_cache_clears(layered_content, action: str) -> None:
 
 @pytest.mark.parametrize("layered_content", ["on_action"], indirect=True)
 def test_inherited_on_action_occurrences_compose_layers(layered_content) -> None:
-    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    _kind, mod, game, base, _root, ids, _get, _listing, _put = layered_content
     occurrences = mod.get_on_action_occurrences(ids["both"])
     assert len(occurrences) == 2
     assert occurrences[0].path.is_relative_to(base)
@@ -747,19 +747,19 @@ def existing_content(request, tmp_path: Path):
 
 
 def test_existing_matrix_game_lookup(existing_content) -> None:
-    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    _kind, _mod, _game, _root, get_game, _get_mod, _listing = existing_content
     assert get_game() is not None
 
 
 def test_existing_matrix_mod_only(existing_content) -> None:
-    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    _kind, _mod, _game, _root, get_game, get_mod, _listing = existing_content
     with pytest.raises(NotFoundError):
         get_game(include_vanilla=False)
     assert get_mod(include_vanilla=False) is not None
 
 
 def test_existing_matrix_list_scope(existing_content) -> None:
-    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    kind, _mod, _game, _root, _get_game, _get_mod, listing = existing_content
     if kind == "localisation":
         assert listing() == []
     elif kind == "region":
@@ -773,7 +773,7 @@ def test_existing_matrix_list_scope(existing_content) -> None:
 
 
 def test_existing_matrix_read_has_no_effect(existing_content) -> None:
-    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    _kind, mod, _game, root, get_game, _get_mod, listing = existing_content
     before = (listing(), mod.preview(), mod.validate())
     files = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
     get_game()
@@ -784,7 +784,7 @@ def test_existing_matrix_read_has_no_effect(existing_content) -> None:
 
 
 def test_existing_matrix_copy_or_immutable(existing_content) -> None:
-    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    kind, _mod, _game, _root, get_game, _get_mod, _listing = existing_content
     value = get_game()
     if kind in {"localisation", "definition", "region"}:
         with pytest.raises((AttributeError, TypeError)):
@@ -797,7 +797,7 @@ def test_existing_matrix_copy_or_immutable(existing_content) -> None:
 
 
 def test_existing_matrix_edit_stages_override(existing_content) -> None:
-    kind, mod, game, root, get_game, get_mod, listing = existing_content
+    kind, mod, game, _root, _get_game, _get_mod, _listing = existing_content
     sources = {p.relative_to(game): p.read_bytes() for p in game.rglob("*") if p.is_file()}
     edits = {
         "country": lambda: mod.update_country("GER", capital=2),
