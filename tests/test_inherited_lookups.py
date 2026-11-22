@@ -220,3 +220,12 @@ def test_localisation_and_region_scope(tmp_path: Path) -> None:
     assert mod.get_strategic_region(1).id == 1
     assert mod.get_strategic_region(1, include_vanilla=False, default=None) is None
     assert mod.list_strategic_regions() == [1]
+
+
+def test_effective_states_include_inherited_without_prior_lookup(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "history/states/1.txt", 'state = { id = 1 name = "STATE_1" history = { owner = GER } }')
+    mod = Mod(root, hoi4_install=game)
+    assert [state.id for state in mod._effective_states()] == [1]
+    assert mod.list_states() == []

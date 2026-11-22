@@ -450,7 +450,7 @@ class StatesLayer(CountriesLayer):
 
     def _effective_states(self) -> list[State]:
         result: list[State] = []
-        for state_id in sorted(set(self._state_ids) | set(self._states)):
+        for state_id in self.list_states(include_vanilla=True):
             try:
                 result.append(self.get_state(state_id))
             except (KeyError, OSError, ValueError):
