@@ -30,9 +30,8 @@ from .patching import (
     set_block,
     set_scalar,
 )
-from .paths import require_country_tag, resolve_mod_output_path
 from .syntax import Assignment, Block, Document, parse, quote, require_well_formed, unquote
-from .textio import read_text, write_text
+from .textio import read_text
 from .types import Focus, FocusTree
 
 #: Keys of focus blocks that may stand at the top level of a focus file.
@@ -446,20 +445,6 @@ def _reindent(text: str, indent: str) -> str:
     for line in rest:
         out.append(indent + line[common:].rstrip() if line.strip() else "")
     return "\n".join(out)
-
-
-def write_focus_tree(tree: FocusTree, mod_root: Path) -> Path:
-    tag = tree.country_tag or tree.id.replace("_focus", "").upper()
-    filename = f"{tag}_focus.txt"
-    if tree.path is None:
-        tag = require_country_tag(tag)
-    out_path = resolve_mod_output_path(
-        mod_root, tree.path or Path("common") / "national_focus" / filename
-    )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    original = out_path.read_bytes() if out_path.exists() else None
-    write_text(out_path, serialize_focus_tree(tree), like=original)
-    return out_path
 
 
 # ── patching an existing file ────────────────────────────────────

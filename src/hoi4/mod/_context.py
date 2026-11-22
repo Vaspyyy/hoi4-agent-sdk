@@ -184,22 +184,6 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
 
         return [icon for _, icon in nlargest(count, (score(icon) for icon in icons))]
 
-    def suggest_focus_icon(self, query: str) -> str:
-        suggestions = self.suggest_focus_icons(query, count=1)
-        if not suggestions:
-            raise ValueError(
-                "No focus icons available from mod, vanilla install, or built-in fallback list"
-            )
-        return suggestions[0]
-
-    def suggest_idea_icon(self, query: str) -> str:
-        suggestions = self.suggest_idea_icons(query, count=1)
-        if not suggestions:
-            raise ValueError(
-                "No idea icons available from mod or configured vanilla install"
-            )
-        return suggestions[0]
-
     # ── Complete country packages and geography ─────────────────
 
     def find_disconnected_states(

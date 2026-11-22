@@ -268,15 +268,6 @@ def write_localization_file(
     )
 
 
-def delete_localization_keys(path: Path, keys_to_delete: set[str]) -> None:
-    if not path.exists():
-        return
-    existing = _read_existing(path)
-    for key in keys_to_delete:
-        existing.pop(key, None)
-    write_localization_file(path, existing)
-
-
 def _read_existing(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}

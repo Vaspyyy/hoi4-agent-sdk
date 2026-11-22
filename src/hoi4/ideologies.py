@@ -122,18 +122,6 @@ def load_ideologies_file(path: Path, *, is_vanilla: bool = False) -> list[Ideolo
     return load_ideologies_text(read_text(path), path, is_vanilla=is_vanilla)
 
 
-def load_ideologies(root: Path, *, is_vanilla: bool = False) -> list[Ideology]:
-    """Load all ideology files beneath a game or mod root."""
-
-    directory = root / "common" / "ideologies"
-    if not directory.is_dir():
-        return []
-    result: list[Ideology] = []
-    for path in sorted(directory.glob("*.txt")):
-        result.extend(load_ideologies_file(path, is_vanilla=is_vanilla))
-    return result
-
-
 def _parse_ideology(ideology_id: str, block: Block) -> Ideology:
     ai_behavior = next(
         (

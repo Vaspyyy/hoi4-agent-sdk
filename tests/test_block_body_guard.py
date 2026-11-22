@@ -148,7 +148,10 @@ def _fields(
 
 def _parameters(function: Callable[..., object], skip: frozenset[str]) -> list[tuple[str, Shape]]:
     cases: list[tuple[str, Shape]] = []
-    for parameter in list(inspect.signature(function).parameters.values())[1:]:
+    parameters = list(inspect.signature(function).parameters.values())
+    if parameters and parameters[0].name in {"self", "cls"}:
+        parameters = parameters[1:]
+    for parameter in parameters:
         if parameter.name in skip or parameter.kind is parameter.VAR_KEYWORD:
             continue
         cases.extend((parameter.name, shape) for shape in _shapes(parameter.annotation))
@@ -628,10 +631,10 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "wargoal effect",
-        _parameters(Mod.create_wargoal, frozenset()),
+        _parameters(Mod.effect_create_wargoal, frozenset()),
         create_with=lambda mod, field, value: mod.create_event(
             "zz.1", title="zz.1.t",
-            immediate=mod.create_wargoal(**{"target": "GER", "war_goal_type": "annex_everything", field: value}),
+            immediate=mod.effect_create_wargoal(**{"target": "GER", "war_goal_type": "annex_everything", field: value}),
         ),
     ),
 ]

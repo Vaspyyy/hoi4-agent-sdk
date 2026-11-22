@@ -17,7 +17,6 @@ from .focus_layout import (
     continuous_focus_position_issue,
     resolve_focus_positions,
 )
-from .layers import ContentView, as_view
 from .parser import iter_assignment_blocks
 from .patching import top_level_assignments
 from .politics import IDEOLOGY_PARTY_MAP, RULING_PARTIES
@@ -662,25 +661,6 @@ def validate_tag_definition_targets(
                 )
             )
     return issues
-
-
-def collect_character_ids(*roots: Path | ContentView | None) -> set[str]:
-    """Collect direct character IDs from ``characters = { ... }`` containers."""
-
-    character_ids: set[str] = set()
-    for root in roots:
-        view = as_view(root)
-        if view is None:
-            continue
-        for path in view.glob("common/characters", "*.txt").values():
-            try:
-                character_ids.update(character_ids_in(read_text(path)))
-            except (OSError, ValueError):
-                # Source syntax/read failures are surfaced by the source-tree
-                # validation pass; do not turn one malformed catalog into a
-                # validation crash here.
-                continue
-    return character_ids
 
 
 def character_ids_in(text: str) -> frozenset[str]:

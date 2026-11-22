@@ -414,11 +414,18 @@ def test_suppress_as_one_string_names_the_mistake(tmp_path):
     import pytest
 
     mod = Mod(mod_root(tmp_path))
-    for kwargs in ({"suppress": "visual_overlap"}, {"suppress_warnings": "visual_overlap"}):
-        with pytest.raises(ValueError, match="takes a list of codes, not one string"):
-            mod.validate(stage="build", **kwargs)
     with pytest.raises(ValueError, match="takes a list of codes, not one string"):
-        mod.validate_effect("add_political_power = 1", suppress_warnings="visual_overlap")
+        mod.validate(stage="build", suppress="visual_overlap")
+    with pytest.raises(ValueError, match="takes a list of codes, not one string"):
+        mod.validate_effect("add_political_power = 1", suppress="visual_overlap")
+    # The older name of the same list is gone.
+    with pytest.raises(TypeError):
+        mod.validate(stage="build", suppress_warnings=["visual_overlap"])
+    with pytest.raises(TypeError):
+        mod.validate_effect("add_political_power = 1", suppress_warnings=["visual_overlap"])
+    # Every option is keyword-only, so no positional argument changes meaning.
+    with pytest.raises(TypeError):
+        mod.validate(None, False)
 
 
 def test_every_error_code_is_listed_once():

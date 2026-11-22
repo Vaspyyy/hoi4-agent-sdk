@@ -75,7 +75,7 @@ def test_weighted_on_action_effect_edit_preview_save_reload(
     else:
         assert rendered == SOURCE.replace("add_stability = 0.10", "add_stability = 0.20")
 
-    mod.reload()
+    mod.discard()
     assert mod.get_on_action("on_daily").effect == "add_stability = 0.20"
     assert mod.get_on_action("on_daily").random_events == original_list
     assert mod.get_on_action("on_weekly").effect == "add_political_power = 1"
@@ -88,7 +88,7 @@ def test_weighted_on_action_effect_edit_preview_save_reload(
     assert find_assignment_block(
         (root / RELATIVE).read_text(encoding="utf-8"), "random_events"
     )[0] == weighted
-    mod.reload()
+    mod.discard()
     assert mod.get_on_action("on_daily").events == ["example.4"]
     assert mod.get_on_action("on_daily").effect == ""
 
@@ -103,7 +103,7 @@ def test_explicit_on_action_list_edits_still_apply(
     result = mod.save(require_changes=True)
     print(result)
     assert result.written_files == [path]
-    mod.reload()
+    mod.discard()
     action = mod.get_on_action("on_daily")
     assert action.events == []
     assert action.random_events == random_events

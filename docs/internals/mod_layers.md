@@ -96,7 +96,8 @@ files, for `content_source()`) and `inherited(relative)` (the lower file a mod
 file hides, used to decide whether deleting the mod's file would expose one).
 
 What the view reads is never kept, so it always matches the disk. The
-descriptors' `replace_path` lines are read once; `reload()` builds a new view.
+descriptors' `replace_path` lines are read once; a full reload (`_reload_all()`, which `discard()` runs when a base mod
+changed) builds a new view.
 The order of a listing matches what the old merged copy gave: a file keeps the
 place it got in the lowest layer that has it, and files new in a higher layer
 come after. Where order decides a duplicate (two localisation files with the
@@ -105,7 +106,7 @@ same key), the later file wins, as before.
 Models keep the real source path (`game/history/states/1-Berlin.txt`). Code
 that needs the path relative to the content root asks the view (`relative()`),
 because a source can be in any layer. Module-level readers that take a game
-folder (`read_country`, `load_all_tags`, `collect_character_ids`,
+folder (`read_country`, `load_vanilla_tags`,
 `build_state_index`, the map topology helpers, ...) also take a view;
 `as_view()` turns a plain folder into a `FolderView`.
 

@@ -88,7 +88,6 @@ def _decision_category_definition_path(
 
 def _filter_validation_errors(
     errors: list[ValidationError],
-    suppress_warnings: Iterable[str] | None = None,
     *,
     suppress: Iterable[str] | None = None,
     advice: bool = True,
@@ -99,8 +98,7 @@ def _filter_validation_errors(
     * ``"info"`` findings (advice) are kept only when ``advice`` is true.
       ``Mod.validate()`` passes its own ``advice`` (default false);
       ``Mod.validate_effect()`` passes its own (default true).
-    * ``suppress`` (and the older ``suppress_warnings``, which now means the
-      same) hides warnings and advice by code: ``"code"`` hides every
+    * ``suppress`` hides warnings and advice by code: ``"code"`` hides every
       finding with that code, ``"code:ID"`` only those about the object
       ``ID`` (a focus, event, idea, decision, country tag, state id, focus
       tree, ideology, dynamic modifier or bookmark). Errors cannot be
@@ -110,7 +108,7 @@ def _filter_validation_errors(
 
     from ..validation import suppression_entries, validation_suppressions
 
-    rules = validation_suppressions(suppression_entries(suppress_warnings, suppress))
+    rules = validation_suppressions(suppression_entries(suppress))
     kept: list[ValidationError] = []
     for error in errors:
         error = _with_registered_severity(error)

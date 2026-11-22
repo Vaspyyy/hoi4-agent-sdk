@@ -747,7 +747,7 @@ def test_suppression_by_code_and_by_object(tmp_path):
     assert missing() == {"TST_a", "TST_b"}
     assert missing(suppress=["missing_localization:TST_a"]) == {"TST_b"}
     assert missing(suppress=["missing_localization"]) == set()
-    assert missing(suppress_warnings=["missing_localization:TST_b"]) == {"TST_a"}
+    assert missing(suppress=["missing_localization:TST_b"]) == {"TST_a"}
     with pytest.raises(ValueError, match="not a validation code"):
         mod.validate(suppress=["No localization found"])
     with pytest.raises(ValueError, match="error code"):

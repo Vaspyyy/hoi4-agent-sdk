@@ -20,7 +20,7 @@ from hoi4.gemini_images import (
     GeminiImageGenerator,
     GeminiImageResponseError,
 )
-from hoi4 import import_flag_to_mod, import_portrait_to_mod, write_portrait_gfx
+from hoi4.assets import import_flag_to_mod, import_portrait_to_mod, write_portrait_gfx
 
 Image = pytest.importorskip("PIL.Image")
 

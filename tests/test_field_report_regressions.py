@@ -199,7 +199,7 @@ def test_reload_rebuilds_country_color_sources_and_diagnostics(tmp_path: Path) -
         "FRA = { color = rgb { 4 5 6 } color_ui = rgb { 4 5 6 } }\n",
         encoding="utf-8",
     )
-    mod.reload()
+    mod.discard()
 
     assert not any(diagnostic.section == "country_colors" for diagnostic in mod.load_diagnostics)
     assert mod.get_country("GER").color == (9, 8, 7)
@@ -299,7 +299,7 @@ def test_idea_icon_validation_and_suggestion(tmp_path: Path) -> None:
     assert icon_issue.idea_id == "ABC_spirit"
     assert "GFX_idea_indstry" in icon_issue.message
     assert "Suggested close match: industry" in icon_issue.message
-    assert mod.suggest_idea_icon("GFX_idea_indstry") == "industry"
+    assert mod.suggest_idea_icons("GFX_idea_indstry", count=1) == ["industry"]
 
 
 def test_legacy_dynamic_country_ideas_is_rejected(tmp_path: Path) -> None:
@@ -375,8 +375,10 @@ def test_generated_country_tags_are_deterministic(tmp_path: Path) -> None:
     ]
 
 
-def test_create_idea_rejects_noncanonical_description_key(tmp_path: Path) -> None:
+def test_create_idea_has_no_description_argument(tmp_path: Path) -> None:
+    # HOI4 reads the description from the fixed key ``ABC_spirit_desc``;
+    # write its text with set_loc().
     mod = Mod(tmp_path)
 
-    with pytest.raises(ValueError, match="fixed localization key 'ABC_spirit_desc'"):
-        mod.create_idea("ABC_spirit", desc="SOME_OTHER_KEY")
+    with pytest.raises(TypeError, match="desc"):
+        mod.create_idea("ABC_spirit", desc="ABC_spirit_desc")

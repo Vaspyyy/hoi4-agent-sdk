@@ -241,7 +241,7 @@ For existing mods, use the following loop:
 
 `Mod` detects source files changed by another writer after it was loaded and
 raises `ExternalModificationError` before preview/save. Use one instance per
-operation or worker; call `reload()` before reapplying an edit after a conflict.
+operation or worker; call `discard()` before reapplying an edit after a conflict.
 
 Country politics are data-driven: custom ideology groups and their popularity
 keys are retained. Existing leader edits follow the recruited character ID and

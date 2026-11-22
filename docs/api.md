@@ -51,7 +51,8 @@ being skipped with a diagnostic: it loads everything at construction.
 After `save()`, only the content whose files were written (and what is built
 from it) loads again on next use. `discard()` drops every unsaved edit and
 picks up files changed on disk the same way: what had no edits and whose files
-did not change stays in memory. `reload()` reloads everything.
+did not change stays in memory. When a base mod's file changed, `discard()`
+reloads everything.
 
 A script file in the mod's own folder with unbalanced braces (or another
 syntax problem) is a load failure. Files from the game or a base mod are read
@@ -60,7 +61,7 @@ there, and a stray closing brace is skipped. When such an inherited file is
 copied into the mod as an override, the copy is written with balanced braces.
 `save()` refuses to rewrite any mod file that failed to load, and to create a
 new override of a game file in the same folder as one; fix the file and call
-`reload()`.
+`discard()`.
 
 `preview()` and `save()` also refuse to write a script file that would get a
 syntax problem it does not have now, for example an unclosed brace in script
@@ -112,7 +113,6 @@ history, characters, and localization.
 | `list_countries() -> list[str]` | Sorted tag list | All loaded country tags |
 | `is_country_tag_available(tag: str) -> bool` | `bool` | False if the tag exists in the mod or vanilla install |
 | `country_tag_conflicts(tag: str) -> list[str]` | `list[str]` | Returns conflict details such as `"mod: TAG (Name)"` or `"vanilla: TAG (Name)"` |
-| `suggest_tag(name: str) -> str` | `str` | Pick an available 3-character tag from a country/place name |
 | `suggest_tags(name: str, count=5) -> list[str]` | `list[str]` | Return available tag candidates |
 | `get_country(tag: str) -> Country` | `Country` | Cached or reads from disk. Tries mod then vanilla install. |
 | `create_country(tag, name, adjective="", color=(128,128,128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, allow_vanilla_override=False) -> Country` | `Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. Raises for existing mod or vanilla tags unless explicitly allowed. |
@@ -140,7 +140,7 @@ Check tag availability before inventing a new country tag:
 ```python
 if not mod.is_country_tag_available("SIC"):
     raise ValueError(f"SIC conflicts with: {mod.country_tag_conflicts('SIC')}")
-tag = mod.suggest_tag("Sicily")
+tag = mod.suggest_tags("Sicily", count=1)[0]
 ```
 
 `create_country()` never changes state ownership, cores, controller, or capital state files. The `capital` argument only writes `capital = <state_id>` in `history/countries/{TAG} - {Name}.txt`.
@@ -149,10 +149,9 @@ tag = mod.suggest_tag("Sicily")
 `communism`, or `neutrality`; groups loaded from the mod or configured vanilla
 install are accepted too. `leader_ideology` uses a sub-ideology. If it is
 omitted, the SDK picks a matching default for the chosen ruling party. Use
-`mod.available_ruling_parties()`,
-`mod.available_leader_ideologies("communism")`, or the static
-`Mod.leader_ideologies_for_party("communism")` and
-`Mod.default_leader_ideology("communism")` helpers instead of guessing.
+`mod.available_ruling_parties()` and
+`mod.available_leader_ideologies("communism")` instead of guessing: both read
+the ideologies of the mod and the game.
 `popularities` is data-driven too: it retains arbitrary ideology-group IDs, so
 supply a distribution containing the custom ruling party when creating one.
 `elections_allowed` is independent of the ruling-party group and is written
@@ -770,7 +769,6 @@ SDK output as an error and removes it when the idea is edited.
 | `update_idea(idea_id: str, *, merge_modifier=False, **kwargs) -> bool` | `bool` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |
 | `delete_idea(idea_id: str) -> bool` | `bool` | Remove from cache |
 | `suggest_idea_icons(query: str, count=5) -> list[str]` | `list[str]` | Rank loaded `GFX_idea_` sprites and return canonical bare stems. Prefixed queries remain accepted. |
-| `suggest_idea_icon(query: str) -> str` | `str` | Return the closest canonical bare picture stem or raise if no icon catalog is available. |
 
 ### Example
 
@@ -1037,7 +1035,7 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_create_unit(division, owner=None, start_experience_factor=None)` | `create_unit = { division = "..." }` |
 | `Mod.effect_swap_idea(old, new, target=None)` | `swap_ideas = { remove_idea = old add_idea = new }`, optionally scoped |
 | `Mod.effect_upgrade_idea_chain([idea_1, idea_2, ...], target=None)` | Conditional staged-spirit upgrade chain using `swap_ideas` |
-| `Mod.effect_set_politics(ruling_party, elections_allowed=None)` | `set_politics = { ... }`; the compatibility-only `elections_frequency` argument raises because HOI4 rejects that field |
+| `Mod.effect_set_politics(ruling_party, elections_allowed=None)` | `set_politics = { ... }` |
 | `Mod.effect_create_faction(name)` | `create_faction = "Name"` |
 | `Mod.effect_add_to_faction(tag)` | Bare current-scope `add_to_faction = TAG`; prefer explicit helpers below |
 | `Mod.effect_add_target_to_faction(faction_leader, target)` | `LEADER = { add_to_faction = TARGET }` |
@@ -1058,8 +1056,8 @@ Prefer these helpers when generating event effects, decision effects, or focus r
 | `Mod.effect_set_autonomy(target, autonomy_state, freedom_level=None)` | `set_autonomy = { target = TAG autonomy_state = ... }` |
 | `Mod.effect_convert_puppet_to_ally(puppet, overlord, faction_leader=None)` | End puppet relationship and optionally join a faction |
 | `Mod.effect_convert_existing_or_spawn_revolt(tag, state_ids, ...)` | Handles `TAG = { exists = yes }` edge cases before falling back to revolt spawning |
-| `Mod.scope_block(scope, *effects)` | Generic scoped effect block |
-| `Mod.effect_block(name, fields)` | Generic `effect = { key = value }` block |
+| `hoi4.scope_block(scope, *effects)` | Generic scoped effect block |
+| `hoi4.effect_block(name, fields)` | Generic `effect = { key = value }` block |
 
 Examples:
 
@@ -1089,10 +1087,10 @@ mod.assert_no_visual_overlap("west_focus")
 
 ```python
 mod.validate(
-    suppress_warnings=None, validate_icons=False, strict_localization=False,
+    *, validate_icons=False, strict_localization=False,
     stage="package", script_token_allowlist=(), liveness_flag_allowlist=(),
     liveness_localization_allowlist=(), progress=None, cancelled=None,
-    *, advice=False, suppress=(),
+    advice=False, suppress=(),
 ) -> list[ValidationError]
 ```
 
@@ -1111,9 +1109,8 @@ its severity. Stages are:
 Pass `validate_icons=True` to scan real interface `.gfx` files and warn about
 missing focus and idea icons. Pass `strict_localization=True` for a final audit
 of event, idea, country, and leader localization. Icon/reference and installed
-vocabulary scans are cached per `Mod` instance; call `reload()` (or
-`discard()`, which also drops these caches) to discard queued edits and
-refresh from disk.
+vocabulary scans are cached per `Mod` instance; call `discard()`
+(which also drops these caches) to discard queued edits and refresh from disk.
 
 With `hoi4_install` configured, `game_script_vocabulary()` exposes documented
 effect, trigger, and modifier tokens, installed-game usage counts by domain,
@@ -1133,8 +1130,8 @@ deliberately unknown. Explicit nested scopes are still checked with
 
 ```python
 mod.validate_effect(
-    script, suppress_warnings=None,
-    *, script_token_allowlist=(), scope="COUNTRY", advice=True,
+    script,
+    *, script_token_allowlist=(), scope="COUNTRY", advice=True, suppress=(),
 ) -> list[ValidationError]
 ```
 
@@ -1248,7 +1245,7 @@ print(VALIDATION_WARNING_CODES)
 print(VALIDATION_SEVERITIES["visual_overlap"])  # "warning"
 errors = mod.validate(suppress=["country_scope_core_effect"])
 errors = mod.validate(suppress=["missing_localization:TAG_secret_focus"])
-errors = mod.validate_effect("add_core_of = SCL", suppress_warnings=["country_scope_core_effect"])
+errors = mod.validate_effect("add_core_of = SCL", suppress=["country_scope_core_effect"])
 ```
 
 Useful script warning codes include `country_scope_core_effect`, `history_set_owner_in_effect`, `unknown_tech_bonus_category`, `missing_wargoal_type`, `unknown_country_scope`, `unknown_idea_reference`, `unknown_event_reference`, `unknown_focus_tree_reference`, `unknown_technology_reference`, `unknown_equipment_reference`, `unknown_focus_icon`, `missing_localization` and `visual_overlap`; `missing_effect_target` and `script_syntax` are errors. Advice codes include `faction_scope_footgun`, `civil_war_scope_footgun`, `civil_war_focus_tree_missing`, `bad_idea_tooltip_pattern`, `idea_not_addable`, `idea_mutation_collision`, `resistance_on_core_state`, `revolt_state_already_owned` and `event_option_no_effect`.
@@ -1290,7 +1287,7 @@ The `history_set_owner_in_effect` warning catches a common HOI4 boundary mistake
 Use icon suggestion helpers instead of guessing:
 
 ```python
-mod.suggest_focus_icon("navy")
+mod.suggest_focus_icons("navy", count=1)
 mod.suggest_focus_icons("industry", count=5)
 ```
 

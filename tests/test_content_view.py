@@ -201,7 +201,7 @@ def test_game_and_base_mods_are_never_written(tmp_path):
         assert all(Path(path).is_relative_to(top) for path in result.written_files)
         mod.set_state_owner(1, "ITA")
         mod.discard()
-        mod.reload()
+        mod.discard()
         assert mod.get_state(2).owner == "ITA"
         assert mod.get_state(1).owner == "GER"
         assert mod.get_loc("shared") == "top"

@@ -218,7 +218,7 @@ def test_pending_idea_deletion_matches_reload(tmp_path, warm, directory):
     before = diagnostics()
     result = mod.save(require_changes=True)
     assert str(source) in [str(path) for path in result.written_files]
-    mod.reload()
+    mod.discard()
     assert diagnostics() == before
 
 
@@ -251,6 +251,6 @@ def test_pending_idea_deletion_respects_inherited_file_precedence(tmp_path, same
     # remains shadowed by the writable file, even after its idea is deleted.
     assert bool(_unknown_ideas(mod.validate_effect("add_ideas = shared"))) == same_file
     mod.save(require_changes=True)
-    mod.reload()
+    mod.discard()
     assert bool(_unknown_ideas(mod.validate_effect("add_ideas = shared"))) == same_file
     assert inherited.read_bytes() == original

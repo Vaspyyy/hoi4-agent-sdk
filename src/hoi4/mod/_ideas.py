@@ -45,16 +45,9 @@ class IdeasLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
         *,
-        desc: str = "",
         removal_cost: str | int | float | None = None,
     ) -> Idea:
         idea_id = require_script_id(idea_id, label="idea ID")
-        expected_desc = f"{idea_id}_desc"
-        if desc and desc != expected_desc:
-            raise ValueError(
-                "HOI4 idea descriptions use the fixed localization key "
-                f"'{expected_desc}'; call set_loc('{expected_desc}', text) instead"
-            )
         existing = self._ideas.get(idea_id)
         if existing is not None and not overwrite:
             raise ValueError(
@@ -63,7 +56,6 @@ class IdeasLayer(CoreLayer):
         idea = Idea(
             id=idea_id,
             icon=normalize_idea_icon(icon),
-            desc=desc,
             removal_cost=removal_cost,
             modifier=dict(modifier or {}),
             category=category,

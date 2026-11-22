@@ -401,7 +401,7 @@ class TestModIconImports:
         staged = icon_codes()
         assert [code for code, _ in staged] == ["unknown_focus_icon"]
         assert "GFX_nope" in staged[0][1]
-        assert mod.suggest_idea_icon("TST custom spirit") == "TST_custom_spirit"
+        assert mod.suggest_idea_icons("TST custom spirit", count=1) == ["TST_custom_spirit"]
 
         mod.save(require_changes=True)
         reopened = Mod(root)

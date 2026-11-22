@@ -106,16 +106,6 @@ def load_bookmarks_file(path: Path, *, text: str | None = None) -> list[Bookmark
     return result
 
 
-def load_bookmarks(root: Path) -> list[Bookmark]:
-    directory = root / "common" / "bookmarks"
-    if not directory.is_dir():
-        return []
-    result: list[Bookmark] = []
-    for path in sorted(directory.glob("*.txt")):
-        result.extend(load_bookmarks_file(path))
-    return result
-
-
 def _parse_bookmark(body: str, path: Path, source_index: int) -> Bookmark:
     scalars: dict[str, str] = {}
     filters = ""

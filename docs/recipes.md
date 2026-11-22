@@ -438,8 +438,8 @@ Mod.effect_end_puppet("SLV", "YUG")
 Mod.effect_set_autonomy("SLV", "autonomy_free")
 Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
 Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)
-Mod.scope_block("LUX", Mod.effect_declare_war("GER"))
-Mod.effect_block("declare_war_on", {"type": "annex_everything", "target": "GER"})
+hoi4.scope_block("LUX", Mod.effect_declare_war("GER"))
+hoi4.effect_block("declare_war_on", {"type": "annex_everything", "target": "GER"})
 mod.validate_effect("LUX = { declare_war_on = { target = GER } }")
 ```
 

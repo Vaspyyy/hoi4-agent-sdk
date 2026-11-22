@@ -40,14 +40,6 @@ class EffectsLayer(CoreLayer):
         )
 
     @staticmethod
-    def effect_block(name: str, fields: dict[str, object] | None = None, **kwargs: object) -> str:
-        return effect_block(name, fields, **kwargs)
-
-    @staticmethod
-    def scope_block(scope: str | int, *effects: str) -> str:
-        return scope_block(scope, *effects)
-
-    @staticmethod
     def effect_add_state_building(
         state_id: int,
         building_type: str,
@@ -293,7 +285,7 @@ class EffectsLayer(CoreLayer):
         target: str,
         war_goal_type: str = "annex_everything",
     ) -> str:
-        return cls.scope_block(
+        return scope_block(
             require_country_tag(actor), cls.effect_declare_war(target, war_goal_type)
         )
 
@@ -375,14 +367,8 @@ class EffectsLayer(CoreLayer):
         ruling_party: str,
         *,
         elections_allowed: bool | None = None,
-        elections_frequency: int | None = None,
     ) -> str:
         ruling_party = require_script_id(ruling_party, label="ruling party")
-        if elections_frequency is not None:
-            raise ValueError(
-                "HOI4's set_politics effect does not support elections_frequency; "
-                "remove this argument"
-            )
         fields: dict[str, object] = {"ruling_party": ruling_party}
         if elections_allowed is not None:
             fields["elections_allowed"] = elections_allowed
@@ -401,7 +387,7 @@ class EffectsLayer(CoreLayer):
         """Add ``target`` to ``faction_leader``'s faction with explicit scope."""
         faction_leader = require_country_tag(faction_leader)
         target = require_country_tag(target)
-        return cls.scope_block(faction_leader, f"add_to_faction = {target}")
+        return scope_block(faction_leader, f"add_to_faction = {target}")
 
     @classmethod
     def effect_join_faction(cls, actor: str, faction_leader: str) -> str:
@@ -423,7 +409,7 @@ class EffectsLayer(CoreLayer):
     @classmethod
     def effect_end_puppet(cls, puppet: str, overlord: str | None = None) -> str:
         effect = f"end_puppet = {require_country_tag(puppet)}"
-        return cls.scope_block(require_country_tag(overlord), effect) if overlord else effect
+        return scope_block(require_country_tag(overlord), effect) if overlord else effect
 
     @staticmethod
     def effect_set_autonomy(
@@ -524,7 +510,7 @@ class EffectsLayer(CoreLayer):
             scoped.append(division_template)
         for unit in units or []:
             scoped.append(cls.effect_create_unit(unit))
-        return [cls.scope_block(tag, "\n".join(scoped))] if scoped else []
+        return [scope_block(tag, "\n".join(scoped))] if scoped else []
 
     @classmethod
     def effect_spawn_revolution(
@@ -628,27 +614,3 @@ class EffectsLayer(CoreLayer):
                 f"else = {{ {normalize_block_body(spawned)} }}",
             ]
         )
-
-    def create_wargoal(self, target: str, war_goal_type: str = "annex_everything") -> str:
-        warnings.warn(
-            "create_wargoal() only builds script; use effect_create_wargoal()",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.effect_create_wargoal(target, war_goal_type)
-
-    def declare_war(self, target: str, war_goal_type: str = "annex_everything") -> str:
-        warnings.warn(
-            "declare_war() only builds script; use effect_declare_war()",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.effect_declare_war(target, war_goal_type)
-
-    def start_civil_war(self, ideology: str, size: float = 0.5, capital: int | None = None) -> str:
-        warnings.warn(
-            "start_civil_war() only builds script; use effect_start_civil_war()",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.effect_start_civil_war(ideology, size, capital)

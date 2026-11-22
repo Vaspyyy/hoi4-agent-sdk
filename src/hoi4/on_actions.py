@@ -41,7 +41,7 @@ from .syntax import (
     parse,
     require_well_formed,
 )
-from .textio import read_text, write_text
+from .textio import read_text
 from .types import OnAction
 
 
@@ -146,12 +146,6 @@ def serialize_on_actions_file(actions: list[OnAction], original: str = "") -> st
     parts.append("}")
     parts.append("")
     return "\n".join(parts)
-
-
-def write_on_actions_file(path: Path, actions: list[OnAction]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_text(path, serialize_on_actions_file(actions))
-    return path
 
 
 # ── reading ─────────────────────────────────────────────────────

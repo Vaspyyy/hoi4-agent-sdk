@@ -88,7 +88,6 @@ mod.validate_effect("add_core_of = SCL", suppress=["country_scope_core_effect"])
 - Errors cannot be suppressed: an error code in `suppress=` raises `ValueError`.
 - An unknown code raises `ValueError`, so a typo does not silently hide
   nothing. Suppressing by message text is no longer supported.
-- `suppress_warnings=` is the older name of the same list and means the same.
 - One mistake gives one finding: a core effect in a country scope is
   `country_scope_core_effect`, not also `unsupported_effect_scope`.
 

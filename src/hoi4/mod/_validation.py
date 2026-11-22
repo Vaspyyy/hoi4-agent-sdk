@@ -528,7 +528,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
     def validate(
         self,
-        suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
+        *,
         validate_icons: bool = False,
         strict_localization: bool = False,
         stage: ValidationStage = "package",
@@ -537,7 +537,6 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         liveness_localization_allowlist: Sequence[str] = (),
         progress: ProgressCallback | None = None,
         cancelled: CancelCallback | None = None,
-        *,
         advice: bool = False,
         suppress: Sequence[str] = (),
     ) -> list[ValidationError]:
@@ -553,7 +552,6 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         of a code (``"visual_overlap"``) or only those about one object
         (``"missing_localization:TAG_my_focus"``). Errors cannot be
         suppressed, and an unknown code raises ``ValueError``.
-        ``suppress_warnings`` is the older name of the same list.
         """
 
         # Checks share data built once per run (``_validation_run``); a
@@ -563,7 +561,6 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             self._validation_run = {}
         try:
             return self._validate_once(
-                suppress_warnings=suppress_warnings,
                 validate_icons=validate_icons,
                 strict_localization=strict_localization,
                 stage=stage,
@@ -583,7 +580,6 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
     def _validate_once(
         self,
-        suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
         validate_icons: bool = False,
         strict_localization: bool = False,
         stage: ValidationStage = "package",
@@ -600,7 +596,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
         stage = require_validation_stage(stage)
         # Fail on a bad suppression before the long run, not after it.
-        validation_suppressions(suppression_entries(suppress_warnings, suppress))
+        validation_suppressions(suppression_entries(suppress))
         for name in _LOC_KEY_INDEXES:
             self._scan_cache.pop(name, None)
         errors: list[ValidationError] = []
@@ -926,7 +922,13 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 for focus in tree.focuses
                 if focus.icon not in known_focus_icons
             }:
-                icon_suggestions[icon] = self.suggest_focus_icon(icon)
+                suggestions = self.suggest_focus_icons(icon, count=1)
+                if not suggestions:
+                    raise ValueError(
+                        "No focus icons available from mod, vanilla install, "
+                        "or built-in fallback list"
+                    )
+                icon_suggestions[icon] = suggestions[0]
 
         search_filters = self._known_focus_search_filters()
         # One mistake, one finding: a focus id that is defined twice was
@@ -1028,7 +1030,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
         check_cancelled(cancelled, operation="validation")
         findings = _filter_validation_errors(
-            errors, suppress_warnings=suppress_warnings, suppress=suppress, advice=advice
+            errors, suppress=suppress, advice=advice
         )
         for name in _LOC_KEY_INDEXES:
             self._scan_cache.pop(name, None)

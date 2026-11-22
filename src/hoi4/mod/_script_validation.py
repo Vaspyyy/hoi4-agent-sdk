@@ -260,7 +260,6 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
     def validate_effect(
         self,
         script: str,
-        suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
         *,
         script_token_allowlist: Sequence[str] = (),
         scope: str | None = "COUNTRY",
@@ -278,8 +277,8 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
         ``advice`` (default ``True``) keeps the ``"info"`` findings, because
         one script is being looked at; pass ``False`` to get only errors and
         warnings, like ``validate()``. ``suppress`` hides warnings and advice
-        by code (``"code"`` or ``"code:ID"``), as in ``validate()``;
-        ``suppress_warnings`` is its older name. Errors cannot be hidden.
+        by code (``"code"`` or ``"code:ID"``), as in ``validate()``.
+        Errors cannot be hidden.
         Every finding has the severity its code is registered with (see
         ``docs/validation.md``).
         """
@@ -330,7 +329,6 @@ class ScriptValidationLayer(StatesLayer, CatalogsLayer):
             )
         return _filter_validation_errors(
             errors,
-            suppress_warnings=suppress_warnings,
             suppress=suppress,
             advice=advice,
         )

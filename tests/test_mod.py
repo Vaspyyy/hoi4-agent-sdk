@@ -731,7 +731,8 @@ class TestAgentFacingApis:
         assert Mod.effect_set_politics("democratic", elections_allowed=True) == (
             "set_politics = { ruling_party = democratic elections_allowed = yes }"
         )
-        with pytest.raises(ValueError, match="does not support elections_frequency"):
+        # HOI4's set_politics has no elections_frequency field.
+        with pytest.raises(TypeError, match="elections_frequency"):
             Mod.effect_set_politics("democratic", elections_frequency=48)
         assert (
             Mod.effect_create_faction("Mediterranean League")
@@ -1071,7 +1072,7 @@ class TestAgentFacingApis:
         assert "unknown_technology_reference" in codes
         assert "unknown_equipment_reference" in codes
         assert "bad_idea_tooltip_pattern" in codes
-        assert mod.suggest_focus_icon("navy") == "GFX_custom_navy_goal"
+        assert mod.suggest_focus_icons("navy", count=1) == ["GFX_custom_navy_goal"]
 
     def test_focus_icon_scan_follows_the_files_on_disk(self, tmp_mod):
         """The scan is kept per file until the file changes, so it is never stale."""
@@ -1369,7 +1370,7 @@ class TestModCountries:
             issue.code == "leader_party_mismatch"
             for issue in tmp_mod.mod.validate()
         )
-        assert "stalinism" in Mod.leader_ideologies_for_party("communism")
+        assert "stalinism" in tmp_mod.mod.available_leader_ideologies("communism")
 
     def test_create_country_persists_research_slots(self, tmp_mod):
         mod = tmp_mod.mod
@@ -1433,7 +1434,7 @@ class TestModCountries:
         )
         mod = Mod(mod_root, hoi4_install=hoi4_root)
         mod.create_country("SCY", "Taken")
-        suggestion = mod.suggest_tag("Sicily")
+        suggestion = mod.suggest_tags("Sicily", count=1)[0]
         assert suggestion not in {"SIC", "SCY", "SRD"}
         assert len(suggestion) == 3
 
@@ -1753,7 +1754,7 @@ class TestModEvents:
 
         all_errors = mod.validate()
         assert any(error.code == "country_scope_core_effect" for error in all_errors)
-        suppressed = mod.validate(suppress_warnings=["country_scope_core_effect"])
+        suppressed = mod.validate(suppress=["country_scope_core_effect"])
         assert not any(error.code == "country_scope_core_effect" for error in suppressed)
         assert "country_scope_core_effect" in VALIDATION_WARNING_CODES
 
@@ -1763,7 +1764,7 @@ class TestModEvents:
         assert any(error.code == "history_set_owner_in_effect" for error in errors)
         suppressed = tmp_mod.mod.validate_effect(
             "SCL = { set_owner = 115 }",
-            suppress_warnings=["history_set_owner_in_effect"],
+            suppress=["history_set_owner_in_effect"],
         )
         assert suppressed == []
 
@@ -1934,7 +1935,6 @@ class TestModIdeas:
         mod.create_idea(
             "TST_spirit",
             modifier={"stability_factor": 0.1},
-            desc="TST_spirit_desc",
             removal_cost=-1,
         )
         mod.save()
@@ -2159,7 +2159,7 @@ class TestIdeaValidation:
         errors = mod.validate(validate_icons=True)
 
         assert not any(error.code == "unknown_idea_icon" for error in errors)
-        assert mod.suggest_idea_icon("GFX_idea_vanila_valid") == "vanilla_valid"
+        assert mod.suggest_idea_icons("GFX_idea_vanila_valid", count=1) == ["vanilla_valid"]
 
 
 class TestEventValidation:
@@ -2365,11 +2365,11 @@ def test_save_rejects_external_changes_until_reload(tmp_path: Path) -> None:
 
     with pytest.raises(ExternalModificationError, match="changed after Mod loaded"):
         mod.preview()
-    with pytest.raises(ExternalModificationError, match="Call reload"):
+    with pytest.raises(ExternalModificationError, match="Call discard"):
         mod.save()
     assert path.read_text(encoding="utf-8") == external
 
-    mod.reload()
+    mod.discard()
     assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
     mod.save()
     assert path.read_text(encoding="utf-8") == external.replace(

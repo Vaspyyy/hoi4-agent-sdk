@@ -35,7 +35,7 @@ def test_inherited_commented_registration(tmp_path, monkeypatch, suffix, filenam
     mod = Mod(tmp_path / 'mod', **kwargs)
     assert not mod.is_country_tag_available('SIC')
     assert mod.is_country_tag_available('IGN')
-    assert mod.suggest_tag('Sicily') != 'SIC'
+    assert mod.suggest_tags('Sicily', count=1)[0] != 'SIC'
     assert 'SIC' not in mod.suggest_tags('Sicily')
     # Loading a country caches it; inspect resolution independently of creation.
     assert Mod(tmp_path / 'mod', **kwargs).get_country('SIC').color == (1, 2, 3)

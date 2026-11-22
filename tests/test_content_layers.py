@@ -99,7 +99,7 @@ def test_empty_replacement_directory_and_ordinary_fallback(tmp_path, layered):
 
     put(top, "descriptor.mod", 'replace_path="common/scripted_triggers"')
     if layered:
-        mod.reload()
+        mod.discard()
     assert mod.content_source("common/scripted_triggers/old.txt") is None
     assert mod.content_files("common/scripted_triggers") == {}
     assert not (top / "common/scripted_triggers").exists()
@@ -163,11 +163,11 @@ def test_state_fallback_save_and_reload_do_not_write_bases(tmp_path):
     assert all(Path(path).is_relative_to(top) for path in result.written_files)
     assert source.read_text() == state("ITA")
     assert (game / "history/states/1.txt").read_text() == state("GER")
-    mod.reload()
+    mod.discard()
     assert mod.get_state(1).owner == "ROM"
     (top / "history/states/1.txt").unlink()
     source.write_text(state("FRA"))
-    mod.reload()
+    mod.discard()
     assert mod.get_state(1).owner == "FRA"
 
 
@@ -316,7 +316,7 @@ def test_delete_last_inherited_localization_preserves_empty_override(tmp_path, e
     assert target in result.written_files
     assert target.read_text(encoding="utf-8-sig") == f"# {comment}\nl_english:\n"
     assert mod.get_loc("ancient") is None
-    mod.reload()
+    mod.discard()
     assert mod.get_loc("ancient") is None
     assert not mod.preview()
     assert all(p.read_bytes() == original for p, original in originals.items())
@@ -344,7 +344,7 @@ def test_delete_last_localization_without_fallback_removes_file(tmp_path, mode):
     result = mod.save(require_changes=True)
     print(result)
     assert not target.exists()
-    mod.reload()
+    mod.discard()
     assert mod.get_loc("ancient") is None
     assert not mod.preview()
 

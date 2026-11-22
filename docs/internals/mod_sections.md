@@ -61,7 +61,7 @@ reads `_countries`). The rest of the code reads `self._events` as before.
 2. every section that owns or reads a written, staged, or externally changed
    file (found by fingerprint, see below), and every section whose loader put
    that file into `_original_files`. The descriptor, or a path outside the
-   mod, reloads everything (`reload()`);
+   mod, reloads everything (`_reload_all()`);
 3. sections changed in memory without a dirty mark (`_reload_on_discard`:
    inherited content loaded for editing);
 4. every section that depends on one of these.
@@ -78,7 +78,7 @@ sprite, scripted-trigger and runtime-activation texts are kept. An entry of
 `_own_reference_cache` also records the character ids it was read with
 (`_character_scope_names()`, the same frozenset while the ids are the same),
 so a character created, deleted or reloaded since reads the file again.
-`reload()`
+`_reload_all()`
 clears all of them. With base mods, the inherited content is read where it is (see
 [`mod_layers.md`](mod_layers.md)), so nothing needs rebuilding after a save. A
 base mod's text files have fingerprints too (`_base_fingerprints`): when one
@@ -106,7 +106,7 @@ fingerprint.
 
 ## The reload check
 
-With `HOI4_VERIFY_RELOAD=1`, every `save()`, `discard()` and `reload()` ends
+With `HOI4_VERIFY_RELOAD=1`, every `save()`, `discard()` and `_reload_all()` ends
 with `_verify_reload()`: it builds a fresh `Mod` on the same folders (sharing
 the inherited layers), loads every section of both, lets the fresh one look up
 what lookups added to the live caches, and compares every section attribute,

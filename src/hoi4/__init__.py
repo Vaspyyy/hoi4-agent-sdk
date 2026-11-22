@@ -11,7 +11,7 @@ Usage:
     mod.save()
 """
 
-from importlib.metadata import PackageNotFoundError, version
+import importlib.metadata as _metadata
 
 from .assets import (
     ICON_KINDS,
@@ -26,13 +26,10 @@ from .assets import (
     find_flag_path,
     find_portrait_path,
     import_bookmark_picture_to_mod,
-    import_flag_to_mod,
     import_icon_to_mod,
-    import_portrait_to_mod,
     render_focus_shine_sprite,
     render_sprite_type,
     upsert_sprite_type,
-    write_portrait_gfx,
 )
 from .bookmarks import Bookmark, BookmarkCountry
 from .characters import (
@@ -146,17 +143,12 @@ from .validation import (
 )
 from .validation_stages import ValidationStage
 
-try:
-    from .effects_catalog import EFFECT_CATEGORIES, TECHNOLOGY_CATEGORIES
-    from .modifiers_catalog import MODIFIER_CATEGORIES
-except ImportError:
-    EFFECT_CATEGORIES = []
-    TECHNOLOGY_CATEGORIES = ()
-    MODIFIER_CATEGORIES = []
+from .effects_catalog import EFFECT_CATEGORIES, TECHNOLOGY_CATEGORIES
+from .modifiers_catalog import MODIFIER_CATEGORIES
 
 try:
-    __version__ = version("hoi4-agent-sdk")
-except PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
+    __version__ = _metadata.version("hoi4-agent-sdk")
+except _metadata.PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
     __version__ = "0.6.5"
 
 __all__ = [
@@ -242,9 +234,6 @@ __all__ = [
     "find_flag_path",
     "find_portrait_path",
     "import_bookmark_picture_to_mod",
-    "import_flag_to_mod",
-    "import_portrait_to_mod",
-    "write_portrait_gfx",
     "ICON_KINDS",
     "IconAsset",
     "import_icon_to_mod",

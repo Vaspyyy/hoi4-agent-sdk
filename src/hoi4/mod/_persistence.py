@@ -481,7 +481,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             )
             raise ExternalModificationError(
                 "Refusing to overwrite files changed after Mod loaded them: "
-                f"{displayed}. Call reload() and reapply the intended edit."
+                f"{displayed}. Call discard() and reapply the intended edit."
             )
 
     def _overrides_inherited(self, path: Path | None) -> bool:
@@ -589,7 +589,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     f"Refusing to create {path}: it would override an inherited file, but "
                     f"{neighbour.path} in the same folder failed to load "
                     f"({neighbour.error_type}: {neighbour.message}) and may already hold the "
-                    "mod's version of this content. Fix that file and call reload() first."
+                    "mod's version of this content. Fix that file and call discard() first."
                 )
             diagnostic = failed.get(resolved)
             if diagnostic is None or not path.is_file():
@@ -599,7 +599,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             raise RuntimeError(
                 f"Refusing to rewrite {path}: it failed to load "
                 f"({diagnostic.error_type}: {diagnostic.message}). Fix the file "
-                "and call reload() before editing it."
+                "and call discard() before editing it."
             )
 
     def _encode_like_source(self, path: Path, content: str, current: bytes | None) -> bytes:
@@ -701,13 +701,13 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         Only sections that had edits or whose files changed on disk (and the
         sections built from them) are unloaded; they load again on next use.
         Everything else stays in memory. When a base mod's text file changed,
-        everything is unloaded, like ``reload()``.
+        everything is unloaded and the content layers are rebuilt.
         """
 
         self._discard_changes(())
 
-    def reload(self) -> None:
-        """Discard queued changes and reload current files from disk."""
+    def _reload_all(self) -> None:
+        """Discard queued changes and reload every section from disk."""
 
         self._refresh_content_layers()
         self._vanilla_tags = (
@@ -738,7 +738,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         if not mapped or self._base_mods_changed():
             # A descriptor, a path outside the mod or a changed base mod
             # changes what every section sees, including the inherited layers.
-            self.reload()
+            self._reload_all()
             return
         self._reset_pending_edits()
         dropped = {*written, *staged, *changed}

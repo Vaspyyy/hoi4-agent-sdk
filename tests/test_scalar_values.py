@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from hoi4 import Character, CharacterPortrait, Mod
+from hoi4 import Character, CharacterPortrait, Mod, effect_block, scope_block
 from hoi4.syntax import ParseError
 
 STATE = (
@@ -460,44 +460,44 @@ def test_a_byte_order_mark_inside_a_value_does_not_split_it(tmp_path: Path) -> N
 def test_script_builders_keep_names_and_effects_inside_their_block(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     # What they always built is built as before.
-    assert mod.effect_block("set_politics", {"ruling_party": "fascism", "elections_allowed": False}) == (
+    assert effect_block("set_politics", {"ruling_party": "fascism", "elections_allowed": False}) == (
         "set_politics = { ruling_party = fascism elections_allowed = no }"
     )
-    assert mod.scope_block("GER", "add_political_power = 1", "add_stability = 0.1") == (
+    assert scope_block("GER", "add_political_power = 1", "add_stability = 0.1") == (
         "GER = { add_political_power = 1 add_stability = 0.1 }"
     )
-    assert mod.scope_block(42, "add_manpower = 1") == "42 = { add_manpower = 1 }"
+    assert scope_block(42, "add_manpower = 1") == "42 = { add_manpower = 1 }"
 
     with pytest.raises(ParseError, match="one word as a key"):
-        mod.effect_block("foo", {"a = 1 } zz_breakout = 1 foo2 = { b": 1})
+        effect_block("foo", {"a = 1 } zz_breakout = 1 foo2 = { b": 1})
     with pytest.raises(ParseError, match="one word as a key"):
-        mod.effect_block("foo = { } zz_breakout = 1 foo2", {"a": 1})
+        effect_block("foo = { } zz_breakout = 1 foo2", {"a": 1})
     with pytest.raises(ParseError, match="one word as a key"):
-        mod.scope_block("GER = { } zz_breakout = 1 GER", "add_political_power = 1")
+        scope_block("GER = { } zz_breakout = 1 GER", "add_political_power = 1")
     with pytest.raises(ParseError):
-        mod.scope_block("GER", "} zz_breakout = 1 GER = {")
+        scope_block("GER", "} zz_breakout = 1 GER = {")
     with pytest.raises(ParseError):
         mod.effect_start_civil_war("fascism", effects=["} zz_breakout = 1 x = {"])
     with pytest.raises(ParseError):
         mod.effect_division_template("Infantry", "infantry = { x = 0 y = 0 } } zz_breakout = 1 x = {")
 
     # A comment in an effect swallows neither the closing brace nor the next effect.
-    commented = mod.scope_block("GER", "add_political_power = 1 # a gift", "add_stability = 0.1")
+    commented = scope_block("GER", "add_political_power = 1 # a gift", "add_stability = 0.1")
     assert commented == "GER = { add_political_power = 1 # a gift\nadd_stability = 0.1 }"
     assert _names(commented) == ["GER", "add_political_power", "add_stability"]
-    commented = mod.scope_block("GER", "add_political_power = 1 # a gift")
+    commented = scope_block("GER", "add_political_power = 1 # a gift")
     assert commented == "GER = { add_political_power = 1 # a gift\n}"
     assert _names(commented) == ["GER", "add_political_power"]
     # A comment that does not end the text changes nothing about the layout.
-    assert mod.scope_block("GER", "# note\nadd_political_power = 1") == (
+    assert scope_block("GER", "# note\nadd_political_power = 1") == (
         "GER = { # note\nadd_political_power = 1 }"
     )
-    assert mod.scope_block("GER", 'set_country_flag = "a # b"', "add_stability = 0.1") == (
+    assert scope_block("GER", 'set_country_flag = "a # b"', "add_stability = 0.1") == (
         'GER = { set_country_flag = "a # b" add_stability = 0.1 }'
     )
-    assert mod.scope_block(" GER ", "add_stability = 0.1") == "GER = { add_stability = 0.1 }"
-    assert mod.scope_block("GER") == "GER = {  }"
-    nested = mod.scope_block(
+    assert scope_block(" GER ", "add_stability = 0.1") == "GER = { add_stability = 0.1 }"
+    assert scope_block("GER") == "GER = {  }"
+    nested = scope_block(
         "GER",
         "add_political_power = 1 # gift",
         "if = {\n\tlimit = { always = yes }\n\tadd_war_support = 0.1\n}\nadd_stability = 0.1",

@@ -102,13 +102,13 @@ with mod.transaction():
    Mod.effect_remove_state_core(state_id, tag)
    ```
 
-7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_swap_idea(...)`, `Mod.effect_upgrade_idea_chain(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_army_experience(...)`, `Mod.effect_add_navy_experience(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_set_politics(...)`, `Mod.effect_create_faction(...)`, `Mod.effect_add_target_to_faction(...)`, `Mod.effect_join_faction(...)`, `Mod.effect_white_peace(...)`, `Mod.effect_spawn_revolution(...)`, `Mod.effect_convert_existing_or_spawn_revolt(...)`, `Mod.effect_load_focus_tree(...)`, `Mod.effect_spawn_civil_war_with_focus_tree(...)`, `Mod.effect_release(...)`, `Mod.effect_release_puppet(...)`, `Mod.effect_end_puppet(...)`, `Mod.effect_set_autonomy(...)`, `Mod.effect_convert_puppet_to_ally(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
+7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_swap_idea(...)`, `Mod.effect_upgrade_idea_chain(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_army_experience(...)`, `Mod.effect_add_navy_experience(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_set_politics(...)`, `Mod.effect_create_faction(...)`, `Mod.effect_add_target_to_faction(...)`, `Mod.effect_join_faction(...)`, `Mod.effect_white_peace(...)`, `Mod.effect_spawn_revolution(...)`, `Mod.effect_convert_existing_or_spawn_revolt(...)`, `Mod.effect_load_focus_tree(...)`, `Mod.effect_spawn_civil_war_with_focus_tree(...)`, `Mod.effect_release(...)`, `Mod.effect_release_puppet(...)`, `Mod.effect_end_puppet(...)`, `Mod.effect_set_autonomy(...)`, `Mod.effect_convert_puppet_to_ally(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `hoi4.scope_block(...)`.
 
 8. Search rather than guess:
 
    ```python
    mod.find_state("Sicily")
-   mod.suggest_tag("Sicily")
+   mod.suggest_tags("Sicily", count=1)
    mod.is_country_tag_available("SIC")
    ```
 
@@ -254,7 +254,7 @@ with mod.transaction():
     one with an unclosed brace, is not loaded, and `save()` refuses to rewrite
     any mod file that failed to load, or to create a new override of a game
     file in the same folder. Fix the file
-    and call `reload()`. Files from the game or a base mod with unbalanced
+    and call `discard()`. Files from the game or a base mod with unbalanced
     braces load the way the game reads them.
 
 38. Top-level `shared_focus`, `joint_focus` and bare `focus` blocks of a file

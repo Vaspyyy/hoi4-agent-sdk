@@ -8,7 +8,6 @@ an owner, cores, manpower, victory points, and province assignments.
 from __future__ import annotations
 
 import re
-import shutil
 import textwrap
 from dataclasses import dataclass
 from decimal import Decimal
@@ -99,28 +98,6 @@ def find_state_file(states_dir: Path | Iterable[Path], state_id: int) -> Optiona
         if state_id_of(read_text(path)) == state_id:
             return path
     return None
-
-
-def ensure_state_in_mod(
-    mod_root: Path, hoi4_install: Optional[Path], state_id: int
-) -> Optional[Path]:
-    mod_states = mod_root / "history" / "states"
-    mod_states.mkdir(parents=True, exist_ok=True)
-
-    f = find_state_file(mod_states, state_id)
-    if f:
-        return f
-
-    if not hoi4_install:
-        return None
-    vanilla_states = hoi4_install / "history" / "states"
-    vf = find_state_file(vanilla_states, state_id)
-    if not vf:
-        return None
-
-    dst = mod_states / vf.name
-    shutil.copy2(vf, dst)
-    return dst
 
 
 def read_state(state_file: Path, text: str | None = None) -> State:
@@ -887,24 +864,6 @@ def patch_state_owner(state_text: str, tag: str, add_core: bool = True) -> str:
     if add_core and tag not in state.cores:
         state.cores.append(tag)
     return serialize_state(state)
-
-
-def patch_state_history_owner_cores(
-    state_file: Path,
-    *,
-    owner: str | None = None,
-    add_cores: list[str] | None = None,
-    remove_cores: list[str] | None = None,
-) -> None:
-    """Patch owner/core lines in-place without reserializing unrelated state data."""
-    text = read_text(state_file)
-    patched = patch_state_history_owner_cores_text(
-        text,
-        owner=owner,
-        add_cores=add_cores,
-        remove_cores=remove_cores,
-    )
-    _write_like_existing(state_file, patched)
 
 
 def patch_state_history_owner_cores_text(

@@ -104,17 +104,6 @@ def load_mod_tags(mod_root: Path) -> list[str]:
     return sorted(tags)
 
 
-def load_all_tags(
-    hoi4_install: Path | ContentView | None, mod_root: Optional[Path]
-) -> list[str]:
-    tags: set[str] = set()
-    if hoi4_install:
-        tags.update(load_vanilla_tags(hoi4_install))
-    if mod_root:
-        tags.update(load_mod_tags(mod_root))
-    return sorted(tags)
-
-
 def add_country_tag(mod_root: Path, tag: str) -> Path:
     tag = require_country_tag(tag)
     p = mod_root / "common/country_tags/00_generated_tags.txt"

@@ -18,10 +18,8 @@ from hoi4 import (
     DivisionUnit,
     Focus,
     Mod,
-    import_flag_to_mod,
-    import_portrait_to_mod,
-    write_portrait_gfx,
 )
+from hoi4.assets import import_flag_to_mod, import_portrait_to_mod, write_portrait_gfx
 from hoi4.characters import load_characters_file, serialize_characters_file
 from hoi4.oob import validate_oob
 
@@ -684,7 +682,7 @@ def test_base_mod_default_name_pool_is_respected_unless_replaced(tmp_path):
         finding.code for finding in mod.validate_country_package("ABC", check_geography=False).findings
     }
     (mod.mod_root / "descriptor.mod").write_text('replace_path="common/names"')
-    mod.reload()
+    mod.discard()
     assert "missing_country_name_pool" in {
         finding.code for finding in mod.validate_country_package("ABC", check_geography=False).findings
     }

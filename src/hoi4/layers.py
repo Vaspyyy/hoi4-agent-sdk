@@ -195,7 +195,7 @@ class ContentLayers(ContentView):
     mod's own files are read from the mod folder. ``source()`` adds them back.
 
     Nothing is copied or cached except the descriptors' ``replace_path``
-    lines (read once; ``Mod.reload()`` builds new layers) and which folders
+    lines (read once; ``Mod.discard()`` builds new layers when a base mod changed) and which folders
     are reached through a symlink. Files are found where they are on disk.
     """
 

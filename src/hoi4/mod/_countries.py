@@ -73,12 +73,6 @@ class CountriesLayer(CoreLayer):
             conflicts.append(f"vanilla: {tag} ({label})")
         return conflicts
 
-    def suggest_tag(self, name: str) -> str:
-        suggestions = self.suggest_tags(name, count=1)
-        if not suggestions:
-            raise ValueError("No available 3-character country tags remain")
-        return suggestions[0]
-
     def suggest_tags(self, name: str, count: int = 5) -> list[str]:
         taken = set(self._countries) | self._vanilla_tags
         token = _normalize_name_token(name)
@@ -290,20 +284,6 @@ class CountriesLayer(CoreLayer):
             setattr(country, field_name, target)
             self._original_files.setdefault(target, self._read_current_text(target))
 
-    @staticmethod
-    def default_leader_ideology(ruling_party: str) -> str:
-        return LEADER_IDEOLOGIES_BY_PARTY.get(
-            ruling_party, LEADER_IDEOLOGIES_BY_PARTY["democratic"]
-        )[0]
-
-    @staticmethod
-    def leader_ideologies_for_party(ruling_party: str) -> tuple[str, ...]:
-        return LEADER_IDEOLOGIES_BY_PARTY.get(ruling_party, ())
-
-    @staticmethod
-    def ruling_parties() -> tuple[str, ...]:
-        return RULING_PARTIES
-
     def available_ruling_parties(self, *, include_vanilla: bool = True) -> tuple[str, ...]:
         """Return ideology groups available to this mod, including custom groups."""
 
@@ -322,13 +302,15 @@ class CountriesLayer(CoreLayer):
             ideology = self._vanilla_ideologies.get(ruling_party)
         if ideology is not None:
             return tuple(subtype.name for subtype in ideology.types)
-        return self.leader_ideologies_for_party(ruling_party)
+        return LEADER_IDEOLOGIES_BY_PARTY.get(ruling_party, ())
 
     def _default_leader_ideology_for_party(self, ruling_party: str) -> str:
         available = self.available_leader_ideologies(ruling_party)
         if available:
             return available[0]
-        return self.default_leader_ideology(ruling_party)
+        # An unknown party falls back to the first democratic subtype;
+        # validate() reports the unknown party.
+        return LEADER_IDEOLOGIES_BY_PARTY["democratic"][0]
 
     def _country_tag_candidates(self) -> set[str]:
         """Every tag the mod, a base mod or the game defines."""

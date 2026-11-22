@@ -18,6 +18,22 @@ say what you got, no duplicate entry points, and the script builders moved to
 | `except KeyError` / `except IndexError` around a lookup | `except hoi4.NotFoundError` (still a `KeyError`, no longer an `IndexError`) | One error for "not there"; the message names close matches instead of every id |
 | `get_on_action(..., occurrence=n)`, `update_on_action(..., occurrence=n)`, `delete_on_action(..., occurrence=n)` out of range: `IndexError` | `NotFoundError` | One error for "not there" |
 | `add_character_role(..., instance_occurrence=n)` and the other role methods with a missing instance: `IndexError` | `NotFoundError` | One error for "not there" |
+| `mod.declare_war(target, wg)`, `mod.create_wargoal(target, wg)`, `mod.start_civil_war(ideology, size, capital)` | `effects.declare_war(...)`, `effects.create_wargoal(...)`, `effects.start_civil_war(...)` | Deprecated aliases of the builders |
+| `mod.reload()` | `mod.discard()` | `discard()` drops every unsaved edit and picks up changed files; it reloads everything itself when a base mod changed |
+| `mod.validate(suppress_warnings=[...])`, `mod.validate_effect(script, suppress_warnings=[...])` | `suppress=[...]` | Older name of the same list |
+| `mod.validate(None, False, True, "release")` (options by position) | `mod.validate(validate_icons=False, strict_localization=True, stage="release")` | Every option of `validate()` and `validate_effect()` is keyword-only |
+| `mod.create_idea(idea_id, ..., desc="X_desc")` | drop the argument; `mod.set_loc("X_desc", text)` | It was accepted only when it was the fixed key and never written |
+| `effects.set_politics(party, elections_frequency=n)` | drop the argument | HOI4's `set_politics` has no such field; the argument only raised |
+| `Mod.ruling_parties()` | `mod.available_ruling_parties()` | Hard-coded table; the replacement reads the real ideologies |
+| `Mod.leader_ideologies_for_party(party)` | `mod.available_leader_ideologies(party)` | Hard-coded table; the replacement reads the real ideologies |
+| `Mod.default_leader_ideology(party)` | `mod.available_leader_ideologies(party)[0]` | Answered `liberalism` for any unknown party |
+| `mod.suggest_tag(name)` | `mod.suggest_tags(name, count=1)[0]` | One-line wrapper |
+| `mod.suggest_focus_icon(query)` | `mod.suggest_focus_icons(query, count=1)[0]` | One-line wrapper |
+| `mod.suggest_idea_icon(query)` | `mod.suggest_idea_icons(query, count=1)[0]` | One-line wrapper |
+| `Mod.effect_block(...)`, `Mod.scope_block(...)` | `effects.block(...)`, `effects.scope_block(...)` | Pass-throughs to the module functions |
+| `hoi4.import_flag_to_mod(mod_root, ...)`, `hoi4.import_portrait_to_mod(mod_root, ...)`, `hoi4.write_portrait_gfx(mod_root, ...)` | `mod.import_flag_to_mod(...)` and friends (staged), or `hoi4.assets.import_flag_to_mod(...)` (writes at once) | Same names as the `Mod` methods but write at once and bypass transactions; no longer in `hoi4.__all__` |
+| `hoi4.version`, `hoi4.PackageNotFoundError` | `importlib.metadata.version`, `importlib.metadata.PackageNotFoundError` | Leaked imports |
+| `hoi4.bookmarks.load_bookmarks`, `hoi4.decisions.write_decisions_file`, `hoi4.focus.write_focus_tree`, `hoi4.ideologies.load_ideologies`, `hoi4.localisation.delete_localization_keys`, `hoi4.on_actions.write_on_actions_file`, `hoi4.states.ensure_state_in_mod`, `hoi4.states.patch_state_history_owner_cores`, `hoi4.tags.load_all_tags`, `hoi4.validation.collect_character_ids` | the matching `Mod` method (`mod.list_bookmarks()`, `mod.save()`, ...) | Unused module functions that bypassed the `Mod` staging |
 
 ### Added
 

@@ -370,7 +370,7 @@ def test_a_country_scope_core_effect_is_one_finding(game: Path, tmp_path: Path) 
     assert [
         item
         for item in mod.validate_effect(
-            "add_core_of = SCL", suppress_warnings=["country_scope_core_effect"]
+            "add_core_of = SCL", suppress=["country_scope_core_effect"]
         )
         if item.severity != "info"
     ] == []

@@ -289,7 +289,7 @@ def test_inherited_history_with_an_open_block_loads_edits_and_saves_well_formed(
 
     mod.save()
     assert not parse(override.read_text(encoding="utf-8")).problems
-    mod.reload()
+    mod.discard()
     assert mod.get_country("ABC").capital == 111
     fresh = Mod(mod_root, hoi4_install=game)
     assert fresh.get_country("ABC").capital == 111
