@@ -9,6 +9,8 @@ from .errors import Hoi4Error
 
 @dataclass(frozen=True)
 class ProgressEvent:
+    """One progress report of a long operation: which operation, which phase, how far."""
+
     operation: str
     phase: str
     current: int
@@ -17,6 +19,7 @@ class ProgressEvent:
 
     @property
     def fraction(self) -> float:
+        """How far the operation is, from 0.0 to 1.0 (1.0 when ``total`` is not positive)."""
         return 1.0 if self.total <= 0 else min(1.0, max(0.0, self.current / self.total))
 
 

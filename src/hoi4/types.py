@@ -19,6 +19,17 @@ def _ensure_nested(value: str | list[str] | list[list[str]] | None) -> list[list
 
 @dataclass
 class Focus:
+    """One national focus of a focus tree.
+
+    ``x`` and ``y`` are grid cells, relative to ``relative_position_id``
+    when it is set. ``prerequisites`` is a list of groups: the focus needs
+    one focus of every group (``[["A", "B"], ["C"]]`` reads "A or B, and
+    C"); ``requires=`` accepts a flat list or a single id as a short form.
+    Script fields (``completion_reward``, ``available`` and the like) hold
+    block bodies without the outer braces. ``raw_block`` and ``touched``
+    are bookkeeping for loaded focuses.
+    """
+
     id: str
     icon: str = "GFX_goal_generic_construct_civilian"
     x: int = 0
@@ -81,6 +92,8 @@ class Focus:
 
 @dataclass
 class FocusTree:
+    """A focus tree (or the top-level focuses of one file, see ``kind``) and its focuses."""
+
     id: str
     country_tag: str = ""
     focuses: list[Focus] = field(default_factory=list)
@@ -99,6 +112,12 @@ class FocusTree:
 
 @dataclass
 class Leader:
+    """The country leader as ``create_country()`` and ``update_country(leader_...=)`` set it.
+
+    ``character_id`` is the leader's character; ``ideology`` is a
+    sub-ideology such as ``"liberalism"``.
+    """
+
     name: str
     character_id: str = ""
     ideology: str = "liberalism"
@@ -107,6 +126,14 @@ class Leader:
 
 @dataclass
 class Country:
+    """A country: its tag file entry, ``common/countries`` definition and starting history.
+
+    ``popularities`` are percentages by ideology group; ``technologies``
+    are the starting technologies. ``stability`` and ``war_support`` keep
+    the spelling of the file. The ``raw_*``, ``*_path`` and
+    ``touched_fields`` fields are bookkeeping for loaded countries.
+    """
+
     tag: str
     name: str = ""
     adjective: str = ""
@@ -174,6 +201,8 @@ class ValidationIssue:
 
 @dataclass
 class SaveResult:
+    """What ``Mod.save()`` did: the written files, the sections that had edits, and a message."""
+
     written_files: list[Path] = field(default_factory=list)
     dirty_sections: list[str] = field(default_factory=list)
     no_changes: bool = False
@@ -181,6 +210,7 @@ class SaveResult:
 
     @property
     def changed(self) -> bool:
+        """Whether any file was written."""
         return bool(self.written_files)
 
     def __str__(self) -> str:
@@ -218,6 +248,12 @@ class EventText:
 
 @dataclass
 class EventOption:
+    """One option of an event: its name key, trigger, effect and AI chance.
+
+    ``trigger``, ``effect`` and ``ai_chance`` hold block bodies without the
+    outer braces.
+    """
+
     name: str = ""
     trigger: str = ""
     effect: str = ""
@@ -261,6 +297,12 @@ class Event:
 
 @dataclass
 class OnAction:
+    """One occurrence of an on-action hook (``on_startup`` and the like) in one file.
+
+    ``events`` are fired every time; ``random_events`` is the flattened
+    weight/event list; ``effect`` is a block body.
+    """
+
     id: str
     effect: str = ""
     events: list[str] = field(default_factory=list)
@@ -278,6 +320,12 @@ class OnAction:
 
 @dataclass
 class State:
+    """A state's history file: owner, cores, provinces, resources and buildings.
+
+    ``name`` is the localisation key (``STATE_<id>``). ``buildings`` and
+    ``history`` hold block bodies; ``raw_text`` is the whole file as read.
+    """
+
     id: int
     name: str = ""
     owner: str = ""
@@ -306,6 +354,13 @@ class State:
 
 @dataclass
 class Decision:
+    """One decision, mission or targeted decision of a decision category.
+
+    Script fields hold block bodies without the outer braces. See
+    ``Mod.create_decision()`` for which fields belong to missions and
+    targeted decisions.
+    """
+
     id: str
     category: str = ""
     icon: str = ""
@@ -352,6 +407,8 @@ class Decision:
 
 @dataclass
 class DecisionCategory:
+    """A decision category: its definition (icon, ``allowed``, ``visible``) and its decisions."""
+
     id: str
     icon: str = ""
     allowed: str = ""
@@ -373,6 +430,12 @@ class DecisionCategory:
 
 @dataclass
 class Idea:
+    """An idea: a national spirit, law, advisor slot entry or other idea category member.
+
+    ``icon`` is the bare picture name (the game adds ``GFX_idea_``);
+    ``modifier`` holds the modifier values by name.
+    """
+
     id: str
     # Compatibility name retained for the public API. HOI4's ``picture`` field
     # stores a bare stem; the engine resolves it as ``GFX_idea_<stem>``.

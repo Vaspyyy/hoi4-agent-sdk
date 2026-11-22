@@ -72,6 +72,7 @@ class EventsLayer(CoreLayer):
     # ── Events ──────────────────────────────────────────────────
 
     def list_events(self) -> list[str]:
+        """Return the sorted ids of the mod's events."""
         return sorted(self._events.keys())
 
     def get_event(self, event_id: str, *, default: _D | _Missing = MISSING) -> Event | _D:
@@ -108,11 +109,30 @@ class EventsLayer(CoreLayer):
         conditional_titles: list[EventText] | None = None,
         conditional_descriptions: list[EventText] | None = None,
     ) -> Event:
-        """Create an event.
+        """Create an event; staged until ``save()``.
 
         ``conditional_titles``/``conditional_descriptions`` add
         ``title = { text = ... trigger = { ... } }`` entries, shown before the
-        plain ``title``/``description`` fallback.
+        plain ``title``/``description`` fallback. The event goes into the
+        file of its namespace (the id before the last dot).
+
+        Args:
+            title: The title's localisation key. Defaults to ``<event_id>.t``.
+            description: The description's localisation key. Defaults to
+                ``<event_id>.d``.
+            event_type: ``"country_event"``, ``"news_event"`` or
+                ``"state_event"`` and the like.
+            trigger: Body of the ``trigger`` block; ``immediate`` and
+                ``mean_time_to_happen`` likewise.
+            options: Without any, one empty option ``<event_id>.a``.
+            overwrite: Replace an existing event of this id.
+
+        Returns:
+            The new event.
+
+        Raises:
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            ValueError: The id is not a valid script id.
         """
         event_id = require_script_id(event_id, label="event ID")
         existing = self._events.get(event_id)

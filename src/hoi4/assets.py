@@ -93,6 +93,7 @@ class FlagAssetSet:
 
     @property
     def paths(self) -> tuple[Path, Path, Path]:
+        """The large, medium and small flag files, in that order."""
         return self.large, self.medium, self.small
 
 
@@ -172,7 +173,15 @@ def find_flag_path(
     ideology: str | None = None,
     size: Literal["large", "medium", "small"] = "large",
 ) -> Path | None:
-    """Return an existing flag path without leaving ``mod_root``."""
+    """Return an existing flag path without leaving ``mod_root``.
+
+    Looks for ``gfx/flags/[medium/|small/]<TAG>[_<ideology>].tga`` in the mod
+    only; ``None`` when there is no such file.
+
+    Raises:
+        ValueError: The tag, ideology or size is not valid.
+        NotADirectoryError: ``mod_root`` is not a folder.
+    """
 
     normalized_tag = require_country_tag(tag)
     normalized_ideology = _require_ideology(ideology)
@@ -194,7 +203,20 @@ def export_flag_from_mod(
     size: Literal["large", "medium", "small"] = "large",
     overwrite: bool = False,
 ) -> Path:
-    """Export a mod TGA flag to PNG, JPEG, TGA, BMP, or WebP."""
+    """Export a mod TGA flag to PNG, JPEG, TGA, BMP, or WebP; written at once.
+
+    The format follows the ending of ``destination``.
+
+    Returns:
+        The written file.
+
+    Raises:
+        FileNotFoundError: The mod has no such flag.
+        FileExistsError: ``destination`` exists and ``overwrite`` is false.
+        UnsupportedImageFormatError: The ending is not a supported format
+            (DDS is refused for flags).
+        ImageBackendUnavailableError: Pillow is not installed.
+    """
 
     source = find_flag_path(mod_root, tag, ideology=ideology, size=size)
     if source is None:
@@ -259,7 +281,16 @@ def find_portrait_path(
     *,
     preference: Iterable[str] = ("dds", "tga"),
 ) -> Path | None:
-    """Find an existing portrait in a caller-defined format preference order."""
+    """Find an existing portrait in a caller-defined format preference order.
+
+    Looks for ``gfx/leaders/<TAG>/<name_slug>.<ext>`` in the mod only, trying
+    each extension of ``preference`` (``dds``, ``tga`` or ``png``); ``None``
+    when there is none.
+
+    Raises:
+        ValueError: The tag, slug or an extension is not valid.
+        NotADirectoryError: ``mod_root`` is not a folder.
+    """
 
     normalized_tag = require_country_tag(tag)
     normalized_slug = _require_asset_stem(name_slug, label="portrait slug")
@@ -294,7 +325,17 @@ def export_portrait_from_mod(
 
     DDS-to-DDS exports copy the original bytes and therefore preserve compression
     and mipmaps without requiring Pillow.  Any newly encoded DDS has the limitation
-    documented by :data:`DDS_LIMITATION`.
+    documented by :data:`DDS_LIMITATION`. Written at once; the format follows
+    the ending of ``destination``.
+
+    Returns:
+        The written file.
+
+    Raises:
+        FileNotFoundError: The mod has no such portrait.
+        FileExistsError: ``destination`` exists and ``overwrite`` is false.
+        UnsupportedImageFormatError: The ending is not a supported format.
+        ImageBackendUnavailableError: Pillow is needed and not installed.
     """
 
     source = find_portrait_path(mod_root, tag, name_slug, preference=preference)
@@ -374,7 +415,27 @@ def import_bookmark_picture_to_mod(
     dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
     overwrite: bool = True,
 ) -> BookmarkPictureAsset:
-    """Create a 180x104 bookmark texture and its ``spriteTypes`` declaration."""
+    """Create a 180x104 bookmark texture and its ``spriteTypes`` declaration.
+
+    Writes ``gfx/interface/<key>.<format>`` and
+    ``interface/<key>_bookmark.gfx`` at once, outside any ``Mod``
+    transaction; ``Mod`` has no staged version of this function.
+
+    Args:
+        sprite_name: Defaults to ``GFX_<bookmark_key>``.
+        resize_mode: ``"cover"`` crops to fill, ``"contain"`` pads, and
+            ``"stretch"`` distorts.
+
+    Returns:
+        The sprite name and the two written files.
+
+    Raises:
+        ValueError: The key, sprite name or format is not valid.
+        FileNotFoundError: ``src_image`` does not exist.
+        FileExistsError: A target exists and ``overwrite`` is false.
+        UnsupportedImageFormatError: The image cannot be read.
+        ImageBackendUnavailableError: Pillow is not installed.
+    """
 
     root = _require_mod_root(mod_root)
     normalized_key = _require_asset_stem(bookmark_key, label="bookmark key")
@@ -549,6 +610,16 @@ def upsert_sprite_type(
     repeated ``SpriteType`` keys. Every other byte of ``text`` is preserved, and
     an equivalent existing entry returns ``text`` unchanged. With
     ``overwrite=False`` a different existing entry raises ``FileExistsError``.
+    Text without a ``spriteTypes`` block gets one.
+
+    Returns:
+        The new text.
+
+    Raises:
+        FileExistsError: A different entry of that name exists and
+            ``overwrite`` is false.
+        ValueError: ``entry`` is not one block assignment, or does not
+            declare ``sprite_name``.
     """
 
     newline = "\r\n" if "\r\n" in text else "\n"

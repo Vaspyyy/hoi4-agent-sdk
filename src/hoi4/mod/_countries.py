@@ -48,13 +48,25 @@ class CountriesLayer(CoreLayer):
     # ── Countries ────────────────────────────────────────────────
 
     def list_countries(self) -> list[str]:
+        """Return the sorted tags of the countries loaded so far.
+
+        That is every country the mod defines, plus each game or base-mod
+        country a lookup has loaded; use ``is_country_tag_available()`` to
+        ask about a tag.
+        """
         return sorted(self._countries.keys())
 
     def is_country_tag_available(self, tag: str) -> bool:
+        """Whether no one (the mod, a base mod or the game) defines ``tag`` yet."""
         tag = tag.upper()
         return tag not in self._countries and tag not in self._vanilla_tags
 
     def country_tag_conflicts(self, tag: str) -> list[str]:
+        """Describe who already defines ``tag``, one line each; empty when it is free.
+
+        The lines read ``"mod: ABC (Name)"`` and ``"vanilla: ABC (Name)"``;
+        ``vanilla`` covers the game and the base mods.
+        """
         tag = tag.upper()
         conflicts: list[str] = []
         if tag in self._countries:
@@ -74,6 +86,12 @@ class CountriesLayer(CoreLayer):
         return conflicts
 
     def suggest_tags(self, name: str, *, count: int = 5) -> list[str]:
+        """Suggest ``count`` free three-letter country tags built from the letters of ``name``.
+
+        The first ones come from ``name`` itself (its first letters, its
+        consonants and similar); the rest start with its first letter. No
+        suggestion is defined by the mod, a base mod or the game.
+        """
         taken = set(self._countries) | self._vanilla_tags
         token = _normalize_name_token(name)
         candidates: list[str] = []

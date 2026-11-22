@@ -34,6 +34,7 @@ class OnActionsLayer(CoreLayer):
     # ── On Actions ───────────────────────────────────────────────
 
     def list_on_actions(self) -> list[str]:
+        """Return the sorted ids of the on-action hooks the mod uses."""
         return sorted(self._on_actions.keys())
 
     def get_on_action_occurrences(
@@ -147,6 +148,29 @@ class OnActionsLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> OnAction:
+        """Add an occurrence of the on-action hook ``action_id`` in one file; staged until ``save()``.
+
+        The game runs every occurrence of a hook, so the mod may add one per
+        file. An occurrence in the same file counts as existing.
+
+        Args:
+            effect: Body of the ``effect`` block.
+            events: Event ids fired by the hook.
+            random_events: The entries of ``random_events``, flattened: a
+                weight followed by an event id, such as ``["100", "my.1"]``.
+            path: The file. Without it, the existing occurrence's file when
+                overwriting, else ``common/on_actions/mod_on_actions.txt``.
+            overwrite: Replace the occurrence in that file.
+
+        Returns:
+            The new occurrence.
+
+        Raises:
+            AlreadyExistsError: The file already has an occurrence of the hook
+                and ``overwrite`` is false.
+            ValueError: The id is not valid, ``path`` is outside the mod, or
+                ``overwrite`` cannot tell which occurrence to replace.
+        """
         action_id = require_script_id(action_id, label="on-action ID")
         existing = self._on_action_occurrences.get(action_id, [])
         default_path = self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"

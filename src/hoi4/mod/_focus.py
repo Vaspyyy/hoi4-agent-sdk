@@ -62,6 +62,11 @@ class FocusLayer(ContextLayer):
     # ── Focus Trees ──────────────────────────────────────────────
 
     def list_focus_trees(self) -> list[str]:
+        """Return the sorted ids of the mod's focus trees.
+
+        Game trees are not listed until ``load_inherited_content()`` loads
+        their file.
+        """
         return sorted(self._focus_trees.keys())
 
     def get_focus_tree(
@@ -318,6 +323,17 @@ class FocusLayer(ContextLayer):
         return self.update_focus(tree_id, focus.id, **updates)
 
     def focus_tree_bounds(self, tree_id: str) -> dict[str, int]:
+        """Return the grid area the tree's focuses take, after resolving relative positions.
+
+        Returns:
+            ``min_x``, ``max_x``, ``min_y``, ``max_y``, ``width`` and
+            ``height`` in focus grid cells; all ``0`` for an empty tree.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+            ValueError: A focus position cannot be resolved (for example a
+                ``relative_position_id`` that points nowhere or in a circle).
+        """
         tree = self.get_focus_tree(tree_id)
         if not tree.focuses:
             return {"min_x": 0, "max_x": 0, "min_y": 0, "max_y": 0, "width": 0, "height": 0}
@@ -539,7 +555,11 @@ class FocusLayer(ContextLayer):
         *,
         path: str | Path | None = None,
     ) -> None:
-        """Set a focus's name and ``<id>_desc`` text (English), optionally in ``path``."""
+        """Set a focus's name and ``<id>_desc`` text (English), optionally in ``path``.
+
+        Raises:
+            ValueError: ``path`` is outside ``localisation/english``.
+        """
         self.set_loc(focus_id, name, path=path)
         self.set_loc(f"{focus_id}_desc", description, path=path)
 
@@ -552,6 +572,28 @@ class FocusLayer(ContextLayer):
         state_id: int | None = None,
         grounded: bool = True,
     ) -> list[Focus]:
+        """Add a ready-made chain of four industry focuses for ``tag``; staged until ``save()``.
+
+        The focuses are ``<TAG>_map_domestic_industry``,
+        ``<TAG>_modernize_transport_links``, ``<TAG>_support_domestic_steel``
+        and ``<TAG>_precision_workshops``, with English names and
+        descriptions. The tree is created when it does not exist.
+
+        Args:
+            anchor_focus_id: Insert the chain after this focus. Without it,
+                the chain goes to the right of the existing focuses.
+            state_id: The state that gets the infrastructure and factories.
+                Defaults to the country's capital, else state 1.
+            grounded: Make the first focus cost 5 days instead of 10.
+
+        Returns:
+            The four added focuses.
+
+        Raises:
+            NotFoundError: ``anchor_focus_id`` is not in the tree.
+            AlreadyExistsError: One of the focus ids is already in the tree.
+            ValueError: ``tag`` is not a valid tag (when the tree is created).
+        """
         tag = tag.upper()
         tree = (
             self.get_focus_tree(tree_id)

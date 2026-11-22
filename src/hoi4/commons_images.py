@@ -39,6 +39,13 @@ class CommonsImageError(Hoi4Error, RuntimeError):
 
 @dataclass(frozen=True)
 class CommonsImage:
+    """One file on Wikimedia Commons with the facts needed to use it legally.
+
+    ``download_url`` is a thumbnail of the requested width (or the original);
+    ``license_name``, ``artist``, ``credit`` and ``attribution_required``
+    come from the file page. ``raw_metadata`` keeps the API answer as JSON.
+    """
+
     title: str
     page_id: int
     source_url: str
@@ -59,6 +66,8 @@ class CommonsImage:
 
 @dataclass(frozen=True)
 class DownloadedCommonsImage:
+    """A downloaded Commons file, its JSON provenance file beside it, and its SHA-256."""
+
     path: Path
     metadata_path: Path
     sha256: str
@@ -237,6 +246,16 @@ class CommonsImageClient:
     def search(
         self, query: str, *, limit: int = 5, thumbnail_width: int = 1024
     ) -> list[CommonsImage]:
+        """Search Commons files for ``query`` and return up to ``limit`` raster images.
+
+        Args:
+            thumbnail_width: The width in pixels of the ``download_url`` each
+                result offers.
+
+        Raises:
+            ValueError: ``query`` is empty, or ``limit`` is not 1 to 50.
+            CommonsImageError: The request failed or the answer was malformed.
+        """
         if not query.strip() or not 1 <= limit <= 50:
             raise ValueError("Require a nonempty query and limit between 1 and 50")
         return self._query(
@@ -245,6 +264,13 @@ class CommonsImageClient:
         )
 
     def get_image(self, title: str, *, thumbnail_width: int = 1024) -> CommonsImage:
+        """Return the Commons file called ``title``; the ``File:`` prefix is optional.
+
+        Raises:
+            ValueError: ``title`` is empty or names several files.
+            CommonsImageError: The file is not a supported raster image, the
+                request failed, or the answer was malformed.
+        """
         if not title.strip() or "|" in title:
             raise ValueError("Provide exactly one Commons file title")
         title = title if title.lower().startswith("file:") else "File:" + title
@@ -258,6 +284,13 @@ class CommonsImageClient:
 
         Existing incomplete or conflicting cache records fail closed. No mod files
         are changed. Install the existing ``assets`` extra to enable raster checks.
+        A file downloaded before (same source, checksum intact) is returned
+        without a new request.
+
+        Raises:
+            CommonsImageError: The URL is not a Commons media URL, Pillow is
+                missing, the download failed or is not a valid image, or the
+                cached copy does not match.
         """
         _check_url(image.download_url, _MEDIA_HOSTS)
         root = Path(directory)

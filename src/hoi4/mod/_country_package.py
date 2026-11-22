@@ -304,6 +304,23 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
         A complete report proves structural authoring completeness only. It
         does not prove that runtime popularity thresholds or other dynamic
         trigger arithmetic are achievable in play.
+
+        Args:
+            minimum_land_provinces: For the geography check: report cut-off
+                land only from this many land provinces up.
+            allowed_state_ids: States that may be cut off or enclosed on purpose.
+            check_geography: Run the map checks (they need NumPy and Pillow).
+            lifecycle: ``"starting"`` for a country present at scenario
+                start, ``"runtime"`` for one released later, ``"auto"`` to
+                decide from the files.
+
+        Returns:
+            The findings; ``report.complete`` says whether nothing is missing.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+            ValueError: ``tag`` is not a valid tag, or ``lifecycle`` is not
+                one of the three values.
         """
 
         tag = self._require_known_country(tag)

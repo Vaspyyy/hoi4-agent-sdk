@@ -70,6 +70,8 @@ class EquipmentVariant:
 
 @dataclass(frozen=True)
 class Battalion:
+    """One battalion or support company of a division template, at grid cell ``x``, ``y``."""
+
     unit_type: str
     x: int
     y: int
@@ -102,6 +104,11 @@ class _SourceItem:
 
 @dataclass
 class DivisionTemplate(_SourceItem):
+    """A ``division_template``: its name, battalions and support companies.
+
+    ``raw_block``, ``touched_fields`` and ``source_index`` are bookkeeping.
+    """
+
     name: str
     battalions: list[Battalion] = field(default_factory=list)
     support: list[Battalion] = field(default_factory=list)
@@ -116,6 +123,12 @@ class DivisionTemplate(_SourceItem):
 
 @dataclass
 class DivisionUnit(_SourceItem):
+    """One division at the start: its template name, the province it stands in, and its state.
+
+    The factors are fractions from 0 to 1. ``raw_block``,
+    ``touched_fields`` and ``source_index`` are bookkeeping.
+    """
+
     division_template: str
     location: int
     name: str = ""
@@ -131,6 +144,8 @@ class DivisionUnit(_SourceItem):
 
 @dataclass
 class ShipEquipment(_SourceItem):
+    """The hull of a ship: equipment type, amount, owner and the variant name (``version_name``)."""
+
     equipment_type: str
     amount: int = 1
     owner: str = ""
@@ -145,6 +160,8 @@ class ShipEquipment(_SourceItem):
 
 @dataclass
 class Ship(_SourceItem):
+    """One ship of a task force: name, ship definition (``ship``, ``submarine`` ...) and equipment."""
+
     name: str
     definition: str
     equipment: list[ShipEquipment] = field(default_factory=list)
@@ -158,6 +175,8 @@ class Ship(_SourceItem):
 
 @dataclass
 class TaskForce(_SourceItem):
+    """A task force of a fleet, starting in province ``location``, with its ships."""
+
     name: str
     location: int
     ships: list[Ship] = field(default_factory=list)
@@ -170,6 +189,8 @@ class TaskForce(_SourceItem):
 
 @dataclass
 class Fleet(_SourceItem):
+    """A fleet: its home naval base province and its task forces."""
+
     name: str
     naval_base: int
     task_forces: list[TaskForce] = field(default_factory=list)
@@ -182,6 +203,8 @@ class Fleet(_SourceItem):
 
 @dataclass
 class AirWing(_SourceItem):
+    """Planes of one equipment type based in state ``location`` (an air base state)."""
+
     location: int
     equipment_type: str
     amount: int
@@ -198,6 +221,12 @@ class AirWing(_SourceItem):
 
 @dataclass
 class OrderOfBattle:
+    """An order of battle file (``history/units``): land, naval or air content of one country.
+
+    ``required_dlc`` and ``excluded_dlc`` gate the country's assignment of
+    it. ``path``, ``raw_text`` and ``touched_fields`` are bookkeeping.
+    """
+
     name: str
     country_tag: str = ""
     templates: list[DivisionTemplate] = field(default_factory=list)

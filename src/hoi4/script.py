@@ -24,6 +24,14 @@ def normalize_block_body(body: str) -> str:
 
 
 def pdx_value(value: object) -> str:
+    """Write ``value`` as a Paradox script value, quoting text only when it needs it.
+
+    ``True``/``False`` become ``yes``/``no``; numbers are written as they
+    are; any other object as its text.
+
+    Raises:
+        ValueError: The text has a line break or a NUL character.
+    """
     if isinstance(value, bool):
         return "yes" if value else "no"
     if isinstance(value, str):
@@ -41,7 +49,11 @@ def pdx_value(value: object) -> str:
 
 
 def pdx_string(value: object) -> str:
-    """Serialize a value as an always-quoted Paradox string."""
+    """Serialize a value as an always-quoted Paradox string.
+
+    Raises:
+        ValueError: The text has a line break or a NUL character.
+    """
     text = str(value)
     if "\n" in text or "\r" in text or "\x00" in text:
         raise ValueError("Paradox single-line strings cannot contain newlines or NUL characters")

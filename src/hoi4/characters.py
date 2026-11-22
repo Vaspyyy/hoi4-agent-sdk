@@ -35,6 +35,8 @@ ROLE_KEYS = frozenset(
 
 @dataclass
 class CharacterPortrait:
+    """One portrait of a character: the channel (``civilian``, ``army``, ``navy``) and its sprites."""
+
     channel: PortraitChannel = "civilian"
     large: str = ""
     small: str = ""
@@ -44,6 +46,8 @@ class CharacterPortrait:
 
 @dataclass
 class CountryLeaderRole:
+    """The ``country_leader`` role: the sub-ideology the character leads with, and traits."""
+
     ideology: str = "liberalism"
     expire: str = "1965.1.1.1"
     traits: list[str] = field(default_factory=list)
@@ -55,6 +59,11 @@ class CountryLeaderRole:
 
 @dataclass
 class AdvisorRole:
+    """The ``advisor`` role: the slot, the political power cost and the idea token.
+
+    ``allowed``, ``visible``, ``available`` and ``ai_will_do`` are block bodies.
+    """
+
     slot: str = "political_advisor"
     traits: list[str] = field(default_factory=list)
     cost: int = 100
@@ -71,6 +80,11 @@ class AdvisorRole:
 
 @dataclass
 class ArmyCommanderRole:
+    """A ``corps_commander`` or ``field_marshal`` role with its skills and traits.
+
+    Raises ``ValueError`` when ``kind`` is neither.
+    """
+
     kind: ArmyCommanderKind = "corps_commander"
     skill: int = 1
     attack_skill: int = 1
@@ -93,6 +107,8 @@ class ArmyCommanderRole:
 
 @dataclass
 class NavyLeaderRole:
+    """The ``navy_leader`` role with its skills and traits."""
+
     skill: int = 1
     attack_skill: int = 1
     defense_skill: int = 1
@@ -119,6 +135,8 @@ class _ParsedScope(TypedDict):
 
 @dataclass
 class CharacterInstance:
+    """One ``instance`` of a character: another name, portraits and roles, used when ``allowed`` holds."""
+
     allowed: str = ""
     name: str = ""
     portraits: list[CharacterPortrait] = field(default_factory=list)
@@ -130,6 +148,13 @@ class CharacterInstance:
 
 @dataclass
 class Character:
+    """A character of ``common/characters``: name, portraits, roles and instances.
+
+    ``name`` is a localisation key or text. ``path``, ``raw_block``,
+    ``touched_fields``, ``source_index`` and ``recruitment_expected`` are
+    bookkeeping.
+    """
+
     id: str
     country_tag: str = ""
     name: str = ""

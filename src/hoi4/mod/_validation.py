@@ -552,6 +552,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         of a code (``"visual_overlap"``) or only those about one object
         (``"missing_localization:TAG_my_focus"``). Errors cannot be
         suppressed, and an unknown code raises ``ValueError``.
+
+        Raises:
+            ValueError: A ``suppress`` entry names an unknown code.
+            OperationCancelled: ``cancelled()`` returned true.
         """
 
         # Checks share data built once per run (``_validation_run``); a
@@ -1072,6 +1076,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         ``incremental=True`` retains the trailing record until the next header.
         Use ``parse_hoi4_error_log`` to obtain a report with a resume offset;
         this facade returns only validation errors. The default flushes EOF.
+
+        Raises:
+            FileNotFoundError: ``log_path`` does not exist.
+            ValueError: ``start_offset`` is outside the log.
         """
 
         from ..game_log import parse_hoi4_error_log

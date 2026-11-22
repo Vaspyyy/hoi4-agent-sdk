@@ -60,6 +60,39 @@ class CountryAuthoringLayer(CharactersLayer):
         overwrite: bool = False,
         overwrite_vanilla: bool = False,
     ) -> Country:
+        """Create a country with its tag, history, colours and leader; staged until ``save()``.
+
+        The leader becomes a character ``<TAG>_leader_1`` with a country
+        leader role and a portrait sprite ``GFX_portrait_<TAG>_leader_1``.
+        The name and adjective go into the English localisation.
+
+        Args:
+            adjective: Defaults to ``name``.
+            color: The map colour as ``(red, green, blue)``, each 0 to 255.
+            capital: The id of the capital state.
+            ruling_party: The ideology group in power, such as ``"democratic"``.
+            popularities: Party popularity in percent, by ideology group.
+            leader_ideology: The leader's sub-ideology. Defaults to the first
+                one the ruling party has.
+            ideas: Ideas (national spirits, laws) the country starts with.
+            technologies: Technologies the country starts with, by id, with
+                the value HOI4 writes (normally ``1``).
+            oob: The name of the starting order of battle file.
+            overwrite: Replace a country of this tag that the mod defines, or
+                tag files on disk that no tag file registers.
+            overwrite_vanilla: Allow a tag that the game or a base mod uses.
+
+        Returns:
+            The new country.
+
+        Raises:
+            AlreadyExistsError: The mod defines ``tag`` and ``overwrite`` is
+                false, or the game or a base mod does and
+                ``overwrite_vanilla`` is false.
+            FileExistsError: Files of ``tag`` are on disk although no tag
+                file registers it, and ``overwrite`` is false.
+            ValueError: ``tag`` is not a valid tag.
+        """
         tag = require_country_tag(tag)
         existing = self._countries.get(tag)
         if existing is not None and not overwrite:
@@ -85,7 +118,7 @@ class CountryAuthoringLayer(CharactersLayer):
                     "only if replacing those orphaned files is intentional."
                 )
         if tag in self._vanilla_tags and not overwrite_vanilla:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Country tag '{tag}' is already used by vanilla HOI4. "
                 "Choose an unused tag or pass overwrite_vanilla=True intentionally."
             )
@@ -316,11 +349,19 @@ class CountryAuthoringLayer(CharactersLayer):
         self._dirty_countries.add(tag)
 
     def rebuild_country_color_table(self) -> Path:
-        """Queue a complete table for a conversion replacing all country tags.
+        """Stage a new ``common/countries/colors.txt`` with the colour of every loaded country.
 
-        Special engine registries can retain an inherited colors.txt even when
-        ordinary country definitions are replaced. Rebuild from every effective
-        country, never a partial caller-supplied subset. Call after country edits.
+        For a total conversion that replaces all country tags: the game can
+        keep an inherited colour table even when the tag files are replaced.
+        The table is built from ``list_countries()``, so call it after the
+        country edits. Written on ``save()``.
+
+        Returns:
+            The path of the staged table.
+
+        Raises:
+            ValueError: The descriptor does not replace ``common/country_tags``,
+                or no country is loaded.
         """
         from ..layers import replace_paths
         if Path("common/country_tags") not in replace_paths(self.mod_root):

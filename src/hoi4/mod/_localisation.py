@@ -72,6 +72,10 @@ class LocalisationLayer(CoreLayer):
 
     @property
     def default_loc_file(self) -> Path:
+        """The file new English entries go to when no ``path`` is given.
+
+        It is ``localisation/english/mod_l_english.yml`` in the mod.
+        """
         return self.mod_root / "localisation" / "english" / "mod_l_english.yml"
 
     def _default_loc_file_for(self, language: str, *, replace: bool = False) -> Path:
@@ -318,6 +322,14 @@ class LocalisationLayer(CoreLayer):
     def search_loc(
         self, query: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
     ) -> dict[str, str]:
+        """Return the entries whose key or text contains ``query``, ignoring case.
+
+        Searches what ``all_loc()`` returns: the game's entries with the
+        mod's on top.
+
+        Raises:
+            ValueError: ``language`` is not a HOI4 language.
+        """
         q = query.lower()
         return {
             k: v
@@ -326,7 +338,11 @@ class LocalisationLayer(CoreLayer):
         }
 
     def all_loc(self, *, language: str = DEFAULT_LOCALISATION_LANGUAGE) -> dict[str, str]:
-        """Every entry of one language: the game's, with the mod's on top."""
+        """Every entry of one language: the game's, with the mod's on top.
+
+        Raises:
+            ValueError: ``language`` is not a HOI4 language.
+        """
         language, entries, _, _ = self._loc_tables(language)
         merged = dict(self._game_loc(language))
         merged.update(entries)
@@ -346,8 +362,15 @@ class LocalisationLayer(CoreLayer):
         every supported non-English language. Existing translations are kept
         unless ``overwrite=True``. New entries go to the file mirroring their
         English source, e.g. ``localisation/english/replace/x_l_english.yml``
-        becomes ``localisation/german/replace/x_l_german.yml``. Returns the
-        keys written per language.
+        becomes ``localisation/german/replace/x_l_german.yml``. Staged until
+        ``save()``.
+
+        Returns:
+            The keys written, per language.
+
+        Raises:
+            NotFoundError: A key in ``keys`` has no English text in the mod.
+            ValueError: A language is not a HOI4 language, or is English.
         """
         if languages is None:
             targets = [

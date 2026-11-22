@@ -121,7 +121,33 @@ class MapLayer(StatesLayer, CatalogsLayer):
         ``name`` is written as ``STATE_<id>`` localisation. Map building
         positions inside moved provinces are reassigned; anything skipped is
         reported through :class:`RuntimeWarning`. Use :meth:`move_provinces`
-        when the full :class:`MapEditReport` is needed.
+        when the full :class:`MapEditReport` is needed. Staged until ``save()``.
+
+        Args:
+            state_category: The category id, such as ``"rural"`` or ``"city"``.
+            manpower: A non-negative whole number.
+            state_id: The new id. Defaults to one above the highest id.
+            resources: Resource amounts by name, such as ``{"steel": 8}``.
+            buildings: Body of the ``buildings`` block in the state history.
+            loc_path: The localisation file for the name.
+            allow_empty_source: Keep a source state that loses every province
+                (reported as a warning) instead of raising.
+            delete_empty_states: Delete such a state instead (reported).
+            reassign_map_buildings: Move building positions inside the moved
+                provinces to the new state.
+
+        Returns:
+            The new state.
+
+        Raises:
+            AlreadyExistsError: ``state_id`` is taken.
+            FileExistsError: The state file the new state needs is on disk.
+            NotFoundError: A province is not on the map (or, without a
+                ``definition.csv``, belongs to no state).
+            ValueError: ``name`` is empty, a value is not valid, no province
+                is given, a province is not a land province, or a source
+                state would be left empty without ``allow_empty_source`` or
+                ``delete_empty_states``.
         """
 
         if not isinstance(name, str) or not name.strip():
@@ -213,6 +239,17 @@ class MapLayer(StatesLayer, CatalogsLayer):
         A source state that would lose every province raises ``ValueError``
         unless ``delete_empty_states=True`` (delete it; reported) or
         ``allow_empty_source=True`` (keep it empty; reported as a warning).
+        A state of the game or a base mod is copied into the mod first.
+        Staged until ``save()``; on an error nothing changes.
+
+        Returns:
+            What moved, what was deleted, and warnings.
+
+        Raises:
+            NotFoundError: ``to_state`` does not exist, or a province is not on
+                the map.
+            ValueError: A province is not a land province, already belongs
+                to ``to_state``, or would leave its state empty (see above).
         """
 
         province_list = self._normalize_province_ids(provinces)
@@ -243,11 +280,15 @@ class MapLayer(StatesLayer, CatalogsLayer):
     ) -> State:
         """Create a new state from some of ``state_id``'s provinces and return it.
 
-        ``create_state_kwargs`` are the keyword arguments of ``create_state()``.
+        ``fields`` are the keyword arguments of ``create_state()`` (``name``
+        is required). Staged until ``save()``.
 
         Raises:
             NotFoundError: The state does not exist.
-            ValueError: A province does not belong to the state.
+            ValueError: A province does not belong to the state, or
+                ``create_state()`` refuses the call.
+            AlreadyExistsError: ``create_state()`` refuses the call (a taken
+                ``state_id``).
         """
         create_state_kwargs: dict[str, Any] = dict(fields)
 
@@ -310,7 +351,19 @@ class MapLayer(StatesLayer, CatalogsLayer):
         provinces: Sequence[int],
         region_id: int,
     ) -> StrategicRegion:
-        """Queue moving land or sea provinces into strategic region ``region_id``."""
+        """Queue moving land or sea provinces into strategic region ``region_id``.
+
+        The provinces leave the regions they are in now. Staged until ``save()``.
+
+        Returns:
+            The region with its new provinces.
+
+        Raises:
+            NotFoundError: The region does not exist, or a province is not on
+                the map.
+            ValueError: A province id is not a positive whole number, or none
+                was given.
+        """
 
         province_list = self._normalize_province_ids(provinces)
         self._require_known_provinces(province_list)
@@ -340,7 +393,22 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
         ``weather`` may be a ``weather = { ... }`` assignment or its body. When
         omitted, the weather block of the region currently holding most of the
-        provinces is copied verbatim.
+        provinces is copied verbatim. The provinces leave their current
+        regions, and ``name`` is written as ``STRATEGICREGION_<id>``
+        localisation. Staged until ``save()``.
+
+        Args:
+            region_id: The new id. Defaults to one above the highest id.
+            loc_path: The localisation file for the name.
+
+        Returns:
+            The new region.
+
+        Raises:
+            AlreadyExistsError: ``region_id`` is taken.
+            FileExistsError: The region file the new region needs exists.
+            NotFoundError: A province is not on the map.
+            ValueError: ``name`` is empty, or an id is not a positive whole number.
         """
 
         if not isinstance(name, str) or not name.strip():
@@ -396,6 +464,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         return self.get_strategic_region(new_id)
 
     def list_supply_nodes(self) -> list[int]:
+        """Return the provinces with a supply node in the effective ``map/supply_nodes.txt``, in file order."""
         text = self._map_text(SUPPLY_NODES_FILE)
         return [] if text is None else [province for _, province in parse_supply_nodes(text)]
 
@@ -419,6 +488,11 @@ class MapLayer(StatesLayer, CatalogsLayer):
         return province
 
     def remove_supply_node(self, province: int) -> None:
+        """Remove the supply node of ``province``; staged until ``save()``.
+
+        Raises:
+            NotFoundError: The province has no supply node.
+        """
         text = self._map_text(SUPPLY_NODES_FILE)
         updated, removed = remove_supply_node_text(text or "", province)
         if not removed:
@@ -428,6 +502,11 @@ class MapLayer(StatesLayer, CatalogsLayer):
         self._queue_map_text(SUPPLY_NODES_FILE, updated)
 
     def list_railways(self) -> list[Railway]:
+        """Return the lines of the effective ``map/railways.txt``, in file order.
+
+        Railways have no ids, so the objects are returned; pass one to
+        ``remove_railway()`` or ``set_railway_level()``.
+        """
         text = self._map_text(RAILWAYS_FILE)
         return [] if text is None else parse_railways(text)[0]
 
@@ -442,7 +521,17 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
         Consecutive provinces must be adjacent when the effective province map
         (and the optional ``map`` extra) is available; otherwise that check is
-        skipped.
+        skipped. Staged until ``save()``.
+
+        Returns:
+            The new line.
+
+        Raises:
+            NotFoundError: A province is not in ``definition.csv``.
+            ValueError: ``level`` is not between 1 and the game's maximum,
+                the route has fewer than two provinces or repeats one, a
+                province is not a land province, or two neighbours in the
+                route are not adjacent.
         """
 
         if isinstance(level, bool) or not isinstance(level, int) or not (
@@ -493,6 +582,11 @@ class MapLayer(StatesLayer, CatalogsLayer):
         self._queue_map_text(RAILWAYS_FILE, text)
 
     def list_map_buildings(self, state_id: int | None = None) -> list[MapBuilding]:
+        """Return the building positions of the effective ``map/buildings.txt``, in file order.
+
+        Positions have no ids, so the objects are returned. ``state_id``
+        keeps only the positions of that state.
+        """
         text = self._map_text(BUILDINGS_FILE)
         if text is None:
             return []
@@ -510,7 +604,23 @@ class MapLayer(StatesLayer, CatalogsLayer):
         *,
         adjacent_sea_province: int = 0,
     ) -> MapBuilding:
-        """Queue a ``map/buildings.txt`` position (``z`` is the north-south axis)."""
+        """Queue a ``map/buildings.txt`` position (``z`` is the north-south axis).
+
+        Coordinates are map pixels, rounded to two decimals; ``rotation`` is
+        in radians. ``adjacent_sea_province`` is the sea province of a naval
+        base (for a floating harbour: its land province); ``0`` for none.
+        Staged until ``save()``.
+
+        Returns:
+            The new position.
+
+        Raises:
+            NotFoundError: The state does not exist, or
+                ``adjacent_sea_province`` is not on the map.
+            ValueError: The building type is not a valid name, a coordinate
+                is not a finite number, or ``adjacent_sea_province`` is not a
+                province of the right kind.
+        """
 
         self.get_state(state_id)
         if not isinstance(building, str) or not re.fullmatch(r"[A-Za-z0-9_]+", building):

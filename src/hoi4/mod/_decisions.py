@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast, Iterable, Sequence, Unpack
+from typing import Any, cast, Iterable, Mapping, Sequence, Unpack
 
 from ..fields import DecisionCategoryFields, DecisionFields, EnsureDecisionCategoryFields, EnsureDecisionFields, MissionOptions, TargetedDecisionOptions
 from ..decisions import category_files
@@ -86,9 +86,11 @@ class DecisionsLayer(LocalisationLayer):
     # ── Decisions ────────────────────────────────────────────────
 
     def list_decision_categories(self) -> list[str]:
+        """Return the sorted ids of the mod's decision categories."""
         return sorted(self._decision_categories.keys())
 
     def list_decisions(self) -> list[str]:
+        """Return the sorted ids of the mod's decisions."""
         return sorted(self._decisions.keys())
 
     def get_decision(
@@ -143,6 +145,33 @@ class DecisionsLayer(LocalisationLayer):
         category_path: str | Path | None = None,
         overwrite: bool = False,
     ) -> DecisionCategory:
+        """Create a decision category; staged until ``save()``.
+
+        The category's decisions go into ``path``; its definition (icon,
+        ``allowed``, ``visible``) goes into ``common/decisions/categories``.
+
+        Args:
+            icon: The category's icon sprite name.
+            allowed: Body of the ``allowed`` trigger block.
+            visible: Body of the ``visible`` trigger block.
+            path: The file for the category's decisions. Without it, the
+                existing category's file or ``common/decisions/mod_decisions.txt``.
+            category_path: The definition file. Without it, a name derived
+                from ``path`` that hides no game or base-mod file.
+            overwrite: Replace an existing category of this id; its
+                decisions are dropped.
+
+        Returns:
+            The new category.
+
+        Raises:
+            AlreadyExistsError: The category exists and ``overwrite`` is false.
+            RuntimeError: ``overwrite`` is true but the category's decisions
+                are spread over several files.
+            ValueError: The id is not a valid script id, ``category_path`` is
+                not in ``common/decisions/categories``, or a path is outside
+                the mod.
+        """
         category_id = require_script_id(category_id, label="decision category ID")
         existing = self._decision_categories.get(category_id)
         if existing is not None and not overwrite:
@@ -351,6 +380,26 @@ class DecisionsLayer(LocalisationLayer):
         ``target_array``, ``target_root_trigger``, ``state_target``,
         ``targets_dynamic``, ``target_non_existing``, and ``on_map_mode``.
         Block fields take raw Paradox script bodies without outer braces.
+        Staged until ``save()``.
+
+        A category that the mod does not define may be one of the game or a
+        base mod: the decision then goes into a block of ``path`` (default
+        ``common/decisions/mod_decisions.txt``) that adds to it.
+
+        Args:
+            path: The file for the decision. Without it, the category's file.
+            overwrite: Replace an existing decision of this id, also one in
+                another category.
+
+        Returns:
+            The new decision.
+
+        Raises:
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            NotFoundError: With a game install configured, no one defines the
+                category.
+            ValueError: An id or a target is not valid, or ``path`` is
+                outside the mod.
         """
         category_id = require_script_id(category_id, label="decision category ID")
         decision_id = require_script_id(decision_id, label="decision ID")
@@ -566,7 +615,7 @@ class DecisionsLayer(LocalisationLayer):
     def create_decision_chain(
         self,
         category_id: str,
-        steps: list[dict | str],
+        steps: Sequence[Mapping[str, Any] | str],
         *,
         prefix: str | None = None,
         icon: str = "",
@@ -575,12 +624,33 @@ class DecisionsLayer(LocalisationLayer):
         final_event: str | None = None,
         overwrite: bool = False,
     ) -> list[Decision]:
-        """Create a staged decision chain with generated completion flags.
+        """Create decisions that unlock one after another; staged until ``save()``.
 
-        Each step is a dict with at least ``id`` unless ``prefix`` is supplied.
-        Common keys are ``icon``, ``cost``, ``days_remove``, ``visible``,
-        ``available``, ``complete_effect``, ``event``, ``loc_name``, and
-        ``loc_desc``. A string step is treated as ``{"id": step}``.
+        Each step sets a country flag (``<id>_done`` unless the step names
+        its ``flag``) that the next step's ``visible`` and ``available``
+        require. The category is created or updated with ``category_icon``
+        and ``path``. Each step is a dict with at least ``id`` unless
+        ``prefix`` is supplied (the id is then ``<prefix>_<n>``, counting
+        from 1). Common keys are ``icon``, ``cost``, ``days_remove``,
+        ``fire_only_once``, ``visible``, ``available``, ``complete_effect``,
+        ``remove_effect``, ``ai_will_do``, ``event`` (with ``event_days``),
+        ``clear_flags``, ``loc_name`` and ``loc_desc``. A string step is
+        treated as ``{"id": step}``.
+
+        Args:
+            icon: The icon of steps that name none.
+            final_event: A country event the last step fires.
+            overwrite: Replace existing decisions of these ids; without it an
+                existing decision is updated in place.
+
+        Returns:
+            The decisions, in step order.
+
+        Raises:
+            ValueError: ``steps`` is empty, a step has neither an id nor a
+                prefix, or an id is not valid.
+            NotFoundError: With a game install configured, the category is
+                not defined (see ``create_decision()``).
         """
         if not steps:
             raise ValueError("create_decision_chain() requires at least one step")
@@ -676,6 +746,19 @@ class DecisionsLayer(LocalisationLayer):
 
         Missions are never paid for, so ``cost``/``custom_cost_trigger`` are
         rejected. Other ``create_decision`` keywords pass through.
+        ``loc_name`` and ``loc_desc`` set the English name and description.
+        Staged until ``save()``.
+
+        Returns:
+            The new mission.
+
+        Raises:
+            TypeError: ``days_mission_timeout`` is not a whole number.
+            ValueError: ``days_mission_timeout`` is not positive, or a cost
+                was given.
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            NotFoundError: With a game install configured, the category is
+                not defined.
         """
         kwargs: dict[str, Any] = dict(fields)
         if isinstance(days_mission_timeout, bool) or not isinstance(days_mission_timeout, int):
@@ -727,6 +810,17 @@ class DecisionsLayer(LocalisationLayer):
         ``targets``/``target_array`` restrict the candidate list and
         ``state_target=True`` targets states. At least one targeting field is
         required. Other ``create_decision`` keywords pass through.
+        ``loc_name`` and ``loc_desc`` set the English name and description.
+        Staged until ``save()``.
+
+        Returns:
+            The new decision.
+
+        Raises:
+            ValueError: No targeting field is set, or a target is not valid.
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            NotFoundError: With a game install configured, the category is
+                not defined.
         """
         kwargs: dict[str, Any] = dict(fields)
         if not (target_trigger.strip() or targets or target_array or state_target):
@@ -771,7 +865,18 @@ class DecisionsLayer(LocalisationLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> Decision:
-        """Create a repair/migration decision for already-started saves."""
+        """Create a repair/migration decision for already-started saves.
+
+        The decision runs ``effect`` once (unless ``fire_only_once`` is
+        false). ``hidden=True`` without ``visible`` hides it from the player
+        (``visible = { always = no }``). A missing category is created (or,
+        with ``path``, created or moved there). ``loc_name`` and ``loc_desc``
+        set the English name and description. Staged until ``save()``.
+
+        Raises:
+            AlreadyExistsError: The decision exists and ``overwrite`` is false.
+            ValueError: An id is not valid, or ``path`` is outside the mod.
+        """
         if path is not None:
             self.ensure_decision_category(category_id, path=path)
         elif category_id not in self._decision_categories:

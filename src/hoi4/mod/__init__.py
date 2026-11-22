@@ -143,6 +143,10 @@ class Mod(
 
         Searches for .hoi4.json starting from `start` (defaults to cwd)
         and walks up to the filesystem root.
+
+        Raises:
+            FileNotFoundError: No config file is found, or it sets no
+                ``mod_path``.
         """
         cfg = find_config(start)
         if cfg is None or cfg.mod_path is None:

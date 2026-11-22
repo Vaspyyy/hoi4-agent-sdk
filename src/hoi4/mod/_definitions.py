@@ -38,6 +38,23 @@ class DefinitionsLayer(CoreLayer):
         participate in preview, transactions and atomic save, and never modify
         the source. Imported ideas are immediately available to validation and
         subsequent ``update_idea`` calls on this same instance.
+
+        Args:
+            source_path: The file to copy, anywhere on disk.
+            relative_path: Where it goes inside the mod, such as
+                ``"common/scripted_effects/my_effects.txt"``.
+            overwrite: Replace a file that is already there or staged.
+
+        Returns:
+            The path the file will be written to on ``save()``.
+
+        Raises:
+            FileNotFoundError: ``source_path`` does not exist.
+            FileExistsError: The target exists and ``overwrite`` is false.
+            ParseError: The source is not valid script.
+            ValueError: The target folder is not supported, a file is not a
+                ``.txt`` file, or an id in the file is defined elsewhere or
+                twice.
         """
         from ..definitions import DEFINITION_KINDS
         from ..parser import parse_pdx
@@ -426,6 +443,15 @@ class DefinitionsLayer(CoreLayer):
 
         ``entries`` are ``(trigger_body, localisation_key)`` pairs evaluated in
         order; an empty trigger is an unconditional fallback and belongs last.
+        Staged until ``save()``.
+
+        Returns:
+            The staged definition.
+
+        Raises:
+            ValueError: ``name`` is not a valid name, an entry other than the
+                last has no trigger, or ``path`` is not in the domain's folder.
+            AlreadyExistsError: ``name`` exists and ``overwrite`` is false.
         """
 
         from ..definitions import render_scripted_localisation
@@ -453,7 +479,17 @@ class DefinitionsLayer(CoreLayer):
         """Queue an ``ai_strategy`` plan from ``(type, id, value)`` entries.
 
         For example ``[("antagonize", "FRA", 100), ("role_ratio", "armor", 15)]``;
-        use an empty id for strategy types that take none.
+        use an empty id for strategy types that take none. ``allowed``,
+        ``enable`` and ``abort`` are trigger bodies; ``extra`` is added to
+        the plan as it is. Staged until ``save()``.
+
+        Returns:
+            The staged definition.
+
+        Raises:
+            AlreadyExistsError: ``plan_id`` exists and ``overwrite`` is false.
+            ValueError: ``path`` is not in the domain's folder, or a body
+                escapes its block.
         """
 
         from ..definitions import render_ai_strategy
@@ -479,7 +515,17 @@ class DefinitionsLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> ScriptDefinition:
-        """Queue an opinion modifier for ``add_opinion_modifier``."""
+        """Queue an opinion modifier for ``add_opinion_modifier``; staged until ``save()``.
+
+        Options left at ``None`` or ``False`` are not written.
+
+        Returns:
+            The staged definition.
+
+        Raises:
+            AlreadyExistsError: ``modifier_id`` exists and ``overwrite`` is false.
+            ValueError: ``path`` is not in the domain's folder.
+        """
 
         from ..definitions import render_scalar_mapping
         fields: dict[str, object] = {"value": value}
@@ -505,7 +551,20 @@ class DefinitionsLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> ScriptDefinition:
-        """Queue a named static modifier (``common/modifiers``)."""
+        """Queue a named static modifier (``common/modifiers``); staged until ``save()``.
+
+        Args:
+            modifiers: The modifier values by name, such as
+                ``{"stability_factor": 0.1}``.
+
+        Returns:
+            The staged definition.
+
+        Raises:
+            ValueError: ``modifiers`` is empty, or ``path`` is not in the
+                domain's folder.
+            AlreadyExistsError: ``modifier_id`` exists and ``overwrite`` is false.
+        """
 
         from ..definitions import render_scalar_mapping
         if not modifiers:

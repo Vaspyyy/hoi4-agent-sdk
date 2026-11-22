@@ -44,10 +44,24 @@ class StatesLayer(CountriesLayer):
     # ── States ──────────────────────────────────────────────────
 
     def list_states(self) -> list[int]:
+        """Return the sorted ids of the effective states: the mod's, the base mods' and the game's."""
         all_ids = set(self._state_ids) | set(self._states.keys())
         return sorted(all_ids)
 
-    def state_index(self, *, include_vanilla: bool = True) -> list[dict]:
+    def state_index(self, *, include_vanilla: bool = True) -> list[dict[str, Any]]:
+        """Return one summary per state file, sorted by id, without loading whole states.
+
+        Each entry has ``id``, ``name`` (the localisation key), ``display_name``
+        (the localised name, else the name from the file name), ``file_name``,
+        ``owner`` (``None`` when unset), ``path``, ``source`` (``"mod"`` or
+        ``"vanilla"``) and ``localized`` (whether the name has localisation).
+        With base mods there are also ``source_path`` and ``source_layer``
+        (``"mod"``, ``"base_mod"`` or ``"vanilla"``). A mod file wins over an
+        inherited one with the same id. The entries are copies.
+
+        Args:
+            include_vanilla: Also list the states of the game and the base mods.
+        """
         cached = self._state_index_cache.get(include_vanilla)
         if cached is not None:
             return [
@@ -55,7 +69,7 @@ class StatesLayer(CountriesLayer):
                 if entry["id"] not in self._deleted_state_ids
             ]
         state_localization = self._state_localization_entries()
-        entries: list[dict] = []
+        entries: list[dict[str, Any]] = []
         for source, base in zip(("mod", "vanilla"), self._data_views()):
             if source == "vanilla" and not include_vanilla:
                 continue
@@ -82,7 +96,7 @@ class StatesLayer(CountriesLayer):
                 if localized_name is not None:
                     item["display_name"] = localized_name
                 entries.append(item)
-        by_id: dict[int, dict] = {}
+        by_id: dict[int, dict[str, Any]] = {}
         for entry in entries:
             existing = by_id.get(entry["id"])
             if existing is None or (
@@ -94,6 +108,10 @@ class StatesLayer(CountriesLayer):
         return [entry for entry in result if entry["id"] not in self._deleted_state_ids]
 
     def get_state_name_map(self, *, include_vanilla: bool = True) -> dict[int, str]:
+        """Return a readable name for every state id, from ``state_index()``.
+
+        The name is the ``display_name``, else the localisation key, else the id.
+        """
         return {
             entry["id"]: entry.get("display_name") or entry.get("name") or str(entry["id"])
             for entry in self.state_index(include_vanilla=include_vanilla)
@@ -101,11 +119,18 @@ class StatesLayer(CountriesLayer):
 
     def find_state(
         self, query: str, *, include_vanilla: bool = True, limit: int = 10
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
+        """Find states whose id, name, localised name or file name match ``query``.
+
+        Matching ignores case and accents and allows near misses. The result
+        holds up to ``limit`` ``state_index()`` entries, best match first,
+        each with a ``matched`` key naming the field that matched. An empty
+        query finds nothing.
+        """
         needle = _fold_search_text(query)
         if not needle:
             return []
-        scored: list[tuple[float, dict, str]] = []
+        scored: list[tuple[float, dict[str, Any], str]] = []
         for entry in self.state_index(include_vanilla=include_vanilla):
             haystacks = [
                 ("id", str(entry.get("id", "")), 1.0),
@@ -141,7 +166,7 @@ class StatesLayer(CountriesLayer):
             if best >= 0.45:
                 scored.append((best, entry, matched))
         scored.sort(key=lambda item: (-item[0], item[1]["id"]))
-        results: list[dict] = []
+        results: list[dict[str, Any]] = []
         for _, entry, matched in scored[:limit]:
             result = dict(entry)
             result["matched"] = matched

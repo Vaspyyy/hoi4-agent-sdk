@@ -48,6 +48,7 @@ class BookmarksLayer(CoreLayer):
     # ── Bookmarks ────────────────────────────────────────────────
 
     def list_bookmarks(self) -> list[str]:
+        """Return the names of the mod's bookmarks, in file order."""
         return [bookmark.name for bookmark in self._bookmarks]
 
     def get_bookmark(self, name: str, *, default: _D | _Missing = MISSING) -> Bookmark | _D:
@@ -82,6 +83,27 @@ class BookmarksLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> Bookmark:
+        """Create a bookmark (a start date on the game's start screen); staged until ``save()``.
+
+        Args:
+            date: The start date in HOI4's ``year.month.day.hour`` format.
+            picture: The sprite name of the bookmark picture.
+            filters: Body of the bookmark's ``filters`` block.
+            effect: Body of the ``effect`` block run when the bookmark starts.
+            countries: The selectable countries. Their tags and DLC lists are
+                checked and normalized.
+            path: The output file. Without it, ``common/bookmarks/<name>.txt``.
+            overwrite: Replace an existing bookmark of this name.
+
+        Returns:
+            The new bookmark.
+
+        Raises:
+            AlreadyExistsError: A bookmark of this name exists and
+                ``overwrite`` is false.
+            ValueError: A country tag or a DLC name is not valid, or ``path``
+                is outside the mod.
+        """
         existing = next((item for item in self._bookmarks if item.name == name), None)
         if existing is not None and not overwrite:
             raise AlreadyExistsError(f"Bookmark '{name}' already exists")

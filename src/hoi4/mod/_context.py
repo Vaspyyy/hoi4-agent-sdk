@@ -6,7 +6,7 @@ import copy
 import dataclasses
 import os
 from heapq import nlargest
-from typing import Sequence
+from typing import Any, Sequence
 
 from ..focus import load_focus_trees
 from ..idea_icons import (
@@ -63,7 +63,7 @@ class ContextLayer(StatesLayer, CatalogsLayer):
         *,
         copy_states: bool = False,
         default: _D | _Missing = MISSING,
-    ) -> dict | _D:
+    ) -> dict[str, Any] | _D:
         """Report what the mod and the game hold for one country.
 
         Basics, owned and core states, matching ideas, advisors, designers,
@@ -74,8 +74,16 @@ class ContextLayer(StatesLayer, CatalogsLayer):
             default: Returned instead of raising ``NotFoundError`` when no one
                 defines ``tag``.
 
+        Returns:
+            A plain dict with ``tag``, ``name``, ``adjective``, ``capital``,
+            ``ruling_party``, ``popularities``, ``leader``, ``states``,
+            ``ideas`` (advisors and designers among them), ``localization``
+            and ``focus_trees``; states, ideas and the leader as plain
+            dicts. A new copy each time.
+
         Raises:
             NotFoundError: No one defines ``tag`` and no default was given.
+            ValueError: ``tag`` is not a valid tag.
         """
         tag = require_country_tag(tag)
         if not self._is_known_country_tag(tag):
@@ -85,7 +93,7 @@ class ContextLayer(StatesLayer, CatalogsLayer):
         if not copy_states and not self._dirty and tag in self._country_context_cache:
             return copy.deepcopy(self._country_context_cache[tag])
         country = self.get_country(tag)
-        context: dict = {
+        context: dict[str, Any] = {
             "tag": tag,
             "name": country.name,
             "adjective": country.adjective,
@@ -187,12 +195,24 @@ class ContextLayer(StatesLayer, CatalogsLayer):
         return [self.get_state(state["id"]) for state in context["states"]]
 
     def suggest_focus_icons(self, query: str, *, count: int = 5) -> list[str]:
+        """Return up to ``count`` known sprite names that match ``query`` best, for a focus icon.
+
+        Every ``GFX_`` sprite of the ``interface/*.gfx`` files of the mod
+        (staged ones too), the base mods and the game is a candidate; with
+        none, a built-in list of common focus icons. Words of ``query`` may
+        be separated by spaces or underscores.
+        """
         icons = sorted(self._known_focus_icons())
         if not icons:
             icons = sorted(COMMON_FOCUS_ICONS)
         return self._rank_icons(query, icons, count)
 
     def suggest_idea_icons(self, query: str, *, count: int = 5) -> list[str]:
+        """Return up to ``count`` known idea icon names that match ``query`` best.
+
+        The names are the ``GFX_idea_`` sprites of the mod, the base mods and
+        the game, without that prefix, as ``create_idea(icon=)`` takes them.
+        """
         icons = sorted(
             icon.removeprefix(IDEA_SPRITE_PREFIX)
             for icon in self._known_focus_icons()
@@ -227,10 +247,27 @@ class ContextLayer(StatesLayer, CatalogsLayer):
         minimum_land_provinces: int = 2,
         allowed_state_ids: Sequence[int] = (),
     ) -> tuple[TerritoryComponent, ...]:
-        """Find significant owned territory disconnected from the capital.
+        """Find land of ``tag`` that has no land connection to its capital.
 
-        This method imports NumPy and Pillow lazily and therefore requires the
-        optional ``map`` extra only when it is called.
+        Mod map files override the game's. Provinces count as connected by a
+        shared border or an adjacency row.
+
+        Args:
+            minimum_land_provinces: Report only pieces with at least this
+                many land provinces.
+            allowed_state_ids: States that may be cut off on purpose; they
+                are not reported.
+
+        Returns:
+            One component per cut-off piece of land.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+            ValueError: ``minimum_land_provinces`` is below 1, or ``tag`` is
+                not a valid tag.
+            RuntimeError: NumPy or Pillow (the optional ``map`` extra) is
+                missing.
+            FileNotFoundError: A map file the check needs is missing.
         """
 
         tag = self._require_known_country(tag)
@@ -254,7 +291,27 @@ class ContextLayer(StatesLayer, CatalogsLayer):
         minimum_land_provinces: int = 1,
         allowed_state_ids: Sequence[int] = (),
     ) -> tuple[TerritoryComponent, ...]:
-        """Find foreign land components entirely enclosed by ``tag``."""
+        """Find foreign land that ``tag`` surrounds on every side.
+
+        A piece that touches the sea or land without an owner does not
+        count as enclosed.
+
+        Args:
+            minimum_land_provinces: Report only pieces with at least this
+                many land provinces.
+            allowed_state_ids: Enclaves that are wanted; they are not reported.
+
+        Returns:
+            One component per enclosed piece of foreign land.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+            ValueError: ``minimum_land_provinces`` is below 1, or ``tag`` is
+                not a valid tag.
+            RuntimeError: NumPy or Pillow (the optional ``map`` extra) is
+                missing.
+            FileNotFoundError: A map file the check needs is missing.
+        """
 
         tag = self._require_known_country(tag)
         states, ownership = self._territory_map()

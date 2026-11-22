@@ -1031,6 +1031,9 @@ class CoreLayer:
 
         A path resolver, not a lookup of content: it returns ``None`` when
         no layer has the file.
+
+        Raises:
+            ValueError: ``relative_path`` is absolute or leaves the mod.
         """
         relative = relative_content_path(relative_path)
         if self._content_layers is not None:
@@ -1048,7 +1051,11 @@ class CoreLayer:
         return None
 
     def content_files(self, directory: str | Path) -> dict[str, Path]:
-        """Map effective relative filenames to original winning source paths."""
+        """Map effective relative filenames to original winning source paths.
+
+        Raises:
+            ValueError: ``directory`` is absolute or leaves the mod.
+        """
         relative = relative_content_path(directory)
         if self._content_layers is not None:
             files = {
@@ -1082,6 +1089,16 @@ class CoreLayer:
         nothing; edits serialize a complete override into this mod on save.
         Duplicate focus IDs within an inherited tree reject the entire import
         before any trees are installed, regardless of ``strict_loading``.
+        A file the mod already holds, or one loaded before, is left alone.
+
+        Args:
+            relative_path: The file's path inside the game or a base mod,
+                such as ``"common/national_focus/germany.txt"``.
+
+        Raises:
+            FileNotFoundError: No layer has this file.
+            ValueError: The path is unsafe, the file is not a focus, event,
+                idea or on-action file, or an id in it is already defined.
         """
         relative = relative_content_path(relative_path)
         source = self.resolve_content_path(relative)

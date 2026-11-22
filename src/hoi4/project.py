@@ -128,7 +128,15 @@ def create_mod_structure(
     """Create an idempotent HOI4 mod directory layout beneath ``mod_root``.
 
     All requested paths are validated before anything is created.  Absolute
-    paths, traversal components, and symlink escapes are rejected.
+    paths, traversal components, and symlink escapes are rejected. Folders
+    are created at once.
+
+    Returns:
+        The requested folders, as absolute paths.
+
+    Raises:
+        NotADirectoryError: ``mod_root`` or a requested path is a file.
+        ValueError: A path is absolute, leaves ``mod_root`` or is ``mod_root``.
     """
 
     root = Path(mod_root).expanduser().resolve(strict=False)
@@ -289,7 +297,23 @@ def write_mod_descriptors(
     The launcher file receives the absolute ``path`` field; the in-project file
     does not.  Replace paths are empty by default and every supplied value is
     normalized and traversal-checked.  Set ``auto_detect_replace_paths=True``
-    only for a deliberate total-conversion style project.
+    only for a deliberate total-conversion style project. Both files are
+    written at once.
+
+    Args:
+        user_mods_dir: The game's user ``mod`` folder for the launcher file.
+        supported_version: Defaults to the installed game's version as
+            ``1.x.*``, read from ``hoi4_install``.
+        tags: Launcher tags. Without them, they are guessed from the files
+            the mod has.
+
+    Returns:
+        Both paths, and the version, replace paths and dependencies written.
+
+    Raises:
+        NotADirectoryError: ``mod_root`` or ``user_mods_dir`` is a file.
+        ValueError: A name, version, tag, dependency, replace path or file
+            name is not valid, or both files would be the same file.
     """
 
     root = Path(mod_root).expanduser().resolve(strict=False)
@@ -418,7 +442,15 @@ def scan_mod_descriptors(
     Relative targets must stay beneath ``user_mods_dir`` and may not contain
     ``..``.  Absolute targets are accepted only beneath ``user_mods_dir`` or an
     explicitly supplied allowed root, unless ``allow_external_absolute`` is set.
-    Symlink descriptors and symlink escapes are rejected.
+    Symlink descriptors and symlink escapes are rejected. A rejected or
+    broken descriptor becomes an issue in the result, not an error.
+
+    Returns:
+        The usable mods and the issues found; both empty when
+        ``user_mods_dir`` is not a folder.
+
+    Raises:
+        ValueError: ``max_descriptor_bytes`` is not positive.
     """
 
     root = Path(user_mods_dir).expanduser().resolve(strict=False)
