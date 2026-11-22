@@ -874,8 +874,8 @@ SDK output as an error and removes it when the idea is edited.
 
 | Method | Description |
 |--------|-------------|
-| `list_ideas() -> list[str]` | All loaded ideas |
-| `get_idea(idea_id, *, default=...) -> Idea` | Raises `NotFoundError` if not found |
+| `list_ideas(*, include_vanilla=False) -> list[str]` | All loaded ideas |
+| `get_idea(idea_id, *, include_vanilla=True, default=...) -> Idea` | Raises `NotFoundError` if not found |
 | `create_idea(idea_id, *, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, removal_cost=None) -> Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
 | `ensure_idea(idea_id, *, merge_modifier=False, **fields) -> Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
 | `update_idea(idea_id, *, merge_modifier=False, **fields) -> Idea` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |

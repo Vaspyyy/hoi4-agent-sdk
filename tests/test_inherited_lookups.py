@@ -77,3 +77,21 @@ def test_mod_definitions_win(tmp_path: Path) -> None:
     assert mod.get_event("test.1").title == "mod"
     assert mod.get_focus("tree", "one").x == 2
     assert not mod._inherited_index
+
+
+def test_inherited_idea_lookup_and_edit(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/ideas/game.txt", "ideas = { country = { test_spirit = { picture = generic } } }")
+    mod = Mod(root, hoi4_install=game)
+    before = (mod.list_ideas(), mod.preview(), mod.validate())
+    idea = mod.get_idea("test_spirit")
+    idea.icon = "changed"
+    assert mod.get_idea("test_spirit").icon == "generic"
+    assert mod.list_ideas(include_vanilla=True) == ["test_spirit"]
+    assert mod.get_idea("test_spirit", include_vanilla=False, default=None) is None
+    assert (mod.list_ideas(), mod.preview(), mod.validate()) == before
+    with pytest.raises(ReadOnlyError, match="load_inherited_content"):
+        mod.update_idea("test_spirit", icon="other")
+    mod.load_inherited_content("common/ideas/game.txt")
+    mod.update_idea("test_spirit", icon="other")

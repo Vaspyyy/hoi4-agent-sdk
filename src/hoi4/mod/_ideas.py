@@ -17,7 +17,7 @@ from ..paths import (
 from ..types import (
     Idea,
 )
-from ..errors import AlreadyExistsError, not_found
+from ..errors import AlreadyExistsError
 from ._countries import CountriesLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -33,15 +33,11 @@ class IdeasLayer(CountriesLayer):
 
     # ── Ideas ───────────────────────────────────────────────────
 
-    def list_ideas(self) -> list[str]:
-        """Return the sorted ids of the mod's ideas.
+    def list_ideas(self, *, include_vanilla: bool = False) -> list[str]:
+        """Return the mod's idea IDs, or all visible IDs when requested."""
+        return self._listed("idea", self._ideas, include_vanilla=include_vanilla)
 
-        Game ideas are not listed until ``load_inherited_content()`` loads
-        their file.
-        """
-        return sorted(self._ideas.keys())
-
-    def get_idea(self, idea_id: str, *, default: _D | _Missing = MISSING) -> Idea | _D:
+    def get_idea(self, idea_id: str, *, include_vanilla: bool = True, default: _D | _Missing = MISSING) -> Idea | _D:
         """Return the idea ``idea_id``.
 
         Args:
@@ -51,11 +47,7 @@ class IdeasLayer(CountriesLayer):
         Raises:
             NotFoundError: No idea has this id.
         """
-        if idea_id not in self._ideas:
-            if default is not MISSING:
-                return default
-            raise not_found("idea", idea_id, self.list_ideas())
-        return self._ideas[idea_id]
+        return self._lookup("idea", self._ideas, idea_id, include_vanilla=include_vanilla, default=default)
 
     def create_idea(
         self,
@@ -141,7 +133,7 @@ class IdeasLayer(CountriesLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        existing = self.get_idea(idea_id, default=None)
+        existing = self.get_idea(idea_id, include_vanilla=False, default=None)
         if existing is not None:
             _check_fields("ensure_idea", existing, kwargs, allow_path=True)
             return self.update_idea(idea_id, merge_modifier=merge_modifier, **kwargs)
@@ -164,7 +156,7 @@ class IdeasLayer(CountriesLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        idea = self.get_idea(idea_id)
+        idea = self._mod_definition("idea", self._ideas, idea_id)
         if "id" in kwargs:
             raise ValueError("Idea IDs are immutable; create a new idea instead")
         _check_fields("update_idea", idea, kwargs, allow_path=True)
@@ -211,7 +203,7 @@ class IdeasLayer(CountriesLayer):
         Raises:
             NotFoundError: No idea has this id.
         """
-        idea = self.get_idea(idea_id)
+        idea = self._mod_definition("idea", self._ideas, idea_id)
         if idea.path is not None:
             self._dirty_idea_files.add(idea.path)
         del self._ideas[idea_id]
