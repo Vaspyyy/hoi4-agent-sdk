@@ -102,27 +102,84 @@ def _check_fields(
     _check_model_lists(method, type(obj), kwargs)
 
 
-def _check_model_lists(method: str, model: type, values: dict[str, Any]) -> None:
-    """Raise ``TypeError`` when a list field of ``model`` is given items of another class.
+def _check_model_lists(
+    method: str, model: type, values: dict[str, Any], *, none_is_unset: bool = False
+) -> None:
+    """Check the values given for fields of ``model`` before anything is set.
 
-    Each checked value is put back into ``values`` as a list, so a generator
-    is read once and its items are kept for the caller.
+    Two things are refused with a ``TypeError`` that names ``method``:
+    ``None`` for a field that cannot be empty (its type does not allow
+    ``None``), and a list of models that holds something else, at any depth
+    (an ``EventOption`` in ``options`` whose ``conditional_names`` holds a
+    string). Both used to be accepted and then made ``preview()`` and
+    ``save()`` raise.
+
+    Each checked list is put back into ``values`` as a list, so a generator
+    is read once and its items are kept for the caller. ``none_is_unset``
+    is for methods whose own keywords default to ``None`` ("not given").
     """
-    for name, classes in _model_list_fields(model).items():
-        if values.get(name) is not None:
-            values[name] = _require_items(method, name, values[name], classes)
+    lists = _model_list_fields(model)
+    can_be_none = _nullable_fields(model)
+    for name, value in list(values.items()):
+        if value is None:
+            if not none_is_unset and can_be_none is not None and name not in can_be_none:
+                raise TypeError(
+                    f"{method}(): {name} cannot be None. Pass an empty value "
+                    "(an empty list, dict or string) to clear it."
+                )
+            continue
+        if name in lists:
+            values[name] = _require_items(method, name, value, lists[name])
 
 
 def _check_model(method: str, obj: object, label: str) -> None:
-    """Raise ``TypeError`` when ``obj`` is not a model or one of its lists holds another class.
+    """Raise ``TypeError`` when ``obj`` is not a model or a list in it holds another class.
 
     For a model the caller built and hands over whole (a ``Character``, an
-    ``EventOption``): its lists are checked like the ``**fields`` of an update.
+    ``EventOption``, a ``Focus``): its lists of models are checked at every
+    depth, like the ``**fields`` of an update. The caller's object is left
+    as it is; only a list given as a one-shot iterator is replaced by a real
+    list, because reading it uses it up.
     """
     if not dataclasses.is_dataclass(obj) or isinstance(obj, type):
         raise TypeError(f"{method}(): {label} must be a model object, got {type(obj).__name__}")
+    _check_lists_inside(method, label, obj)
+
+
+def _check_lists_inside(method: str, label: str, obj: object) -> None:
     for name, classes in _model_list_fields(type(obj)).items():
-        setattr(obj, name, _require_items(method, f"{label}.{name}", getattr(obj, name), classes))
+        value = getattr(obj, name)
+        checked = _require_items(method, f"{label}.{name}", value, classes)
+        if not isinstance(value, (list, tuple)):
+            setattr(obj, name, checked)
+
+
+_NULLABLE_FIELDS: dict[type, frozenset[str] | None] = {}
+
+
+def _nullable_fields(model: type) -> frozenset[str] | None:
+    """The fields of ``model`` whose type allows ``None``; ``None`` when the types cannot be read."""
+    if model in _NULLABLE_FIELDS:
+        return _NULLABLE_FIELDS[model]
+    found: frozenset[str] | None
+    try:
+        hints = typing.get_type_hints(model)
+    except Exception:  # a hint that only resolves for the type checker
+        found = None
+    else:
+        found = frozenset(
+            name
+            for name, hint in hints.items()
+            if hint is Any
+            or hint is object
+            or hint is type(None)
+            or (
+                typing.get_origin(hint) in (typing.Union, types.UnionType)
+                and type(None) in typing.get_args(hint)
+            )
+        )
+    _NULLABLE_FIELDS[model] = found
+    return found
 
 
 _MODEL_LIST_FIELDS: dict[type, dict[str, tuple[type, ...]]] = {}
@@ -175,11 +232,12 @@ def _require_items(
             f"{method}(): {name} must be a list of {wanted} objects, got {type(values).__name__}"
         )
     items = list(values)
-    for item in items:
+    for index, item in enumerate(items):
         if not isinstance(item, classes):
             raise TypeError(
                 f"{method}(): {name} must hold {wanted} objects, got {type(item).__name__}"
             )
+        _check_lists_inside(method, f"{name}[{index}]", item)
     return items
 
 

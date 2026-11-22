@@ -294,6 +294,7 @@ class EventsLayer(CoreLayer):
             The added option.
 
         Raises:
+            TypeError: ``option`` is not an ``EventOption``; nothing changed.
             NotFoundError: No event has this id.
             AlreadyExistsError: The event already has an option with this name.
         """

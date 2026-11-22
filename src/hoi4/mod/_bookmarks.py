@@ -28,6 +28,7 @@ from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
+    _check_model,
     _require_items,
     _set_fields,
 )
@@ -174,7 +175,7 @@ class BookmarksLayer(CoreLayer):
         if forbidden:
             raise ValueError(f"Internal bookmark fields: {sorted(forbidden)}")
         _check_fields("update_bookmark", bookmark, kwargs, allow_path=True)
-        if kwargs.get("countries") is not None:
+        if "countries" in kwargs:
             kwargs["countries"] = _checked_bookmark_countries(
                 "update_bookmark", kwargs["countries"]
             )
@@ -202,10 +203,12 @@ class BookmarksLayer(CoreLayer):
             The added entry (the object passed in, now part of the bookmark).
 
         Raises:
+            TypeError: ``country`` is not a ``BookmarkCountry``; nothing changed.
             NotFoundError: No bookmark is called ``bookmark_name``.
             AlreadyExistsError: The bookmark already has an entry for this tag
                 with the same ``required_dlc``; use ``update_bookmark_country()``.
         """
+        _check_model("add_bookmark_country", country, "country")
         bookmark = self.get_bookmark(bookmark_name)
         tag = require_bookmark_country_key(country.tag)
         required_dlc = normalize_required_dlc(country.required_dlc)

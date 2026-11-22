@@ -174,6 +174,17 @@ once (`create_country()`, `create_industrial_branch()`, `insert_branch()`,
 `create_decision_chain()`, `create_recovery_decision()`) check everything
 first, so a call that raises stages nothing.
 
+What a call checks, and what it leaves to `save()`: every call checks the
+names of its fields, that a list of models holds models of the right class
+(at every depth: the options of an event, the conditional names of each
+option), and that `None` is only given for a field that can be empty. A
+`TypeError` for any of these comes before anything changes. A call does not
+check the content of a value: a cost that is not a number, a date that is not
+a date, an event type the game does not know, script text with an unclosed
+brace. Those are written as given or refused by `preview()` / `save()`
+(`SaveRefusedError`, `ParseError`), and `validate()` reports what the game
+would not accept. After such a refusal, `discard()` drops the edit.
+
 The tables below give each method's signature (generated from the code by
 `scripts/api_signatures.py` and checked by `tests/test_doc_blocks.py`), what it
 returns and what it raises beyond these rules. `help(Mod.<name>)` shows the
