@@ -127,6 +127,10 @@ class CountriesLayer(CoreLayer):
             _color_sources=self._country_color_sources,
         )
         self._countries[tag] = country
+        # Not one of the mod's loaded countries: a country of the game, a
+        # base mod, or a new file. It is only a lookup's cache, so save() and
+        # discard() drop it with the section, as a full reload used to.
+        self._reload_on_discard.add("countries")
         for path in country_file_paths(self.mod_root, country):
             if path.exists():
                 text = read_text(path)

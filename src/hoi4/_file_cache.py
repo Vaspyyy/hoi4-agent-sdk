@@ -117,9 +117,17 @@ def cached_files_result(
         if identity is not None
     )
     key = f"{os.fspath(paths[0])}\0{purpose}\0{others}"
+    # In memory as well, like a single file's result: the store hands an
+    # entry out once and does not keep a second copy of it.
+    memory_key = (f"{purpose}\0{others}", os.fspath(paths[0]))
+    cached = _CACHE.get(memory_key)
+    if cached is not None and cached[0] == first:
+        return cached[1]  # type: ignore[return-value]
     found, stored_result = _disk_cache.lookup(disk, key, first[1], first[2])
     if found:
-        return stored_result  # type: ignore[no-any-return]
-    result = compute()
-    _disk_cache.remember(disk, key, first[1], first[2], result)
+        result: T = stored_result
+    else:
+        result = compute()
+        _disk_cache.remember(disk, key, first[1], first[2], result)
+    _CACHE[memory_key] = (first, result)
     return result

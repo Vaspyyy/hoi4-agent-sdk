@@ -896,7 +896,9 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 continue
             value = live[key] if isinstance(live, dict) else None
             if value is not None and not _comes_from(value, self.mod_root):
-                skipped.add(key)
+                # A lookup cached content of the game or a base mod. The
+                # section should have been dropped (``_reload_on_discard``);
+                # left in, it shows up as a difference below.
                 continue
             try:
                 getattr(fresh, lookup)(key)

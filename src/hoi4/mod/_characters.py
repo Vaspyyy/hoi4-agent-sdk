@@ -480,6 +480,9 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             except (OSError, ValueError):
                 pass
             self._scan_cache[cache_key] = set()
+            # Characters of the game or a base mod, cached by this lookup:
+            # save() and discard() drop them with the section.
+            self._reload_on_discard.add("characters")
 
     @staticmethod
     def _all_character_roles(character: Character) -> tuple[CharacterRole, ...]:

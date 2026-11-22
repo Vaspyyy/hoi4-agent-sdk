@@ -367,10 +367,9 @@ _Fingerprint = tuple[int, int, bool]
 _RACY_NS = 2_000_000_000
 
 # One section loader at a time, in the whole process (loaders are plain
-# Python, so nothing is lost). It keeps two threads from running the same
-# loader at once. It does NOT make a ``Mod`` safe to share between threads:
-# a section's attributes exist, still half filled, while its loader runs (see
-# ``docs/internals/mod_sections.md``).
+# Python, so nothing is lost). A second thread that needs a section which is
+# loading waits here and then finds it complete (see ``CoreLayer.__getattr__``
+# and ``docs/internals/mod_sections.md``).
 _SECTION_LOCK = threading.RLock()
 
 
@@ -506,6 +505,10 @@ class CoreLayer:
         # Section bookkeeping comes first: ``__getattr__`` reads it.
         self._section_loaded: set[str] = set()
         self._section_loading: list[str] = []
+        # The values of a section while its loader runs, and the thread that
+        # runs it (see ``__getattr__``).
+        self._section_staged: dict[str, dict[str, object]] = {}
+        self._section_thread: int | None = None
         self._section_diagnostics: dict[str, list[LoadDiagnostic]] = {}
         # Files each section's loader put in ``_original_files``.
         self._section_files: dict[str, set[Path]] = {}
@@ -561,21 +564,41 @@ class CoreLayer:
             Python calls this only when normal lookup fails, so loaded
             attributes cost nothing. Names with two leading underscores and
             objects still being built (``copy``, ``pickle``) fail as usual.
+
+            While a section loads, its attributes are not on the object yet:
+            the loader's own thread is handed the half-filled values from
+            here, and any other thread waits until the section is complete.
             """
 
             if not name.startswith("__"):
-                loaded = self.__dict__.get("_section_loaded")
+                state = self.__dict__
+                loaded = state.get("_section_loaded")
                 section = type(self)._sections.by_attribute.get(name)
-                if loaded is not None and section is not None and section.name not in loaded:
-                    self._load_section(section.name)
-                    return self.__dict__[name]
+                if loaded is not None and section is not None:
+                    staged = state["_section_staged"].get(section.name)
+                    if staged is not None and state["_section_thread"] == threading.get_ident():
+                        return staged[name]
+                    if staged is not None or section.name not in loaded:
+                        self._load_section(section.name)
+                        return state[name]
             raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     def _load_section(self, name: str) -> None:
-        """Run one section's loader, once. Its data is empty until then."""
+        """Run one section's loader, once. Its data is empty until then.
+
+        One loader runs at a time (``_SECTION_LOCK``). A second thread that
+        needs the section waits here and finds it loaded.
+        """
 
         with _SECTION_LOCK:
-            self._load_section_locked(name)
+            outermost = not self._section_loading
+            if outermost:
+                self._section_thread = threading.get_ident()
+            try:
+                self._load_section_locked(name)
+            finally:
+                if outermost:
+                    self._section_thread = None
 
     def _load_section_locked(self, name: str) -> None:
         if name in self._section_loaded:
@@ -584,8 +607,11 @@ class CoreLayer:
             chain = " -> ".join((*self._section_loading, name))
             raise RuntimeError(f"Loading the {name} section needs the section itself: {chain}")
         section = self._sections.by_name[name]
-        for attribute, factory in section.data:
-            setattr(self, attribute, factory())
+        # The loader fills these through ``__getattr__``. They become
+        # attributes of the object only when the section is complete, so no
+        # other thread ever reads a half-filled section.
+        staged = {attribute: factory() for attribute, factory in section.data}
+        self._section_staged[name] = staged
         self._section_diagnostics[name] = []
         before = set(self._original_files)
         self._section_loading.append(name)
@@ -593,6 +619,7 @@ class CoreLayer:
             getattr(self, section.loader)()
         except BaseException as error:
             self._section_loading.pop()
+            del self._section_staged[name]
             for path in set(self._original_files) - before:
                 del self._original_files[path]
             self._forget_sections({name})
@@ -602,6 +629,10 @@ class CoreLayer:
             raise
         self._section_loading.pop()
         self._section_files[name] = set(self._original_files) - before
+        for attribute, value in staged.items():
+            # A loader may have assigned an attribute itself (a scalar).
+            self.__dict__.setdefault(attribute, value)
+        del self._section_staged[name]
         self._section_loaded.add(name)
 
     def __copy__(self) -> Self:
@@ -616,6 +647,8 @@ class CoreLayer:
         clone.__dict__.update(self.__dict__)
         clone._section_loaded = set(self._section_loaded)
         clone._section_loading = []
+        clone._section_staged = {}
+        clone._section_thread = None
         clone._section_diagnostics = dict(self._section_diagnostics)
         clone._section_files = {name: set(paths) for name, paths in self._section_files.items()}
         return clone
@@ -873,7 +906,18 @@ class CoreLayer:
             return True
         digest = self._read_digests.get(key)
         if digest is None:
-            return not _same_file_state(recorded, current)
+            held = self._original_files.get(key)
+            if held is not None:
+                digest = _text_digest(held)
+            elif os.environ.get("HOI4_VERIFY_RELOAD") == "1":
+                # The test suite runs with this switch: every reader whose
+                # text ends up in a written file has to note what it read.
+                raise AssertionError(
+                    f"{key} is about to be overwritten, but nothing noted what was read "
+                    "from it (_note_read): a touch would be refused and a change missed"
+                )
+            else:
+                return not _same_file_state(recorded, current)
         try:
             return digest != _text_digest(read_text(key))
         except (OSError, ValueError):

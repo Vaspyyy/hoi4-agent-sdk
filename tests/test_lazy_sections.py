@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import os
+import threading
 import time
 import warnings
 from pathlib import Path
@@ -426,3 +427,132 @@ def test_rollback_keeps_unsaved_edits_made_before(mod_root: Path) -> None:
     assert mod.preview() == preview
     mod.save()
     assert "before_title" in (mod_root / "events/test.txt").read_text(encoding="utf-8")
+
+
+# ── Threads ──────────────────────────────────────────────────────
+
+
+def test_a_second_thread_waits_for_a_section_that_is_loading(
+    mod_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No thread reads a half-filled section: reading from several threads works as before."""
+
+    started = threading.Event()
+    load_events = Mod._load_events
+
+    def slow_load(self: Mod) -> None:
+        started.set()
+        time.sleep(0.2)  # the second thread asks for the events in this window
+        load_events(self)
+
+    monkeypatch.setattr(Mod, "_load_events", slow_load)
+    mod = Mod(mod_root)
+    results: dict[str, list[str]] = {}
+
+    def first() -> None:
+        results["first"] = mod.list_events()
+
+    def second() -> None:
+        assert started.wait(5)
+        results["second"] = mod.list_events()
+
+    threads = [threading.Thread(target=first), threading.Thread(target=second)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert results == {"first": ["test.1"], "second": ["test.1"]}
+    assert "_events" in vars(mod)
+
+
+def test_a_loading_section_is_not_on_the_object_until_it_is_complete(
+    mod_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, object] = {}
+    load_events = Mod._load_events
+
+    def watching_load(self: Mod) -> None:
+        seen["before"] = "_events" in vars(self)
+        load_events(self)
+        seen["filled"] = sorted(self._events)
+        seen["after"] = "_events" in vars(self)
+
+    monkeypatch.setattr(Mod, "_load_events", watching_load)
+    mod = Mod(mod_root)
+
+    assert mod.list_events() == ["test.1"]
+    assert seen == {"before": False, "filled": ["test.1"], "after": False}
+    assert "_events" in vars(mod)
+
+
+# ── Lookups of game content ──────────────────────────────────────
+
+
+@pytest.fixture
+def game_root(tmp_path: Path) -> Path:
+    game = tmp_path / "game"
+    _write(game, "common/country_tags/00_countries.txt", 'GER = "countries/Germany.txt"\n')
+    _write(game, "common/countries/Germany.txt", "color = { 1 2 3 }\n")
+    _write(
+        game,
+        "history/countries/GER - Germany.txt",
+        "capital = 1\noob = \"GER_1936\"\nset_popularities = { neutrality = 50 }\n"
+        "recruit_character = GER_leader\n",
+    )
+    _write(game, "history/states/1-Game.txt", STATE)
+    _write(
+        game,
+        "common/characters/GER.txt",
+        "characters = {\n\tGER_leader = { name = GER_leader }\n}\n",
+    )
+    _write(
+        game,
+        "history/units/GER_1936.txt",
+        'division_template = {\n\tname = "Inf"\n\tregiments = { infantry = { x = 0 y = 0 } }\n}\n'
+        "units = { }\n",
+    )
+    return game
+
+
+@pytest.mark.parametrize("ending", ["save", "discard"])
+def test_game_content_a_lookup_cached_is_gone_after_save_and_discard(
+    tmp_path: Path, game_root: Path, ending: str
+) -> None:
+    """A lookup caches what it read from the game; a list must not keep naming it."""
+
+    root = tmp_path / "mod"
+    _write(root, "events/test.txt", EVENTS)
+
+    def listed(mod: Mod) -> tuple[object, ...]:
+        return (
+            mod.list_countries(),
+            mod.list_states(),
+            mod.list_characters(include_vanilla=False),
+            mod.list_oobs(include_vanilla=False),
+        )
+
+    def findings(mod: Mod) -> list[tuple[str | None, str]]:
+        return sorted((f.code, f.message) for f in mod.validate(stage="build"))
+
+    fresh = Mod(root, hoi4_install=game_root)
+    expected, expected_findings = listed(fresh), findings(Mod(root, hoi4_install=game_root))
+    assert expected == ([], [], [], [])
+
+    mod = Mod(root, hoi4_install=game_root)
+    mod.get_country("GER")
+    mod.get_state(1)
+    mod.get_character("GER_leader")
+    mod.get_oob("GER_1936")
+    mod.update_event("test.1", title="new_title")
+    if ending == "save":
+        mod.save()
+    else:
+        mod.discard()
+
+    assert listed(mod) == expected
+    assert findings(mod) == expected_findings
+    # validate() looks game content up as well: the same holds after it.
+    mod.update_event("test.1", title="another_title")
+    mod.discard()
+    assert listed(mod) == expected

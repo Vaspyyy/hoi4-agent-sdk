@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Iterable
 
-from ._disk_cache import DiskAnalysis
+from ._disk_cache import DiskAnalysis, string_map
 from ._file_cache import cached_file_result
 from .textio import decode_text, read_text, write_text
 
@@ -188,7 +188,7 @@ def localization_file_entries(path: Path) -> dict[str, str]:
 
 #: How :func:`localization_file_entries` results go to disk and back.
 LOCALISATION_ON_DISK: DiskAnalysis[dict[str, str]] = DiskAnalysis(
-    "localisation_entries", dict, dict
+    "localisation_entries", dict, string_map
 )
 
 

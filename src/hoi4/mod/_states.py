@@ -203,6 +203,11 @@ class StatesLayer(CoreLayer):
             state = read_state(f)
             self._states[state_id] = state
             self._state_source_paths.setdefault(state_id, f)
+            if not f.is_relative_to(self.mod_root):
+                # A state of the game or a base mod, cached by this lookup:
+                # save() and discard() drop it with the section, as a full
+                # reload used to, so list_states() names the mod's again.
+                self._reload_on_discard.add("states")
             text = read_text(f)
             self._original_files.setdefault(f, text)
             self._note_read(f, text)

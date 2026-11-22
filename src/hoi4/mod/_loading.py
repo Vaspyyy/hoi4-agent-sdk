@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import cast
 
-from .._disk_cache import DiskAnalysis
+from .._disk_cache import DiskAnalysis, string_map
 from ..bookmarks import (
     load_bookmarks_file,
 )
@@ -58,8 +58,14 @@ from ._shared import (
 )
 
 #: ``tag -> {key: text}`` of one localisation file (see ``country_loc_entries``).
+def _country_loc_from_disk(data: object) -> dict[str, dict[str, str]]:
+    if not isinstance(data, dict):
+        raise TypeError("stored country texts must be a map")
+    return {str(tag): string_map(entries) for tag, entries in data.items()}
+
+
 _COUNTRY_LOC_ON_DISK: DiskAnalysis[dict[str, dict[str, str]]] = DiskAnalysis(
-    "country_loc_entries", dict, dict
+    "country_loc_entries", dict, _country_loc_from_disk
 )
 
 

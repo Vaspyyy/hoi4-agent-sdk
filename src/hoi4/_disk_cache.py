@@ -111,8 +111,26 @@ def _sorted_strings(values: frozenset[str]) -> list[str]:
     return sorted(values)
 
 
+def _strings(data: object) -> frozenset[str]:
+    """A stored list of names. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        raise TypeError("a stored set of names must be a list of strings")
+    return frozenset(data)
+
+
+def string_map(data: object) -> dict[str, str]:
+    """A stored ``text -> text`` map. Anything else is a damaged entry and is read again."""
+
+    if not isinstance(data, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in data.items()
+    ):
+        raise TypeError("a stored map must map strings to strings")
+    return dict(data)
+
+
 #: A set of names read from one file (scripted effects, division templates).
-NAMES_ON_DISK: DiskAnalysis[frozenset[str]] = DiskAnalysis("names", _sorted_strings, frozenset)
+NAMES_ON_DISK: DiskAnalysis[frozenset[str]] = DiskAnalysis("names", _sorted_strings, _strings)
 
 
 def _pairs_to_lists(pairs: tuple[tuple[str, str], ...]) -> list[list[str]]:

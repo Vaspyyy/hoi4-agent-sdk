@@ -199,10 +199,13 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             )
             self._oobs[name] = oob
             if path.resolve(strict=False).is_relative_to(self.mod_root):
-                self._original_files.setdefault(
-                    path,
-                    read_text(path),
-                )
+                text = read_text(path)
+                self._original_files.setdefault(path, text)
+                self._note_read(path, text)
+            else:
+                # An OOB of the game or a base mod, cached by this lookup:
+                # save() and discard() drop it with the section.
+                self._reload_on_discard.add("oobs")
             return oob
         raise KeyError(f"OOB '{name}' not found")
 

@@ -201,6 +201,24 @@ def test_a_broken_store_file_is_ignored_and_rebuilt(
     assert json.loads(target.read_text(encoding="utf-8"))["entries"]
 
 
+def test_a_damaged_entry_of_names_is_computed_again(store: Path, tmp_path: Path) -> None:
+    """A string where a list of names belongs must not be read as a set of its letters."""
+
+    path = write(tmp_path / "game", "common/a.txt", "alpha beta")
+    compute = Counted()
+    read_through(path, compute)
+    disk_cache.flush()
+    (target,) = store.glob("names-*.json")
+    data = json.loads(target.read_text(encoding="utf-8"))
+    for entry in data["entries"].values():
+        entry[2] = "POISON"
+    target.write_text(json.dumps(data), encoding="utf-8")
+
+    new_process()
+    assert read_through(path, compute) == {"alpha", "beta"}
+    assert compute.calls == 2
+
+
 def test_an_entry_of_the_wrong_shape_is_computed_again(store: Path, tmp_path: Path) -> None:
     path = write(tmp_path / "game", "common/a.txt", "alpha beta")
     analysis = DiskAnalysis("shapes", list, lambda data: data["missing"])

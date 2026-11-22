@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, Sequence, TypeVar, cast
 
 from ..paths import (
     resolve_mod_output_path,
@@ -13,6 +13,9 @@ from ..paths import (
 from ..types import (
     ValidationError,
 )
+
+
+_Parsed = TypeVar("_Parsed")
 
 
 class ExternalModificationError(RuntimeError):
@@ -52,6 +55,25 @@ def _set_fields(obj: object, kwargs: dict[str, Any], *, allow_path: bool = False
         if key in ("prerequisites", "mutually_exclusive") and isinstance(value, list):
             value = _ensure_nested(value)
         setattr(obj, key, value)
+
+
+def _keep_recent(
+    previous: dict[str, _Parsed], current: dict[str, _Parsed], *, floor: int = 64
+) -> dict[str, _Parsed]:
+    """A cache keyed by exact text, after one run: this run's entries and the newest older ones.
+
+    An edit that is undone (a transaction that rolls back) finds its text
+    again, and a long session of edits does not keep every text it ever saw:
+    the result holds at most three times the entries of this run, and at
+    least ``floor``.
+    """
+
+    kept = {key: value for key, value in previous.items() if key not in current}
+    kept.update(current)
+    limit = max(floor, 3 * len(current))
+    for key in list(kept)[: max(0, len(kept) - limit)]:
+        del kept[key]
+    return kept
 
 
 def _join_script_parts(parts: Sequence[str | None]) -> str:

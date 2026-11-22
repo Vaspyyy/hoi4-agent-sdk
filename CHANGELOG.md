@@ -208,13 +208,10 @@ All notable changes to this project are documented here. The format follows
   built. A file that was changed, touched or created in between is read as
   it is then, which is what a fresh `Mod` would see, and can be edited and
   saved. A change after the SDK read the file is still refused by `save()`.
-- **A `Mod` shared between threads needs more care than before.** It was
-  never safe to change one from two threads, but reading one from several
-  threads used to work, because everything was loaded at construction. Now
-  a section loads on first use, and a second thread that reads the same
-  content while it loads gets an incomplete answer without an error. Use
-  one `Mod` per thread, your own lock, or `Mod(..., strict_loading=True)`,
-  which loads everything up front as before.
+- Reading one `Mod` from several threads keeps working, although content
+  now loads on first use: a thread that asks for a section while another
+  thread loads it waits until the section is complete. (Changing a `Mod`
+  from two threads was never safe and still is not.)
 - With base mods, the files below a folder are read in one fixed order on
   every Python version and file system. Before, the order was that of
   `Path.rglob` of the running Python and of the temporary copy's file

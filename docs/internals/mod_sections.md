@@ -123,18 +123,23 @@ Two questions are asked of them, with different care:
 
 ## Threads
 
-A `Mod` is not safe to share between threads, and lazy loading makes that
-matter more than before: while a section's loader runs, the section's
-attributes already exist and are half filled, so a second thread that asks
-for the same content at that moment gets an incomplete answer without an
-error. One lock (`_SECTION_LOCK`) lets only one loader run at a time, which
-keeps two threads from running the same loader, and nothing more.
+Reading one `Mod` from several threads works as it did when everything was
+loaded at construction: no thread ever sees a half-filled section.
 
-Use one `Mod` per thread (as `docs/api.md` has always said), or guard a
-shared one with your own lock. For read-only use from several threads,
-`Mod(..., strict_loading=True)` loads every section at construction and
-again after each `save()` and `discard()`, so no section loads in the
-middle of a read.
+- One loader runs at a time in the whole process (`_SECTION_LOCK`, a
+  re-entrant lock; a loader may load another section).
+- While a loader runs, the section's values are kept in `_section_staged`,
+  not on the object. The loader's own thread (`_section_thread`) gets them
+  through `__getattr__`; for any other thread the attribute is still
+  missing, so it lands in `__getattr__` too, waits for the lock and finds
+  the section complete. The values become attributes only at the end.
+- The price is one `__getattr__` call per access while a section loads,
+  which is not measurable on a large mod (loading every section of a mod
+  with 11,297 files: 6.3 s before and after).
+
+Changing a `Mod` from two threads was never safe and still is not: edits,
+`save()`, `discard()` and `validate()` are not guarded. Use one `Mod` per
+thread for that (as `docs/api.md` says), or your own lock.
 
 ## The reload check
 

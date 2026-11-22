@@ -549,7 +549,8 @@ class MapLayer(StatesLayer, CatalogsLayer):
             and self._mod_hides_inherited(Path(relative))
         ):
             return None
-        return read_text(source)
+        # What is read here is what an edit of the map file builds on.
+        return self._keep_source(source, read_text(source))
 
     def _queue_map_text(self, relative: str, text: str) -> None:
         resolve_mod_output_path(self.mod_root, relative)
