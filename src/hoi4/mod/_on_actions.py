@@ -139,6 +139,13 @@ class OnActionsLayer(CoreLayer):
             return actions[occurrence]
         if default is not MISSING:
             return default
+        if actions:
+            raise NotFoundError(
+                f"On-action '{action_id}' occurrence {occurrence} is out of range "
+                f"for {len(actions)} matching occurrence(s).",
+                kind="on-action occurrence",
+                id=occurrence,
+            )
         raise not_found("on-action", action_id, self.list_on_actions(include_vanilla=include_vanilla))
 
     def create_on_action(
