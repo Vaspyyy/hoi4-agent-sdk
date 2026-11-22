@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from hoi4 import EventOption, Focus, Mod, NotFoundError, ReadOnlyError
+from hoi4 import BookmarkCountry, EventOption, Focus, Mod, NotFoundError, ReadOnlyError
 
 
 def write(root: Path, path: str, text: str) -> None:
@@ -292,6 +292,7 @@ _MATRIX = {
     "idea": ("common/ideas", "ideas = {{ country = {{ {id} = {{ picture = {marker} }} }} }}", "get_idea", "list_ideas"),
     "decision": ("common/decisions", "matrix_category = {{ {id} = {{ cost = 1 }} }}", "get_decision", "list_decisions"),
     "decision_category": ("common/decisions/categories", "{id} = {{ icon = {marker} }}", "get_decision_category", "list_decision_categories"),
+    "bookmark": ("common/bookmarks", "bookmarks = {{ bookmark = {{ name = {id} desc = {marker} date = 1936.1.1.12 GER = {{ history = old }} }} }}", "get_bookmark", "list_bookmarks"),
 }
 
 
@@ -378,9 +379,10 @@ def test_matrix_lookup_does_not_stage(layered_content) -> None:
 def test_matrix_inherited_object_is_a_copy(layered_content) -> None:
     kind, mod, game, base, root, ids, get, listing, put = layered_content
     obj = get("game")
-    old = obj.id
-    obj.id = "changed"
-    assert get("game").id == old
+    field = "name" if kind == "bookmark" else "id"
+    old = getattr(obj, field)
+    setattr(obj, field, "changed")
+    assert getattr(get("game"), field) == old
 
 
 @pytest.mark.parametrize("edit", ["update", "delete", "add_option", "update_option", "namespace"])
@@ -566,3 +568,39 @@ def test_inherited_category_combines_decision_files(tmp_path: Path) -> None:
     category = Mod(root, hoi4_install=game).get_decision_category("joined")
     assert category.icon == "category_icon"
     assert [decision.id for decision in category.decisions] == ["first_decision", "second_decision"]
+
+
+@pytest.mark.parametrize("layered_content", ["bookmark"], indirect=True)
+@pytest.mark.parametrize("edit", ["update", "delete", "add_country", "update_country", "delete_country"])
+def test_matrix_bookmark_edit_requires_staged_file(layered_content, edit: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    operations = {
+        "update": lambda: mod.update_bookmark(ids["game"], description="changed"),
+        "delete": lambda: mod.delete_bookmark(ids["game"]),
+        "add_country": lambda: mod.add_bookmark_country(ids["game"], BookmarkCountry(tag="FRA")),
+        "update_country": lambda: mod.update_bookmark_country(ids["game"], "GER", history="changed"),
+        "delete_country": lambda: mod.delete_bookmark_country(ids["game"], "GER"),
+    }
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError) as error:
+        operations[edit]()
+    assert 'mod.load_inherited_content("common/bookmarks/game.txt")' in str(error.value)
+    assert mod.preview() == before
+    mod.load_inherited_content("common/bookmarks/game.txt")
+    operations[edit]()
+    assert mod.save(require_changes=True).written_files
+    assert (root / "common/bookmarks/game.txt").exists()
+
+
+@pytest.mark.parametrize("layered_content", ["bookmark"], indirect=True)
+@pytest.mark.parametrize("action", ["discard", "save", "reload"])
+def test_matrix_bookmark_cache_clears(layered_content, action: str) -> None:
+    kind, mod, game, base, root, ids, get, listing, put = layered_content
+    assert get("game").description == "game"
+    put(game, "game", "game", "changed")
+    if action == "save":
+        with pytest.warns(RuntimeWarning):
+            mod.save(require_changes=False)
+    else:
+        getattr(mod, action)()
+    assert get("game").description == "changed"
