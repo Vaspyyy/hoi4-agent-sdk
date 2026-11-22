@@ -17,6 +17,7 @@ from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
+    _require_items,
     _set_fields,
 )
 
@@ -100,11 +101,13 @@ class IdeologiesLayer(CoreLayer):
             The new ideology.
 
         Raises:
+            TypeError: ``types`` holds something that is not a ``SubIdeology``; nothing changed.
             AlreadyExistsError: The mod defines the id and ``overwrite`` is false.
             ValueError: The id is not a valid script id, or ``path`` is
                 outside the mod.
         """
         ideology_id = require_script_id(ideology_id, label="ideology ID")
+        types = _require_items("create_ideology", "types", types or [], (SubIdeology,))
         existing = self._ideologies.get(ideology_id)
         if existing is not None and not overwrite:
             raise AlreadyExistsError(

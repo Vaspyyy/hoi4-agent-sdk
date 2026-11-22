@@ -24,7 +24,7 @@ from ..paths import (
 from ..textio import read_text
 from ..errors import AlreadyExistsError, NotFoundError, not_found
 from ._countries import CountriesLayer
-from ._shared import MISSING, _D, _Missing, _check_field_names
+from ._shared import MISSING, _D, _Missing, _check_field_names, _check_model_lists
 from ._localisation import LocalisationLayer
 
 
@@ -216,7 +216,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
 
         Raises:
             NotFoundError: No character has this id.
-            TypeError: A field name is unknown; nothing changed.
+            TypeError: A field name is unknown, or ``portraits`` holds something
+                that is not a ``CharacterPortrait``; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
         character = self.get_character(character_id)
@@ -227,6 +228,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 "is not supported."
             )
         _check_field_names("update_character", dict(kwargs), {"name", "portraits"})
+        _check_model_lists("update_character", Character, kwargs)
         self._materialize_character_override(character)
         for key, value in kwargs.items():
             setattr(character, key, copy.deepcopy(value))
@@ -244,16 +246,16 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         remove_recruitment: bool = True,
     ) -> None:
-        """Stage the deletion of a loaded character and its localisation.
+        """Stage the deletion of a character and the localisation the mod holds for it.
 
         ``remove_recruitment`` also removes it from its country's
-        ``recruit_character`` list. A character loaded from the game or a
-        base mod is deleted by writing an override of its file.
+        ``recruit_character`` list. A character of the game or a base mod
+        is deleted by writing an override of its file.
 
         Raises:
-            NotFoundError: No loaded character has this id.
+            NotFoundError: No character has this id.
         """
-        character = self.get_character(character_id, include_vanilla=False)
+        character = self.get_character(character_id)
         self._materialize_character_override(character)
         self._characters.pop(character.id, None)
         if character.path is not None:
@@ -323,6 +325,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         _check_field_names(
             "update_character_instance", dict(kwargs), {"allowed", "name", "portraits"}
         )
+        _check_model_lists("update_character_instance", CharacterInstance, kwargs)
         self._materialize_character_override(character)
         instance = character.instances[occurrence]
         for key, value in kwargs.items():
@@ -592,7 +595,10 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         source_text = read_text(source)
         for item in load_characters_file(source, country_tag=character.country_tag):
             cached = self._characters.get(item.id)
-            if cached is not None and cached.path == source:
+            if cached is None and item.id != character.id:
+                item.path = target
+                self._characters[item.id] = item
+            elif cached is not None and cached.path == source:
                 cached.path = target
         self._original_files.setdefault(
             target,

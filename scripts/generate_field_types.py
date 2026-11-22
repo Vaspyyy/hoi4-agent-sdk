@@ -156,6 +156,7 @@ SPECS: tuple[ModelDict | EnsureDict | OptionsDict, ...] = (
                   ("mutually_exclusive", list[list[str]] | list[str]),
               )),
     ModelDict("IdeaFields", ("update_idea",), (Idea,), allow_path=True,
+              refused=frozenset({"desc"}),
               overrides=(("path", PATH_VALUE),)),
     ModelDict("IdeologyFields", ("update_ideology",), (Ideology,), allow_path=True,
               overrides=(("path", PATH_VALUE),)),

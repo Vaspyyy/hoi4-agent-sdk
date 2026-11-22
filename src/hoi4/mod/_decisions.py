@@ -24,6 +24,7 @@ from ._localisation import LocalisationLayer
 from ._shared import (
     _decision_category_definition_path,
     _check_field_names,
+    _typed_dict_keys,
     _check_fields,
     _create_arguments,
     _join_script_parts,
@@ -60,6 +61,29 @@ def _insert_in_file_order(category: DecisionCategory, decision: Decision) -> Non
             category.decisions.insert(index, decision)
             return
     category.decisions.append(decision)
+
+
+#: The keys a step of ``create_decision_chain()`` may have.
+_CHAIN_STEP_KEYS = frozenset(
+    {
+        "id",
+        "flag",
+        "icon",
+        "cost",
+        "days_remove",
+        "fire_only_once",
+        "visible",
+        "available",
+        "complete_effect",
+        "remove_effect",
+        "ai_will_do",
+        "event",
+        "event_days",
+        "clear_flags",
+        "loc_name",
+        "loc_desc",
+    }
+)
 
 
 class DecisionsLayer(LocalisationLayer):
@@ -507,6 +531,30 @@ class DecisionsLayer(LocalisationLayer):
         self._scan_cache["inherited_decision_categories"] = set(ids)
         return ids
 
+    def _category_for_new_decisions(
+        self, category_id: str, *, icon: str = "", path: str | Path | None = None
+    ) -> None:
+        """Make sure ``category_id`` is there for decisions that are about to be created.
+
+        A category the mod defines is updated with ``icon`` and ``path``. A
+        category no one defines is created. A category that only the game or
+        a base mod defines is left alone unless an ``icon`` is asked for:
+        ``create_decision()`` adds to it, and a definition written here would
+        replace theirs (the icon and the conditions of the category).
+        """
+        fields: EnsureDecisionCategoryFields = {}
+        if icon:
+            fields["icon"] = icon
+        if path is not None:
+            fields["path"] = path
+        if category_id in self._decision_categories:
+            if fields:
+                self.ensure_decision_category(category_id, **fields)
+            return
+        if not icon and category_id in self._inherited_decision_category_ids():
+            return
+        self.ensure_decision_category(category_id, **fields)
+
     def _extend_inherited_decision_category(
         self, category_id: str, path: str | Path | None
     ) -> DecisionCategory:
@@ -630,14 +678,18 @@ class DecisionsLayer(LocalisationLayer):
 
         Each step sets a country flag (``<id>_done`` unless the step names
         its ``flag``) that the next step's ``visible`` and ``available``
-        require. The category is created or updated with ``category_icon``
-        and ``path``. Each step is a dict with at least ``id`` unless
+        require. A category the mod defines is updated with ``category_icon``
+        and ``path``, and a category no one defines is created. A category
+        of the game or a base mod only gets the decisions added (as with
+        ``create_decision()``); pass ``category_icon`` to give it a
+        definition of the mod's own, which replaces theirs. Each step is a
+        dict with at least ``id`` unless
         ``prefix`` is supplied (the id is then ``<prefix>_<n>``, counting
         from 1). Common keys are ``icon``, ``cost``, ``days_remove``,
         ``fire_only_once``, ``visible``, ``available``, ``complete_effect``,
-        ``remove_effect``, ``ai_will_do``, ``event`` (with ``event_days``),
-        ``clear_flags``, ``loc_name`` and ``loc_desc``. A string step is
-        treated as ``{"id": step}``.
+        ``remove_effect``, ``ai_will_do``, ``flag``, ``event`` (with
+        ``event_days``), ``clear_flags``, ``loc_name`` and ``loc_desc``. A
+        string step is treated as ``{"id": step}``.
 
         Args:
             icon: The icon of steps that name none.
@@ -649,10 +701,12 @@ class DecisionsLayer(LocalisationLayer):
             The decisions, in step order.
 
         Raises:
+            TypeError: A step has a key that is not one of the keys above;
+                nothing changed.
             ValueError: ``steps`` is empty, a step has neither an id nor a
-                prefix, or an id is not valid.
-            NotFoundError: With a game install configured, the category is
-                not defined (see ``create_decision()``).
+                prefix, an id is not valid, or a step exists in another
+                category.
+            AlreadyExistsError: One id is in ``steps`` twice.
         """
         if not steps:
             raise ValueError("create_decision_chain() requires at least one step")
@@ -660,13 +714,22 @@ class DecisionsLayer(LocalisationLayer):
         # Work out and check every step before the first change, so a call
         # that raises leaves nothing staged.
         planned: list[tuple[str, dict[str, Any], Mapping[str, Any]]] = []
+        planned_ids: set[str] = set()
         previous_flag = ""
         for index, raw_step in enumerate(steps, start=1):
             step = {"id": raw_step} if isinstance(raw_step, str) else dict(raw_step)
+            _check_field_names(
+                "create_decision_chain", step, _CHAIN_STEP_KEYS, where=f" in step {index}"
+            )
             decision_id = str(step.get("id") or (f"{prefix}_{index}" if prefix else ""))
             if not decision_id:
                 raise ValueError("Decision chain steps need an id or a prefix")
             decision_id = require_script_id(decision_id, label="decision ID")
+            if decision_id in planned_ids:
+                raise AlreadyExistsError(
+                    f"create_decision_chain(): decision '{decision_id}' is in this call twice."
+                )
+            planned_ids.add(decision_id)
             existing = self.get_decision(decision_id, include_vanilla=False, default=None)
             if existing is not None and not overwrite and existing.category != category_id:
                 raise ValueError(
@@ -719,12 +782,7 @@ class DecisionsLayer(LocalisationLayer):
             planned.append((decision_id, create_kwargs, step))
             previous_flag = flag
 
-        category_kwargs: EnsureDecisionCategoryFields = {}
-        if category_icon:
-            category_kwargs["icon"] = category_icon
-        if path is not None:
-            category_kwargs["path"] = path
-        self.ensure_decision_category(category_id, **category_kwargs)
+        self._category_for_new_decisions(category_id, icon=category_icon, path=path)
         decisions: list[Decision] = []
         for decision_id, create_kwargs, planned_step in planned:
             if overwrite:
@@ -770,6 +828,7 @@ class DecisionsLayer(LocalisationLayer):
             The new mission.
 
         Raises:
+            TypeError: A keyword is not one of ``create_decision()``'s; nothing changed.
             TypeError: ``days_mission_timeout`` is not a whole number.
             ValueError: ``days_mission_timeout`` is not positive, or a cost
                 was given.
@@ -784,6 +843,11 @@ class DecisionsLayer(LocalisationLayer):
             raise ValueError("days_mission_timeout must be positive")
         if kwargs.get("cost") or kwargs.get("custom_cost_trigger"):
             raise ValueError("Missions cannot have cost or custom_cost_trigger")
+        _check_field_names(
+            "create_mission",
+            kwargs,
+            _typed_dict_keys(MissionOptions) | {"cost", "custom_cost_trigger"},
+        )
         decision = self.create_decision(
             category_id,
             decision_id,
@@ -834,12 +898,16 @@ class DecisionsLayer(LocalisationLayer):
             The new decision.
 
         Raises:
+            TypeError: A keyword is not one of ``create_decision()``'s; nothing changed.
             ValueError: No targeting field is set, or a target is not valid.
             AlreadyExistsError: The id exists and ``overwrite`` is false.
             NotFoundError: With a game install configured, the category is
                 not defined.
         """
         kwargs: dict[str, Any] = dict(fields)
+        _check_field_names(
+            "create_targeted_decision", kwargs, _typed_dict_keys(TargetedDecisionOptions)
+        )
         if not (target_trigger.strip() or targets or target_array or state_target):
             raise ValueError(
                 "A targeted decision needs target_trigger, targets, target_array, "
@@ -897,10 +965,7 @@ class DecisionsLayer(LocalisationLayer):
         # The decision is checked before the category changes, so a call
         # that raises leaves nothing staged.
         self._require_new_decision_id(decision_id, overwrite=overwrite)
-        if path is not None:
-            self.ensure_decision_category(category_id, path=path)
-        elif category_id not in self._decision_categories:
-            self.create_decision_category(category_id)
+        self._category_for_new_decisions(category_id, path=path)
         visible_body = visible or ("always = no" if hidden else "")
         decision = self.create_decision(
             category_id,

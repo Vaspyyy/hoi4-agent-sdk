@@ -335,7 +335,9 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "idea",
-        _fields(Idea),
+        # ``desc`` is read from old files but cannot be set: the game takes
+        # an idea's description from localisation only.
+        [(name, make) for name, make in _fields(Idea) if name != "desc"],
         create=lambda mod: mod.create_idea("zz_idea"),
         update=lambda mod, field, value: mod.update_idea("zz_idea", **{field: value}),
         create_with=lambda mod, field, value: mod.create_idea("zz_idea", **{field: value}),

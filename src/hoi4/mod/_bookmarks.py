@@ -27,6 +27,7 @@ from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
     _check_fields,
+    _require_items,
     _set_fields,
 )
 
@@ -99,6 +100,7 @@ class BookmarksLayer(CoreLayer):
             The new bookmark.
 
         Raises:
+            TypeError: ``countries`` holds something that is not a ``BookmarkCountry``; nothing changed.
             AlreadyExistsError: A bookmark of this name exists and
                 ``overwrite`` is false.
             ValueError: A country tag or a DLC name is not valid, or ``path``
@@ -117,7 +119,9 @@ class BookmarksLayer(CoreLayer):
             / "bookmarks"
             / f"{safe_file_stem(name, fallback='bookmark')}.txt"
         )
-        selected_countries = list(countries or [])
+        selected_countries: list[BookmarkCountry] = _require_items(
+            "create_bookmark", "countries", countries or [], (BookmarkCountry,)
+        )
         for country in selected_countries:
             country.tag = require_bookmark_country_key(country.tag)
             country.required_dlc = normalize_required_dlc(country.required_dlc)

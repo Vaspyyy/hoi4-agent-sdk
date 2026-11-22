@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from hoi4.ideas import (
     detect_ideas_container,
     read_ideas_file,
@@ -294,7 +296,11 @@ def test_mod_description_edit_does_not_rebuild_unrelated_nested_blocks(
     from hoi4 import Mod
 
     mod = Mod(tmp_path)
-    mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    # ``desc`` cannot be set (it is localisation); a rewrite of the idea
+    # drops the old ``desc =`` line and nothing else.
+    with pytest.raises(TypeError, match="set_loc"):
+        mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    mod.update_idea("custom_spirit")
     mod.save()
 
     assert path.read_text(encoding="utf-8") == original.replace(

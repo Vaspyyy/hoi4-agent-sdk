@@ -620,7 +620,11 @@ def serialize_oob(oob: OrderOfBattle) -> str:
             parts.append(f"units = {{\n{units_body}\n}}")
         if oob.air_wings:
             parts.append(_serialize_air_wings(oob.air_wings))
-        return "\n\n".join(parts) + ("\n" if parts else "")
+        if not parts:
+            # An order of battle without content is still a file: a country
+            # that is assigned it must find it.
+            return "units = {\n}\n"
+        return "\n\n".join(parts) + "\n"
     if not oob.touched_fields:
         return text
     if "templates" in oob.touched_fields:

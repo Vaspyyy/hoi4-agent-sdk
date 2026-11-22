@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Unpack
 
 from pathlib import Path
@@ -14,6 +15,7 @@ from ..characters import (
 )
 from ..countries import (
     _country_localisation_suffixes,
+    country_color_tags,
     country_file_paths,
     country_history_target,
     serialize_country_colors_file,
@@ -34,6 +36,44 @@ from ._shared import (
     _set_fields,
     _settable_fields,
 )
+
+
+def _check_country_values(method: str, values: Mapping[str, Any], *, allow_none: bool) -> None:
+    """Refuse a colour, a list or a mapping of the wrong shape before anything changes.
+
+    These values are only read when the country's files are written. A wrong
+    shape used to raise in the middle of the call or later in ``preview()``,
+    with the country already changed.
+    """
+    for name in ("popularities", "technologies"):
+        if name not in values or (values[name] is None and allow_none):
+            continue
+        value = values[name]
+        if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
+            raise TypeError(
+                f"{method}(): {name} must be a dict of names to numbers, "
+                f"got {type(value).__name__}"
+            )
+    if "ideas" in values and not (values["ideas"] is None and allow_none):
+        value = values["ideas"]
+        if not isinstance(value, (list, tuple)) or not all(isinstance(item, str) for item in value):
+            raise TypeError(f"{method}(): ideas must be a list of idea ids, got {value!r}")
+    for name in ("color", "color_ui"):
+        if name not in values or (values[name] is None and (allow_none or name == "color_ui")):
+            continue
+        value = values[name]
+        if (
+            not isinstance(value, (tuple, list))
+            or len(value) != 3
+            or not all(
+                isinstance(part, int) and not isinstance(part, bool) and 0 <= part <= 255
+                for part in value
+            )
+        ):
+            raise ValueError(
+                f"{method}(): {name} must be three whole numbers from 0 to 255 "
+                f"(red, green, blue), got {value!r}"
+            )
 
 
 class CountryAuthoringLayer(CharactersLayer):
@@ -87,6 +127,7 @@ class CountryAuthoringLayer(CharactersLayer):
             The new country.
 
         Raises:
+            TypeError: ``ideas``, ``popularities`` or ``technologies`` is not a list or a dict as described; nothing changed.
             AlreadyExistsError: The mod defines ``tag`` or the character
                 ``<TAG>_leader_1`` and ``overwrite`` is false, or the game or
                 a base mod defines ``tag`` and ``overwrite_vanilla`` is false.
@@ -96,6 +137,12 @@ class CountryAuthoringLayer(CharactersLayer):
             ValueError: ``tag`` is not a valid tag.
         """
         tag = require_country_tag(tag)
+        _check_country_values(
+            "create_country",
+            {"color": color, "popularities": popularities, "ideas": ideas,
+             "technologies": technologies},
+            allow_none=True,
+        )
         existing = self._countries.get(tag)
         if existing is not None and not overwrite:
             raise AlreadyExistsError(
@@ -224,6 +271,17 @@ class CountryAuthoringLayer(CharactersLayer):
 
         return country
 
+    def _has_color_table_entry(self, tag: str) -> bool:
+        """Whether a save writes this tag's colours to ``common/countries/colors.txt``.
+
+        The same test as the save uses: a tag of the game or a base mod, or one
+        the mod's own table already lists.
+        """
+        if tag in self._vanilla_tags:
+            return True
+        table = self._read_current_text(self.mod_root / "common" / "countries" / "colors.txt")
+        return tag in country_color_tags(table)
+
     def update_country(self, tag: str, **fields: Unpack[CountryFields]) -> Country:
         """Patch modeled country fields; ``leader_<field>`` sets the leader's fields.
 
@@ -235,7 +293,9 @@ class CountryAuthoringLayer(CharactersLayer):
         Raises:
             NotFoundError: No one defines ``tag``.
             TypeError: A field name is unknown; nothing changed.
-            ValueError: ``tag`` is not a valid tag.
+            ValueError: ``tag`` is not a valid tag, or ``color_ui`` is set for
+                a country that is not in the colour table (a country the
+                mod adds: the game uses its map colour).
         """
         kwargs: dict[str, Any] = dict(fields)
         tag = require_country_tag(tag)
@@ -265,6 +325,15 @@ class CountryAuthoringLayer(CharactersLayer):
             {f"leader_{key}": value for key, value in leader_kwargs.items()},
             leader_fields,
         )
+        _check_country_values("update_country", other_kwargs, allow_none=False)
+        if other_kwargs.get("color_ui") is not None and not self._has_color_table_entry(tag):
+            raise ValueError(
+                f"update_country(): color_ui of '{tag}' cannot be set: a save would not "
+                "write it. A UI colour is written for a country of the game's colour "
+                "table and for one the mod's saved common/countries/colors.txt lists. "
+                "A country the mod adds takes its map colour from its own file, which "
+                "has no color_ui."
+            )
         self._materialize_country_override(country)
         if other_kwargs:
             _set_fields(country, other_kwargs)

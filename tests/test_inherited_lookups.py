@@ -243,3 +243,25 @@ def test_localisation_mod_only_excludes_base_layers(tmp_path: Path) -> None:
     assert mod.get_loc("game_key", include_vanilla=False, default=None) is None
     mod.set_loc("base_key", "Changed")
     assert mod.get_loc("base_key", include_vanilla=False) == "Changed"
+
+
+@pytest.mark.parametrize("delete", [False, True])
+def test_edit_inherited_character_preserves_other_file_entries(tmp_path: Path, delete: bool) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    source = "characters = { GER_one = { name = ONE } GER_two = { name = TWO } }\n"
+    write(game, "common/characters/GER.txt", source)
+    mod = Mod(root, hoi4_install=game)
+    if delete:
+        mod.delete_character("GER_one", remove_recruitment=False)
+    else:
+        mod.update_character("GER_one", name="NEW")
+    result = mod.save(require_changes=True)
+    assert result.written_files
+    assert (game / "common/characters/GER.txt").read_text() == source
+    reloaded = Mod(root, hoi4_install=game)
+    assert reloaded.get_character("GER_two", include_vanilla=False).name == "TWO"
+    if delete:
+        assert reloaded.get_character("GER_one", include_vanilla=False, default=None) is None
+    else:
+        assert reloaded.get_character("GER_one", include_vanilla=False).name == "NEW"

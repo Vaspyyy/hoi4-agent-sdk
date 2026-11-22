@@ -26,6 +26,7 @@ from ._shared import (
     _check_field_names,
     _check_fields,
     _create_arguments,
+    _require_items,
     _set_fields,
 )
 
@@ -150,10 +151,13 @@ class EventsLayer(CoreLayer):
             The new event.
 
         Raises:
+            TypeError: ``options`` holds something that is not an ``EventOption``; nothing changed.
             AlreadyExistsError: The id exists and ``overwrite`` is false.
             ValueError: The id is not a valid script id.
         """
         event_id = require_script_id(event_id, label="event ID")
+        if options is not None:
+            options = _require_items("create_event", "options", options, (EventOption,))
         existing = self._events.get(event_id)
         if existing is not None and not overwrite:
             raise AlreadyExistsError(

@@ -2384,7 +2384,7 @@ def test_save_rejects_external_changes_until_reload(tmp_path: Path) -> None:
     source = "ideas = { country = { custom_spirit = { desc = OLD_DESC } } }\n"
     path.write_text(source, encoding="utf-8")
     mod = Mod(tmp_path)
-    mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    mod.update_idea("custom_spirit")
 
     external = source.rstrip() + "\n# legacy writer changed this file\n"
     path.write_text(external, encoding="utf-8")
@@ -2396,7 +2396,7 @@ def test_save_rejects_external_changes_until_reload(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == external
 
     mod.discard()
-    mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    mod.update_idea("custom_spirit")
     mod.save()
     assert path.read_text(encoding="utf-8") == external.replace(
         "{ desc = OLD_DESC }", "{}"
