@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 
 from .bookmarks import (
@@ -120,15 +121,13 @@ def validate_bookmark(bookmark: Bookmark) -> list[ValidationIssue]:
         )
     weather_effect_found = False
     if not effect_issues:
-        try:
+        # The structural syntax error is already reported above in normal
+        # cases; malformed assignment shapes still need a useful result.
+        with contextlib.suppress(ParseError):
             weather_effect_found = any(
                 span.key == "randomize_weather" and not span.is_block
                 for span in top_level_assignments(bookmark.effect)
             )
-        except ParseError:
-            # The structural syntax error is already reported above in normal
-            # cases; malformed assignment shapes still need a useful result.
-            pass
     if not weather_effect_found:
         issues.append(
             _error(

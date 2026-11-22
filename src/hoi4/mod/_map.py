@@ -6,10 +6,12 @@ import math
 import re
 import textwrap
 import warnings
+from itertools import pairwise
 from pathlib import Path
 from collections.abc import Callable
 from functools import partial
-from typing import Any, Sequence, TypeVar, Unpack
+from typing import Any, TypeVar, Unpack
+from collections.abc import Sequence
 
 from ..fields import CreateStateOptions
 from .._disk_cache import DiskAnalysis
@@ -546,7 +548,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         if check_adjacency:
             graph = self._optional_land_adjacency()
             if graph is not None:
-                for left, right in zip(route, route[1:]):
+                for left, right in pairwise(route):
                     if right not in graph.get(left, set()):
                         raise ValueError(f"Provinces {left} and {right} are not adjacent")
         text = append_line(self._map_text(RAILWAYS_FILE) or "", render_railway(level, route))

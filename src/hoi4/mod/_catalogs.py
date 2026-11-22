@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import dataclasses
 import io
@@ -510,12 +511,10 @@ class CatalogsLayer(SourcesLayer):
         render = getattr(self, "_render_dirty_files", None)
         pending: dict[Path, str | None] = dict(self._script_file_updates)
         if render is not None:
-            try:
+            # Validation must still run when a pending edit cannot be
+            # rendered; save() reports that problem on its own.
+            with contextlib.suppress(Exception):
                 pending.update(render())
-            except Exception:
-                # Validation must still run when a pending edit cannot be
-                # rendered; save() reports that problem on its own.
-                pass
         return pending
 
     def _reference_corpus(self, *, inherited: bool = True) -> list[FileReferences]:

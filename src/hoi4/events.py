@@ -23,7 +23,6 @@ as unconditional.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from .patching import (
     AssignmentSpan,
@@ -98,7 +97,7 @@ def scan_event_ids_file(path: Path) -> set[str]:
 
 def load_events_file(
     path: Path, *, document: Document | None = None
-) -> tuple[Optional[str], list[Event]]:
+) -> tuple[str | None, list[Event]]:
     """The namespace and events of one file; ``document`` is the file already parsed."""
 
     doc = document if document is not None else parse(read_text(path))
@@ -114,7 +113,7 @@ def load_events_file(
     return namespace or None, events
 
 
-def _event_from_block(block: Block, event_type: str, path: Optional[Path]) -> Optional[Event]:
+def _event_from_block(block: Block, event_type: str, path: Path | None) -> Event | None:
     event_id = block.scalar("id")
     if not event_id:
         return None
@@ -147,7 +146,7 @@ def _parse_body(body: str) -> Block:
     return parse(body).root
 
 
-def _read_bool(block: Block, key: str) -> Optional[bool]:
+def _read_bool(block: Block, key: str) -> bool | None:
     value = block.scalar(key)
     if value == "yes":
         return True
@@ -173,7 +172,7 @@ def _text_entries(block: Block, key: str) -> list[Assignment]:
     ]
 
 
-def _entry_trigger(item: Assignment) -> Optional[Block]:
+def _entry_trigger(item: Assignment) -> Block | None:
     value = item.value
     if type(value) is not Block:
         return None
@@ -195,7 +194,7 @@ def _entry_text(item: Assignment) -> str:
 def _read_text_entries(block: Block, key: str) -> tuple[str, list[EventText]]:
     """Return the unconditional key and the conditional entries of ``key``."""
 
-    plain: Optional[str] = None
+    plain: str | None = None
     conditional: list[EventText] = []
     for item in _text_entries(block, key):
         trigger = _entry_trigger(item)
@@ -311,7 +310,7 @@ def serialize_event(event: Event) -> str:
     return "\n".join(parts)
 
 
-def serialize_events_file(namespace: Optional[str], events: list[Event], original: str = "") -> str:
+def serialize_events_file(namespace: str | None, events: list[Event], original: str = "") -> str:
     if original:
         text = original
         if parse(text).root.scalar("add_namespace") != namespace:
@@ -355,7 +354,7 @@ def serialize_events_file(namespace: Optional[str], events: list[Event], origina
     return "\n".join(parts)
 
 
-def write_events_file(path: Path, namespace: Optional[str], events: list[Event]) -> Path:
+def write_events_file(path: Path, namespace: str | None, events: list[Event]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     write_text(path, serialize_events_file(namespace, events))
     return path
@@ -527,7 +526,7 @@ def _replace_option_effect(body: str, effect: str) -> str:
 
 def _text_entries_equal(left: list[EventText], right: list[EventText]) -> bool:
     return len(left) == len(right) and all(
-        _text_entry_equal(a, b) for a, b in zip(left, right)
+        _text_entry_equal(a, b) for a, b in zip(left, right, strict=True)
     )
 
 
@@ -617,10 +616,10 @@ def _patch_conditional_entry(body: str, item: Assignment, entry: EventText) -> s
     return replace_assignment_body(body, span, inner)
 
 
-def _last_of(body: str, keys: tuple[str, ...]) -> Optional[Assignment]:
+def _last_of(body: str, keys: tuple[str, ...]) -> Assignment | None:
     """The last top-level assignment whose key is in ``keys``, or ``None``."""
 
-    found: Optional[Assignment] = None
+    found: Assignment | None = None
     for item in _parse_body(body).assignments():
         if item.name in keys:
             found = item
@@ -628,7 +627,7 @@ def _last_of(body: str, keys: tuple[str, ...]) -> Optional[Assignment]:
 
 
 def _set_scalar_near(
-    body: str, key: str, value: Optional[str], anchors: tuple[str, ...]
+    body: str, key: str, value: str | None, anchors: tuple[str, ...]
 ) -> str:
     """Set ``key = value``; a new statement goes after the last of ``anchors``."""
 
@@ -637,7 +636,7 @@ def _set_scalar_near(
     return _insert_statement(body, f"{key} = {value}", after=_last_of(body, anchors))
 
 
-def _set_block_before_options(body: str, key: str, value: Optional[str]) -> str:
+def _set_block_before_options(body: str, key: str, value: str | None) -> str:
     """Set ``key = { value }``; a new block goes before the first option."""
 
     block = _parse_body(body)
@@ -654,8 +653,8 @@ def _insert_statement(
     body: str,
     statement: str,
     *,
-    after: Optional[Assignment | Scalar | Block | Tagged] = None,
-    before: Optional[Assignment | Scalar | Block | Tagged] = None,
+    after: Assignment | Scalar | Block | Tagged | None = None,
+    before: Assignment | Scalar | Block | Tagged | None = None,
 ) -> str:
     """Insert ``statement`` next to an existing item, matching its indentation.
 

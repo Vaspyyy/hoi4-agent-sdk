@@ -148,9 +148,13 @@ def python_prose(code: str) -> Iterator[tuple[int, str]]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             body = node.body
-            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
-                if isinstance(body[0].value.value, str):
-                    yield body[0].lineno, body[0].value.value
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                yield body[0].lineno, body[0].value.value
     for token in tokenize.generate_tokens(io.StringIO(code).readline):
         if token.type == tokenize.COMMENT:
             yield token.start[0], token.string
@@ -192,9 +196,7 @@ def code_problems(code: str) -> Iterator[tuple[int, str]]:
                     yield node.lineno, f"from {node.module} import {alias.name}"
         elif isinstance(node, ast.Attribute):
             receiver = receiver_name(node.value)
-            if node.attr in REMOVED_MOD_METHODS and receiver not in ALLOWED_RECEIVERS.get(node.attr, ()):
-                yield node.lineno, f"{receiver}.{node.attr}"
-            elif node.attr in REMOVED_FUNCTIONS:
+            if (node.attr in REMOVED_MOD_METHODS and receiver not in ALLOWED_RECEIVERS.get(node.attr, ())) or node.attr in REMOVED_FUNCTIONS:
                 yield node.lineno, f"{receiver}.{node.attr}"
             elif receiver == "hoi4" and node.attr in REMOVED_TOP_LEVEL:
                 yield node.lineno, f"hoi4.{node.attr}"

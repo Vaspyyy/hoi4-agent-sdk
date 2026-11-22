@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 from .. import _disk_cache
 from .._disk_cache import NAMES_ON_DISK

@@ -7,7 +7,7 @@ import os
 import tempfile
 import warnings
 from collections.abc import Collection, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import Self
 from pathlib import Path
 
@@ -180,13 +180,12 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         written_files = sorted((*changed, *changed_assets))
         self._note_written(written_files)
         self._discard_changes(written_files)
-        result = SaveResult(
+        return SaveResult(
             written_files=written_files,
             dirty_sections=dirty_sections,
             no_changes=False,
             message=f"Saved {len(written_files)} file(s)",
         )
-        return result
 
     def _render_dirty_files(self) -> dict[Path, str | None]:
         rendered: dict[Path, str | None] = dict(self._script_file_updates)
@@ -964,10 +963,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             value = live[key] if isinstance(live, dict) else None
             if value is not None and not _comes_from(value, self.mod_root):
                 continue
-            try:
+            with suppress(KeyError):
                 getattr(fresh, lookup)(key)
-            except KeyError:
-                pass
 
 
 def _comes_from(value: object, root: Path) -> bool:
@@ -1021,7 +1018,7 @@ def _first_difference(live: object, fresh: object, root: Path, where: str = "") 
             return None
         if isinstance(left, (list, tuple)):
             assert isinstance(right, (list, tuple))
-            for index, (a, b) in enumerate(zip(left, right)):
+            for index, (a, b) in enumerate(zip(left, right, strict=False)):
                 found = walk(a, b, f"{where}[{index}]")
                 if found is not None:
                     return found

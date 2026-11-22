@@ -51,7 +51,11 @@ def _modules() -> list[_Module]:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         parents: dict[int, ast.FunctionDef | ast.AsyncFunctionDef] = {}
 
-        def visit(node: ast.AST, function: ast.FunctionDef | ast.AsyncFunctionDef | None) -> None:
+        def visit(
+            node: ast.AST,
+            function: ast.FunctionDef | ast.AsyncFunctionDef | None,
+            parents: dict[int, ast.FunctionDef | ast.AsyncFunctionDef] = parents,
+        ) -> None:
             for child in ast.iter_child_nodes(node):
                 if function is not None:
                     parents[id(child)] = function
@@ -94,7 +98,7 @@ def _default(function: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> ast
     for index, arg in enumerate(positional):
         if arg.arg == name and index >= offset:
             return args.defaults[index - offset]
-    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
         if arg.arg == name:
             return default
     return None
@@ -199,7 +203,7 @@ def _resolve_together(
         if isinstance(item, ast.IfExp):
             test = ast.dump(item.test)
 
-            def branch(chosen: str) -> tuple[_Item, ...]:
+            def branch(chosen: str, test: str = test) -> tuple[_Item, ...]:
                 return tuple(
                     getattr(other, chosen)
                     if isinstance(other, ast.IfExp) and ast.dump(other.test) == test
@@ -212,10 +216,8 @@ def _resolve_together(
             ) | _resolve_together(branch("orelse"), missing, module, node, depth=depth + 1)
     # Everything that is not a parameter is resolved where it stands.
     resolved: list[_Item] = []
-    for item, default in zip(items, missing):
-        if item is None or isinstance(item, frozenset):
-            resolved.append(item)
-        elif _is_parameter(item, module, node):
+    for item, default in zip(items, missing, strict=True):
+        if item is None or isinstance(item, frozenset) or _is_parameter(item, module, node):
             resolved.append(item)
         else:
             resolved.append(frozenset(_resolve_one(item, module, node, default, depth)))
@@ -233,7 +235,7 @@ def _resolve_together(
             result |= _resolve_together(at_site, missing, caller, call, depth=depth + 1)
         return result
     combinations: set[tuple[str, ...]] = {()}
-    for item, default in zip(resolved, missing):
+    for item, default in zip(resolved, missing, strict=True):
         if item is None:
             if default is None:
                 raise _Unresolved("argument not given")

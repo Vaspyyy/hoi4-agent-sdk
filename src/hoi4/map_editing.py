@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import re
 import textwrap
+from itertools import pairwise
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
 
 from .errors import NotFoundError
 from .patching import AssignmentSpan, append_assignment, replace_assignment, top_level_assignments
@@ -375,7 +377,7 @@ def split_victory_points(value: str, provinces: Iterable[int]) -> tuple[str, str
         raise ValueError("Victory points require province/value pairs")
     kept: list[str] = []
     moved: list[str] = []
-    for province, points in zip(tokens[::2], tokens[1::2]):
+    for province, points in zip(tokens[::2], tokens[1::2], strict=True):
         (moved if province in targets else kept).extend((province, points))
     return " ".join(kept), " ".join(moved)
 
@@ -800,7 +802,7 @@ def validate_map_consistency(
                 if bad:
                     problems.append(f"unknown or non-land provinces {_preview(bad)}")
             if land_adjacency is not None:
-                for left, right in zip(railway.provinces, railway.provinces[1:]):
+                for left, right in pairwise(railway.provinces):
                     if right not in land_adjacency.get(left, set()):
                         problems.append(f"provinces {left} and {right} are not adjacent")
             if problems:

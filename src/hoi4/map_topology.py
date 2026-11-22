@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from ._disk_cache import DiskAnalysis, int_list
 from ._file_cache import cached_files_result

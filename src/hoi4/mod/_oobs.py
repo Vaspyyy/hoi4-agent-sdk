@@ -5,7 +5,8 @@ from __future__ import annotations
 import copy
 import re
 from pathlib import Path
-from typing import Literal, Protocol, Sequence, TypeVar, cast
+from typing import Literal, Protocol, TypeVar, cast
+from collections.abc import Sequence
 
 from ..oob import (
     AirWing,

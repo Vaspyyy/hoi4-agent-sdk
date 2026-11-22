@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 from ..definitions import DefinitionKind, ScriptDefinition
 from ..ideas import read_ideas_file, scan_idea_ids_file

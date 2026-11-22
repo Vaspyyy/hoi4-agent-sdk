@@ -34,7 +34,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterable, Iterator, Literal, Mapping, Sequence, cast
+from typing import Literal, cast
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 
 from ._disk_cache import cache_root, disk_cache_enabled
 from ._script_corpus import script_blocks
@@ -291,11 +292,11 @@ class GameScriptVocabulary:
 
         return GameScriptVocabulary(
             hoi4_install=self.hoi4_install,
-            effects=merged("effect", {name: ((), "mod scripted_effects") for name in effects}),
+            effects=merged("effect", dict.fromkeys(effects, ((), "mod scripted_effects"))),
             triggers=merged(
                 "trigger",
                 {
-                    **{name: ((), "mod scripted_triggers") for name in triggers},
+                    **dict.fromkeys(triggers, ((), "mod scripted_triggers")),
                     **family_triggers,
                 },
             ),
@@ -835,9 +836,12 @@ def _read_definitions(
 def _family_members(block: Block, how: str, key: str | None) -> Iterator[str]:
     if how == "top":
         for item in block.assignments():
-            if item.block is not None and not item.name.startswith("@"):
-                if item.name != "phases":
-                    yield item.name
+            if (
+                item.block is not None
+                and not item.name.startswith("@")
+                and item.name != "phases"
+            ):
+                yield item.name
         return
     if how == "children":
         for container in block.assignments(key):
@@ -1169,8 +1173,8 @@ __all__ = [
     "ScriptSource",
     "ScriptTokenInfo",
     "ScriptTokenKind",
+    "check_statement",
     "load_game_script_vocabulary",
     "script_sources",
-    "check_statement",
     "validate_script_sources",
 ]

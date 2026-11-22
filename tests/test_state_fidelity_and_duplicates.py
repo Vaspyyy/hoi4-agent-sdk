@@ -231,7 +231,7 @@ def test_duplicate_ids_retain_both_sources_and_validate(
 def test_strict_loading_rejects_duplicate_ids(tmp_path: Path, section: str) -> None:
     _make_duplicate(tmp_path, section)
 
-    with pytest.raises(RuntimeError, match="Duplicate .* ID"):
+    with pytest.raises(RuntimeError, match=r"Duplicate .* ID"):
         Mod(tmp_path, strict_loading=True)
 
 

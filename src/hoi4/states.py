@@ -12,7 +12,7 @@ import textwrap
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 from .map_editing import list_ints, patch_int_list_body
 from .parser import PdxNode, parse_pdx, serialize_pdx
@@ -83,7 +83,7 @@ def _state_files(states: Path | Iterable[Path]) -> list[Path]:
     return sorted(states.glob("*.txt")) if states.is_dir() else []
 
 
-def find_state_file(states_dir: Path | Iterable[Path], state_id: int) -> Optional[Path]:
+def find_state_file(states_dir: Path | Iterable[Path], state_id: int) -> Path | None:
     """Return the file in ``states_dir`` whose state block has ``id = state_id``.
 
     ``states_dir`` is a folder, or its state files sorted by name. Files whose
@@ -482,7 +482,7 @@ def _victory_point_pairs(value: str) -> list[tuple[str, str]]:
         # victory_points block.
         if not _VICTORY_POINT_NUMBER.fullmatch(item):
             raise ValueError(f"Victory points have to be numbers, found {item!r}")
-    return list(zip(values[::2], values[1::2]))
+    return list(zip(values[::2], values[1::2], strict=True))
 
 
 def _victory_point_spans(text: str) -> list[AssignmentSpan]:

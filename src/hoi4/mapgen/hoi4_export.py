@@ -86,7 +86,7 @@ def _stage_total_conversion_profile(
             if (
                 source.name == ".gitkeep"
                 or source.suffix.lower() == ".md"
-                or source.name.startswith("descriptor") and source.suffix == ".mod"
+                or (source.name.startswith("descriptor") and source.suffix == ".mod")
                 or source.name.startswith("colourMappings")
             ):
                 continue
@@ -171,18 +171,18 @@ def _province_id_array(
 def compute_adjacencies(
     province_data: list[dict[str, Any]], province_image: Image.Image
 ) -> set[tuple[int, int]]:
-    """Find orthogonal province neighbors, including HOI4's east–west wrap."""
+    """Find orthogonal province neighbors, including HOI4's east-west wrap."""
     ids, _ = _province_id_array(province_data, province_image)
     result: set[tuple[int, int]] = set()
     horizontal = (ids[:, :-1] != ids[:, 1:]) & (ids[:, :-1] >= 0) & (ids[:, 1:] >= 0)
-    for y, x in zip(*np.where(horizontal)):
+    for y, x in zip(*np.where(horizontal), strict=True):
         a, b = int(ids[y, x]), int(ids[y, x + 1])
         result.add((min(a, b), max(a, b)))
     vertical = (ids[:-1] != ids[1:]) & (ids[:-1] >= 0) & (ids[1:] >= 0)
-    for y, x in zip(*np.where(vertical)):
+    for y, x in zip(*np.where(vertical), strict=True):
         a, b = int(ids[y, x]), int(ids[y + 1, x])
         result.add((min(a, b), max(a, b)))
-    for a, b in zip(ids[:, :1].ravel(), ids[:, -1:].ravel()):
+    for a, b in zip(ids[:, :1].ravel(), ids[:, -1:].ravel(), strict=True):
         if a >= 0 and b >= 0 and a != b:
             result.add((int(min(a, b)), int(max(a, b))))
     return result
@@ -191,7 +191,7 @@ def compute_adjacencies(
 def compute_coastal_provinces(
     province_data: list[dict[str, Any]], province_image: Image.Image
 ) -> set[int]:
-    """Find land touching ocean orthogonally, with east–west wrapping only."""
+    """Find land touching ocean orthogonally, with east-west wrapping only."""
     ids, water = _province_id_array(province_data, province_image)
     lake_ids = {
         int(item["province_id"]) for item in province_data if item.get("province_type") == "lake"

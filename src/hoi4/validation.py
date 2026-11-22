@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 from .decisions import decision_has_cost, decision_has_mission_timeout
 from .effects_catalog import TECHNOLOGY_CATEGORIES
@@ -1482,7 +1482,7 @@ def validate_state(
 
 def validate_event(
     event: Event,
-    namespace: str | None | object = _UNSET,
+    namespace: str | object | None = _UNSET,
     *,
     namespaces: Collection[str] | None = None,
 ) -> list[ValidationIssue]:
@@ -1587,8 +1587,11 @@ def validate_event(
     # The namespace is everything before the last dot: ``a.b.1`` needs
     # ``add_namespace = a.b``.
     prefix = event_namespace(event.id)
-    if declared is not None and prefix:
-        if prefix.lower() not in {name.lower() for name in declared}:
+    if (
+        declared is not None
+        and prefix
+        and prefix.lower() not in {name.lower() for name in declared}
+    ):
             errors.append(
                 ValidationIssue(
                     message=(

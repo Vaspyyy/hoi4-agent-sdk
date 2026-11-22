@@ -727,13 +727,13 @@ def test_what_a_complete_country_needs_is_a_warning_that_still_blocks_completene
     from hoi4 import COUNTRY_PACKAGE_REQUIREMENT_CODES, VALIDATION_SEVERITIES
 
     # The game loads a country without any of these: none of them is an error.
-    assert COUNTRY_PACKAGE_REQUIREMENT_CODES == {
+    assert {
         "missing_country_leader",
         "insufficient_political_advisors",
         "insufficient_military_commanders",
         "missing_land_oob",
         "capital_not_cored",
-    }
+    } == COUNTRY_PACKAGE_REQUIREMENT_CODES
     assert {VALIDATION_SEVERITIES[code] for code in COUNTRY_PACKAGE_REQUIREMENT_CODES} == {
         "warning"
     }

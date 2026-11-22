@@ -213,7 +213,7 @@ class TestModIconImports:
         original = texture.read_bytes()
 
         mod = Mod(root)
-        with pytest.raises(FileExistsError, match="my_decision.dds"):
+        with pytest.raises(FileExistsError, match=r"my_decision\.dds"):
             mod.import_decision_icon("my_decision", blue)
         assert mod.preview() == ""
         assert mod.import_decision_icon("my_decision", blue, overwrite=True) == (
@@ -303,7 +303,7 @@ class TestModIconImports:
             encoding="utf-8",
         )
         mod = Mod(root)
-        with pytest.raises(ValueError, match="legacy.gfx"):
+        with pytest.raises(ValueError, match=r"legacy\.gfx"):
             mod.import_idea_icon("dupe", source)
         assert mod.preview() == ""
 
@@ -373,10 +373,9 @@ class TestModIconImports:
         assert not any(root.rglob("*.dds"))
         assert not any(root.rglob("*.gfx"))
 
-        with pytest.raises(RuntimeError, match="boom"):
-            with mod.transaction():
-                mod.import_idea_icon("temp", source)
-                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"), mod.transaction():
+            mod.import_idea_icon("temp", source)
+            raise RuntimeError("boom")
         assert mod.preview() == ""
 
     @requires_dxt5
@@ -421,7 +420,7 @@ class TestModIconImports:
             mod.import_idea_icon("x", source, gfx_file="../outside.gfx")
         with pytest.raises(ValueError, match="under interface/"):
             mod.import_idea_icon("x", source, gfx_file="common/x.gfx")
-        with pytest.raises(ValueError, match=".gfx extension"):
+        with pytest.raises(ValueError, match=r"\.gfx extension"):
             mod.import_idea_icon("x", source, gfx_file="interface/x.txt")
         with pytest.raises(ValueError, match="positive"):
             mod.import_idea_icon("x", source, size=(0, 10))

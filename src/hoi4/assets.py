@@ -129,7 +129,7 @@ def import_flag_to_mod(
     selected_ideologies = (
         tuple(ideologies)
         if ideologies is not None
-        else ((None,) + VANILLA_FLAG_IDEOLOGIES if overwrite_vanilla else (None,))
+        else ((None, *VANILLA_FLAG_IDEOLOGIES) if overwrite_vanilla else (None,))
     )
     if not selected_ideologies:
         raise ValueError("At least one flag variant is required")
@@ -947,7 +947,7 @@ def _require_pillow() -> tuple[Any, Any, type[Exception]]:
     try:
         Image = import_module("PIL.Image")
         ImageOps = import_module("PIL.ImageOps")
-        UnidentifiedImageError = getattr(import_module("PIL"), "UnidentifiedImageError")
+        UnidentifiedImageError = import_module("PIL").UnidentifiedImageError
     except (ImportError, AttributeError) as exc:
         raise ImageBackendUnavailableError(
             "Image operations require the optional Pillow dependency. Install Pillow and retry."

@@ -5,7 +5,8 @@ from __future__ import annotations
 import copy
 import dataclasses
 from pathlib import Path
-from typing import Any, Sequence, Unpack
+from typing import Any, Unpack
+from collections.abc import Sequence
 
 from ..fields import FocusFields, FocusTreeFields
 from ..focus import FOCUS_KINDS

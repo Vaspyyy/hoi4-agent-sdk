@@ -208,7 +208,10 @@ def test_role_dict_holds_the_fields_of_every_role_type(mod: Mod) -> None:
     valid: set[str] = set()
     for role_type in ("country_leader", "advisor", "field_marshal", "navy_leader"):
         valid |= _valid(
-            lambda mod, **f: mod.update_character_role("ABC_hero", role_type, **f), mod
+            lambda mod, role_type=role_type, **f: mod.update_character_role(
+                "ABC_hero", role_type, **f
+            ),
+            mod,
         )
     assert set(hoi4.fields.CharacterRoleFields.__annotations__) == valid
 

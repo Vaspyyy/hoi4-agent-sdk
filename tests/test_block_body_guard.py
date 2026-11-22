@@ -34,7 +34,8 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
+from collections.abc import Callable, Iterator
 
 import pytest
 
@@ -707,7 +708,7 @@ def _apply(root: Path, recipe: Recipe, mode: str, field: str, value: Any) -> tup
         # ParseError is a ValueError; the last check before saving raises
         # RuntimeError. Either way nothing was written.
         return "refused", f"{type(error).__name__}: {str(error)[:90]}"
-    except Exception as error:  # noqa: BLE001 - reported by the test
+    except Exception as error:
         if _not_applicable(error):
             return "skipped", str(error)[:90]
         return "crashed", f"{type(error).__name__}: {str(error)[:160]}"

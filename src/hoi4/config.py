@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import Any
 
 DEFAULT_CONFIG_FILENAME = ".hoi4.json"
 
@@ -32,8 +32,8 @@ class Config:
     of a list.
     """
 
-    mod_path: Optional[Path]
-    hoi4_install: Optional[Path]
+    mod_path: Path | None
+    hoi4_install: Path | None
 
     def __init__(
         self,
@@ -79,7 +79,7 @@ class Config:
         p.write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
 
 
-def find_config(start: str | Path | None = None) -> Optional[Config]:
+def find_config(start: str | Path | None = None) -> Config | None:
     """Search for .hoi4.json starting from `start` dir, walking up to root.
 
     If start is None, uses the current working directory. Relative mod and

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal
+from collections.abc import Sequence
 
 from ..assets import FlagAssetSet, IconAsset
 from ..paths import (
@@ -237,7 +238,7 @@ class AssetsLayer(CoreLayer):
             f"\t\ttexturefile = {pdx_string(texture)}\n"
             "\t}\n"
             "}\n"
-        ).encode("utf-8")
+        ).encode()
         self._stage_asset_files({output: content}, overwrite=overwrite)
         return output
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 from ._disk_cache import DiskAnalysis, string_map
 from ._file_cache import cached_file_result

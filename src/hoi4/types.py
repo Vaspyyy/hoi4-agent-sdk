@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
-from typing import Optional, cast
+from typing import cast
 
 from .idea_icons import DEFAULT_IDEA_ICON
 
@@ -49,9 +49,9 @@ class Focus:
     complete_tooltip: str = ""
     allow_branch: str = ""
     ai_will_do: str = ""
-    cancel_if_invalid: Optional[bool] = None
-    continue_if_invalid: Optional[bool] = None
-    available_if_capitulated: Optional[bool] = None
+    cancel_if_invalid: bool | None = None
+    continue_if_invalid: bool | None = None
+    available_if_capitulated: bool | None = None
     will_lead_to_war_with: str = ""
     raw_block: str = ""
     touched: bool = False
@@ -97,8 +97,8 @@ class FocusTree:
     id: str
     country_tag: str = ""
     focuses: list[Focus] = field(default_factory=list)
-    path: Optional[Path] = None
-    default: Optional[bool] = None
+    path: Path | None = None
+    default: bool | None = None
     continuous_focus_position: str = ""
     shared_focuses: list[str] = field(default_factory=list)
     raw_block: str = ""
@@ -144,7 +144,7 @@ class Country:
     ruling_party: str = "democratic"
     popularities: dict[str, int] = field(default_factory=dict)
     elections_allowed: bool = True
-    leader: Optional[Leader] = None
+    leader: Leader | None = None
     ideas: list[str] = field(default_factory=list)
     research_slots: int | None = None
     stability: str | int | float | None = None
@@ -155,9 +155,9 @@ class Country:
     raw_definition: str = ""
     raw_history: str = ""
     raw_character: str = ""
-    definition_path: Optional[Path] = None
-    history_path: Optional[Path] = None
-    character_path: Optional[Path] = None
+    definition_path: Path | None = None
+    history_path: Path | None = None
+    character_path: Path | None = None
     touched_fields: set[str] = field(default_factory=set)
     # UI colour from ``common/countries/colors.txt``; ``None`` means "same as color".
     color_ui: tuple[int, int, int] | None = None
@@ -183,20 +183,20 @@ class ValidationIssue:
     message: str
     severity: str = "error"
     code: str = ""
-    file_path: Optional[str] = None
-    focus_id: Optional[str] = None
-    country_tag: Optional[str] = None
-    state_id: Optional[int] = None
-    event_id: Optional[str] = None
-    idea_id: Optional[str] = None
-    decision_id: Optional[str] = None
-    focus_tree_id: Optional[str] = None
-    ideology_id: Optional[str] = None
-    dynamic_modifier_id: Optional[str] = None
-    bookmark_name: Optional[str] = None
-    related_file_path: Optional[str] = None
-    line: Optional[int] = None
-    column: Optional[int] = None
+    file_path: str | None = None
+    focus_id: str | None = None
+    country_tag: str | None = None
+    state_id: int | None = None
+    event_id: str | None = None
+    idea_id: str | None = None
+    decision_id: str | None = None
+    focus_tree_id: str | None = None
+    ideology_id: str | None = None
+    dynamic_modifier_id: str | None = None
+    bookmark_name: str | None = None
+    related_file_path: str | None = None
+    line: int | None = None
+    column: int | None = None
 
 
 @dataclass
@@ -229,8 +229,8 @@ class LoadDiagnostic:
     path: Path
     error_type: str
     message: str
-    related_path: Optional[Path] = None
-    identifier: Optional[str] = None
+    related_path: Path | None = None
+    identifier: str | None = None
 
 
 @dataclass
@@ -263,7 +263,7 @@ class EventOption:
     # ``name = { text = ... trigger = { ... } }`` entries, in source order.
     conditional_names: list[EventText] = field(default_factory=list)
     # Exact interior retained independently of the option's current list position.
-    _source_body: Optional[str] = field(default=None, repr=False, compare=False)
+    _source_body: str | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -282,12 +282,12 @@ class Event:
     event_type: str = "country_event"
     picture: str = "GFX_report_event_generic"
     is_triggered_only: bool = False
-    fire_only_once: Optional[bool] = None
+    fire_only_once: bool | None = None
     trigger: str = ""
     immediate: str = ""
     mean_time_to_happen: str = ""
     options: list[EventOption] = field(default_factory=list)
-    path: Optional[Path] = None
+    path: Path | None = None
     raw_block: str = ""
     touched: bool = False
     touched_fields: set[str] = field(default_factory=set)
@@ -307,14 +307,14 @@ class OnAction:
     effect: str = ""
     events: list[str] = field(default_factory=list)
     random_events: list[str] = field(default_factory=list)
-    path: Optional[Path] = None
+    path: Path | None = None
     raw_block: str = ""
     touched: bool = False
     # On-action hooks are compositional in HOI4: the same hook may occur more
     # than once, including multiple times in one file.  These internal source
     # coordinates let the serializer patch or remove the exact occurrence
     # without collapsing its siblings.
-    source_path: Optional[Path] = None
+    source_path: Path | None = None
     source_occurrence: int = -1
 
 
@@ -342,9 +342,9 @@ class State:
     is_demilitarized_zone: bool = False
     provinces: list[int] = field(default_factory=list)
     history: str = ""
-    path: Optional[Path] = None
+    path: Path | None = None
     raw_text: str = ""
-    source_path: Optional[Path] = None
+    source_path: Path | None = None
 
     impassable: bool = False
     # Set when a caller passes ``victory_points`` explicitly: the points are
@@ -366,13 +366,13 @@ class Decision:
     icon: str = ""
     cost: int | None = None
     days_remove: int | None = None
-    fire_only_once: Optional[bool] = None
+    fire_only_once: bool | None = None
     available: str = ""
     visible: str = ""
     complete_effect: str = ""
     remove_effect: str = ""
     ai_will_do: str = ""
-    path: Optional[Path] = None
+    path: Path | None = None
     raw_block: str = ""
     touched: bool = False
     # Missions (timed decisions that fire on their own).
@@ -381,16 +381,16 @@ class Decision:
     timeout_effect: str = ""
     cancel_trigger: str = ""
     cancel_effect: str = ""
-    is_good: Optional[bool] = None
-    selectable_mission: Optional[bool] = None
+    is_good: bool | None = None
+    selectable_mission: bool | None = None
     # Targeted decisions (one instance per country or state target).
     target_trigger: str = ""
     targets: list[str] = field(default_factory=list)
     target_array: str = ""
     target_root_trigger: str = ""
-    state_target: Optional[bool] = None
-    targets_dynamic: Optional[bool] = None
-    target_non_existing: Optional[bool] = None
+    state_target: bool | None = None
+    targets_dynamic: bool | None = None
+    target_non_existing: bool | None = None
     on_map_mode: str = ""
     # General decision fields.
     allowed: str = ""
@@ -398,7 +398,7 @@ class Decision:
     war_with_on_remove: str = ""
     custom_cost_trigger: str = ""
     custom_cost_text: str = ""
-    cancel_if_not_visible: Optional[bool] = None
+    cancel_if_not_visible: bool | None = None
     modifier: str = ""
     remove_trigger: str = ""
     highlight_states: str = ""
@@ -418,8 +418,8 @@ class DecisionCategory:
     # decision content belongs in common/decisions. ``path`` is the
     # decision-content file new decisions go to: the last file, in load
     # order, that holds a block of the category.
-    path: Optional[Path] = None
-    definition_path: Optional[Path] = None
+    path: Path | None = None
+    definition_path: Path | None = None
     raw_block: str = ""
     definition_raw_block: str = ""
     touched: bool = False
@@ -441,7 +441,7 @@ class Idea:
     # stores a bare stem; the engine resolves it as ``GFX_idea_<stem>``.
     icon: str = DEFAULT_IDEA_ICON
     modifier: dict[str, str | int | float | bool] = field(default_factory=dict)
-    path: Optional[Path] = None
+    path: Path | None = None
     category: str = ""
     allowed: str = ""
     research_bonus: dict[str, str | int | float | bool] = field(default_factory=dict)

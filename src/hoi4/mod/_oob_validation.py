@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
 
 from .._disk_cache import NAMES_ON_DISK
 from ..oob import (
@@ -736,35 +736,33 @@ class OobValidationLayer(StatesLayer, EquipmentLayer):
                     label = ship.name or "<ordered name>"
                     for equipment in ship.equipment:
                         is_hull = equipment.equipment_type.startswith("ship_hull_")
-                        if not is_hull and _MAN_THE_GUNS not in excluded:
-                            if not reported_legacy:
-                                reported_legacy = True
-                                flag_use(
-                                    f"uses legacy naval equipment "
-                                    f"'{equipment.equipment_type}' when Man the "
-                                    "Guns may be active. HOI4 will skip these "
-                                    "ships because no proper equipment variant "
-                                    "exists. Assign a legacy naval OOB with "
-                                    "excluded_dlc=('Man the Guns',) and a "
-                                    "hull-based OOB with "
-                                    "required_dlc=('Man the Guns',).",
-                                    (
-                                        "mtg_naval_oob_uses_legacy_equipment"
-                                        if _MAN_THE_GUNS in required
-                                        else "legacy_naval_oob_without_dlc_fallback"
-                                    ),
-                                    line,
-                                )
-                        if is_hull and _MAN_THE_GUNS not in required:
-                            if not reported_ungated:
-                                reported_ungated = True
-                                flag_use(
-                                    "uses Man the Guns hull equipment but is not "
-                                    "gated with required_dlc=('Man the Guns',). "
-                                    "Add the gate and a legacy naval fallback.",
-                                    "ungated_mtg_naval_oob",
-                                    line,
-                                )
+                        if not is_hull and _MAN_THE_GUNS not in excluded and not reported_legacy:
+                            reported_legacy = True
+                            flag_use(
+                                f"uses legacy naval equipment "
+                                f"'{equipment.equipment_type}' when Man the "
+                                "Guns may be active. HOI4 will skip these "
+                                "ships because no proper equipment variant "
+                                "exists. Assign a legacy naval OOB with "
+                                "excluded_dlc=('Man the Guns',) and a "
+                                "hull-based OOB with "
+                                "required_dlc=('Man the Guns',).",
+                                (
+                                    "mtg_naval_oob_uses_legacy_equipment"
+                                    if _MAN_THE_GUNS in required
+                                    else "legacy_naval_oob_without_dlc_fallback"
+                                ),
+                                line,
+                            )
+                        if is_hull and _MAN_THE_GUNS not in required and not reported_ungated:
+                            reported_ungated = True
+                            flag_use(
+                                "uses Man the Guns hull equipment but is not "
+                                "gated with required_dlc=('Man the Guns',). "
+                                "Add the gate and a legacy naval fallback.",
+                                "ungated_mtg_naval_oob",
+                                line,
+                            )
                         if not is_hull:
                             continue
                         if not equipment.version_name:

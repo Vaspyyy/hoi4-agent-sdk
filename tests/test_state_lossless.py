@@ -366,7 +366,7 @@ def test_owner_edit_keeps_a_combined_victory_points_block(tmp_path: Path) -> Non
 
 
 def test_changed_victory_points_are_still_written(tmp_path: Path) -> None:
-    mod, path = _state_mod(tmp_path)
+    mod, _path = _state_mod(tmp_path)
     mod.update_state(7, victory_points="1 5 2 20")
     mod.save()
     assert Mod(tmp_path).get_state(7).victory_points == "1 5 2 20"

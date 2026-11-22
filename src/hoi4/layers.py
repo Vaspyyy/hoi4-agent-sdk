@@ -12,7 +12,8 @@ import stat
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, NamedTuple
+from typing import NamedTuple
+from collections.abc import Callable, Iterable, Iterator
 
 from .parser import parse_pdx
 

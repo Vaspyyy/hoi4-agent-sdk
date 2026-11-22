@@ -126,7 +126,7 @@ def _check_file(report: CorpusReport, root: Path, path: Path) -> None:
         again = parse_pdx(serialize_pdx(tree), strict=False)
         if again != tree and _normalised(again) != _normalised(tree):
             report.fail("pdxnode", name, "re-serialised tree differs")
-    except Exception:  # noqa: BLE001 - every crash is a finding
+    except Exception:
         report.fail("pdxnode", name, traceback.format_exc(limit=1).strip()[-200:])
 
 

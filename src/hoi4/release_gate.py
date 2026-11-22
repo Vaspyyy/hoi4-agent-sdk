@@ -17,7 +17,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Callable, Literal, TypeVar, cast
+from typing import Literal, TypeVar, cast
+from collections.abc import Callable
 
 from .mod import Mod
 from .idea_icons import DEFAULT_IDEA_ICON
@@ -135,11 +136,10 @@ class GateReport:
             return False
         if self.fail_on_load_diagnostics and self.load_diagnostics:
             return False
-        if self.fail_on_validation_errors and (
-            self.validation_error_count or self.incomplete_country_count
-        ):
-            return False
-        return True
+        return not (
+            self.fail_on_validation_errors
+            and (self.validation_error_count or self.incomplete_country_count)
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation."""

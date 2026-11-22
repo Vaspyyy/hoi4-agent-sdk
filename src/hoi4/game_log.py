@@ -83,14 +83,16 @@ class GameLogReport:
                 )
             )
         for entry in self.entries:
+            # A report built by hand may hold an entry no file was found for.
             relative_path = entry.relative_path
-            assert relative_path is not None
             issues.append(
                 ValidationIssue(
                     message=f"HOI4 [{entry.error_class}] {entry.message}",
                     severity="error",
                     code="game_log_error",
-                    file_path=str(self.mod_root / relative_path),
+                    file_path=(
+                        str(self.mod_root / relative_path) if relative_path is not None else None
+                    ),
                     line=entry.line,
                 )
             )

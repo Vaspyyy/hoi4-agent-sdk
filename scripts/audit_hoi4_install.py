@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 from hoi4.compatibility_audit import (
@@ -56,7 +56,7 @@ def main() -> int:
     )
     summary = format_compatibility_report(report)
     detail = f"{summary}\n\n{format_report(report.gate)}\n"
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     args.report_dir.mkdir(parents=True, exist_ok=True)
     text_path = args.report_dir / f"audit-{timestamp}.txt"
     json_path = args.report_dir / f"audit-{timestamp}.json"

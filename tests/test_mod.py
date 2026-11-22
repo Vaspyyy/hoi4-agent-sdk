@@ -182,9 +182,11 @@ class TestModSave:
         assert str(result) == result.message
 
     def test_save_require_changes_raises_on_noop(self, tmp_mod):
-        with pytest.warns(RuntimeWarning, match="no dirty changes"):
-            with pytest.raises(RuntimeError, match="No changes written"):
-                tmp_mod.mod.save(require_changes=True)
+        with (
+            pytest.warns(RuntimeWarning, match="no dirty changes"),
+            pytest.raises(RuntimeError, match="No changes written"),
+        ):
+            tmp_mod.mod.save(require_changes=True)
 
     def test_discard_reverts_changes(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
@@ -332,7 +334,7 @@ class TestCatalogs:
 
         for cat_name, entries in EFFECT_CATEGORIES:
             assert isinstance(cat_name, str)
-            for effect_name, effect_desc in entries:
+            for effect_name, _effect_desc in entries:
                 assert isinstance(effect_name, str)
 
     def test_modifier_categories_have_name_and_modifiers(self):
@@ -392,7 +394,7 @@ class TestConfig:
         assert mod.strict_loading is True
 
     def test_mod_from_config_not_found(self, tmp_path):
-        with pytest.raises(FileNotFoundError, match="No .hoi4.json"):
+        with pytest.raises(FileNotFoundError, match=r"No \.hoi4\.json"):
             Mod.from_config(tmp_path)
 
     def test_config_round_trip(self, tmp_path):

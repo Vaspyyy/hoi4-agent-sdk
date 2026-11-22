@@ -204,7 +204,7 @@ class TestValidation:
         ],
     )
     def test_rejects_invalid_known_model_resolutions(self, model: str, size: str) -> None:
-        with pytest.raises(ValueError, match="image_size|supports"):
+        with pytest.raises(ValueError, match=r"image_size|supports"):
             GeminiImageGenerator(model=model, image_size=size, client=FakeClient())
 
     @pytest.mark.parametrize(
@@ -482,7 +482,7 @@ class TestImporterIntegration:
             client=_client_for_image((768, 512))
         ).generate_flag_candidate("A flag", tmp_path / "candidate.png")
         assets = import_flag_to_mod(tmp_path / "mod", "TST", candidate.path)
-        for size_name, path in zip(("large", "medium", "small"), assets[0].paths):
+        for size_name, path in zip(("large", "medium", "small"), assets[0].paths, strict=True):
             with Image.open(path) as opened:
                 assert opened.size == FLAG_SIZES[size_name]
                 assert opened.format == "TGA"

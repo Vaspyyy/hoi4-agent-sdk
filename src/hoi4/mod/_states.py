@@ -70,7 +70,7 @@ class StatesLayer(CountriesLayer):
             ]
         state_localization = self._state_localization_entries()
         entries: list[dict[str, Any]] = []
-        for source, base in zip(("mod", "vanilla"), self._data_views()):
+        for source, base in zip(("mod", "vanilla"), self._data_views(), strict=False):
             if source == "vanilla" and not include_vanilla:
                 continue
             for entry in build_state_index(

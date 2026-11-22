@@ -7,7 +7,8 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Protocol
+from typing import TYPE_CHECKING, Protocol
+from collections.abc import Iterable
 
 from ._disk_cache import NAMES_ON_DISK
 from ._file_cache import cached_file_result

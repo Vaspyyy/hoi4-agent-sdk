@@ -136,7 +136,7 @@ def serialize_on_actions_file(actions: list[OnAction], original: str = "") -> st
                 _patch_actions_body(actions, body, occurrences, append=index == len(roots) - 1)
             )
         text = original
-        for span, body in reversed(list(zip(roots, bodies))):
+        for span, body in reversed(list(zip(roots, bodies, strict=True))):
             text = replace_assignment_body(text, span, body)
         return text
     parts = ["on_actions = {"]
@@ -326,7 +326,7 @@ def _set_entries(body: str, key: str, wanted: list[tuple[str, ...]]) -> str:
             reweighted.append((node.key.start, node.key.end, twin[0]))
 
     # Walking the wanted list, the staying entries have to come in source order.
-    flat = [(value, block) for value, (_, block, _) in zip(stays, held) if value is not None]
+    flat = [(value, block) for value, (_, block, _) in zip(stays, held, strict=True) if value is not None]
     if not flat:
         return _set_field(body, key, rendered or None)
     per_block: dict[int, list[tuple[str, ...]]] = {}

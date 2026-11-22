@@ -409,7 +409,7 @@ def test_event_options_and_namespaces(full_mod: Mod) -> None:
     mod = full_mod
     added = mod.add_event_option("zz.1", EventOption(name="zz.1.b"))
     assert isinstance(added, EventOption) and added.name == "zz.1.b"
-    with pytest.raises(AlreadyExistsError, match="Event option 'zz.1.b' already exists"):
+    with pytest.raises(AlreadyExistsError, match=r"Event option 'zz\.1\.b' already exists"):
         mod.add_event_option("zz.1", EventOption(name="zz.1.b"))
     with pytest.raises(NotFoundError):
         mod.add_event_option("zz.9", EventOption(name="zz.9.a"))

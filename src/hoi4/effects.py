@@ -20,6 +20,7 @@ Every value and identifier is checked, so text never escapes its block.
 from __future__ import annotations
 
 import warnings
+from itertools import pairwise
 from collections.abc import Mapping, Sequence
 
 from .effects_catalog import TECHNOLOGY_CATEGORIES
@@ -28,8 +29,6 @@ from .script import braced, normalize_block_body, pdx_string, pdx_value
 from .syntax import quote, require_key, require_well_formed
 
 __all__ = [
-    "block",
-    "scope_block",
     "add_air_experience",
     "add_army_experience",
     "add_building",
@@ -52,6 +51,7 @@ __all__ = [
     "add_timed_idea",
     "add_to_faction",
     "add_war_support",
+    "block",
     "convert_existing_or_spawn_revolt",
     "convert_puppet_to_ally",
     "create_faction",
@@ -69,6 +69,7 @@ __all__ = [
     "remove_dynamic_modifier",
     "remove_state_core",
     "schedule_country_event",
+    "scope_block",
     "set_autonomy",
     "set_politics",
     "set_rule",
@@ -389,7 +390,7 @@ def upgrade_idea_chain(ideas: list[str], target: str | None = None) -> str:
         raise ValueError("effects.upgrade_idea_chain() requires at least two idea IDs")
     ideas = [require_script_id(idea, label="idea ID") for idea in ideas]
     effects: list[str] = []
-    for old, new in reversed(list(zip(ideas, ideas[1:]))):
+    for old, new in reversed(list(pairwise(ideas))):
         effects.append(
             f"if = {{ limit = {{ has_idea = {old} }} {swap_idea(old, new)} }}"
         )

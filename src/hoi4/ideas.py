@@ -426,9 +426,7 @@ def _patch_idea_body(idea: Idea, body: str) -> str:
     }
     if "icon" in fields:
         picture_spans = assignment_spans(body, "picture")
-        if picture_spans:
-            body = set_scalar(body, "picture", _picture(idea.icon))
-        elif idea.icon and normalize_idea_icon(idea.icon) != DEFAULT_IDEA_ICON:
+        if picture_spans or (idea.icon and normalize_idea_icon(idea.icon) != DEFAULT_IDEA_ICON):
             body = set_scalar(body, "picture", _picture(idea.icon))
     if "removal_cost" in fields:
         body = set_scalar(

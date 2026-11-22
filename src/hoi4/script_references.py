@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Collection, Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator
 
 from ._disk_cache import DiskAnalysis, string_list, string_map
 from ._script_corpus import split_file

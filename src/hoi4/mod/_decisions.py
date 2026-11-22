@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, cast, Iterable, Mapping, Sequence, Unpack
+from typing import Any, cast, Unpack
+from collections.abc import Iterable, Mapping, Sequence
 
 from ..fields import DecisionCategoryFields, DecisionFields, EnsureDecisionCategoryFields, EnsureDecisionFields, MissionOptions, TargetedDecisionOptions
 from ..decisions import category_files
@@ -600,9 +601,8 @@ class DecisionsLayer(LocalisationLayer):
             # in the file that holds it.
             self._dirty_decision_files.add(decision.path)
         category = self._decision_categories.get(decision.category)
-        if category is not None:
-            if category.path is not None:
-                self._dirty_decision_files.add(category.path)
+        if category is not None and category.path is not None:
+            self._dirty_decision_files.add(category.path)
         return decision
 
     def delete_decision(self, decision_id: str) -> None:

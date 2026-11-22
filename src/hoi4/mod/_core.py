@@ -12,7 +12,8 @@ import time
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Self, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
+from collections.abc import Sequence
 
 from .._disk_cache import DiskAnalysis
 from .._file_cache import cached_file_result
@@ -507,8 +508,8 @@ class CoreLayer:
     _inherited_state_source_paths: dict[int, Path] | None
     _focus_trees: dict[str, FocusTree]
     _events: dict[str, Event]
-    _event_namespaces: dict[str, Optional[str]]
-    _event_file_namespaces: dict[Path, Optional[str]]
+    _event_namespaces: dict[str, str | None]
+    _event_file_namespaces: dict[Path, str | None]
     _on_actions: dict[str, OnAction]
     _on_action_occurrences: dict[str, list[OnAction]]
     _decisions: dict[str, Decision]

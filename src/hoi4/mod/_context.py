@@ -6,7 +6,8 @@ import copy
 import dataclasses
 import os
 from heapq import nlargest
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from ..focus import load_focus_trees
 from ..idea_icons import (
@@ -232,7 +233,8 @@ class ContextLayer(StatesLayer, CatalogsLayer):
             substring = 2.0 if needle and needle in low else 0.0
             token_overlap = len(needle_parts & low_parts) / max(1, len(needle_parts))
             prefix = (
-                len(os.path.commonprefix((needle, low))) / max(1, len(needle)) if needle else 0.0
+                # A plain string prefix, character by character, is what is meant here.
+                len(os.path.commonprefix((needle, low))) / max(1, len(needle)) if needle else 0.0  # noqa: RUF071
             )
             return (substring + token_overlap + prefix, icon)
 

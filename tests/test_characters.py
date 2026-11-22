@@ -178,7 +178,7 @@ def test_country_tag_update_rejected_without_disturbing_pending_work(
     )
     fields["country_tag"] = country_tag
 
-    with pytest.raises(TypeError, match="Remove country_tag.*reassignment.*not supported"):
+    with pytest.raises(TypeError, match=r"Remove country_tag.*reassignment.*not supported"):
         mod.update_character("ABC_leader", **fields)
 
     assert mod._snapshot() == before

@@ -1,6 +1,6 @@
 import pytest
 
-from hoi4 import Mod
+from hoi4 import Mod, ParseError
 from hoi4.mod import ExternalModificationError
 
 
@@ -44,7 +44,7 @@ def test_import_preserves_bytes_and_refuses_path_or_syntax_errors(tmp_path):
         with pytest.raises(ValueError):
             mod.import_script_file(src, relative)
     invalid = source(tmp_path, "check = {", "invalid.txt")
-    with pytest.raises(Exception):
+    with pytest.raises(ParseError):
         mod.import_script_file(invalid, "common/scripted_triggers/invalid.txt")
     assert not (mod.mod_root / "common/scripted_triggers/invalid.txt").exists()
 

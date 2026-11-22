@@ -117,7 +117,7 @@ class Problem:
     ``"missing_value"``, ``"stray_operator"`` or ``"unterminated_string"``.
     """
 
-    __slots__ = ("offset", "kind", "message")
+    __slots__ = ("kind", "message", "offset")
 
     def __init__(self, offset: int, kind: str, message: str) -> None:
         self.offset = offset
@@ -131,7 +131,7 @@ class Problem:
 class Scalar:
     """A bare word or a quoted string."""
 
-    __slots__ = ("doc", "start", "end", "quoted")
+    __slots__ = ("doc", "end", "quoted", "start")
 
     def __init__(self, doc: Document, start: int, end: int, quoted: bool) -> None:
         self.doc = doc
@@ -159,7 +159,7 @@ class Scalar:
 class Block:
     """``{ ... }``, or the whole file for :attr:`Document.root`."""
 
-    __slots__ = ("doc", "start", "end", "body_start", "body_end", "items", "closed")
+    __slots__ = ("body_end", "body_start", "closed", "doc", "end", "items", "start")
 
     def __init__(self, doc: Document, start: int, body_start: int) -> None:
         self.doc = doc
@@ -275,7 +275,7 @@ class Block:
 class Tagged:
     """A typed block such as ``rgb { 255 0 0 }``."""
 
-    __slots__ = ("doc", "tag", "block")
+    __slots__ = ("block", "doc", "tag")
 
     def __init__(self, doc: Document, tag: Scalar, block: Block) -> None:
         self.doc = doc
@@ -304,7 +304,7 @@ Value = Scalar | Block | Tagged
 class Assignment:
     """``key OP value``."""
 
-    __slots__ = ("doc", "key", "op_start", "op_end", "value")
+    __slots__ = ("doc", "key", "op_end", "op_start", "value")
 
     def __init__(
         self, doc: Document, key: Scalar, op_start: int, op_end: int, value: Value
@@ -365,7 +365,7 @@ Item = Assignment | Scalar | Block | Tagged
 class Document:
     """A parsed script file: the source text plus its syntax tree."""
 
-    __slots__ = ("text", "root", "comments", "problems", "_line_starts")
+    __slots__ = ("_line_starts", "comments", "problems", "root", "text")
 
     def __init__(self, text: str) -> None:
         self.text = text
@@ -487,7 +487,7 @@ def _parse_into(doc: Document) -> None:
             comments.append((start, end))
             continue
 
-        if kind == _WORD or kind == _STRING:
+        if kind in (_WORD, _STRING):
             quoted = kind == _STRING
             if quoted and (end - start < 2 or text[end - 1] != '"' or _escaped(text, end - 1)):
                 problems.append(Problem(start, "unterminated_string", "Unterminated quoted string"))
@@ -715,9 +715,13 @@ def repair(text: str) -> str:
         parts.append(text[position:offset])
         position = offset + 1
         # ``1}b`` must not become the single word ``1b``.
-        if 0 < offset and position < len(text):
-            if text[offset - 1] not in _SPACES and text[position] not in _SPACES:
-                parts.append(" ")
+        if (
+            offset > 0
+            and position < len(text)
+            and text[offset - 1] not in _SPACES
+            and text[position] not in _SPACES
+        ):
+            parts.append(" ")
     parts.append(text[position:])
     repaired = "".join(parts)
     if unclosed:

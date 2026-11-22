@@ -366,7 +366,7 @@ def _require_png_destination(destination: str | Path) -> Path:
 def _require_pillow() -> tuple[Any, type[Exception]]:
     try:
         Image = import_module("PIL.Image")
-        unidentified_error = getattr(import_module("PIL"), "UnidentifiedImageError")
+        unidentified_error = import_module("PIL").UnidentifiedImageError
     except (ImportError, AttributeError) as exc:
         raise GeminiBackendUnavailableError(
             "Gemini image generation requires the 'gemini' extra. "

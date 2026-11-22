@@ -634,13 +634,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
 
     @staticmethod
     def _all_character_roles(character: Character) -> tuple[CharacterRole, ...]:
-        return tuple(
-            [
-                *character.roles,
-                *(
-                    role
-                    for instance in character.instances
-                    for role in instance.roles
-                ),
-            ]
+        return (
+            *character.roles,
+            *(role for instance in character.instances for role in instance.roles),
         )

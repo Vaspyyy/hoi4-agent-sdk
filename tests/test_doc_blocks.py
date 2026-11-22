@@ -193,7 +193,7 @@ def test_doc_blocks_run(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 exec(compile(code, block.where, "exec"), namespace)
-        except BaseException as exc:  # noqa: BLE001 - every error is a doc failure
+        except BaseException as exc:
             failures.append(_error(block, exc))
     assert not failures, "Doc blocks failed:\n" + "\n".join(failures)
 
