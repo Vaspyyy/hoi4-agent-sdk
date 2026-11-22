@@ -54,7 +54,7 @@ EFFECT_BUILDERS = [
 
 # Mod methods that no longer exist (removed, or the old name of a renamed one).
 REMOVED_MOD_METHODS = {
-    "declare_war", "create_wargoal", "start_civil_war", "reload", "effect_block",
+    "declare_war", "create_wargoal", "start_civil_war", "effect_block",
     "scope_block", "ruling_parties", "leader_ideologies_for_party",
     "default_leader_ideology", "suggest_tag", "suggest_focus_icon", "suggest_idea_icon",
     "create_scripted_trigger", "create_scripted_effect", "create_country_leader_trait",
@@ -69,7 +69,6 @@ ALLOWED_RECEIVERS = {
     "create_wargoal": {"effects"},
     "start_civil_war": {"effects"},
     "scope_block": {"effects", "builders"},
-    "reload": {"importlib"},
 }
 
 # Removed or renamed keyword arguments, per method.

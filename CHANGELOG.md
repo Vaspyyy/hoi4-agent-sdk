@@ -19,7 +19,6 @@ say what you got, no duplicate entry points, and the script builders moved to
 | `get_on_action(..., occurrence=n)`, `update_on_action(..., occurrence=n)`, `delete_on_action(..., occurrence=n)` out of range: `IndexError` | `NotFoundError` | One error for "not there" |
 | `add_character_role(..., instance_occurrence=n)` and the other role methods with a missing instance: `IndexError` | `NotFoundError` | One error for "not there" |
 | `mod.declare_war(target, wg)`, `mod.create_wargoal(target, wg)`, `mod.start_civil_war(ideology, size, capital)` | `effects.declare_war(...)`, `effects.create_wargoal(...)`, `effects.start_civil_war(...)` | Deprecated aliases of the builders |
-| `mod.reload()` | `mod.discard()` | `discard()` drops every unsaved edit and picks up changed files; it reloads everything itself when a base mod changed |
 | `mod.validate(suppress_warnings=[...])`, `mod.validate_effect(script, suppress_warnings=[...])` | `suppress=[...]` | Older name of the same list |
 | `mod.validate(None, False, True, "release")` (options by position) | `mod.validate(validate_icons=False, strict_localization=True, stage="release")` | Every option of `validate()` and `validate_effect()` is keyword-only |
 | `mod.create_idea(idea_id, ..., desc="X_desc")` | drop the argument; `mod.set_loc("X_desc", text)` | It was accepted only when it was the fixed key and never written |

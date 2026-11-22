@@ -702,13 +702,32 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
     def discard(self) -> None:
         """Drop every unsaved edit and pick up files changed on disk.
 
-        Only sections that had edits or whose files changed on disk (and the
-        sections built from them) are unloaded; they load again on next use.
-        Everything else stays in memory. When a base mod's text file changed,
-        everything is unloaded and the content layers are rebuilt.
+        This is the cheap way back to the files: only sections that had
+        edits or whose files changed on disk (and the sections built from
+        them) are unloaded; they load again on next use. Everything else
+        stays in memory. When a base mod's text file changed, everything is
+        unloaded and the content layers are rebuilt.
+
+        It looks only at the files of the mod and its base mods. A file
+        counts as changed when its size or modification time and its text
+        differ, or when a refused ``save()`` saw its text change. Use
+        ``reload()`` instead when a game file changed, or when a file may
+        have changed without its size or time showing it.
         """
 
         self._discard_changes(())
+
+    def reload(self) -> None:
+        """Drop every unsaved edit and read the whole mod again from disk.
+
+        Unlike ``discard()``, this does not trust file sizes and times: every
+        section of the mod, the base mods and the game is read again on next
+        use. It is slower than ``discard()``. Use it when files changed in a
+        way ``discard()`` cannot see (a game file, a file written back with
+        its old size and time), or to start from a clean state.
+        """
+
+        self._reload_all()
 
     def _reload_all(self) -> None:
         """Discard queued changes and reload every section from disk."""

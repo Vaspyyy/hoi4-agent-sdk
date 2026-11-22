@@ -12,7 +12,6 @@ REMOVED_MOD_NAMES = [
     "declare_war",
     "create_wargoal",
     "start_civil_war",
-    "reload",
     "effect_block",
     "scope_block",
     "ruling_parties",

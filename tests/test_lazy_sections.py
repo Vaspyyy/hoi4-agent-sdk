@@ -370,7 +370,7 @@ def test_a_change_after_the_section_loaded_stays_refused_on_a_second_read(mod_ro
         mod.save()
 
 
-@pytest.mark.parametrize("way_out", ["discard"])
+@pytest.mark.parametrize("way_out", ["discard", "reload"])
 @pytest.mark.parametrize("same_time", [False, True], ids=["new time", "old time set back"])
 @pytest.mark.parametrize("kind", ["event", "scripted trigger"])
 def test_after_a_refused_save_discard_takes_the_changed_file(
