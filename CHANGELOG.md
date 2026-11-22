@@ -89,6 +89,7 @@ say what you got, no duplicate entry points, and the script builders moved to
 | `mod.set_loc(key, value, "localisation/...yml")`, `set_loc(..., file_path=...)`, `mod.set_focus_loc(id, name, desc, file_path)` | `path=` (keyword-only) | One name per concept |
 | `mod.create_state(..., localisation_file=...)`, `mod.create_strategic_region(..., localisation_file=...)` | `loc_path=` | One name per concept |
 | `mod.create_country(..., allow_vanilla_override=True)`, `mod.import_flag_to_mod(tag, src, True)` / `vanilla_override=True` (also `hoi4.assets.import_flag_to_mod`), `mod.set_loc(..., replace=True)` | `overwrite_vanilla=True` (keyword-only) | One name for "override the game's content" |
+| `except ValueError` around `create_x(id, ...)` for an existing id (country, character, bookmark, decision, decision category, dynamic modifier, event, focus tree, idea, ideology, on-action, OOB, state, strategic region, equipment variant) | `except hoi4.AlreadyExistsError` (still a `ValueError`) | One error for "already there" |
 | `hoi4.bookmarks.load_bookmarks`, `hoi4.decisions.write_decisions_file`, `hoi4.focus.write_focus_tree`, `hoi4.ideologies.load_ideologies`, `hoi4.localisation.delete_localization_keys`, `hoi4.on_actions.write_on_actions_file`, `hoi4.states.ensure_state_in_mod`, `hoi4.states.patch_state_history_owner_cores`, `hoi4.tags.load_all_tags`, `hoi4.validation.collect_character_ids` | the matching `Mod` method (`mod.list_bookmarks()`, `mod.save()`, ...) | Unused module functions that bypassed the `Mod` staging |
 
 ### Added

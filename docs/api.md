@@ -109,6 +109,9 @@ anything changes (the `TypeError` names the `ensure_x` method), and raises
 `ValueError` when the existing object has a different parent (another
 country's focus tree, another category's decision).
 
+Every `create_x(id, ...)` returns the new object and raises
+`AlreadyExistsError` for an id that exists, unless `overwrite=True`.
+
 Every `get_x(id)` returns the object or raises `NotFoundError`. Pass
 `default=` (keyword only) to get that value instead, as with `dict.get`:
 `mod.get_focus("TAG_focus", "TAG_x", default=None)`. A lookup never creates

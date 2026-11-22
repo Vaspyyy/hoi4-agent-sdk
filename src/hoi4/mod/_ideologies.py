@@ -10,7 +10,7 @@ from ..paths import (
     require_script_id,
     resolve_mod_output_path,
 )
-from ..errors import ReadOnlyError, not_found
+from ..errors import AlreadyExistsError, ReadOnlyError, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -80,7 +80,7 @@ class IdeologiesLayer(CoreLayer):
         ideology_id = require_script_id(ideology_id, label="ideology ID")
         existing = self._ideologies.get(ideology_id)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Ideology '{ideology_id}' already exists. Use overwrite=True or update_ideology()."
             )
         target = (

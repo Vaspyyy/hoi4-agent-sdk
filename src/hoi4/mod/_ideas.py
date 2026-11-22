@@ -16,7 +16,7 @@ from ..paths import (
 from ..types import (
     Idea,
 )
-from ..errors import not_found
+from ..errors import AlreadyExistsError, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -65,7 +65,7 @@ class IdeasLayer(CoreLayer):
         idea_id = require_script_id(idea_id, label="idea ID")
         existing = self._ideas.get(idea_id)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Idea '{idea_id}' already exists. Use overwrite=True to replace it or update_idea() to patch it."
             )
         idea = Idea(

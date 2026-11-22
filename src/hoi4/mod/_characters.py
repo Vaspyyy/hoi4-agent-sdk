@@ -20,7 +20,7 @@ from ..paths import (
     resolve_mod_output_path,
 )
 from ..textio import read_text
-from ..errors import NotFoundError, not_found
+from ..errors import AlreadyExistsError, NotFoundError, not_found
 from ._countries import CountriesLayer
 from ._shared import MISSING, _D, _Missing, _check_field_names
 from ._localisation import LocalisationLayer
@@ -135,7 +135,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             )
         existing = self._characters.get(character_id)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Character '{character_id}' already exists. "
                 "Use overwrite=True only for deliberate replacement."
             )

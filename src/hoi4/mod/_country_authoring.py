@@ -22,7 +22,7 @@ from ..types import (
     Country,
     Leader,
 )
-from ..errors import ReadOnlyError, not_found
+from ..errors import AlreadyExistsError, ReadOnlyError, not_found
 from ._characters import CharactersLayer
 from ._shared import (
     _check_field_names,
@@ -60,7 +60,7 @@ class CountryAuthoringLayer(CharactersLayer):
         tag = require_country_tag(tag)
         existing = self._countries.get(tag)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Country tag '{tag}' already exists in the mod. "
                 "Use overwrite=True only when intentionally replacing that mod country."
             )

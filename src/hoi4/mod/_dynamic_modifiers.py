@@ -15,7 +15,7 @@ from ..paths import (
 from ..script import (
     normalize_block_body,
 )
-from ..errors import not_found
+from ..errors import AlreadyExistsError, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -68,7 +68,7 @@ class DynamicModifiersLayer(CoreLayer):
         )
         existing = self._dynamic_modifiers.get(modifier_id)
         if existing is not None and not overwrite:
-            raise ValueError(f"Dynamic modifier '{modifier_id}' already exists")
+            raise AlreadyExistsError(f"Dynamic modifier '{modifier_id}' already exists")
         target = (
             resolve_mod_output_path(self.mod_root, path)
             if path is not None

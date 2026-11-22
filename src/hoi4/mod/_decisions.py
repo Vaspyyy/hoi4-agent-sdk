@@ -16,7 +16,7 @@ from ..types import (
     Decision,
     DecisionCategory,
 )
-from ..errors import not_found
+from ..errors import AlreadyExistsError, not_found
 from ._effects import EffectsLayer
 from ._shared import MISSING, _D, _Missing
 from ._localisation import LocalisationLayer
@@ -146,7 +146,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         category_id = require_script_id(category_id, label="decision category ID")
         existing = self._decision_categories.get(category_id)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Decision category '{category_id}' already exists. "
                 "Use overwrite=True to replace it or update existing decisions."
             )
@@ -356,7 +356,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         decision_id = require_script_id(decision_id, label="decision ID")
         existing = self._decisions.get(decision_id)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Decision '{decision_id}' already exists. "
                 "Use overwrite=True to replace it or update_decision() to patch it."
             )

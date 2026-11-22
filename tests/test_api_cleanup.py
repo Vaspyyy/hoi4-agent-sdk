@@ -620,3 +620,31 @@ def test_definition_writers_return_the_definition(tmp_path) -> None:
     ):
         assert isinstance(result, ScriptDefinition)
     assert mod.list_definitions("scripted_trigger") == ["zz_trigger"]
+
+
+# ── create_* ────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda mod: mod.create_country("ABC", "Again"),
+        lambda mod: mod.create_bookmark("zz_bm"),
+        lambda mod: mod.create_decision_category("zz_cat"),
+        lambda mod: mod.create_decision("zz_cat", "zz_dec"),
+        lambda mod: mod.create_dynamic_modifier("zz_dm"),
+        lambda mod: mod.create_event("zz.1"),
+        lambda mod: mod.create_focus_tree("zz_tree", "ABC"),
+        lambda mod: mod.create_idea("zz_idea"),
+        lambda mod: mod.create_ideology("zz_ideo"),
+        lambda mod: mod.create_on_action("on_startup"),
+        lambda mod: mod.create_oob("ABC_1936", "ABC"),
+    ],
+)
+def test_creating_an_existing_id_raises_already_exists(full_mod: Mod, call) -> None:
+    from hoi4 import AlreadyExistsError
+
+    before = full_mod.preview()
+    with pytest.raises(AlreadyExistsError):
+        call(full_mod)
+    assert full_mod.preview() == before

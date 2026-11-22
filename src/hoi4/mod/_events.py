@@ -17,7 +17,7 @@ from ..types import (
     EventOption,
     EventText,
 )
-from ..errors import NotFoundError, already_exists, not_found
+from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -115,7 +115,7 @@ class EventsLayer(CoreLayer):
         event_id = require_script_id(event_id, label="event ID")
         existing = self._events.get(event_id)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Event '{event_id}' already exists. Use overwrite=True to replace it, "
                 "or update_event()/update_event_option() to patch it."
             )

@@ -35,7 +35,7 @@ from ..textio import read_text
 from ..types import (
     Country,
 )
-from ..errors import NotFoundError, ReadOnlyError, not_found
+from ..errors import AlreadyExistsError, NotFoundError, ReadOnlyError, not_found
 from ._countries import CountriesLayer
 from ._shared import MISSING, _D, _Missing
 from ._equipment import EquipmentLayer
@@ -243,7 +243,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         country_tag = self._require_country_reference(tag)
         existing = self._oobs.get(name)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"OOB '{name}' already exists. Use overwrite=True only for "
                 "deliberate replacement."
             )
@@ -731,7 +731,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 and existing.required_dlc == variant.required_dlc
                 and existing.excluded_dlc == variant.excluded_dlc
             ):
-                raise ValueError(
+                raise AlreadyExistsError(
                     f"Equipment variant '{variant.name}' for "
                     f"'{variant.equipment_type}' already exists in {country_tag} history"
                 )

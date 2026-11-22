@@ -19,7 +19,7 @@ from ..paths import (
 from ..script import (
     normalize_block_body,
 )
-from ..errors import NotFoundError, already_exists, not_found
+from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -81,7 +81,7 @@ class BookmarksLayer(CoreLayer):
     ) -> Bookmark:
         existing = next((item for item in self._bookmarks if item.name == name), None)
         if existing is not None and not overwrite:
-            raise ValueError(f"Bookmark '{name}' already exists")
+            raise AlreadyExistsError(f"Bookmark '{name}' already exists")
         if existing is not None:
             self.delete_bookmark(name)
         target = (

@@ -16,7 +16,7 @@ from ..types import (
     Idea,
     ValidationError,
 )
-from ..errors import NotFoundError, already_exists, not_found
+from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ..textio import decode_text, read_text
@@ -297,7 +297,7 @@ class DefinitionsLayer(CoreLayer):
                 )
             relative = Path(existing.relative_path)
             if path is not None and relative_content_path(path) != relative:
-                raise ValueError(
+                raise AlreadyExistsError(
                     f"{resolved.name} {definition_id!r} already exists in {existing.relative_path}; "
                     "update it there or delete it first"
                 )

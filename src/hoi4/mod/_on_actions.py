@@ -14,7 +14,7 @@ from ..script import (
 from ..types import (
     OnAction,
 )
-from ..errors import NotFoundError, not_found
+from ..errors import AlreadyExistsError, NotFoundError, not_found
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -167,7 +167,7 @@ class OnActionsLayer(CoreLayer):
             if (action.path or default_path).resolve(strict=False) == target
         ]
         if target_existing and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"On-action '{action_id}' already has an occurrence in {target}. "
                 "Use overwrite=True to replace that occurrence, update_on_action() "
                 "to patch it, or choose another path for an additive extension."

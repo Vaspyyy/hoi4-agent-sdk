@@ -66,7 +66,7 @@ from ..types import (
     State,
     ValidationError,
 )
-from ..errors import NotFoundError, already_exists, not_found
+from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._catalogs import CatalogsLayer
 from ._shared import MISSING, _D, _Missing
 from ._states import StatesLayer
@@ -138,7 +138,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
             if isinstance(state_id, bool) or not isinstance(state_id, int) or state_id <= 0:
                 raise ValueError(f"state_id must be a positive integer, got {state_id!r}")
             if state_id in effective_ids:
-                raise ValueError(f"State {state_id} already exists")
+                raise AlreadyExistsError(f"State {state_id} already exists")
             new_id = state_id
         target_path = resolve_mod_output_path(
             self.mod_root,
@@ -338,7 +338,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
             if isinstance(region_id, bool) or not isinstance(region_id, int) or region_id <= 0:
                 raise ValueError(f"region_id must be a positive integer, got {region_id!r}")
             if region_id in existing:
-                raise ValueError(f"Strategic region {region_id} already exists")
+                raise AlreadyExistsError(f"Strategic region {region_id} already exists")
             new_id = region_id
         relative = (
             f"{STRATEGIC_REGIONS_DIR}/{new_id}-"
