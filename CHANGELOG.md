@@ -201,7 +201,30 @@ All notable changes to this project are documented here. The format follows
   copy of the bytes of every text file of the mod. It records each file's size
   and modification time, and a digest of the text it read. A file whose time
   changed but whose text did not (a `touch`) can still be overwritten; any
-  other change behind the SDK's back still raises `ExternalModificationError`.
+  other change behind the SDK's back still raises `ExternalModificationError`
+  (before a file is overwritten, its text is compared, whatever its size
+  and time say).
+- A file is read when its section is first used, not when `Mod(...)` is
+  built. A file that was changed, touched or created in between is read as
+  it is then, which is what a fresh `Mod` would see, and can be edited and
+  saved. A change after the SDK read the file is still refused by `save()`.
+- **A `Mod` shared between threads needs more care than before.** It was
+  never safe to change one from two threads, but reading one from several
+  threads used to work, because everything was loaded at construction. Now
+  a section loads on first use, and a second thread that reads the same
+  content while it loads gets an incomplete answer without an error. Use
+  one `Mod` per thread, your own lock, or `Mod(..., strict_loading=True)`,
+  which loads everything up front as before.
+- With base mods, the files below a folder are read in one fixed order on
+  every Python version and file system. Before, the order was that of
+  `Path.rglob` of the running Python and of the temporary copy's file
+  system. On Python 3.11 and 3.12 this can change which of two definitions
+  wins when an inherited layer defines the same key twice in nested
+  folders (on 3.13 and later the order is the same as before).
+- A symlink in a base mod that leaves the base mod's folder is refused when
+  it is read, not when the `Mod` is built.
+- `copy.copy(mod)` gives a copy that keeps its own account of which
+  sections are loaded.
 - A load failure in a file that was changed or broken after `Mod(...)` was
   built, but before its section was first used, is now reported as a load
   diagnostic (`load_failure` in `validate()`), like any file that fails to load.

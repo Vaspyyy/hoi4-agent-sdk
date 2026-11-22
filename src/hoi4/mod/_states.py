@@ -205,7 +205,7 @@ class StatesLayer(CoreLayer):
             self._state_source_paths.setdefault(state_id, f)
             text = read_text(f)
             self._original_files.setdefault(f, text)
-            self._note_read(f, text, adopt=True)
+            self._note_read(f, text)
             return state
         raise KeyError(f"State {state_id} not found")
 

@@ -5,11 +5,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import os
+import threading
 import time
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Optional, Sequence, TypeVar
+from typing import TYPE_CHECKING, ClassVar, Optional, Self, Sequence, TypeVar
 
 from .._disk_cache import DiskAnalysis
 from .._file_cache import cached_file_result
@@ -365,6 +366,13 @@ _BASELINE_SUFFIXES = frozenset({".txt", ".yml", ".gfx", ".lua", ".mod"})
 _Fingerprint = tuple[int, int, bool]
 _RACY_NS = 2_000_000_000
 
+# One section loader at a time, in the whole process (loaders are plain
+# Python, so nothing is lost). It keeps two threads from running the same
+# loader at once. It does NOT make a ``Mod`` safe to share between threads:
+# a section's attributes exist, still half filled, while its loader runs (see
+# ``docs/internals/mod_sections.md``).
+_SECTION_LOCK = threading.RLock()
+
 
 def _same_file_state(recorded: _Fingerprint, current: _Fingerprint | None) -> bool:
     """Whether a fingerprint proves the file unchanged since it was recorded."""
@@ -566,6 +574,10 @@ class CoreLayer:
     def _load_section(self, name: str) -> None:
         """Run one section's loader, once. Its data is empty until then."""
 
+        with _SECTION_LOCK:
+            self._load_section_locked(name)
+
+    def _load_section_locked(self, name: str) -> None:
         if name in self._section_loaded:
             return
         if name in self._section_loading:
@@ -591,6 +603,22 @@ class CoreLayer:
         self._section_loading.pop()
         self._section_files[name] = set(self._original_files) - before
         self._section_loaded.add(name)
+
+    def __copy__(self) -> Self:
+        """A shallow copy that keeps its own account of what is loaded.
+
+        The copy shares the content that is loaded now, as a shallow copy
+        does. What loads later loads for one of the two only, so neither
+        believes it holds a section that the other one loaded.
+        """
+
+        clone = object.__new__(type(self))
+        clone.__dict__.update(self.__dict__)
+        clone._section_loaded = set(self._section_loaded)
+        clone._section_loading = []
+        clone._section_diagnostics = dict(self._section_diagnostics)
+        clone._section_files = {name: set(paths) for name, paths in self._section_files.items()}
+        return clone
 
     def _load_all_sections(self) -> None:
         for section in self._sections.sections:
@@ -773,29 +801,36 @@ class CoreLayer:
             return None
         return (stat.st_size, stat.st_mtime_ns, stat.st_mtime_ns >= time.time_ns() - _RACY_NS)
 
-    def _note_read(self, path: Path, text: str, *, adopt: bool = False) -> None:
-        """Remember what the SDK read from a mod file, if the file is unchanged.
+    def _note_read(self, path: Path, text: str) -> None:
+        """Remember what the SDK read from a mod file: its baseline from now on.
 
-        A digest only counts while the file still has its baseline
-        fingerprint: text read after a change behind the SDK's back must not
-        make that change look safe to overwrite. ``adopt`` takes a file that
-        had no fingerprint yet (it appeared after loading) into the baseline.
+        The first read of a file takes it as it is then. A file that was
+        touched, changed or created after ``Mod()`` and before its section
+        first loaded is simply read, as a fresh ``Mod`` would read it, and
+        ``save()`` may write it.
+
+        A later read does not move the baseline while a loaded section still
+        holds an older text of the file (``_original_files``): what is in
+        memory was built from that text, so a change behind the SDK's back
+        must keep looking like one, and ``save()`` refuses to overwrite it.
         """
 
         key = path if path in self._fingerprints else path.resolve(strict=False)
-        if key in self._read_digests:
+        if key not in self._fingerprints and not key.is_relative_to(self.mod_root):
             return
-        recorded = self._fingerprints.get(key)
-        if recorded is None:
-            if not adopt or not key.is_relative_to(self.mod_root):
-                return
-            current = self._fingerprint(key)
-            if current is None:
-                return
-            self._fingerprints[key] = current
-        elif not _same_file_state(recorded, self._fingerprint(key)):
+        digest = _text_digest(text)
+        known = self._read_digests.get(key)
+        if known == digest:
             return
-        self._read_digests[key] = _text_digest(text)
+        if known is not None:
+            held = self._original_files.get(key)
+            if held is not None and held != text:
+                return
+        current = self._fingerprint(key)
+        if current is None:
+            return
+        self._fingerprints[key] = current
+        self._read_digests[key] = digest
 
     def _read_source(self, path: Path) -> str:
         """Read a mod file for loading, remembering what was read."""

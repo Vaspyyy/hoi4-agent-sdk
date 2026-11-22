@@ -293,6 +293,69 @@ def test_a_same_size_rewrite_with_its_old_time_set_back_is_refused(mod_root: Pat
     assert "test.1.x" in path.read_text(encoding="utf-8")
 
 
+def test_a_file_is_taken_as_it_is_when_its_section_first_loads(mod_root: Path) -> None:
+    """Touched, changed or created after Mod() and before first use: read as a fresh Mod would."""
+
+    path = mod_root / "events/test.txt"
+    other = mod_root / "events/other.txt"
+    _age(path)
+    mod = Mod(mod_root)
+    assert mod._section_loaded == set()
+    # All three happen behind the SDK's back, before the events are loaded.
+    path.write_text(EVENTS.replace("test.1.d", "changed.d"), encoding="utf-8")
+    os.utime(path, None)
+    other.write_text(EVENTS.replace("test.1", "test.2"), encoding="utf-8")
+
+    assert mod.get_event("test.1").description == "changed.d"
+    mod.update_event("test.1", title="new_title")
+    mod.update_event("test.2", title="other_title")
+    mod.save()
+
+    saved = path.read_text(encoding="utf-8")
+    assert "new_title" in saved and "changed.d" in saved
+    assert "other_title" in other.read_text(encoding="utf-8")
+
+
+def test_a_touch_before_the_section_loads_is_not_an_edit(mod_root: Path) -> None:
+    path = mod_root / "events/test.txt"
+    _age(path)
+    mod = Mod(mod_root)
+    path.touch()
+    mod.update_event("test.1", title="new_title")
+
+    mod.save()
+
+    assert "new_title" in path.read_text(encoding="utf-8")
+
+
+def test_a_change_after_the_section_loaded_stays_refused_on_a_second_read(mod_root: Path) -> None:
+    """A later read must not make a change look safe while older text is still in memory."""
+
+    path = mod_root / "events/test.txt"
+    _age(path)
+    mod = Mod(mod_root)
+    mod.update_event("test.1", title="new_title")
+    path.write_text(EVENTS.replace("test.1.d", "longer.changed.d"), encoding="utf-8")
+    # Something reads the file again (here directly; a lookup or a second
+    # section does the same).
+    mod._read_source(path)
+
+    with pytest.raises(ExternalModificationError, match="events/test.txt"):
+        mod.save()
+
+
+def test_a_shallow_copy_keeps_its_own_account_of_what_is_loaded(mod_root: Path) -> None:
+    mod = Mod(mod_root)
+    clone = copy.copy(mod)
+
+    assert clone.list_events() == ["test.1"]
+    # The copy's load must not make the original believe it holds the events.
+    assert mod._section_loaded == set()
+    assert mod.list_events() == ["test.1"]
+    assert mod.list_states() == [1]
+    assert clone.list_states() == [1]
+
+
 def test_a_touch_is_not_an_edit(mod_root: Path) -> None:
     path = mod_root / "events/test.txt"
     _age(path)

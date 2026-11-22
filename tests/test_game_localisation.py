@@ -165,3 +165,23 @@ def test_an_unrelated_save_keeps_the_game_index(game: Path, mod_root: Path) -> N
     mod.save()
     assert mod._game_loc_entries["english"] is index
     assert mod.get_loc("GER") == "Germany"
+
+
+def test_the_release_gate_probes_a_text_of_the_mod_itself(game: Path, mod_root: Path) -> None:
+    """The game's longer texts are in all_loc(), but the gate edits the mod's own file."""
+
+    from hoi4.release_gate import _probe_localization
+
+    write(
+        game,
+        "localisation/english/long_l_english.yml",
+        'l_english:\n GAME_long: "A much longer text of the game than anything the mod has"\n',
+    )
+    mod = Mod(mod_root, hoi4_install=game)
+    assert max(mod.all_loc().items(), key=lambda item: len(item[1]))[0] == "GAME_long"
+
+    assert _probe_localization(mod) == "STATE_1"
+    mod.save()
+    folder = mod_root / "localisation/english"
+    assert [path.name for path in folder.iterdir()] == ["mod_l_english.yml"]
+    assert "[sdk gate]" in (folder / "mod_l_english.yml").read_text(encoding="utf-8-sig")

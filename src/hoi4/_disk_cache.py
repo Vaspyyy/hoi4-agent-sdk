@@ -238,7 +238,7 @@ def _prune(directory: Path, name: str, current: Path) -> None:
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
-        for old in versions[_KEEP_VERSIONS - 1 :]:
+        for old in versions[_KEEP_VERSIONS:]:
             old.unlink(missing_ok=True)
         limit = time.time() - _STALE_TEMPORARY_S
         for temporary in directory.glob(f".{name}-*.tmp"):

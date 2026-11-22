@@ -131,7 +131,7 @@ class CountriesLayer(CoreLayer):
             if path.exists():
                 text = read_text(path)
                 self._original_files.setdefault(path, text)
-                self._note_read(path, text, adopt=True)
+                self._note_read(path, text)
         return country
 
     def set_country_name_pool(

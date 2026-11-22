@@ -88,8 +88,15 @@ changed, appeared or went away, `save()` and `discard()` reload everything.
 
 `_fingerprints` holds `(size, mtime_ns, racy)` for every text file of the mod
 (`.txt .yml .gfx .lua .mod`), taken with `stat` alone. `_read_digests` holds a
-digest of the text the SDK read from a file while it still had its recorded
-fingerprint.
+digest of the text the SDK read from a file (`_note_read`).
+
+The first read of a file takes it as it is then, with its fingerprint of
+that moment. So a file that was touched, changed or created after `Mod()`
+and before its section first loaded is simply read, as a fresh `Mod` would
+read it, and `save()` may write it. A later read of the same file does not
+move the baseline while a loaded section still holds an older text of it
+(`_original_files`): what is in memory was built from that text, so the
+change keeps looking like one and `save()` refuses to overwrite it.
 
 Two questions are asked of them, with different care:
 
@@ -113,6 +120,21 @@ Two questions are asked of them, with different care:
 - After a save, the written files get new fingerprints and digests. A discard
   takes the fingerprints of the whole mod again, which is also how it finds
   files changed on disk.
+
+## Threads
+
+A `Mod` is not safe to share between threads, and lazy loading makes that
+matter more than before: while a section's loader runs, the section's
+attributes already exist and are half filled, so a second thread that asks
+for the same content at that moment gets an incomplete answer without an
+error. One lock (`_SECTION_LOCK`) lets only one loader run at a time, which
+keeps two threads from running the same loader, and nothing more.
+
+Use one `Mod` per thread (as `docs/api.md` has always said), or guard a
+shared one with your own lock. For read-only use from several threads,
+`Mod(..., strict_loading=True)` loads every section at construction and
+again after each `save()` and `discard()`, so no section loads in the
+middle of a read.
 
 ## The reload check
 
