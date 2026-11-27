@@ -177,7 +177,7 @@ from .modifiers_catalog import MODIFIER_CATEGORIES
 try:
     __version__ = _metadata.version("hoi4-agent-sdk")
 except _metadata.PackageNotFoundError:  # pragma: no cover - source tree without installation metadata
-    __version__ = "0.6.5"
+    __version__ = "0.7.0"
 
 __all__ = [
     "COUNTRY_PACKAGE_REQUIREMENT_CODES",

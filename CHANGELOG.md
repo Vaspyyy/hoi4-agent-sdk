@@ -6,7 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed (breaking, 0.7.0)
+## [0.7.0] - 2026-11-27
+
+### Changed (breaking)
 
 The public API of `hoi4.Mod` was cleaned up: one error hierarchy, lookups and
 changes that raise instead of returning `False` or `None`, return values that
