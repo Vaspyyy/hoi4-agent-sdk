@@ -1437,12 +1437,12 @@ class CoreLayer:
         """Copies of every inherited definition of ``key``, the highest layer first."""
 
         kind = INHERITED_KINDS[kind_name]
-        return [
+        return copy.deepcopy([
             (source, model)
             for source in self._inherited_sources(kind_name, key)
             for model in self._inherited_file_models(kind_name, source)
             if kind.key(model) == key
-        ]
+        ])
 
     def _inherited_definition(self, kind_name: str, key: str) -> Any:
         """A copy of what the base mods or the game define as ``key``, or ``None``."""
