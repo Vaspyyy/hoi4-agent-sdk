@@ -108,6 +108,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         """
         # Look up before validating: the game accepts ids the SDK would not
         # generate, such as ``COL_alfonso_lópez_pumarejo`` in vanilla.
+        if character_id is None:
+            raise TypeError("Character ID cannot be None")
         character: Character | None = self._characters.get(str(character_id))
         if character is not None:
             return character

@@ -111,6 +111,8 @@ class LocalisationLayer(CoreLayer):
             NotFoundError: ``key`` has no text in that language and no
                 default was given.
         """
+        if key is None:
+            raise TypeError("Localisation key cannot be None")
         language, entries, sources, dirty_keys = self._loc_tables(language)
         key = self._normalize_loc_key(key)
         value = entries.get(key)

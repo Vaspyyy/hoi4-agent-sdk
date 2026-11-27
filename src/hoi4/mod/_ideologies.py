@@ -50,6 +50,8 @@ class IdeologiesLayer(CoreLayer):
         Raises:
             NotFoundError: No ideology has this id.
         """
+        if ideology_id is None:
+            raise TypeError("Ideology ID cannot be None")
         ideology = self._ideologies.get(ideology_id)
         if ideology is None and include_vanilla:
             ideology = copy.deepcopy(self._vanilla_ideologies.get(ideology_id))

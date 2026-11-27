@@ -174,6 +174,8 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             NotFoundError: No OOB file has this name and no default was given.
             ValueError: ``name`` is not a valid OOB name.
         """
+        if name is None:
+            raise TypeError("OOB name cannot be None")
         name = require_script_id(name, label="OOB name")
         cached = self._oobs.get(name)
         if cached is not None:

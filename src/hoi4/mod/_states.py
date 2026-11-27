@@ -211,6 +211,8 @@ class StatesLayer(CountriesLayer):
         Raises:
             NotFoundError: The state does not exist and no default was given.
         """
+        if state_id is None:
+            raise TypeError("State ID cannot be None")
         if state_id in self._states:
             return self._states[state_id]
         if state_id in self._deleted_state_ids:

@@ -234,6 +234,8 @@ class DefinitionsLayer(CoreLayer):
 
         from ..definitions import get_definition_kind
         resolved = get_definition_kind(kind)
+        if definition_id is None:
+            raise TypeError("Definition ID cannot be None")
         for definition in self._effective_definitions(resolved, include_vanilla=False):
             if definition.id == definition_id:
                 return definition

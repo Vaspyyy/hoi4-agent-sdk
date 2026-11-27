@@ -287,6 +287,8 @@ class FocusLayer(ContextLayer):
         Raises:
             NotFoundError: The tree or the focus does not exist.
         """
+        if focus_id is None:
+            raise TypeError("Focus ID cannot be None")
         try:
             return self._require_focus(
                 self.get_focus_tree(tree_id, include_vanilla=include_vanilla), focus_id

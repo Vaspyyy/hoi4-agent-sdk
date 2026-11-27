@@ -891,11 +891,11 @@ class CoreLayer:
         """Load diagnostics of the sections loaded so far, in load order."""
 
         order = self._sections.order
-        return [
+        return copy.deepcopy([
             diagnostic
             for name in sorted(self._section_diagnostics, key=lambda key: order.get(key, len(order)))
             for diagnostic in self._section_diagnostics[name]
-        ]
+        ])
 
     def _add_load_diagnostic(self, diagnostic: LoadDiagnostic) -> None:
         """File a diagnostic under the section being loaded."""
@@ -1437,12 +1437,12 @@ class CoreLayer:
         """Copies of every inherited definition of ``key``, the highest layer first."""
 
         kind = INHERITED_KINDS[kind_name]
-        return copy.deepcopy([
+        return [
             (source, model)
             for source in self._inherited_sources(kind_name, key)
             for model in self._inherited_file_models(kind_name, source)
             if kind.key(model) == key
-        ])
+        ]
 
     def _inherited_definition(self, kind_name: str, key: str) -> Any:
         """A copy of what the base mods or the game define as ``key``, or ``None``."""
@@ -1507,6 +1507,8 @@ class CoreLayer:
         copy (see ``_inherited_definition``).
         """
 
+        if key is None:
+            raise TypeError("Lookup ID cannot be None")
         value = table.get(key)
         if value is not None:
             return value

@@ -51,6 +51,8 @@ class OnActionsLayer(CoreLayer):
                 default was given.
         """
 
+        if action_id is None:
+            raise TypeError("On-action ID cannot be None")
         occurrences = list(self._on_action_occurrences.get(action_id, ()))
         if include_vanilla:
             occurrences.extend(model for _, model in self._inherited_matches("on_action", action_id))

@@ -345,6 +345,8 @@ class MapLayer(StatesLayer, CatalogsLayer):
         Raises:
             NotFoundError: No strategic region has this id.
         """
+        if region_id is None:
+            raise TypeError("Strategic region ID cannot be None")
         for region in self._effective_strategic_regions(include_vanilla=False):
             if region.id == region_id:
                 return region

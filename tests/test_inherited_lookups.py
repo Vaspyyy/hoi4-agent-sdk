@@ -820,3 +820,95 @@ def test_existing_matrix_edit_stages_override(existing_content) -> None:
     result = mod.save(require_changes=True)
     assert result.written_files
     assert {p.relative_to(game): p.read_bytes() for p in game.rglob("*") if p.is_file()} == sources
+
+
+def test_modified_inherited_models_are_valid_edit_values(mod: Mod) -> None:
+    inherited = mod.get_event("test.1")
+    inherited.options[0].name = "changed_option"
+    mod.create_event("own.1")
+    updated = mod.update_event("own.1", options=inherited.options)
+    assert updated.options[0].name == "changed_option"
+    assert mod.get_event("test.1").options[0].name == "a"
+    invalid = mod.get_event("test.1").options
+    invalid[0].conditional_names = [object()]
+    before = mod.preview()
+    with pytest.raises(TypeError, match="conditional_names"):
+        mod.update_event("own.1", options=invalid)
+    assert mod.preview() == before
+
+
+def test_modified_inherited_bookmark_countries_are_valid_edit_values(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/bookmarks/game.txt", "bookmarks = { bookmark = { name = GAME date = 1936.1.1.12 GER = { history = old } } }")
+    mod = Mod(root, hoi4_install=game)
+    inherited = mod.get_bookmark("GAME")
+    inherited.countries[0].history = "changed_history"
+    mod.create_bookmark("OWN")
+    updated = mod.update_bookmark("OWN", countries=inherited.countries)
+    assert updated.countries[0].history == "changed_history"
+    assert mod.get_bookmark("GAME").countries[0].history == "old"
+
+
+@pytest.mark.parametrize("kind", [
+    "event", "tree", "focus", "idea", "decision", "category", "bookmark", "modifier",
+    "on_action", "occurrences", "country", "state", "character", "oob", "ideology",
+    "localisation", "definition", "definition_kind", "list_definition", "region",
+])
+def test_none_lookup_id_reports_clear_error(mod: Mod, kind: str) -> None:
+    sentinel = object()
+    calls = {
+        "event": lambda: mod.get_event(None, default=sentinel),
+        "tree": lambda: mod.get_focus_tree(None, default=sentinel),
+        "focus": lambda: mod.get_focus("tree", None, default=sentinel),
+        "idea": lambda: mod.get_idea(None, default=sentinel),
+        "decision": lambda: mod.get_decision(None, default=sentinel),
+        "category": lambda: mod.get_decision_category(None, default=sentinel),
+        "bookmark": lambda: mod.get_bookmark(None, default=sentinel),
+        "modifier": lambda: mod.get_dynamic_modifier(None, default=sentinel),
+        "on_action": lambda: mod.get_on_action(None, default=sentinel),
+        "occurrences": lambda: mod.get_on_action_occurrences(None, default=sentinel),
+        "country": lambda: mod.get_country(None),
+        "state": lambda: mod.get_state(None, default=sentinel),
+        "character": lambda: mod.get_character(None, default=sentinel),
+        "oob": lambda: mod.get_oob(None, default=sentinel),
+        "ideology": lambda: mod.get_ideology(None, default=sentinel),
+        "localisation": lambda: mod.get_loc(None, default=sentinel),
+        "definition": lambda: mod.get_definition("opinion_modifier", None, default=sentinel),
+        "definition_kind": lambda: mod.get_definition(None, "id"),
+        "list_definition": lambda: mod.list_definitions(None),
+        "region": lambda: mod.get_strategic_region(None, default=sentinel),
+    }
+    with pytest.raises((TypeError, ValueError), match="None"):
+        calls[kind]()
+
+
+def test_none_id_is_not_coerced_to_valid_string(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/characters/test.txt", "characters = { None = { name = NAME } }")
+    write(game, "history/units/None.txt", 'division_template = { name = "Inf" regiments = { infantry = { x = 0 y = 0 } } }')
+    write(game, "localisation/english/test_l_english.yml", 'l_english:\n None:0 "Text"\n')
+    mod = Mod(root, hoi4_install=game)
+    assert mod.get_character("None").id == "None"
+    assert mod.get_oob("None").name == "None"
+    assert mod.get_loc("None") == "Text"
+    for lookup in (mod.get_character, mod.get_oob, mod.get_loc):
+        with pytest.raises(TypeError, match="None"):
+            lookup(None)
+
+
+def test_modified_inherited_focus_is_valid_add_value(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/country_tags/g.txt", 'GER = "countries/Germany.txt"')
+    write(game, "common/countries/Germany.txt", "color = { 1 2 3 }")
+    write(game, "common/national_focus/game.txt", "focus_tree = { id = game_tree focus = { id = game_focus x = 1 y = 0 } }")
+    mod = Mod(root, hoi4_install=game)
+    focus = mod.get_focus("game_tree", "game_focus")
+    focus.id = "own_focus"
+    focus.x = 7
+    mod.create_focus_tree("own_tree", "GER")
+    mod.add_focus("own_tree", focus)
+    assert mod.get_focus("own_tree", "own_focus").x == 7
+    assert mod.get_focus("game_tree", "game_focus").x == 1
