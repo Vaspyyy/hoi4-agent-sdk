@@ -227,7 +227,7 @@ All four classes are importable from `hoi4` (`Hoi4Error` is their base). See
     `recruit_character` in events, focuses, decisions, on-actions, and
     scripted effects; gate a later role unlock with the role's
     `available`/`visible` trigger instead.
-    Every advisor needs a civilian `small` portrait sprite, and an air-capable
+    Every advisor needs a `small` portrait sprite (civilian channel for a political advisor, army or navy channel for a military one), and an air-capable
     new country needs a `set_country_name_pool()` entry for generated names.
 
 32. Treat `unsupported_effect_scope` and `unsupported_trigger_scope` as real

@@ -21,6 +21,7 @@ from ..characters import (
 from ..countries import (
     country_color_tags,
     country_file_paths,
+    country_table_colors,
     seed_country_colors_file,
     serialize_country_colors_file,
     serialize_country_files,
@@ -63,6 +64,7 @@ from ..tags import (
 )
 from ..textio import encode_text, read_text
 from ..types import (
+    Country,
     SaveResult,
 )
 from ._core import (
@@ -275,12 +277,37 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             colors_path = self.mod_root / "common" / "countries" / "colors.txt"
             colors_original = self._read_current_text(colors_path)
             existing_color_tags = country_color_tags(colors_original)
+            inherited_colors_path = (
+                self._base_content.file("common/countries/colors.txt")
+                if self._base_content is not None
+                else None
+            )
+            inherited_colors = (
+                read_text(inherited_colors_path) if inherited_colors_path is not None else ""
+            )
+            table_tags = existing_color_tags | country_color_tags(inherited_colors)
+            current_colors = colors_original or inherited_colors
+
+            def table_entry_differs(tag: str, country: Country) -> bool:
+                return country_table_colors(current_colors, tag) != (
+                    tuple(country.color),
+                    tuple(country.color_ui) if country.color_ui is not None else None,
+                )
+
+            # The table is replaced as a whole, so it is only written for a
+            # tag it lists (or one that asks for a UI colour, which lives
+            # nowhere else) and only when that entry really changes. The
+            # colour of every other tag is in its own definition file.
             color_updates = {
                 tag: country.color
                 for tag in self._dirty_countries
                 if (country := self._countries.get(tag)) is not None
                 and {"*", "color", "color_ui"} & country.touched_fields
-                and (tag in self._vanilla_tags or tag in existing_color_tags)
+                and (
+                    tag in table_tags
+                    or (tag in self._vanilla_tags and country.color_ui is not None)
+                )
+                and table_entry_differs(tag, country)
             }
             ui_color_updates = {
                 tag: self._countries[tag].color_ui for tag in color_updates
@@ -307,7 +334,11 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 deleted_tags=deleted_color_tags,
                 ui_colors=ui_color_updates,
             )
-            if colors_text != colors_original:
+            if colors_text != colors_original and not (
+                # A table that only repeats the inherited one would hide it
+                # for nothing: no colour of it changed.
+                not colors_path.exists() and self._same_as_inherited(colors_path, colors_text)
+            ):
                 rendered[colors_path] = colors_text or None
 
         if "characters" in self._dirty:

@@ -361,8 +361,9 @@ def _probe_on_action(mod: Mod) -> str | None:
                 (action_id, occurrence, action),
             )
             for action_id in mod.list_on_actions()
+            # The mod's own occurrences: update_on_action() counts only those.
             for occurrence, action in enumerate(
-                mod.get_on_action_occurrences(action_id)
+                mod.get_on_action_occurrences(action_id, include_vanilla=False)
             )
         ]
     )

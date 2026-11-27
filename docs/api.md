@@ -204,7 +204,7 @@ history, characters, and localization.
 | `country_tag_conflicts(tag) -> list[str]` | Returns conflict details such as `"mod: TAG (Name)"` or `"vanilla: TAG (Name)"` |
 | `suggest_tags(name, *, count=5) -> list[str]` | Return available tag candidates |
 | `get_country(tag, *, include_vanilla=True, default=...) -> Country` | Cached or reads from disk. Tries mod then vanilla install. A tag no one defines raises `NotFoundError` (or returns `default`); it is never invented. |
-| `create_country(tag, name, *, adjective="", color=(128, 128, 128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, overwrite_vanilla=False) -> Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. A tag the mod has, or a character `<TAG>_leader_1` the mod has, raises `AlreadyExistsError` unless `overwrite=True` (nothing is staged then); a tag the game uses raises `ValueError` unless `overwrite_vanilla=True`; an invalid tag raises `ValueError`. |
+| `create_country(tag, name, *, adjective="", color=None, capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, overwrite_vanilla=False) -> Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. A tag the mod has, or a character `<TAG>_leader_1` the mod has, raises `AlreadyExistsError` unless `overwrite=True` (nothing is staged then); a tag the game uses raises `ValueError` unless `overwrite_vanilla=True`; an invalid tag raises `ValueError`. |
 | `update_country(tag, **fields) -> Country` | Update modeled country fields, including `color`. `color_ui` can be set for a country in the colour table `colors.txt` (a game country); for a country the mod adds it raises `ValueError`, because its own file has no UI colour. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
 | `delete_country(tag) -> None` | Stage deletion of a mod-owned country and its generated localization. Raises `NotFoundError` for an unknown tag and `ReadOnlyError` for a game or base-mod country (that needs an explicit total-conversion strategy). |
 | `get_country_context(tag, *, copy_states=False, default=...) -> dict[str, Any]` | What the mod and the game hold for one country: basics, owned and core states, matching ideas, advisors, designers, localisation and focus trees. `copy_states=True` also queues overrides of its states. A tag no one defines raises `NotFoundError` (or returns `default`). |
@@ -294,8 +294,10 @@ a compatibility façade for the selected head of state.
 HOI4 accepts `recruit_character` only from scenario history. To unlock a role
 later, recruit the character at startup and express the unlock in the role's
 `available`/`visible` trigger; validation rejects runtime recruitment effects.
-Advisor roles require a `portraits.civilian.small` sprite in addition to any
-large portrait used elsewhere.
+Advisor roles require a small portrait sprite in addition to any large
+portrait used elsewhere: `portraits.civilian.small` for a political advisor,
+`portraits.army.small` or `portraits.navy.small` for a military one, as in
+the game's own files.
 
 ### Land, naval, and air OOB methods
 
@@ -1761,7 +1763,7 @@ and political rendering and procedural generation require the `map` extra:
 | Method | Description |
 |--------|-------------|
 | `import_flag_to_mod(tag, src_image, *, overwrite_vanilla=False, ideologies=None, resize_mode="stretch", overwrite=True) -> tuple[FlagAssetSet, ...]` | Stage the three flag sizes (82x52, 41x26, 10x7) of a tag, or of its ideology variants. Raises `FileNotFoundError` for a missing image and `ValueError` for a game tag without `overwrite_vanilla=True`. |
-| `import_portrait_to_mod(tag, name_slug, src_image, *, output_format="dds", size=(156, 210), resize_mode="cover", dds_compression="DXT5", overwrite=True) -> Path` | Stage one converted portrait and return its path in the mod |
+| `import_portrait_to_mod(tag, name_slug, src_image, *, output_format="dds", size=(156, 210), resize_mode="cover", dds_compression="DXT5", overwrite=True, crop=None) -> Path` | Stage one converted portrait and return its path in the mod |
 | `write_portrait_gfx(tag, portrait_slug, *, portrait_path=None, sprite_name=None, overwrite=True) -> Path` | Stage the sprite declaration `GFX_portrait_<tag>_<slug>` of a portrait and return the `.gfx` file |
 | `import_focus_icon(name, src_image, *, size=(100, 88), resize_mode="contain", shine=True, gfx_file=None, dds_compression="DXT5", overwrite=False) -> str` | Stage a focus icon and return its `GFX_<name>` sprite (see the table below) |
 | `import_idea_icon(name, src_image, *, size=(65, 67), resize_mode="contain", gfx_file=None, dds_compression="DXT5", overwrite=False) -> str` | Stage an idea picture and return its `GFX_idea_<name>` sprite |

@@ -6,6 +6,57 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Found by three models that each built the same mod with 0.7.0.
+
+### Added
+
+- `validate()` reports `event_text_key_clash`: an event whose title or
+  description uses the same localisation key as one of its options (the
+  classic case is a fourth option named `<id>.d`).
+- `validate(validate_icons=True)` reports `unknown_decision_icon` for a
+  decision or decision category icon without a sprite.
+- `Country.last_election` and `Country.election_frequency`, settable with
+  `update_country()`.
+- `BookmarkCountry.minor` for the row of minor countries.
+- `import_portrait_to_mod(..., crop=(left, upper, right, lower))`.
+- `write_mod_descriptors(mod_root, None, name)` writes only `descriptor.mod`.
+
+### Changed
+
+- `create_country(tag, ..., overwrite_vanilla=True)` writes the new country
+  to the files the game's tag already uses (for example
+  `common/countries/Danzig.txt` and `history/countries/DNZ - Danzig.txt`)
+  and keeps the tag's colour unless one is passed. Before, it could write
+  files the game never reads, or a second history file for the tag.
+  `color` now defaults to `None` (grey for a new tag).
+- `common/countries/colors.txt` is only written when an entry of it really
+  changes. A country that is not in the table keeps its colour in its own
+  definition file.
+- A country whose leader is an old `create_country_leader` block is read as
+  that leader (name and ideology) with an empty `character_id`. No character
+  `<TAG>_leader_1` is invented and no `recruit_character` line is written
+  for it. `update_country(leader_...=)` turns the block into a character and
+  removes the block.
+- `update_country(popularities=...)` or `ruling_party=` no longer replaces
+  the country names the game has per ideology. Only missing keys are filled.
+- An advisor's small portrait may be on the army or navy channel, as in the
+  game's own files.
+
+### Fixed
+
+- `State.is_demilitarized_zone` reads and writes `set_demilitarized_zone` in
+  the state's history, where the game keeps it. It used to look for a key at
+  state scope that does not exist, so turning the zone off did nothing.
+- `validate_country_package()` no longer reports `missing_country_flag` for a
+  tag whose flag the game or a base mod ships.
+- A colour written to a mod file that replaces a game country's definition
+  is read back.
+- The on-action probe of the release gate counted the game's occurrences
+  and failed for a mod that extends `on_startup`.
+- The docs of `effects.add_dynamic_modifier()` and
+  `remove_dynamic_modifier()` say what `scope=` is (the modifier's variable
+  scope, not where the effect runs).
+
 ## [0.7.0] - 2026-11-27
 
 ### Changed (breaking)

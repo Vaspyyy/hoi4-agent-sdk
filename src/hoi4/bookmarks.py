@@ -36,7 +36,9 @@ class BookmarkCountry:
 
     ``history`` and ``ideology`` are localisation keys; ``available`` is a
     trigger body; ``ideas`` and ``focuses`` are the ids shown on the
-    selection screen. The last three fields are bookkeeping.
+    selection screen. ``minor`` puts the country in the row of minor
+    countries (``minor = yes``) instead of among the major powers. The last
+    three fields are bookkeeping.
     """
 
     tag: str
@@ -49,6 +51,7 @@ class BookmarkCountry:
     raw_block: str = ""
     touched_fields: set[str] = field(default_factory=set)
     source_index: int | None = None
+    minor: bool = False
 
 
 @dataclass
@@ -184,6 +187,7 @@ def _parse_country(tag: str, body: str, source_index: int) -> BookmarkCountry:
         focuses=_bare_tokens(blocks.get("focuses", "")),
         raw_block=body,
         source_index=source_index,
+        minor=scalars.get("minor", "") == "yes",
     )
 
 
@@ -218,6 +222,7 @@ def _patch_country_body(
         "required_dlc",
         "ideas",
         "focuses",
+        "minor",
     } if all_fields else country.touched_fields
     if not all_fields and body:
         source = _parse_country(country.tag, body, 0)
@@ -239,6 +244,8 @@ def _patch_country_body(
             body = set_block(body, field_name, rendered or None)
         elif field_name == "ideology":
             body = set_scalar(body, field_name, pdx_value(country.ideology) if country.ideology else None)
+        elif field_name == "minor":
+            body = set_scalar(body, field_name, "yes" if country.minor else None)
         elif field_name == "available":
             body = set_block(body, field_name, country.available or None)
         elif field_name in {"ideas", "focuses"}:

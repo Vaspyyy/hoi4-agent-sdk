@@ -338,7 +338,13 @@ def add_dynamic_modifier(
     days: int | str | None = None,
     scope: str | int | None = None,
 ) -> str:
-    """Return ``add_dynamic_modifier = { ... }``, optionally timed or scoped."""
+    """Return ``add_dynamic_modifier = { ... }``, optionally timed.
+
+    ``scope`` is the effect's own ``scope = ...`` field: the country or state
+    the modifier's variables are read from. It is not where the effect runs.
+    To add a modifier to a state from country scope, wrap the effect:
+    ``scope_block(85, add_dynamic_modifier("id"))``.
+    """
     fields: dict[str, object] = {
         "modifier": require_script_id(
             modifier_id,
@@ -357,7 +363,13 @@ def remove_dynamic_modifier(
     *,
     scope: str | int | None = None,
 ) -> str:
-    """Return ``remove_dynamic_modifier = { ... }``, optionally scoped."""
+    """Return ``remove_dynamic_modifier = { ... }``..
+
+    ``scope`` is the effect's own ``scope = ...`` field: the country or state
+    the modifier's variables are read from. It is not where the effect runs.
+    To remove a modifier from a state from country scope, wrap the effect:
+    ``scope_block(85, remove_dynamic_modifier("id"))``.
+    """
     fields: dict[str, object] = {
         "modifier": require_script_id(
             modifier_id,

@@ -254,7 +254,7 @@ without it. See [internals/disk_cache.md](internals/disk_cache.md).
 | `missing_character_portrait` | error | A visible character has no portrait reference. |
 | `missing_character_portrait_gfx` | error | A character portrait has no interface sprite declaration. |
 | `missing_character_portrait_texture` | error | A character portrait sprite points to a missing texture. |
-| `missing_character_small_portrait` | error | An advisor character has no civilian small portrait. |
+| `missing_character_small_portrait` | error | An advisor character has no small portrait. |
 | `missing_country_activation` | error | A generated country has neither scenario-start territory nor a runtime release/setup path. |
 | `missing_country_flag` | error | An SDK-created country is missing one or more required flag sizes. |
 | `missing_country_name_pool` | error | A country that needs generated names has no common/names entry. |
@@ -326,6 +326,7 @@ without it. See [internals/disk_cache.md](internals/disk_cache.md).
 | `empty_strategic_region` | warning | A strategic region has no provinces. |
 | `enclosed_foreign_territory` | warning | A foreign land component is completely enclosed by the target country. |
 | `event_conditional_text_missing` | warning | A conditional event title, description or option name has no text key. |
+| `event_text_key_clash` | warning | An event's title or description uses the same localisation key as one of its options. |
 | `flag_read_never_set` | warning | A scripted flag is read but never written by the mod or the game. Release stage only. |
 | `flag_set_never_read` | warning | A scripted flag is written but never read. Release stage only. |
 | `history_set_owner_in_effect` | warning | State history owner directive appears in runtime effect script. |
@@ -351,6 +352,7 @@ without it. See [internals/disk_cache.md](internals/disk_cache.md).
 | `unknown_assigned_idea` | warning | Country history assigns an idea ID not loaded by the SDK. |
 | `unknown_character_trait` | warning | A character uses a trait no trait file defines. |
 | `unknown_country_scope` | warning | Script scopes into a tag that no country tag, tag alias or dynamic tag of the game, a base mod or the mod declares. |
+| `unknown_decision_icon` | warning | Decision or decision category icon did not resolve to a GFX_decision_ sprite. |
 | `unknown_effect_token` | warning | Effect token is absent from installed-game documentation. |
 | `unknown_equipment_reference` | warning | Effect script references an equipment ID not found in configured data. |
 | `unknown_event_reference` | warning | Effect script references an event ID not loaded from the mod or configured HOI4 install. |

@@ -580,7 +580,11 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         country = self.get_country(tag)
         self._materialize_country_override(country)
         values = list(country.recruited_characters)
-        if country.leader and country.leader.character_id not in values:
+        if (
+            country.leader
+            and country.leader.character_id
+            and country.leader.character_id not in values
+        ):
             values.append(country.leader.character_id)
         if recruited and character_id not in values:
             values.append(character_id)

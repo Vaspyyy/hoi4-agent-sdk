@@ -737,7 +737,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         )
         known_focus_icons = (
             self._known_focus_icons()
-            if validate_icons and (self._focus_trees or self._ideas)
+            if validate_icons and (self._focus_trees or self._ideas or self._decisions)
             else set()
         )
         known_state_ids = {entry["id"] for entry in self.state_index()}
@@ -837,6 +837,54 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
         for decision in self._decisions.values():
             errors.extend(validate_decision(decision))
+            icon = decision.icon.strip('"')
+            if (
+                validate_icons
+                and known_focus_icons
+                and icon
+                and icon not in known_focus_icons
+                and f"GFX_decision_{icon}" not in known_focus_icons
+            ):
+                errors.append(
+                    ValidationIssue(
+                        message=(
+                            f"Decision '{decision.id}' icon '{icon}' has no sprite: neither "
+                            f"'GFX_decision_{icon}' nor '{icon}' is in the interface files. "
+                            "A decision icon is the sprite name without 'GFX_decision_'."
+                        ),
+                        severity="warning",
+                        code="unknown_decision_icon",
+                        decision_id=decision.id,
+                        file_path=str(decision.path) if decision.path else None,
+                    )
+                )
+        if validate_icons and known_focus_icons:
+            for category in self._decision_categories.values():
+                icon = category.icon.strip('"')
+                # Only a category the mod defines: the mod's part of a game
+                # category shows the game's icon.
+                if (
+                    icon
+                    and (category.touched or category.definition_raw_block)
+                    and icon not in known_focus_icons
+                    and f"GFX_decision_category_{icon}" not in known_focus_icons
+                ):
+                    errors.append(
+                        ValidationIssue(
+                            message=(
+                                f"Decision category '{category.id}' icon '{icon}' has no "
+                                f"sprite: neither 'GFX_decision_category_{icon}' nor "
+                                f"'{icon}' is in the interface files."
+                            ),
+                            severity="warning",
+                            code="unknown_decision_icon",
+                            file_path=(
+                                str(category.definition_path)
+                                if category.definition_path
+                                else None
+                            ),
+                        )
+                    )
 
         begin_phase("ideas", "Validating ideas and assignments")
         idea_categories = self._known_idea_categories() if self._ideas else set()

@@ -48,6 +48,9 @@ FOLDERS = ("events", "common/national_focus", "common/ideas", "common/decisions"
 #: Real mistakes in the game's files (HOI4 1.19), as ``(code, file name,
 #: text in the message)``. Each is explained in the comment above it.
 KNOWN_GAME_MISTAKES = {
+    # A debug event whose description key ``TORPS`` is also the name of one
+    # of its options.
+    ("event_text_key_clash", "debug_events.txt", "TORPS"),
     # ``prerequisite = { focus = ROM_reaffirm_the_little_entente focus =
     # ROM_align_with_germany focus = ROM_cooperate_against_communism }`` on
     # ROM_cooperate_against_communism itself: the focus lists itself as one of

@@ -86,9 +86,12 @@ _WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 @dataclass(frozen=True)
 class ModDescriptorFiles:
-    """Paths and resolved metadata written for one launcher descriptor pair."""
+    """Paths and resolved metadata written for one launcher descriptor pair.
 
-    launcher: Path
+    ``launcher`` is ``None`` when only ``descriptor.mod`` was written.
+    """
+
+    launcher: Path | None
     descriptor: Path
     supported_version: str
     replace_paths: tuple[str, ...]
@@ -277,7 +280,7 @@ def scan_replace_paths(
 
 def write_mod_descriptors(
     mod_root: str | Path,
-    user_mods_dir: str | Path,
+    user_mods_dir: str | Path | None,
     name: str,
     *,
     supported_version: str | None = None,
@@ -294,6 +297,9 @@ def write_mod_descriptors(
 ) -> ModDescriptorFiles:
     """Write ``descriptor.mod`` and its launcher ``.mod`` companion.
 
+    With ``user_mods_dir=None`` only ``descriptor.mod`` inside the mod is
+    written: for a mod that is built somewhere else and installed later.
+
     The launcher file receives the absolute ``path`` field; the in-project file
     does not.  Replace paths are empty by default and every supplied value is
     normalized and traversal-checked.  Set ``auto_detect_replace_paths=True``
@@ -301,7 +307,8 @@ def write_mod_descriptors(
     written at once.
 
     Args:
-        user_mods_dir: The game's user ``mod`` folder for the launcher file.
+        user_mods_dir: The game's user ``mod`` folder for the launcher file,
+            or ``None`` to write no launcher file.
         supported_version: Defaults to the installed game's version as
             ``1.x.*``, read from ``hoi4_install``.
         tags: Launcher tags. Without them, they are guessed from the files
@@ -317,10 +324,14 @@ def write_mod_descriptors(
     """
 
     root = Path(mod_root).expanduser().resolve(strict=False)
-    launcher_root = Path(user_mods_dir).expanduser().resolve(strict=False)
+    launcher_root = (
+        Path(user_mods_dir).expanduser().resolve(strict=False)
+        if user_mods_dir is not None
+        else None
+    )
     if root.exists() and not root.is_dir():
         raise NotADirectoryError(f"Mod root is not a directory: {root}")
-    if launcher_root.exists() and not launcher_root.is_dir():
+    if launcher_root is not None and launcher_root.exists() and not launcher_root.is_dir():
         raise NotADirectoryError(f"Launcher mod path is not a directory: {launcher_root}")
 
     display_name = _validate_descriptor_scalar(name, label="mod name")
@@ -344,7 +355,11 @@ def write_mod_descriptors(
     if launcher_filename is None:
         launcher_filename = f"{safe_file_stem(display_name, fallback='mod')}.mod"
     launcher_filename = _validate_launcher_filename(launcher_filename)
-    launcher_path = resolve_mod_output_path(launcher_root, launcher_filename)
+    launcher_path = (
+        resolve_mod_output_path(launcher_root, launcher_filename)
+        if launcher_root is not None
+        else None
+    )
     descriptor_path = resolve_mod_output_path(root, "descriptor.mod")
     if launcher_path == descriptor_path:
         raise ValueError("Launcher descriptor and in-project descriptor resolve to one file")
@@ -382,12 +397,10 @@ def write_mod_descriptors(
 
     inner_content = "\n".join(common_lines) + "\n"
     launcher_content = inner_content + f"path={pdx_string(root.as_posix())}\n"
-    _atomic_write_texts(
-        {
-            descriptor_path: inner_content,
-            launcher_path: launcher_content,
-        }
-    )
+    files = {descriptor_path: inner_content}
+    if launcher_path is not None:
+        files[launcher_path] = launcher_content
+    _atomic_write_texts(files)
     return ModDescriptorFiles(
         launcher=launcher_path,
         descriptor=descriptor_path,
@@ -426,6 +439,7 @@ def generate_mod_descriptor(
         user_dir=mod_name,
         dependencies=dependencies,
     )
+    assert result.launcher is not None
     return result.launcher
 
 

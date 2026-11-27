@@ -93,7 +93,7 @@ def test_vanilla_color_override_seeds_complete_vanilla_table(tmp_path: Path) -> 
     assert "FRA = { color = rgb { 4 5 6 }" in colors
 
 
-def test_vanilla_color_override_fails_without_source_table(tmp_path: Path) -> None:
+def test_vanilla_color_override_without_a_table_goes_to_the_definition(tmp_path: Path) -> None:
     game_root = tmp_path / "game"
     mod_root = tmp_path / "mod"
     _write_vanilla_countries(game_root)
@@ -102,14 +102,12 @@ def test_vanilla_color_override_fails_without_source_table(tmp_path: Path) -> No
     mod.get_country("GER")
     mod.update_country("GER", color=(9, 8, 7))
 
-    try:
-        mod.save()
-    except RuntimeError as error:
-        assert "writing a partial table" in str(error)
-    else:
-        raise AssertionError("unsafe vanilla color override should fail closed")
+    # No layer has a colour table, so the colour lives in the country's own
+    # definition file: the save writes it there and makes no partial table.
+    mod.save()
 
     assert not (mod_root / "common/countries/colors.txt").exists()
+    assert Mod(mod_root, hoi4_install=game_root).get_country("GER").color == (9, 8, 7)
 
 
 def test_truncated_country_colors_file_is_reported(tmp_path: Path) -> None:

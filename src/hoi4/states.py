@@ -123,10 +123,6 @@ def read_state(state_file: Path, text: str | None = None) -> State:
     if category:
         state_obj.state_category = category
 
-    demilitarized = state_block.scalar("is_demilitarized_zone")
-    if demilitarized:
-        state_obj.is_demilitarized_zone = demilitarized == "yes"
-
     state_obj.impassable = state_block.scalar("impassable") == "yes"
 
     manpower = state_block.scalar("manpower")
@@ -167,6 +163,10 @@ def read_state(state_file: Path, text: str | None = None) -> State:
         owner = history.scalar("owner")
         if owner:
             state_obj.owner = owner
+
+        # The game sets the zone with this effect in the history block (dated
+        # blocks have their own). There is no key for it at state scope.
+        state_obj.is_demilitarized_zone = history.scalar("set_demilitarized_zone") == "yes"
 
         state_obj.cores = [
             item.scalar for item in history.assignments("add_core_of") if item.scalar
@@ -614,9 +614,6 @@ def _render_new_state(state: State) -> str:
     if state.impassable:
         state_block.children.append(PdxNode(key="impassable", value="yes"))
 
-    if state.is_demilitarized_zone:
-        state_block.children.append(PdxNode(key="is_demilitarized_zone", value="yes"))
-
     factor = _scalar_text(state.buildings_max_level_factor)
     if factor and not plain_values_equivalent(factor, "1.0"):
         state_block.children.append(PdxNode(key="buildings_max_level_factor", value=factor))
@@ -653,6 +650,9 @@ def _render_new_state(state: State) -> str:
             history.children.append(vp_block)
     if state.buildings:
         _replace_block(history, "buildings", state.buildings)
+    history.remove("set_demilitarized_zone")
+    if state.is_demilitarized_zone:
+        history.children.append(PdxNode(key="set_demilitarized_zone", value="yes"))
     state_block.children.append(history)
 
     return serialize_pdx(root)
@@ -710,14 +710,6 @@ def _patch_existing_state(state: State) -> str:
             first=key == "id",
         )
 
-    if state.is_demilitarized_zone != original.is_demilitarized_zone:
-        state_body = _set_direct_scalar(
-            state_body,
-            "is_demilitarized_zone",
-            "yes" if state.is_demilitarized_zone else None,
-            layout,
-            after_keys=("state_category", "manpower"),
-        )
     if state.impassable != original.impassable:
         state_body = _set_direct_scalar(
             state_body, "impassable", "yes" if state.impassable else None, layout,
@@ -746,6 +738,7 @@ def _patch_existing_state(state: State) -> str:
             state.owner != original.owner,
             state.cores != original.cores,
             state.buildings.strip() != original.buildings.strip(),
+            state.is_demilitarized_zone != original.is_demilitarized_zone,
         )
     )
     if history_span is None and history_changed:
@@ -770,6 +763,14 @@ def _patch_existing_state(state: State) -> str:
             history_body = _set_direct_block(
                 history_body, "buildings", state.buildings or None, history_layout,
                 before_dated=True,
+            )
+        if state.is_demilitarized_zone != original.is_demilitarized_zone:
+            history_body = _set_direct_scalar(
+                history_body,
+                "set_demilitarized_zone",
+                "yes" if state.is_demilitarized_zone else None,
+                history_layout,
+                after_keys=("victory_points", "add_core_of", "owner"),
             )
         state_body = _replace_body(state_body, history_span, history_body)
 

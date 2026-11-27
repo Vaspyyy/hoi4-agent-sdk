@@ -120,8 +120,12 @@ class AssetsLayer(CoreLayer):
         resize_mode: Literal["stretch", "cover", "contain"] = "cover",
         dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
         overwrite: bool = True,
+        crop: tuple[int, int, int, int] | None = None,
     ) -> Path:
         """Stage one converted portrait for transactional save.
+
+        ``crop`` is a ``(left, upper, right, lower)`` box in pixels of the
+        source image, cut out before the resize.
 
         Raises:
             FileNotFoundError: ``src_image`` does not exist.
@@ -145,6 +149,7 @@ class AssetsLayer(CoreLayer):
                 resize_mode=resize_mode,
                 dds_compression=dds_compression,
                 overwrite=True,
+                crop=crop,
             )
             target = resolve_mod_output_path(
                 self.mod_root,

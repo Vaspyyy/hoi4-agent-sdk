@@ -365,7 +365,10 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
         missing_flags = [
             path.relative_to(self.mod_root).as_posix()
             for path in flag_paths
-            if not path.is_file() and path not in self._pending_asset_writes
+            if not path.is_file()
+            and path not in self._pending_asset_writes
+            # A tag of the game or a base mod brings its flag with it.
+            and self.resolve_content_path(path.relative_to(self.mod_root)) is None
         ]
         if missing_flags:
             issue(
@@ -499,16 +502,19 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                 if sprite
             }
             roles = self._all_character_roles(character)
+            # The game's own files put it on the civilian channel for political
+            # advisors and on the army or navy channel for military ones.
             if any(isinstance(role, AdvisorRole) for role in roles) and not any(
-                portrait.channel == "civilian" and portrait.small
-                for portrait in portraits
+                portrait.small for portrait in portraits
             ):
                 issue(
                     "missing_character_small_portrait",
                     (
-                        f"Advisor character '{character.id}' has no civilian small "
-                        "portrait. Advisor cards require portraits.civilian.small "
-                        "and a resolvable interface/*.gfx sprite."
+                        f"Advisor character '{character.id}' has no small portrait. "
+                        "Advisor cards require a small sprite (portraits.civilian.small "
+                        "for a political advisor, portraits.army.small or "
+                        "portraits.navy.small for a military one) that an "
+                        "interface/*.gfx file declares."
                     ),
                     file_path=str(character.path) if character.path else None,
                 )

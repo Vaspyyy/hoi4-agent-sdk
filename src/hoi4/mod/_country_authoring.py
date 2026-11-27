@@ -18,6 +18,7 @@ from ..countries import (
     country_color_tags,
     country_file_paths,
     country_history_target,
+    remove_legacy_leader,
     serialize_country_colors_file,
 )
 from ..paths import (
@@ -86,7 +87,7 @@ class CountryAuthoringLayer(CharactersLayer):
         name: str,
         *,
         adjective: str = "",
-        color: tuple[int, int, int] = (128, 128, 128),
+        color: tuple[int, int, int] | None = None,
         capital: int = 1,
         research_slots: int | None = None,
         ruling_party: str = "democratic",
@@ -111,6 +112,8 @@ class CountryAuthoringLayer(CharactersLayer):
         Args:
             adjective: Defaults to ``name``.
             color: The map colour as ``(red, green, blue)``, each 0 to 255.
+                Without it a new tag is grey ``(128, 128, 128)`` and a tag of
+                the game or a base mod keeps its colour.
             capital: The id of the capital state.
             ruling_party: The ideology group in power, such as ``"democratic"``.
             popularities: Party popularity in percent, by ideology group.
@@ -123,6 +126,11 @@ class CountryAuthoringLayer(CharactersLayer):
             overwrite: Replace a country of this tag that the mod defines, or
                 tag files on disk that no tag file registers.
             overwrite_vanilla: Allow a tag that the game or a base mod uses.
+                The new country takes the place of their files (the same
+                definition and history file names) and starts from nothing:
+                their history (technology per DLC, doctrines, old leader
+                blocks) is not carried over. To change such a country and
+                keep the rest, use ``update_country()``.
 
         Returns:
             The new country.
@@ -172,8 +180,15 @@ class CountryAuthoringLayer(CharactersLayer):
                 f"Country tag '{tag}' is already used by vanilla HOI4. "
                 "Choose an unused tag or pass overwrite_vanilla=True intentionally."
             )
-        if existing is None and overwrite and overwrite_vanilla and tag in self._vanilla_tags:
+        if existing is None and overwrite_vanilla and tag in self._vanilla_tags:
+            # The game finds the country through the files its tag file and
+            # history folder name: the new country takes their places, or it
+            # would sit in files the game never reads (or reads twice).
             existing = self.get_country(tag)
+            if color is None:
+                color = existing.color
+        if color is None:
+            color = (128, 128, 128)
         leader_id = f"{tag}_leader_1"
         if not overwrite and leader_id in self._characters:
             # Checked here, not only in create_character() below, so a call
@@ -351,6 +366,18 @@ class CountryAuthoringLayer(CharactersLayer):
         if leader_kwargs:
             if country.leader is None:
                 country.leader = Leader(name="Leader", character_id=f"{tag}_leader_1")
+            elif not country.leader.character_id:
+                # An old-style ``create_country_leader`` block becomes a
+                # character: the block goes, the character is recruited.
+                self._materialize_country_history(country)
+                country.raw_history = remove_legacy_leader(
+                    country.raw_history, country.leader.name
+                )
+                country.leader.character_id = f"{tag}_leader_1"
+                country.leader.portrait_slug = "leader_1"
+                if country.leader.character_id not in country.recruited_characters:
+                    country.recruited_characters.append(country.leader.character_id)
+                country.touched_fields.add("recruited_characters")
             _set_fields(country.leader, leader_kwargs, method="update_country")
         country.touched_fields.update(other_kwargs)
         country.touched_fields.update(f"leader_{key}" for key in leader_kwargs)
@@ -360,7 +387,11 @@ class CountryAuthoringLayer(CharactersLayer):
         if {"name", "adjective", "popularities", "ruling_party"} & set(
             other_kwargs
         ) or leader_kwargs:
-            self._sync_country_loc(country)
+            self._sync_country_loc(
+                country,
+                names=bool({"name", "adjective"} & set(other_kwargs)),
+                leader=bool(leader_kwargs),
+            )
         if leader_kwargs and country.leader is not None:
             self._sync_leader_character_model(country)
         self._note_country_files(country)
