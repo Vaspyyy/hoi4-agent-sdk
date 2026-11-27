@@ -1065,7 +1065,9 @@ def test_ensure_helpers_refuse_inherited_only_content(game_content: Mod, kind: s
     assert mod.get_idea("game_idea").path.parent.parent.parent.name == "game"
     # A decision of the mod's own in the game's category needs no definition.
     assert mod.ensure_decision("game_category", "mine", cost=2).cost == 2
-    assert mod.get_decision_category("game_category", include_vanilla=False).icon == ""
+    # The mod's part shows the game's presentation and writes no definition for it.
+    assert mod.get_decision_category("game_category", include_vanilla=False).icon == "game_icon"
+    assert "categories" not in mod.preview()
 
 
 def test_new_event_in_its_namespace_file_hides_the_inherited_file_before_save(game_content: Mod) -> None:
@@ -1183,3 +1185,47 @@ def test_mod_only_lookups_do_not_suggest_inherited_ids(tmp_path: Path) -> None:
             call()
         assert "Did you mean" not in str(error.value)
         assert "(0 " in str(error.value)
+
+
+def test_mod_part_of_a_game_category_shows_the_game_presentation(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/decisions/categories/c.txt", "cat = { icon = game_icon allowed = { always = yes } }\n")
+    write(game, "common/decisions/g.txt", "cat = { game_decision = { cost = 10 } }\n")
+    mod = Mod(root, hoi4_install=game)
+
+    def shown(current: Mod) -> tuple[str, str]:
+        category = current.get_decision_category("cat")
+        return category.icon, category.allowed.strip()
+
+    expected = shown(mod)
+    assert expected == ("game_icon", "always = yes")
+    mod.load_inherited_content("common/decisions/g.txt")
+    mod.update_decision("game_decision", cost=5)
+    assert shown(mod) == expected
+    mod.save()
+    # Only the decisions were copied: no definition of the category is written.
+    assert [p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()] == ["common/decisions/g.txt"]
+    assert shown(mod) == shown(Mod(root, hoi4_install=game)) == expected
+
+    other = Mod(tmp_path / "other", hoi4_install=game)
+    other.create_decision("cat", "mine", cost=1)
+    assert shown(other) == expected
+    other.save()
+    assert not (other.mod_root / "common/decisions/categories").exists()
+    # An edit of the category itself writes a definition that keeps the rest.
+    other.update_decision_category("cat", icon="my_icon")
+    other.save()
+    text = next((other.mod_root / "common/decisions/categories").glob("*.txt")).read_text(encoding="utf-8")
+    assert "my_icon" in text and "always = yes" in text
+
+
+def test_staged_scan_is_remembered_until_the_next_edit(mod: Mod) -> None:
+    mod.create_event("own.1")
+    mod.update_event("own.1", path="events/game.txt")
+    mod.delete_event("own.1")
+    assert mod.get_event("test.1").title == "original"
+    assert mod.__dict__["_staged_scans"] == {mod.mod_root / "events/game.txt": False}
+    mod.create_event("own.2")
+    mod.update_event("own.2", path="events/game.txt")
+    assert mod.get_event("test.1", default=None) is None

@@ -141,7 +141,8 @@ class DecisionsLayer(LocalisationLayer):
         category, or a copied definition file), the result is the mod's part:
         the object an edit changes. Its ``decisions`` are then the mod's
         only; ``list_decisions(include_vanilla=True)`` and ``get_decision()``
-        reach the ones other layers add. A category only the game or a base
+        reach the ones other layers add. Its icon and conditions are those of
+        the inherited definition as long as the mod has none of its own. A category only the game or a base
         mod has comes back as a merged copy.
 
         Args:
@@ -593,6 +594,7 @@ class DecisionsLayer(LocalisationLayer):
             )
         target = self._output_path(path or Path("common") / "decisions" / "mod_decisions.txt")
         category = DecisionCategory(id=category_id, path=target)
+        self._inherit_category_presentation(category)
         self._decision_categories[category_id] = category
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(category_id)

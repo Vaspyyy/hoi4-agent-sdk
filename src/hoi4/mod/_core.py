@@ -475,6 +475,14 @@ def _is_edit_name(name: str) -> bool:
     )
 
 
+def _table_values(table: Any) -> Iterable[Any]:
+    """The entries of a section table, which is a dict or a list (or not loaded)."""
+
+    if not table:
+        return ()
+    return table.values() if isinstance(table, dict) else table
+
+
 def _noting_failure(method: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap an edit method so that a call of it that raises is remembered."""
 
@@ -485,6 +493,7 @@ def _noting_failure(method: Callable[..., Any]) -> Callable[..., Any]:
             # may catch the error and finish properly.
             return method(self, *args, **kwargs)
         self._edit_depth = 1
+        self.__dict__.pop("_staged_scans", None)
         try:
             return method(self, *args, **kwargs)
         except BaseException:
@@ -1333,7 +1342,33 @@ class CoreLayer:
             category.definition_path = _decision_category_definition_path(
                 self.mod_root, category.path, self._shadows_inherited
             )
+            self._inherit_category_presentation(category)
             self._decision_categories[category.id] = category
+
+    def _inherit_category_presentation(self, category: DecisionCategory) -> None:
+        """Show a lower layer's icon and conditions on the mod's part of its category.
+
+        The mod's block only adds decisions; the game still reads the
+        presentation from the inherited definition, so a lookup reports that
+        one. Nothing is written for it: a definition goes into the mod only
+        when the category itself is edited, and then it starts from these
+        values instead of dropping them.
+        """
+
+        if category.definition_raw_block or category.icon or category.allowed or category.visible:
+            return
+        definition = next(
+            (
+                model
+                for source, model in self._inherited_matches("decision_category", category.id)
+                if source.parent.name == "categories"
+            ),
+            None,
+        )
+        if definition is not None:
+            category.icon = definition.icon
+            category.allowed = definition.allowed
+            category.visible = definition.visible
 
     # ── Inherited content: read-only lookups ─────────────────────
     #
@@ -1422,9 +1457,18 @@ class CoreLayer:
             return False
         return not self._dirty or not self._file_is_staged(target)
 
-    _LIVE_TABLES: tuple[str, ...] = (
-        "_focus_trees", "_events", "_ideas", "_decisions", "_decision_categories",
-        "_dynamic_modifiers", "_on_action_occurrences", "_characters", "_bookmarks", "_oobs",
+    # The tables whose definitions live in the files of each dirty set.
+    _LIVE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("_dirty_focus_files", ("_focus_trees",)),
+        ("_dirty_event_files", ("_events",)),
+        ("_dirty_idea_files", ("_ideas",)),
+        ("_dirty_decision_files", ("_decisions", "_decision_categories")),
+        ("_dirty_decision_category_files", ("_decision_categories",)),
+        ("_dirty_dynamic_modifier_files", ("_dynamic_modifiers",)),
+        ("_dirty_on_action_files", ("_on_action_occurrences",)),
+        ("_dirty_character_files", ("_characters",)),
+        ("_dirty_bookmark_files", ("_bookmarks",)),
+        ("_dirty_oob_files", ("_oobs",)),
     )
 
     def _file_is_staged(self, target: Path) -> bool:
@@ -1437,24 +1481,30 @@ class CoreLayer:
         if target in self._staged_file_paths():
             return True
         state = self.__dict__
-        if not any(
-            target in value
-            for name, value in state.items()
-            if name.startswith("_dirty_") and name.endswith("_files")
-        ) and not any(
+        tables = {
+            table_name
+            for dirty_name, table_names in self._LIVE_TABLES
+            if target in state.get(dirty_name, ())
+            for table_name in table_names
+        }
+        if any(
             isinstance(item, tuple) and item and item[0] == target
             for item in state.get("_dirty_bookmarks", ())
         ):
+            tables.add("_bookmarks")
+        if not tables:
             return False
-        for table_name in self._LIVE_TABLES:
-            table = state.get(table_name) or ()
-            for found in table.values() if isinstance(table, dict) else table:
-                for model in found if isinstance(found, list) else (found,):
-                    if target in (
-                        getattr(model, "path", None), getattr(model, "definition_path", None)
-                    ):
-                        return True
-        return False
+        # The scan reads every definition of the kind: remembered until the
+        # next edit, save(), discard() or reload().
+        scans: dict[Path, bool] = state.setdefault("_staged_scans", {})
+        if target not in scans:
+            scans[target] = any(
+                target in (getattr(model, "path", None), getattr(model, "definition_path", None))
+                for table_name in tables
+                for found in _table_values(state.get(table_name))
+                for model in (found if isinstance(found, list) else (found,))
+            )
+        return scans[target]
 
     _STAGED_TABLES: tuple[tuple[str, str], ...] = (
         ("_dirty_focus_trees", "_focus_trees"),
@@ -1575,6 +1625,7 @@ class CoreLayer:
         self._inherited_relatives.clear()
         self._inherited_files.clear()
         self._inherited_found.clear()
+        self.__dict__.pop("_staged_scans", None)
 
     def _lookup(
         self,
