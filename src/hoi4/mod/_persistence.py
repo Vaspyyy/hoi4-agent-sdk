@@ -120,7 +120,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 current = ""
             diff = unified_diff(original, current, rel)
             if not diff and not original and not current:
-                if not is_deletion and not path.exists():
+                if not is_deletion and not path.exists() and self._inherits_file(path.relative_to(self.mod_root)):
                     diff = f"--- /dev/null\n+++ b/{rel}\n"
                 elif is_deletion and path.exists():
                     diff = f"--- a/{rel}\n+++ /dev/null\n"
@@ -172,7 +172,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             path: content
             for path, content in rendered.items()
             if (content is None and path.exists())
-            or (content is not None and (not path.exists() or self._read_current_text(path) != content))
+            or (content is not None and (self._read_current_text(path) != content
+                or (not path.exists() and self._inherits_file(path.relative_to(self.mod_root)))))
         }
         changed_assets = {
             path: content

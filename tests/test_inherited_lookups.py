@@ -912,3 +912,16 @@ def test_modified_inherited_focus_is_valid_add_value(tmp_path: Path) -> None:
     mod.add_focus("own_tree", focus)
     assert mod.get_focus("own_tree", "own_focus").x == 7
     assert mod.get_focus("game_tree", "game_focus").x == 1
+
+
+@pytest.mark.parametrize("move", [False, True])
+def test_discarded_new_event_path_is_not_written(mod: Mod, move: bool) -> None:
+    mod.create_event("own.1")
+    if move:
+        mod.update_event("own.1", path="events/target.txt")
+    else:
+        mod.delete_event("own.1")
+    assert "own_events.txt" not in mod.preview()
+    result = mod.save(require_changes=False)
+    assert mod.mod_root / "events/own_events.txt" not in result.written_files
+    assert not (mod.mod_root / "events/own_events.txt").exists()

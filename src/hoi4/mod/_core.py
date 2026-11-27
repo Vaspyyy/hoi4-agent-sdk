@@ -1401,6 +1401,11 @@ class CoreLayer:
                 rank = index
         return rank
 
+    def _inherits_file(self, relative: Path) -> bool:
+        if self._content_layers is not None:
+            return self._content_layers.inherited(relative) is not None
+        return self._base_content is not None and self._base_content.file(relative) is not None
+
     def _inherited_file_visible(self, source: Path) -> bool:
         """Whether no mod file (on disk or about to be written) hides an indexed file."""
 
