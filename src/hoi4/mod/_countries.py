@@ -135,6 +135,8 @@ class CountriesLayer(CoreLayer):
             NotFoundError: No one defines ``tag`` and no default was given.
             ValueError: ``tag`` is not a valid tag.
         """
+        if tag is None:
+            raise TypeError("Country tag cannot be None")
         tag = require_country_tag(tag)
         if tag in self._countries:
             return self._countries[tag]

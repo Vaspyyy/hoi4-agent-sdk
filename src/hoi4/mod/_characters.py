@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..fields import CharacterFields, CharacterInstanceFields, CharacterRoleFields
 from ..characters import (
+    _infer_country_tag,
     AdvisorRole,
     Character,
     CharacterInstance,
@@ -84,25 +85,19 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             if normalized is None:
                 own |= self._inherited_ids("character")
             else:
-                # Only the tag is needed: read the files' models as they are,
-                # without the copy a lookup hands out.
-                by_file: dict[Path, dict[str, Character]] = {}
+                # A character's tag comes from its id, else from its file's
+                # name: no file has to be read to filter by it.
+                visible: dict[Path, bool] = {}
                 for character_id, sources in self._inherited_index_of("character").items():
                     if character_id in self._characters:
                         continue  # the mod's definition is the one that counts
-                    source = next(
-                        (item for item in sources if self._inherited_file_visible(item)), None
-                    )
-                    if source is None:
-                        continue
-                    if source not in by_file:
-                        by_file[source] = {
-                            model.id: model
-                            for model in reversed(self._inherited_file_models("character", source))
-                        }
-                    found = by_file[source].get(character_id)
-                    if found is not None and found.country_tag == normalized:
-                        own.add(character_id)
+                    for source in sources:
+                        if source not in visible:
+                            visible[source] = self._inherited_file_visible(source)
+                        if visible[source]:
+                            if _infer_country_tag(character_id, source) == normalized:
+                                own.add(character_id)
+                            break
         return sorted(own)
 
     def get_character(

@@ -18,6 +18,7 @@ say what you got, no duplicate entry points, and the script builders moved to
 | Old call (0.6) | New call (0.7) | Why |
 |---|---|---|
 | `list_characters()` | `list_characters(include_vanilla=True)` | The default lists only the mod's characters |
+| `mod.get_x(None)` answering like the id `"None"` (`NotFoundError`, or a definition really called `None`) | raises `TypeError` | `None` is never an id |
 | `list_ideologies()` | `list_ideologies(include_vanilla=True)` | The default lists only the mod's ideologies |
 | `list_definitions(kind)` | `list_definitions(kind, include_vanilla=True)` | The default lists only the mod's definitions |
 | `list_states()` after inherited lookups | `list_states(include_vanilla=True)` | The default lists the mod's state files instead of the states cached so far |

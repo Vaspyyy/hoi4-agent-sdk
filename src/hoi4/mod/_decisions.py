@@ -142,7 +142,8 @@ class DecisionsLayer(LocalisationLayer):
         the object an edit changes. Its ``decisions`` are then the mod's
         only; ``list_decisions(include_vanilla=True)`` and ``get_decision()``
         reach the ones other layers add. Its icon and conditions are those of
-        the inherited definition as long as the mod has none of its own. A category only the game or a base
+        the inherited definition in ``common/decisions/categories`` as long
+        as the mod's part has no icon or conditions of its own. A category only the game or a base
         mod has comes back as a merged copy.
 
         Args:
@@ -346,6 +347,17 @@ class DecisionsLayer(LocalisationLayer):
                 "Decision category_path must point inside common/decisions/categories"
             )
         category.definition_path = definition_path
+        if not category.touched and not category.definition_raw_block:
+            # The first edit of the mod's part of a category a lower layer
+            # defines: the definition written for it replaces theirs, so it
+            # starts from their whole block (priority, picture, map area and
+            # the other keys the model does not carry), not only from the
+            # fields it shows.
+            inherited = self._inherited_category_definition(category_id)
+            if inherited is not None and (inherited.icon, inherited.allowed, inherited.visible) == (
+                category.icon, category.allowed, category.visible
+            ):
+                category.definition_raw_block = inherited.definition_raw_block
         _set_fields(category, kwargs)
         if target is not None:
             self._point_decision_category_at(category, target)

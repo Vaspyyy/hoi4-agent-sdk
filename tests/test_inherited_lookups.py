@@ -879,7 +879,9 @@ def test_none_lookup_id_reports_clear_error(mod: Mod, kind: str) -> None:
         "list_definition": lambda: mod.list_definitions(None),
         "region": lambda: mod.get_strategic_region(None, default=sentinel),
     }
-    with pytest.raises((TypeError, ValueError), match="None"):
+    # A kind name is not an id: an unknown one is a ValueError, None included.
+    expected = ValueError if kind in ("definition_kind", "list_definition") else TypeError
+    with pytest.raises(expected, match="None"):
         calls[kind]()
 
 
@@ -1229,3 +1231,55 @@ def test_staged_scan_is_remembered_until_the_next_edit(mod: Mod) -> None:
     mod.create_event("own.2")
     mod.update_event("own.2", path="events/game.txt")
     assert mod.get_event("test.1", default=None) is None
+
+
+def test_first_edit_of_a_game_category_keeps_its_whole_definition(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(
+        game,
+        "common/decisions/categories/c.txt",
+        "cat = {\n\ticon = game_icon\n\tpriority = 5\n\tpicture = some_picture\n\tallowed = { always = yes }\n}\n",
+    )
+    write(game, "common/decisions/g.txt", "cat = { game_decision = { cost = 10 } }\n")
+    mod = Mod(root, hoi4_install=game)
+    mod.create_decision("cat", "mine", cost=1)
+    mod.save()
+    mod.update_decision_category("cat", icon="my_icon")
+    mod.save()
+    text = next((root / "common/decisions/categories").glob("*.txt")).read_text(encoding="utf-8")
+    assert "icon = my_icon" in text and "game_icon" not in text
+    for kept in ("priority = 5", "picture = some_picture", "always = yes"):
+        assert kept in text
+    fresh = Mod(root, hoi4_install=game).get_decision_category("cat")
+    assert (fresh.icon, fresh.allowed.strip()) == ("my_icon", "always = yes")
+
+
+def test_category_presentation_reads_only_the_categories_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/decisions/categories/c.txt", "cat = { icon = game_icon }\n")
+    write(game, "common/decisions/g.txt", "cat = { game_decision = { cost = 10 } }\n")
+    write(root, "common/decisions/mine.txt", "cat = { mine = { cost = 1 } }\n")
+    import hoi4._inherited as inherited
+
+    def no_decisions(path: Path, text: str | None = None) -> list[object]:
+        raise AssertionError(f"read {path}")
+
+    monkeypatch.setattr(inherited, "load_decisions_file", no_decisions)
+    mod = Mod(root, hoi4_install=game)
+    assert mod.list_decisions() == ["mine"]
+    assert mod.get_decision_category("cat").icon == "game_icon"
+
+
+def test_character_tag_filter_reads_no_character_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/characters/GER.txt", "characters = { GER_a = { name = A } plain = { name = B } }")
+    write(game, "common/characters/ITA.txt", "characters = { ITA_a = { name = A } GER_guest = { name = C } }")
+    mod = Mod(root, hoi4_install=game)
+    assert mod.list_characters(include_vanilla=True) == ["GER_a", "GER_guest", "ITA_a", "plain"]
+    expected = sorted(c for c in mod.list_characters(include_vanilla=True) if mod.get_character(c).country_tag == "GER")
+    fresh = Mod(root, hoi4_install=game)
+    monkeypatch.setattr(type(fresh), "_inherited_file_models", lambda *args: pytest.fail("read a character file"))
+    assert fresh.list_characters(tag="GER", include_vanilla=True) == expected == ["GER_a", "GER_guest", "plain"]

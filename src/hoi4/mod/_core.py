@@ -1357,18 +1357,48 @@ class CoreLayer:
 
         if category.definition_raw_block or category.icon or category.allowed or category.visible:
             return
-        definition = next(
-            (
-                model
-                for source, model in self._inherited_matches("decision_category", category.id)
-                if source.parent.name == "categories"
-            ),
-            None,
-        )
+        definition = self._inherited_category_definition(category.id)
         if definition is not None:
             category.icon = definition.icon
             category.allowed = definition.allowed
             category.visible = definition.visible
+
+    def _inherited_category_definition(self, category_id: str) -> DecisionCategory | None:
+        """What ``common/decisions/categories`` of a lower layer defines as ``category_id``.
+
+        Reads only that folder (a few small files), not the decisions files
+        that add to the category: the mod's own loader asks this for every
+        game category the mod has decisions in. Do not change the result.
+        """
+
+        cache_key = ("category_definitions", "")
+        definitions: list[tuple[Path, DecisionCategory]] | None = self._inherited_found.get(cache_key)
+        if definitions is None:
+            definitions = []
+            base = self._base_content
+            if base is not None:
+                files = [
+                    (Path(relative), source)
+                    for relative, source in base.glob("common/decisions/categories", "*.txt").items()
+                    if not self._mod_hides_inherited(Path(relative))
+                ]
+                # Stable: the file name order stays within one layer.
+                files.sort(key=lambda item: -self._inherited_layer(item[1]))
+                for relative, source in files:
+                    self._inherited_relatives.setdefault(source, relative)
+                    definitions.extend(
+                        (source, model)
+                        for model in self._inherited_file_models("decision_category", source)
+                    )
+            self._inherited_found[cache_key] = definitions
+        return next(
+            (
+                model
+                for source, model in definitions
+                if model.id == category_id and self._inherited_file_visible(source)
+            ),
+            None,
+        )
 
     # ── Inherited content: read-only lookups ─────────────────────
     #
