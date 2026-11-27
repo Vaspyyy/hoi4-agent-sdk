@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Unpack
 
 import copy
+import typing
 import dataclasses
 from pathlib import Path
 
@@ -159,7 +160,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 is outside the mod.
         """
         tag = require_country_tag(tag)
-        _check_model("create_character", character, "character")
+        _check_model("create_character", character, "character", (Character,))
         character_id = require_script_id(character.id, label="character ID")
         if recruit and not self._is_known_country_tag(tag):
             raise not_found(
@@ -297,7 +298,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 is configured.
         """
         character = self.get_character(character_id)
-        _check_model("add_character_instance", instance, "instance")
+        _check_model("add_character_instance", instance, "instance", (CharacterInstance,))
         self._materialize_character_override(character)
         new_instance = copy.deepcopy(instance)
         new_instance.source_occurrence = -1
@@ -395,7 +396,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             ValueError: The character comes from the game but no game install
                 is configured.
         """
-        _check_model("add_character_role", role, "role")
+        _check_model("add_character_role", role, "role", typing.get_args(CharacterRole))
         character = self.get_character(character_id)
         self._materialize_character_override(character)
         roles, scope = self._character_role_scope(character, instance_occurrence)

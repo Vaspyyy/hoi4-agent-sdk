@@ -157,6 +157,8 @@ class IdeasLayer(CountriesLayer):
         existing = self.get_idea(idea_id, default=None)
         if existing is not None:
             _refuse_desc("ensure_idea", idea_id, kwargs)
+            if kwargs.get("modifier", ...) is None:
+                del kwargs["modifier"]  # None means "leave the modifier as it is"
             _check_fields("ensure_idea", existing, kwargs, allow_path=True)
             return self.update_idea(idea_id, merge_modifier=merge_modifier, **kwargs)
         _check_field_names(
@@ -184,6 +186,8 @@ class IdeasLayer(CountriesLayer):
         if "id" in kwargs:
             raise ValueError("Idea IDs are immutable; create a new idea instead")
         _refuse_desc("update_idea", idea_id, kwargs)
+        if kwargs.get("modifier", ...) is None:
+            del kwargs["modifier"]  # None means "leave the modifier as it is"
         _check_fields("update_idea", idea, kwargs, allow_path=True)
         if "icon" in kwargs:
             kwargs["icon"] = normalize_idea_icon(kwargs["icon"])

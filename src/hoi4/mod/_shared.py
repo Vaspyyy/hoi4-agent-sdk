@@ -120,20 +120,26 @@ def _check_model_lists(
     """
     lists = _model_list_fields(model)
     can_be_none = _nullable_fields(model)
+    own = {field.name for field in dataclasses.fields(model)}
     for name, value in list(values.items()):
         if value is None:
-            if not none_is_unset and can_be_none is not None and name not in can_be_none:
+            if (
+                not none_is_unset
+                and can_be_none is not None
+                and name in own
+                and name not in can_be_none
+            ):
                 raise TypeError(
-                    f"{method}(): {name} cannot be None. Pass an empty value "
-                    "(an empty list, dict or string) to clear it."
+                    f"{method}(): {name} cannot be None. Pass an empty value of the "
+                    "field's own type to clear it."
                 )
             continue
         if name in lists:
             values[name] = _require_items(method, name, value, lists[name])
 
 
-def _check_model(method: str, obj: object, label: str) -> None:
-    """Raise ``TypeError`` when ``obj`` is not a model or a list in it holds another class.
+def _check_model(method: str, obj: object, label: str, classes: tuple[type, ...]) -> None:
+    """Raise ``TypeError`` when ``obj`` is not one of ``classes`` or a list in it holds another class.
 
     For a model the caller built and hands over whole (a ``Character``, an
     ``EventOption``, a ``Focus``): its lists of models are checked at every
@@ -141,8 +147,9 @@ def _check_model(method: str, obj: object, label: str) -> None:
     as it is; only a list given as a one-shot iterator is replaced by a real
     list, because reading it uses it up.
     """
-    if not dataclasses.is_dataclass(obj) or isinstance(obj, type):
-        raise TypeError(f"{method}(): {label} must be a model object, got {type(obj).__name__}")
+    if not isinstance(obj, classes):
+        wanted = " or ".join(cls.__name__ for cls in classes)
+        raise TypeError(f"{method}(): {label} must be a {wanted} object, got {type(obj).__name__}")
     _check_lists_inside(method, label, obj)
 
 

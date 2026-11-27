@@ -278,7 +278,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             "templates": templates, "divisions": divisions, "fleets": fleets,
             "air_wings": air_wings,
         }
-        _check_model_lists("create_oob", OrderOfBattle, lists, none_is_unset=True)
+        _check_model_lists("create_oob", OrderOfBattle, lists)
         templates, divisions = lists["templates"], lists["divisions"]
         fleets, air_wings = lists["fleets"], lists["air_wings"]
         country_tag = self._require_country_reference(tag)
@@ -719,7 +719,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 unlocked.
         """
 
-        _check_model("create_equipment_variant", variant, "variant")
+        _check_model("create_equipment_variant", variant, "variant", (EquipmentVariant,))
         country_tag = self._require_known_country(tag)
         if not variant.name.strip():
             raise ValueError("Equipment variant name cannot be empty")
