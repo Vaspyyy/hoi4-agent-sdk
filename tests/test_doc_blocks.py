@@ -200,6 +200,10 @@ def test_doc_blocks_run(
                 warnings.simplefilter("ignore")
                 exec(compile(code, block.where, "exec"), namespace)
         except BaseException as exc:
+            if type(exc).__name__ == "DDSExportUnsupportedError":
+                # The oldest Pillow the package allows cannot write DXT5: the
+                # library says so with this error, and the docs name it.
+                continue
             failures.append(_error(block, exc))
     assert not failures, "Doc blocks failed:\n" + "\n".join(failures)
 
