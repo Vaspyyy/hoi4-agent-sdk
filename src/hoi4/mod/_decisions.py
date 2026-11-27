@@ -567,7 +567,9 @@ class DecisionsLayer(LocalisationLayer):
             return
         if not icon and category_id in self._inherited_decision_category_ids():
             return
-        self.ensure_decision_category(category_id, **fields)
+        # With an icon this is the explicit choice to give the category a
+        # definition of the mod's own, also on top of an inherited one.
+        self.create_decision_category(category_id, **fields)
 
     def _extend_inherited_decision_category(
         self, category_id: str, path: str | Path | None
@@ -747,6 +749,8 @@ class DecisionsLayer(LocalisationLayer):
                 )
             planned_ids.add(decision_id)
             existing = self.get_decision(decision_id, include_vanilla=False, default=None)
+            if existing is None and not overwrite:
+                self._refuse_inherited("decision", decision_id)
             if existing is not None and not overwrite and existing.category != category_id:
                 raise ValueError(
                     f"Decision '{decision_id}' is in category '{existing.category}', "

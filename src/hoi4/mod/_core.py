@@ -1420,7 +1420,41 @@ class CoreLayer:
         target = self.mod_root / relative
         if target in self._original_files or target.is_file():
             return False
-        return not self._dirty or target not in self._staged_file_paths()
+        return not self._dirty or not self._file_is_staged(target)
+
+    _LIVE_TABLES: tuple[str, ...] = (
+        "_focus_trees", "_events", "_ideas", "_decisions", "_decision_categories",
+        "_dynamic_modifiers", "_on_action_occurrences", "_characters", "_bookmarks", "_oobs",
+    )
+
+    def _file_is_staged(self, target: Path) -> bool:
+        """Whether save() will write content of the mod to ``target``.
+
+        A dirty file that no definition lives in any more (created and
+        deleted again before a save) is not one: save() writes nothing there.
+        """
+
+        if target in self._staged_file_paths():
+            return True
+        state = self.__dict__
+        if not any(
+            target in value
+            for name, value in state.items()
+            if name.startswith("_dirty_") and name.endswith("_files")
+        ) and not any(
+            isinstance(item, tuple) and item and item[0] == target
+            for item in state.get("_dirty_bookmarks", ())
+        ):
+            return False
+        for table_name in self._LIVE_TABLES:
+            table = state.get(table_name) or ()
+            for found in table.values() if isinstance(table, dict) else table:
+                for model in found if isinstance(found, list) else (found,):
+                    if target in (
+                        getattr(model, "path", None), getattr(model, "definition_path", None)
+                    ):
+                        return True
+        return False
 
     _STAGED_TABLES: tuple[tuple[str, str], ...] = (
         ("_dirty_focus_trees", "_focus_trees"),
@@ -1433,7 +1467,7 @@ class CoreLayer:
     )
 
     def _staged_file_paths(self) -> set[Path]:
-        """The mod files the staged changes will write (or empty) on save().
+        """The files of the mod's changed definitions, which save() will write.
 
         A file about to be written hides the inherited file of the same name
         just as a file on disk does, so a lookup answers the same before and
@@ -1442,12 +1476,6 @@ class CoreLayer:
 
         state = self.__dict__
         paths: set[Path] = set()
-        for name, value in state.items():
-            if name.startswith("_dirty_") and name.endswith("_files"):
-                paths.update(path for path in value if isinstance(path, Path))
-        for item in state.get("_dirty_bookmarks", ()):
-            if isinstance(item, tuple) and item and isinstance(item[0], Path):
-                paths.add(item[0])
         for dirty_name, table_name in self._STAGED_TABLES:
             table = state.get(table_name) or {}
             for key in state.get(dirty_name, ()):

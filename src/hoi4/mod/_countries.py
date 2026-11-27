@@ -141,7 +141,8 @@ class CountriesLayer(CoreLayer):
         if not include_vanilla or not self._is_known_country_tag(tag):
             if default is not MISSING:
                 return default
-            raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
+            known = self._country_tag_candidates() if include_vanilla else set(self._countries)
+            raise not_found("country", tag, known, plural="countries")
         country = self._inherited_copy("country", tag, lambda: read_country(
             self.mod_root, tag, self._base_content,
             _tag_mappings=self._country_tag_mappings,

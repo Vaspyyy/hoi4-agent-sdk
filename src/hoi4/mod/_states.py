@@ -257,7 +257,12 @@ class StatesLayer(CountriesLayer):
             return state
         if default is not MISSING:
             return default
-        raise not_found("state", state_id, self._known_state_ids())
+        known = (
+            self._known_state_ids()
+            if include_vanilla
+            else (set(self._states) | set(self._state_source_paths)) - set(self._deleted_state_ids)
+        )
+        raise not_found("state", state_id, known)
 
     def _known_state_ids(self) -> set[int]:
         """Every state id the mod or inherited content defines, minus queued deletions."""

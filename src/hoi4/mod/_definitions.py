@@ -244,13 +244,15 @@ class DefinitionsLayer(CoreLayer):
                 return definition
         if default is not MISSING:
             return default
-        raise self._definition_not_found(resolved, definition_id)
+        raise self._definition_not_found(resolved, definition_id, include_vanilla=include_vanilla)
 
-    def _definition_not_found(self, kind: DefinitionKind, definition_id: str) -> NotFoundError:
+    def _definition_not_found(
+        self, kind: DefinitionKind, definition_id: str, *, include_vanilla: bool = True
+    ) -> NotFoundError:
         return not_found(
             kind.name.replace("_", " "),
             definition_id,
-            self.list_definitions(kind, include_vanilla=True),
+            self.list_definitions(kind, include_vanilla=include_vanilla),
         )
 
     def _queue_definition_text(self, relative: Path, text: str, original: str) -> Path:

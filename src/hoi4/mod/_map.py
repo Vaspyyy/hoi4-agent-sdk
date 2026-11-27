@@ -358,7 +358,10 @@ class MapLayer(StatesLayer, CatalogsLayer):
         raise not_found(
             "strategic region",
             region_id,
-            self.list_strategic_regions(),
+            (
+                region.id
+                for region in self._effective_strategic_regions(include_vanilla=include_vanilla)
+            ),
         )
 
     def move_provinces_to_strategic_region(

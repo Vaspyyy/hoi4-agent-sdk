@@ -1121,3 +1121,65 @@ def test_on_action_source_path_takes_backslashes_and_tag_filter_follows_the_mod(
     other = "GER" if tag == "ITA" else "ITA"
     assert mod.list_characters(tag=tag, include_vanilla=True) == ["leader_one"]
     assert mod.list_characters(tag=other, include_vanilla=True) == []
+
+
+def test_decision_chain_on_a_game_category(game_content: Mod) -> None:
+    mod = game_content
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError, match="game_decision"):
+        mod.create_decision_chain(
+            "game_category", [{"id": "mine_one", "cost": 1}, {"id": "game_decision", "cost": 2}]
+        )
+    assert mod.preview() == before == ""
+    assert mod.list_decisions() == []
+    chain = mod.create_decision_chain("game_category", [{"id": "step_one", "cost": 1}], category_icon="my_icon")
+    assert [decision.id for decision in chain] == ["step_one"]
+    assert mod.get_decision_category("game_category").icon == "my_icon"
+
+
+@pytest.mark.parametrize("kind", ["event", "dynamic_modifier"])
+def test_created_and_deleted_at_a_game_path_changes_nothing(tmp_path: Path, kind: str) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "events/game.txt", "add_namespace = game\ncountry_event = { id = game.1 title = t }\n")
+    write(game, "common/dynamic_modifiers/game.txt", "game_mod = { icon = i }\n")
+    mod = Mod(root, hoi4_install=game)
+
+    def answers(current: Mod) -> tuple[object, ...]:
+        return (
+            current.get_event("game.1", default=None) is not None,
+            current.get_dynamic_modifier("game_mod", default=None) is not None,
+        )
+
+    if kind == "event":
+        mod.create_event("own.1")
+        mod.update_event("own.1", path="events/game.txt")
+        assert answers(mod) == (False, True)
+        mod.delete_event("own.1")
+    else:
+        mod.create_dynamic_modifier("mine", path="common/dynamic_modifiers/game.txt")
+        assert answers(mod) == (True, False)
+        mod.delete_dynamic_modifier("mine")
+    assert answers(mod) == (True, True)
+    assert mod.preview() == ""
+    mod.save(require_changes=False)
+    assert [path for path in root.rglob("*") if path.is_file()] == []
+    assert answers(mod) == answers(Mod(root, hoi4_install=game)) == (True, True)
+
+
+def test_mod_only_lookups_do_not_suggest_inherited_ids(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/country_tags/00_countries.txt", 'GER = "countries/Germany.txt"\n')
+    write(game, "common/countries/Germany.txt", "color = { 1 2 3 }\n")
+    write(game, "history/countries/GER - Germany.txt", "capital = 1\n")
+    write(game, "common/opinion_modifiers/00.txt", "opinion_modifiers = { game_value = { value = 1 } }\n")
+    mod = Mod(root, hoi4_install=game)
+    for call in (
+        lambda: mod.get_country("GER", include_vanilla=False),
+        lambda: mod.get_definition("opinion_modifier", "game_value", include_vanilla=False),
+    ):
+        with pytest.raises(NotFoundError) as error:
+            call()
+        assert "Did you mean" not in str(error.value)
+        assert "(0 " in str(error.value)

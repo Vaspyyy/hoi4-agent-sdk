@@ -154,9 +154,16 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             return sorted(set(self._oobs) | {
                 path.stem
                 for relative, path in inherited.items()
-                if not self._mod_hides_inherited(Path(relative))
+                if not self._oob_file_hidden(Path(relative))
             })
         return sorted(self._oobs)
+
+    def _oob_file_hidden(self, relative: Path) -> bool:
+        """Whether the mod hides an inherited OOB file (on disk, staged or by replace_path)."""
+
+        return self._mod_hides_inherited(relative) or (
+            bool(self._dirty) and self._file_is_staged(self.mod_root / relative)
+        )
 
     def get_oob(
         self,
@@ -187,7 +194,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         if include_vanilla and self._base_content is not None:
             relative = Path("history/units") / f"{name}.txt"
             inherited = self._base_content.file(relative)
-            if inherited is not None and not self._mod_hides_inherited(relative):
+            if inherited is not None and not self._oob_file_hidden(relative):
                 candidates.append(inherited)
         country_tag = next(
             (

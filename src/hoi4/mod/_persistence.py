@@ -120,7 +120,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 current = ""
             diff = unified_diff(original, current, rel)
             if not diff and not original and not current:
-                if not is_deletion and not path.exists() and self._inherits_file(path.relative_to(self.mod_root)):
+                if not is_deletion and self._empty_file_hides(path):
                     diff = f"--- /dev/null\n+++ b/{rel}\n"
                 elif is_deletion and path.exists():
                     diff = f"--- a/{rel}\n+++ /dev/null\n"
@@ -173,7 +173,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             for path, content in rendered.items()
             if (content is None and path.exists())
             or (content is not None and (self._read_current_text(path) != content
-                or (not path.exists() and self._inherits_file(path.relative_to(self.mod_root)))))
+                or self._empty_file_hides(path)))
         }
         changed_assets = {
             path: content
@@ -195,6 +195,21 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             dirty_sections=dirty_sections,
             no_changes=False,
             message=f"Saved {len(written_files)} file(s)",
+        )
+
+    def _empty_file_hides(self, path: Path) -> bool:
+        """Whether an empty new file at ``path`` has to be written.
+
+        Only for a file copied from a lower layer (``load_inherited_content``)
+        whose definitions were all deleted: the empty file is what keeps the
+        inherited one hidden. A path that never held content of the mod gets
+        no file.
+        """
+
+        return (
+            not path.exists()
+            and path in self._original_files
+            and self._inherits_file(path.relative_to(self.mod_root))
         )
 
     def _render_dirty_files(self) -> dict[Path, str | None]:
