@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Collection
 from functools import partial
 from pathlib import Path
-from typing import Iterator, Optional, TypeVar, cast
+from typing import TypeVar, cast
+from collections.abc import Iterator
 
 from ..characters import (
     Character,
@@ -232,9 +233,9 @@ class SourcesLayer(LocalisationLayer):
 
     def _group_events_by_file(
         self, dirty_only: bool = False
-    ) -> tuple[dict[Path, list[Event]], dict[Path, Optional[str]]]:
+    ) -> tuple[dict[Path, list[Event]], dict[Path, str | None]]:
         file_events: dict[Path, list[Event]] = {}
-        file_ns: dict[Path, Optional[str]] = {}
+        file_ns: dict[Path, str | None] = {}
         dirty_files: set[Path] = set(self._dirty_event_files) if dirty_only else set()
         if dirty_only:
             for eid in self._dirty_events:

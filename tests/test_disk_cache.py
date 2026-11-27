@@ -978,7 +978,7 @@ def test_shared_focuses_of_other_files_with_lazy_sections(
         mod.assert_no_visual_overlap("t_tree")
     assert overlaps(mod) == ["H2"]
     # The focus section reloads after an edit and a discard.
-    assert mod.update_focus("t_tree", "H1", cost=2)
+    mod.update_focus("t_tree", "H1", cost=2)
     mod.discard()
     assert overlaps(mod) == ["H2"]
     with pytest.raises(ValueError, match="H2"):
@@ -1050,7 +1050,7 @@ def test_the_vocabulary_characters_are_the_mods_set(
     prepare(mode, lambda: names(new_mod()), monkeypatch)
     mod = new_mod()
     assert names(mod) == everyone
-    assert mod.delete_character("MOD_hero")
+    mod.delete_character("MOD_hero")
     assert names(mod) == everyone - {"mod_hero"}
     mod.discard()
     assert names(mod) == everyone

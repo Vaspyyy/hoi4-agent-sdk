@@ -1,10 +1,11 @@
-# AGENTS.md — HOI4 Agent SDK Instructions
+# AGENTS.md: HOI4 Agent SDK Instructions
 
 Mandatory instructions for agents using the `hoi4` Python SDK to modify Hearts of Iron IV mods.
 
 ## Setup
 
-Requires Python 3.11 or newer.
+Requires Python 3.11 or newer. The package is not on PyPI; install it from a
+checkout of this repository:
 
 ```bash
 python -m venv venv && ./venv/bin/pip install -e .
@@ -14,7 +15,7 @@ Mod projects should contain a `.hoi4.json` file:
 
 ```json
 {
-  "mod_path": "/path/to/mod",
+  "mod_path": "/path/to/my_mod",
   "hoi4_install": "/path/to/Hearts of Iron IV"
 }
 ```
@@ -30,12 +31,16 @@ mod = Mod.from_config()
 
 ## Script Location
 
-For one-off automation, put scripts in `/tmp/hoi4-agent-scripts/` and run them from the mod project containing `.hoi4.json`. Do not place task-specific scripts inside `/home/ransom/Projekte/hoi4-agent-sdk` or any SDK repo directory. Reusable scripts belong in the mod project's `scripts/` or `tools/` directory.
+For one-off automation, put scripts in `/tmp/hoi4-agent-scripts/` and run them from the mod project containing `.hoi4.json`. Do not place task-specific scripts inside the SDK checkout or any other SDK directory. Reusable scripts belong in the mod project's `scripts/` or `tools/` directory.
+
+Run them with the Python of the environment you installed the SDK into
+(`$HOI4_SDK_PYTHON` below stands for its path, for example
+`<sdk checkout>/venv/bin/python`):
 
 ```bash
 mkdir -p /tmp/hoi4-agent-scripts
 cd /path/to/mod-project
-/home/ransom/Projekte/hoi4-agent-sdk/venv/bin/python /tmp/hoi4-agent-scripts/task.py
+"$HOI4_SDK_PYTHON" /tmp/hoi4-agent-scripts/task.py
 ```
 
 ## Required Workflow
@@ -43,15 +48,20 @@ cd /path/to/mod-project
 All mutations are in memory until `save()`.
 
 ```python
-from hoi4 import Mod
+from hoi4 import Focus, Mod
 
 mod = Mod.from_config()
 
-# Inspect existing data.
-tree = mod.get_focus_tree("german_focus")
+# Inspect existing data. A focus tree the game ships is not visible to the
+# lookups until its file is copied into the mod (this stages the copy).
+mod.load_inherited_content("common/national_focus/germany.txt")
+anchor = mod.get_focus("german_focus", "GER_anschluss")
 
 # Make changes.
-# ...
+mod.add_focus("german_focus", Focus(
+    id="GER_new_focus", x=anchor.x, y=anchor.y + 1, requires="GER_anschluss",
+))
+mod.set_focus_loc("GER_new_focus", "New Focus", "What it does.")
 
 # Validate.
 errors = mod.validate()
@@ -69,13 +79,28 @@ print(result)
 print(result.written_files)
 ```
 
-Use `mod.discard()` to throw away changes and reload from disk. Use a transaction for dry runs:
+Use `mod.discard()` to throw away every unsaved change; it also picks up files
+changed on disk. Use a transaction for dry runs:
 
 ```python
 with mod.transaction():
-    # Make temporary changes.
+    mod.set_loc("GER_new_focus", "A Trial Name")  # thrown away on exit
     print(mod.preview())
 ```
+
+Lookups and changes raise instead of returning `None` or `False`:
+
+- `get_x(id)` raises `NotFoundError` (a `KeyError`) for a missing id; its
+  message names close matches. Pass `default=None` to get `None` instead.
+- `create_x(id, ...)` raises `AlreadyExistsError` (a `ValueError`) for an id
+  that exists. Use `ensure_x()` when a script may run twice, or
+  `overwrite=True` to replace on purpose.
+- `update_x()`, `delete_x()` and `remove_x()` raise `NotFoundError` for a
+  missing target. Deleting game content raises `ReadOnlyError`: override it
+  instead.
+
+All four classes are importable from `hoi4` (`Hoi4Error` is their base). See
+[Errors](docs/api.md#errors).
 
 ## Hard Rules
 
@@ -87,7 +112,7 @@ with mod.transaction():
 
 4. Event and focus block fields contain the block body without outer braces: `mean_time_to_happen="days = 1"`.
 
-5. `set_state_owner()` writes state history files. Event and focus rewards are runtime effects; use `Mod.effect_transfer_state(state_id, tag)` there, not `set_owner = ...`.
+5. `set_state_owner()` writes state history files. Event and focus rewards are runtime effects; use `effects.transfer_state(state_id, tag)` there, not `set_owner = ...`.
 
 6. Never use bare country-scope core effects such as:
 
@@ -98,17 +123,22 @@ with mod.transaction():
    Use state-scoped helpers:
 
    ```python
-   Mod.effect_add_state_core(state_id, tag)
-   Mod.effect_remove_state_core(state_id, tag)
+   from hoi4 import effects
+
+   effects.add_state_core(4, "GER")      # 4 = { add_core_of = GER }
+   effects.remove_state_core(4, "AUS")   # 4 = { remove_core_of = AUS }
    ```
 
-7. Prefer SDK helpers over manually assembled Paradox script: `Mod.effect_transfer_state_with_core(...)`, `Mod.effect_transfer_state(...)`, `Mod.effect_swap_idea(...)`, `Mod.effect_upgrade_idea_chain(...)`, `Mod.effect_add_political_power(...)`, `Mod.effect_add_war_support(...)`, `Mod.effect_add_manpower(...)`, `Mod.effect_add_army_experience(...)`, `Mod.effect_add_navy_experience(...)`, `Mod.effect_add_equipment(...)`, `Mod.effect_set_technology(...)`, `Mod.effect_set_politics(...)`, `Mod.effect_create_faction(...)`, `Mod.effect_add_target_to_faction(...)`, `Mod.effect_join_faction(...)`, `Mod.effect_white_peace(...)`, `Mod.effect_spawn_revolution(...)`, `Mod.effect_convert_existing_or_spawn_revolt(...)`, `Mod.effect_load_focus_tree(...)`, `Mod.effect_spawn_civil_war_with_focus_tree(...)`, `Mod.effect_release(...)`, `Mod.effect_release_puppet(...)`, `Mod.effect_end_puppet(...)`, `Mod.effect_set_autonomy(...)`, `Mod.effect_convert_puppet_to_ally(...)`, `Mod.effect_add_civilian_factory(...)`, `Mod.effect_add_bunker(...)`, `Mod.effect_add_tech_bonus(...)`, `Mod.effect_declare_war_from(...)`, `Mod.scope_block(...)`.
+   The builders live in the `hoi4.effects` module, not on `Mod`. Each returns
+   the script text as a `str`.
+
+7. Prefer SDK helpers over manually assembled Paradox script: `effects.transfer_state_with_core(...)`, `effects.transfer_state(...)`, `effects.swap_idea(...)`, `effects.upgrade_idea_chain(...)`, `effects.add_political_power(...)`, `effects.add_war_support(...)`, `effects.add_manpower(...)`, `effects.add_army_experience(...)`, `effects.add_navy_experience(...)`, `effects.add_equipment(...)`, `effects.set_technology(...)`, `effects.set_politics(...)`, `effects.create_faction(...)`, `effects.add_target_to_faction(...)`, `effects.join_faction(...)`, `effects.white_peace(...)`, `effects.spawn_revolution(...)`, `effects.convert_existing_or_spawn_revolt(...)`, `effects.load_focus_tree(...)`, `effects.spawn_civil_war_with_focus_tree(...)`, `effects.release(...)`, `effects.release_puppet(...)`, `effects.end_puppet(...)`, `effects.set_autonomy(...)`, `effects.convert_puppet_to_ally(...)`, `effects.add_civilian_factory(...)`, `effects.add_bunker(...)`, `effects.add_tech_bonus(...)`, `effects.declare_war_from(...)`, `effects.scope_block(...)`.
 
 8. Search rather than guess:
 
    ```python
    mod.find_state("Sicily")
-   mod.suggest_tag("Sicily")
+   mod.suggest_tags("Sicily", count=1)
    mod.is_country_tag_available("SIC")
    ```
 
@@ -127,13 +157,13 @@ with mod.transaction():
     Every finding has a severity: `error`, `warning` or `info` (advice). `validate()` hides advice unless you pass `advice=True`; `validate_effect()` shows it unless `advice=False`.
     Every code and its severity is listed in [`docs/validation.md`](docs/validation.md).
 
-11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `upsert_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
+11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `ensure_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
 
 12. Use `get_country_context(tag)` before generating country-specific content. Pass `copy_states=True` before directly modifying vanilla states.
 
 13. Use `create_event(..., overwrite=True)` only when replacing an existing event. Use `update_event()` or `update_event_option()` for targeted edits.
 
-14. Register startup hooks with `create_on_action()`, not manual `common/on_actions` file edits. Use `Mod.effect_schedule_country_event(...)` for delayed event firing.
+14. Register startup hooks with `create_on_action()`, not manual `common/on_actions` file edits. Use `effects.schedule_country_event(...)` for delayed event firing.
 
 15. New ideas default to current HOI4 `common/ideas/...` files and `ideas = { country = { ... } }`. Use `create_idea(..., category="political_advisor")` or another explicit category for non-spirit ideas. National spirits and other ideas use `picture = <bare_stem>`, never `icon =` and never `picture = GFX_idea_<stem>`. HOI4 prepends `GFX_idea_` itself, so `picture = generic_political_support` resolves the sprite declaration `GFX_idea_generic_political_support` in `interface/*.gfx`. The compatibility `icon=` API argument accepts either spelling but normalizes to the bare stem. Validate both the assignment shape and sprite resolution before treating the idea as renderable.
 
@@ -143,7 +173,7 @@ with mod.transaction():
     Decision-category metadata belongs in `common/decisions/categories`, while
     decision definitions belong in `common/decisions`.
 
-16. `create_focus_tree()`, `create_decision_category()`, `create_decision()`, and `create_idea()` also raise on existing IDs unless `overwrite=True`.
+16. Every `create_*()` method (`create_focus_tree()`, `create_decision_category()`, `create_decision()`, `create_idea()`, ...) raises `AlreadyExistsError` on an existing ID unless `overwrite=True`. Use the matching `ensure_*()` for a step that may run twice.
 
 17. Use `Focus(..., requires="FOCUS_ID")` for a single prerequisite instead of manually writing `prerequisites=[["FOCUS_ID"]]`.
 
@@ -151,22 +181,22 @@ with mod.transaction():
 
 19. Use `preview_summary()` alongside `preview()` in long scripts so the agent log contains a compact semantic change list.
 
-20. State edits (`set_state_owner()`, `add_state_core()`, `set_state_properties()`, `patch_state_history()`) change only the statements they touch; `patch_state_history()` sets the owner and several cores in one call. A state is identified by the `id` directly inside its own `state = { }` block, not by its file name.
+20. State edits (`set_state_owner()`, `add_state_core()`, `remove_state_core()`, `update_state()`) change only the statements they touch; `update_state(id, owner=..., add_cores=[...], remove_cores=[...])` sets the owner and several cores in one call, and `set_state_owner()` takes one state id or a list. A state is identified by the `id` directly inside its own `state = { }` block, not by its file name.
 
-21. Avoid bare `add_to_faction = TAG`. Use `effect_add_target_to_faction(leader, target)` or `effect_join_faction(actor, leader)` so faction direction is explicit.
+21. Avoid bare `add_to_faction = TAG`. Use `effects.add_target_to_faction(leader, target)` or `effects.join_faction(actor, leader)` so faction direction is explicit.
 
 22. State serialization preserves unmodeled vanilla content. Do not rewrite entire state files manually unless specifically required.
 
-23. For civil-war countries that need custom focus trees, use `Mod.effect_spawn_civil_war_with_focus_tree(...)`. It nests the tree load inside `start_civil_war`, where HOI4 scopes it to the spawned country. Do not guess dynamic `D01`-style rebel tags.
+23. For civil-war countries that need custom focus trees, use `effects.spawn_civil_war_with_focus_tree(...)`. It nests the tree load inside `start_civil_war`, where HOI4 scopes it to the spawned country. Do not guess dynamic `D01`-style rebel tags.
 
-24. For revolt chains where the tag might already exist or be a puppet, use `Mod.effect_convert_existing_or_spawn_revolt(...)` or explicit puppet helpers. Do not assume the target tag is unreleased.
+24. For revolt chains where the tag might already exist or be a puppet, use `effects.convert_existing_or_spawn_revolt(...)` or explicit puppet helpers. Do not assume the target tag is unreleased.
 
 25. Do not use `add_resistance` as generic unrest on states that are cores of their current owner. Use flags, variables, decisions, and events for unrest/revolt progression.
 
 26. Triggered lore events should have at least one gameplay effect in each option, even if it is only a flag. Use `create_decision_chain()` for staged flag/event/cleanup decision chains and `create_recovery_decision()` for live-save repair hooks.
 
 27. Use native `create_dynamic_modifier()` and
-    `effect_add_dynamic_modifier()`. `dynamic_country_ideas` is not a HOI4
+    `effects.add_dynamic_modifier()`. `dynamic_country_ideas` is not a HOI4
     construct and validation rejects it.
 
 28. A new mod-only country keeps its color in
@@ -254,7 +284,7 @@ with mod.transaction():
     one with an unclosed brace, is not loaded, and `save()` refuses to rewrite
     any mod file that failed to load, or to create a new override of a game
     file in the same folder. Fix the file
-    and call `reload()`. Files from the game or a base mod with unbalanced
+    and call `discard()`. Files from the game or a base mod with unbalanced
     braces load the way the game reads them.
 
 38. Top-level `shared_focus`, `joint_focus` and bare `focus` blocks of a file

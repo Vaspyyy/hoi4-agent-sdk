@@ -1,6 +1,6 @@
 import pytest
 
-from hoi4 import Mod
+from hoi4 import Mod, ParseError
 from hoi4.mod import ExternalModificationError
 
 
@@ -44,7 +44,7 @@ def test_import_preserves_bytes_and_refuses_path_or_syntax_errors(tmp_path):
         with pytest.raises(ValueError):
             mod.import_script_file(src, relative)
     invalid = source(tmp_path, "check = {", "invalid.txt")
-    with pytest.raises(Exception):
+    with pytest.raises(ParseError):
         mod.import_script_file(invalid, "common/scripted_triggers/invalid.txt")
     assert not (mod.mod_root / "common/scripted_triggers/invalid.txt").exists()
 
@@ -71,14 +71,15 @@ def test_script_import_composes_with_trigger_creation_without_cross_domain_colli
     src = source(tmp_path, "shared_name = { always = yes }")
     mod = Mod(tmp_path / "mod")
     mod.import_script_file(src, "common/scripted_effects/source.txt")
-    mod.create_scripted_trigger("shared_name", "always = no")
+    mod.create_definition("scripted_trigger", "shared_name", "always = no")
     with pytest.raises(ValueError, match="conflict"):
         mod.import_script_file(src, "common/scripted_triggers/duplicate.txt")
     mod.import_script_file(
         source(tmp_path, "other = { always = yes }", "other.txt"),
         "common/scripted_triggers/source.txt",
     )
-    mod.create_scripted_trigger(
+    mod.create_definition(
+        "scripted_trigger",
         "sibling", "always = yes", path="common/scripted_triggers/source.txt"
     )
     mod.save(require_changes=True)

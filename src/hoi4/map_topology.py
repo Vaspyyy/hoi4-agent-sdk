@@ -15,7 +15,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from ._disk_cache import DiskAnalysis, int_list
 from ._file_cache import cached_files_result
@@ -273,7 +274,7 @@ def find_enclosed_foreign_components(
 _Topology = tuple[frozenset[int], dict[int, set[int]], frozenset[int]]
 
 
-def _encode_topology(topology: _Topology) -> dict[str, list]:
+def _encode_topology(topology: _Topology) -> dict[str, list[Any]]:
     land, graph, coastal = topology
     return {
         "land": sorted(land),

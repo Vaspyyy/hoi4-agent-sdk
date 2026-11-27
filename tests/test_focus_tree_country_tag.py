@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from hoi4 import Mod
+from hoi4.errors import NotFoundError
 
 
 COMPLEX_SELECTOR = """country = {
@@ -40,7 +41,7 @@ def test_rejected_country_tag_preserves_pending_work(
     if source == "created":
         mod.create_focus_tree("german_focus", "GER")
     elif source.endswith("_edited"):
-        assert mod.update_focus_tree("german_focus", continuous_focus_position="x = 0 y = 1000")
+        mod.update_focus_tree("german_focus", continuous_focus_position="x = 0 y = 1000")
     tree = mod.get_focus_tree("german_focus")
     original_position = tree.continuous_focus_position
     mod.set_loc("PENDING_WORK", "Keep staged localization")
@@ -53,7 +54,7 @@ def test_rejected_country_tag_preserves_pending_work(
     } if mixed_fields else {}
     fields["country_tag"] = country_tag
 
-    with pytest.raises(TypeError, match="Remove country_tag.*selector reassignment.*not supported"):
+    with pytest.raises(TypeError, match=r"Remove country_tag.*selector reassignment.*not supported"):
         mod.update_focus_tree("german_focus", **fields)
 
     assert mod._snapshot() == before
@@ -97,4 +98,5 @@ def test_rejected_country_tag_keeps_clean_tree_clean(tmp_path: Path) -> None:
 
 def test_missing_focus_tree_update_still_returns_false(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
-    assert mod.update_focus_tree("missing", country_tag="GER") is False
+    with pytest.raises(NotFoundError):
+        mod.update_focus_tree("missing", country_tag="GER")

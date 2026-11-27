@@ -7,12 +7,13 @@ inherited files where a rule depends on them.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import pytest
 
-from hoi4 import Mod
-from hoi4.types import Event, EventOption, Focus, FocusTree, Idea, ValidationError
+from hoi4 import Mod, ReadOnlyError
+from hoi4.types import Event, EventOption, Focus, FocusTree, Idea, ValidationIssue
 from hoi4.validation import (
     validate_event,
     validate_focus_tree,
@@ -27,7 +28,7 @@ def write(root: Path, relative: str, text: str, *, bom: bool = False) -> Path:
     return path
 
 
-def codes(findings: list[ValidationError], code: str) -> list[ValidationError]:
+def codes(findings: list[ValidationIssue], code: str) -> list[ValidationIssue]:
     return [finding for finding in findings if finding.code == code]
 
 
@@ -515,8 +516,8 @@ def test_allow_branch_cleared_through_the_api_counts_before_save(tmp_path):
     mod = Mod(root)
     assert overlaps(mod) == ["F"]
     # Without its own allow_branch, B is hidden with A: B hangs on X, D on Z.
-    assert mod.update_focus("test_tree", "B", allow_branch="")
-    assert mod.update_focus("test_tree", "E", cost=7)
+    mod.update_focus("test_tree", "B", allow_branch="")
+    mod.update_focus("test_tree", "E", cost=7)
     assert overlaps(mod) == ["F"]
     mod.save()
     saved = (root / "common/national_focus/t.txt").read_text()
@@ -559,7 +560,7 @@ def test_a_focus_below_a_shared_focus_of_another_file_is_hidden_with_it(tmp_path
             with pytest.raises(ValueError, match="overlaps"):
                 mod.assert_no_visual_overlap("t_tree")
         else:
-            assert mod.assert_no_visual_overlap("t_tree")
+            mod.assert_no_visual_overlap("t_tree")
         return found
 
     gate_x, gate_y = 'allow_branch = { has_dlc = "X" }', 'allow_branch = { has_dlc = "Y" }'
@@ -682,7 +683,8 @@ def test_strict_localisation_reads_names_the_way_the_game_does(tmp_path, game):
     mod.create_event("t.1", title="t.1.t", options=[EventOption(name="t.1.a", effect="x = 1")])
     # Drop the names create_country wrote, so only the game's keys remain.
     for key in [key for key in mod.all_loc() if key.startswith(("BSK", "NNN"))]:
-        mod.delete_loc(key)
+        with contextlib.suppress(ReadOnlyError):  # the game's own key stays
+            mod.delete_loc(key)
     findings = mod.validate(stage="build", strict_localization=True, advice=True)
     missing = {(f.message.split("'")[3], f.severity) for f in findings if "localization" in f.code}
     assert ("BSK", "warning") not in missing  # BSK_fascism counts
@@ -747,7 +749,7 @@ def test_suppression_by_code_and_by_object(tmp_path):
     assert missing() == {"TST_a", "TST_b"}
     assert missing(suppress=["missing_localization:TST_a"]) == {"TST_b"}
     assert missing(suppress=["missing_localization"]) == set()
-    assert missing(suppress_warnings=["missing_localization:TST_b"]) == {"TST_a"}
+    assert missing(suppress=["missing_localization:TST_b"]) == {"TST_a"}
     with pytest.raises(ValueError, match="not a validation code"):
         mod.validate(suppress=["No localization found"])
     with pytest.raises(ValueError, match="error code"):

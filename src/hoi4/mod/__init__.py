@@ -1,15 +1,36 @@
-"""
-Mod facade - the primary entry point for AI agents.
+"""The ``Mod`` class: the main entry point for AI agents.
 
-Usage:
-    from hoi4 import Mod
+Usage (the quick start of ``README.md``)::
 
-    mod = Mod("/path/to/my_mod", hoi4_install="/opt/steam/hoi4")
-    tree = mod.get_focus_tree("german_focus")
-    mod.add_focus("german_focus", Focus(id="GER_new", x=5, y=3))
-    errors = mod.validate()
-    diff = mod.preview()
-    mod.save()
+    from hoi4 import Focus, Mod
+
+    mod = Mod("/path/to/my_mod", hoi4_install="/path/to/Hearts of Iron IV")
+
+    with mod.transaction():
+        mod.create_focus_tree("ger_extra_focus", "GER")
+        mod.add_focus(
+            "ger_extra_focus",
+            Focus(
+                id="GER_expand_industry",
+                x=3,
+                y=2,
+                completion_reward="add_political_power = 50",
+            ),
+        )
+        mod.set_focus_loc("GER_expand_industry", "Expand Industry", "More factories.")
+        print(mod.preview_summary())
+        print(mod.preview())
+        issues = mod.validate()
+        for issue in issues:
+            print(f"[{issue.severity}] {issue.message}")
+        if any(issue.severity == "error" for issue in issues):
+            raise RuntimeError("Validation failed")
+
+    # This dry run discards its changes on exit. After reviewing the output,
+    # rerun the block with mod.transaction(save=True) to apply and save the edits.
+
+A focus tree the game ships is not visible to ``get_focus_tree()`` until its
+file is copied into the mod with ``mod.load_inherited_content(path)``.
 
 The class is assembled from layers, one module per content type. Each layer
 class subclasses only the layers whose methods it calls, so its class header
@@ -19,7 +40,6 @@ state is declared in ``_core``.
 "Uses" below lists every layer a module calls into. Its class header names
 only the ones it does not already reach through another base.
 
-* ``_effects``: Builders that return ready-made effect script. Uses only ``_core``.
 * ``_localisation``: Localisation tables: loading, lookup, edits and language mirroring.
   Uses only ``_core``.
 * ``_sources``: Per-file grouping of loaded models and the effective script texts. Uses
@@ -36,21 +56,20 @@ only the ones it does not already reach through another base.
   ``_localisation``, ``_countries``, ``_characters``.
 * ``_oobs``: Orders of battle, equipment variants and their country assignment. Uses
   ``_catalogs``, ``_equipment``, ``_countries``.
-* ``_states``: State lookup, search and history edits. Uses only ``_core``.
+* ``_states``: State lookup, search and history edits. Uses ``_countries``.
 * ``_map``: Map editing: provinces, strategic regions, supply, railways and buildings.
   Uses ``_localisation``, ``_catalogs``, ``_states``.
 * ``_events``: Event authoring. Uses only ``_core``.
 * ``_on_actions``: On-action authoring. Uses only ``_core``.
-* ``_decisions``: Decision and decision-category authoring. Uses ``_effects``,
-  ``_localisation``.
-* ``_ideas``: Idea (national spirit) authoring. Uses only ``_core``.
+* ``_decisions``: Decision and decision-category authoring. Uses ``_localisation``.
+* ``_ideas``: Idea (national spirit) authoring. Uses ``_countries``.
 * ``_ideologies``: Ideology authoring. Uses only ``_core``.
 * ``_dynamic_modifiers``: Dynamic modifier authoring. Uses only ``_core``.
 * ``_bookmarks``: Bookmark authoring. Uses only ``_core``.
 * ``_context``: Country context reports, icon suggestions and territory checks. Uses
   ``_catalogs``, ``_countries``, ``_states``.
-* ``_focus``: Focus tree authoring and layout. Uses ``_effects``, ``_localisation``,
-  ``_context``, ``_catalogs``.
+* ``_focus``: Focus tree authoring and layout. Uses ``_localisation``, ``_context``,
+  ``_catalogs``, ``_countries``.
 * ``_definitions``: Script imports and the keyed ``common/`` definition API. Uses only
   ``_core``.
 * ``_assets``: Flag, portrait, icon and picture imports. Uses only ``_core``.
@@ -145,6 +164,10 @@ class Mod(
 
         Searches for .hoi4.json starting from `start` (defaults to cwd)
         and walks up to the filesystem root.
+
+        Raises:
+            FileNotFoundError: No config file is found, or it sets no
+                ``mod_path``.
         """
         cfg = find_config(start)
         if cfg is None or cfg.mod_path is None:

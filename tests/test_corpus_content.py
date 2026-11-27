@@ -32,7 +32,7 @@ from hoi4 import Mod
 from hoi4.localisation import YML_ENTRY_RE, normalize_localization_key
 from hoi4.mod._shared import _filter_validation_errors
 from hoi4.textio import read_text
-from hoi4.types import ValidationError
+from hoi4.types import ValidationIssue
 from hoi4.validation import (
     validate_decision,
     validate_event,
@@ -77,13 +77,13 @@ def game_mod(tmp_path_factory: pytest.TempPathFactory) -> Mod:
     return Mod(root, hoi4_install=install)
 
 
-def _content_findings(mod: Mod) -> list[ValidationError]:
+def _content_findings(mod: Mod) -> list[ValidationIssue]:
     known_state_ids = {entry["id"] for entry in mod.state_index()}
     focus_ids = {focus.id for tree in mod._focus_trees.values() for focus in tree.focuses}
     filters = mod._known_focus_search_filters()
     namespaces = mod._declared_event_namespaces()
     categories = mod._known_idea_categories()
-    findings: list[ValidationError] = []
+    findings: list[ValidationIssue] = []
     for tree in mod._focus_trees.values():
         findings += validate_focus_tree(
             tree,
@@ -103,7 +103,7 @@ def _content_findings(mod: Mod) -> list[ValidationError]:
     return _filter_validation_errors(findings, advice=False)
 
 
-def _signature(finding: ValidationError) -> tuple[str, str]:
+def _signature(finding: ValidationIssue) -> tuple[str, str]:
     return finding.code, Path(finding.file_path or "").name
 
 

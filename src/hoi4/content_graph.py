@@ -7,7 +7,8 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Protocol
+from typing import TYPE_CHECKING, Protocol
+from collections.abc import Iterable
 
 from ._disk_cache import NAMES_ON_DISK
 from ._file_cache import cached_file_result
@@ -22,7 +23,7 @@ from .script_references import (
 )
 from .syntax import Scalar, parse
 from .textio import read_text
-from .types import ValidationError
+from .types import ValidationIssue
 
 if TYPE_CHECKING:
     from .bookmarks import Bookmark
@@ -188,15 +189,17 @@ class ContentLivenessReport:
     flags_read_only: tuple[str, ...]
     used_localization: tuple[str, ...]
     unused_localization: tuple[str, ...]
-    findings: tuple[ValidationError, ...]
+    findings: tuple[ValidationIssue, ...]
     analysis_scope: str = "structural"
     proves_dynamic_achievability: bool = False
 
     @property
     def clean(self) -> bool:
+        """Whether the analysis found nothing to report."""
         return not self.findings
 
     def to_dict(self) -> dict[str, object]:
+        """Return the report as plain JSON-ready values (lists, strings, numbers)."""
         return {
             "clean": self.clean,
             "analysis_scope": self.analysis_scope,
@@ -343,12 +346,12 @@ def analyze_content_liveness(
             return found
         return (str(fallback) if fallback is not None else None), None
 
-    findings: list[ValidationError] = []
+    findings: list[ValidationIssue] = []
     for focus_id in sorted(unreachable):
         focus, path = all_focuses[focus_id]
         file_path, line = site("focus", focus_id, path)
         findings.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Focus '{focus_id}' is unreachable from every root focus. "
                     "Check prerequisite groups and mutually exclusive branches."
@@ -363,7 +366,7 @@ def analyze_content_liveness(
     for event_id in sorted(unfired_events):
         file_path, line = site("event", event_id, mod._events[event_id].path)
         findings.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Triggered-only event '{event_id}' is never fired: no effect, "
                     "on-action or border war in the mod or the game names it."
@@ -378,7 +381,7 @@ def analyze_content_liveness(
     for idea_id in sorted(ungranted_ideas):
         file_path, line = site("idea", idea_id, mod._ideas[idea_id].path)
         findings.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"Country idea '{idea_id}' is never granted: no country history "
                     "or effect in the mod or the game adds it, and nothing shows it."
@@ -393,7 +396,7 @@ def analyze_content_liveness(
     for flag in sorted(set_only):
         file_path, line = write_sites.get(flag, (None, None))
         findings.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Flag '{flag}' is written but never read.",
                 severity="warning",
                 code="flag_set_never_read",
@@ -404,7 +407,7 @@ def analyze_content_liveness(
     for flag in sorted(read_only):
         file_path, line = read_sites.get(flag, (None, None))
         findings.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Flag '{flag}' is read but never written by the mod or the game.",
                 severity="warning",
                 code="flag_read_never_set",
@@ -414,7 +417,7 @@ def analyze_content_liveness(
         )
     for key in sorted(unused_localization):
         findings.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"Localization key '{key}' is not referenced by modeled content.",
                 severity="warning",
                 code="unused_localization",

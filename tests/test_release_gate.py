@@ -161,7 +161,7 @@ def test_release_gate_fails_on_a_half_built_country_although_it_is_a_warning(
 ) -> None:
     from dataclasses import replace
 
-    from hoi4 import ValidationError
+    from hoi4 import ValidationIssue
 
     mod_root = tmp_path / "source_stability_mod"
     shutil.copytree(FIXTURE, mod_root)
@@ -175,7 +175,7 @@ def test_release_gate_fails_on_a_half_built_country_although_it_is_a_warning(
         report,
         validation_issues=[
             *report.validation_issues,
-            ValidationError(
+            ValidationIssue(
                 message="Starting country 'ABC' has no unambiguous land OOB.",
                 severity="warning",
                 code="missing_land_oob",

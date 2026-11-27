@@ -1,7 +1,7 @@
 """Every finding the SDK can produce has a registered, documented code.
 
 The test reads the Python source of ``src/hoi4`` through its syntax tree
-(``ast``) and looks at every ``ValidationError(...)`` call. The ``code`` and
+(``ast``) and looks at every ``ValidationIssue(...)`` call. The ``code`` and
 ``severity`` arguments are followed back to string constants:
 
 * a constant is used as it is;
@@ -51,7 +51,11 @@ def _modules() -> list[_Module]:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         parents: dict[int, ast.FunctionDef | ast.AsyncFunctionDef] = {}
 
-        def visit(node: ast.AST, function: ast.FunctionDef | ast.AsyncFunctionDef | None) -> None:
+        def visit(
+            node: ast.AST,
+            function: ast.FunctionDef | ast.AsyncFunctionDef | None,
+            parents: dict[int, ast.FunctionDef | ast.AsyncFunctionDef] = parents,
+        ) -> None:
             for child in ast.iter_child_nodes(node):
                 if function is not None:
                     parents[id(child)] = function
@@ -94,7 +98,7 @@ def _default(function: ast.FunctionDef | ast.AsyncFunctionDef, name: str) -> ast
     for index, arg in enumerate(positional):
         if arg.arg == name and index >= offset:
             return args.defaults[index - offset]
-    for arg, default in zip(args.kwonlyargs, args.kw_defaults):
+    for arg, default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
         if arg.arg == name:
             return default
     return None
@@ -199,7 +203,7 @@ def _resolve_together(
         if isinstance(item, ast.IfExp):
             test = ast.dump(item.test)
 
-            def branch(chosen: str) -> tuple[_Item, ...]:
+            def branch(chosen: str, test: str = test) -> tuple[_Item, ...]:
                 return tuple(
                     getattr(other, chosen)
                     if isinstance(other, ast.IfExp) and ast.dump(other.test) == test
@@ -212,10 +216,8 @@ def _resolve_together(
             ) | _resolve_together(branch("orelse"), missing, module, node, depth=depth + 1)
     # Everything that is not a parameter is resolved where it stands.
     resolved: list[_Item] = []
-    for item, default in zip(items, missing):
-        if item is None or isinstance(item, frozenset):
-            resolved.append(item)
-        elif _is_parameter(item, module, node):
+    for item, default in zip(items, missing, strict=True):
+        if item is None or isinstance(item, frozenset) or _is_parameter(item, module, node):
             resolved.append(item)
         else:
             resolved.append(frozenset(_resolve_one(item, module, node, default, depth)))
@@ -233,7 +235,7 @@ def _resolve_together(
             result |= _resolve_together(at_site, missing, caller, call, depth=depth + 1)
         return result
     combinations: set[tuple[str, ...]] = {()}
-    for item, default in zip(resolved, missing):
+    for item, default in zip(resolved, missing, strict=True):
         if item is None:
             if default is None:
                 raise _Unresolved("argument not given")
@@ -292,7 +294,7 @@ def _resolve_one(
 
 
 def _pairs(call: ast.Call, module: _Module) -> set[tuple[str, str]]:
-    """Return every ``(code, severity)`` pair a ``ValidationError`` call can build.
+    """Return every ``(code, severity)`` pair a ``ValidationIssue`` call can build.
 
     ``code`` and ``severity`` are followed together (see ``_resolve_together``),
     so a helper called once with an error code and once with a warning code
@@ -314,7 +316,7 @@ def _constructions() -> list[tuple[ast.Call, _Module]]:
         (node, module)
         for module in MODULES
         for node in ast.walk(module.tree)
-        if isinstance(node, ast.Call) and _call_name(node) == "ValidationError"
+        if isinstance(node, ast.Call) and _call_name(node) == "ValidationIssue"
     ]
 
 

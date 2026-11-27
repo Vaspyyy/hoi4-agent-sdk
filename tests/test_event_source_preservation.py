@@ -154,7 +154,7 @@ def test_replace_loaded_options_preserves_identity(tmp_path, order):
     saved = path.read_text()
     loaded = Mod(tmp_path).get_event("source.1").options
     assert [option.name for option in loaded] == [option.name for option in replacement]
-    for option, index in zip(loaded, order):
+    for option, index in zip(loaded, order, strict=True):
         if index == "new":
             assert option.effect == "add_stability = 0.1"
             assert "custom_" not in option.raw_block

@@ -24,7 +24,7 @@ from .patching import (
     top_level_assignments,
 )
 from .syntax import Scalar, parse, quote, require_well_formed, unquote
-from .textio import read_text, write_text
+from .textio import read_text
 from .types import Decision, DecisionCategory
 
 # Keys a category block may carry for itself. Every other ``key = { ... }``
@@ -642,12 +642,6 @@ def _patch_category_definition_body(category: DecisionCategory, body: str) -> st
         if value != current.get(key, ""):
             body = set_block(body, key, value or None)
     return body
-
-
-def write_decisions_file(path: Path, categories: list[DecisionCategory]) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_text(path, serialize_decisions_file(categories))
-    return path
 
 
 def _indent(text: str, count: int) -> str:

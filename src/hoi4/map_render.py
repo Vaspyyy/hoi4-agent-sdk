@@ -12,8 +12,10 @@ import re
 from colorsys import hsv_to_rgb
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
+from .errors import Hoi4Error
 from .countries import read_color
 from .layers import replace_paths
 from .progress import ProgressCallback as EventProgressCallback
@@ -29,7 +31,7 @@ CancelCallback = Callable[[], bool]
 _COUNTRY_TAG = re.compile(r"^[A-Z0-9]{3}$")
 
 
-class MapRenderCancelled(RuntimeError):
+class MapRenderCancelled(Hoi4Error, RuntimeError):
     """Raised when a caller-provided cancellation callback requests a stop."""
 
 
@@ -173,7 +175,21 @@ def render_political_map(
 ) -> PoliticalMapResult:
     """Render provinces by state owner and optionally save the result.
 
-    Install the SDK's ``map`` extra before calling this function.
+    Install the SDK's ``map`` extra before calling this function. Each
+    province gets its owner's map colour; sea is ``ocean_color`` and land
+    without an owner ``unowned_color``. Mod files override the game's.
+
+    Args:
+        output_path: Save the picture here as well (the format follows the
+            ending).
+        progress: Called as ``progress(done, total)`` while rendering;
+            ``event_progress`` gets ``ProgressEvent`` objects instead.
+        cancelled: Polled while rendering; returning true stops it.
+
+    Raises:
+        RuntimeError: NumPy or Pillow (the ``map`` extra) is missing.
+        MapRenderCancelled: ``cancelled()`` returned true.
+        FileNotFoundError: A map file does not exist.
     """
 
     try:

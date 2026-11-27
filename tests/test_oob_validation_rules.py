@@ -11,7 +11,7 @@ from pathlib import Path
 
 from hoi4 import Mod
 from hoi4.oob import load_oob_file, validate_oob
-from hoi4.types import ValidationError
+from hoi4.types import ValidationIssue
 
 
 def _write(path: Path, text: str) -> Path:
@@ -101,12 +101,12 @@ def _setup(tmp_path: Path) -> tuple[Path, Path]:
     return game, mod_root
 
 
-def _oob_findings(mod: Mod) -> list[ValidationError]:
+def _oob_findings(mod: Mod) -> list[ValidationIssue]:
     return mod._validate_country_oobs()
 
 
-def _codes(findings: list[ValidationError]) -> dict[str, list[ValidationError]]:
-    result: dict[str, list[ValidationError]] = {}
+def _codes(findings: list[ValidationIssue]) -> dict[str, list[ValidationIssue]]:
+    result: dict[str, list[ValidationIssue]] = {}
     for finding in findings:
         result.setdefault(finding.code, []).append(finding)
     return result

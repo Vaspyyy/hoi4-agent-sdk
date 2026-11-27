@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
+import copy
 from pathlib import Path
 
+from ..fields import BookmarkCountryFields, BookmarkFields
 from ..bookmarks import (
     DEFAULT_BOOKMARK_EFFECT,
     Bookmark,
@@ -19,10 +23,41 @@ from ..paths import (
 from ..script import (
     normalize_block_body,
 )
+from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
+    _check_fields,
+    _check_model,
+    _require_items,
     _set_fields,
 )
+
+
+def _checked_bookmark_countries(method: str, countries: object) -> list[BookmarkCountry]:
+    """Return copies of ``countries`` with tag and DLC names in their written form.
+
+    It raises before anything changes, and it leaves the caller's own objects
+    as they are.
+    """
+    checked: list[BookmarkCountry] = []
+    for country in _require_items(method, "countries", countries, (BookmarkCountry,)):
+        entry = copy.copy(country)
+        entry.tag = require_bookmark_country_key(country.tag)
+        entry.required_dlc = normalize_required_dlc(country.required_dlc)
+        checked.append(entry)
+    return checked
+
+
+def _missing_bookmark_country(
+    bookmark: Bookmark, tag: str, occurrence: int, count: int
+) -> NotFoundError:
+    return NotFoundError(
+        f"Bookmark '{bookmark.name}' has no entry {occurrence} for country '{tag}' "
+        f"({count} entries for that tag).",
+        kind="bookmark country",
+        id=tag,
+    )
 
 
 class BookmarksLayer(CoreLayer):
@@ -31,12 +66,24 @@ class BookmarksLayer(CoreLayer):
     # ── Bookmarks ────────────────────────────────────────────────
 
     def list_bookmarks(self) -> list[str]:
-        return [bookmark.name for bookmark in self._bookmarks]
+        """Return the sorted names of the mod's bookmarks, each once."""
+        return sorted({bookmark.name for bookmark in self._bookmarks})
 
-    def get_bookmark(self, name: str) -> Bookmark:
+    def get_bookmark(self, name: str, *, default: _D | _Missing = MISSING) -> Bookmark | _D:
+        """Return the bookmark called ``name``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No bookmark has this name.
+        """
         bookmark = next((item for item in self._bookmarks if item.name == name), None)
         if bookmark is None:
-            raise KeyError(f"Bookmark '{name}' not found. Available: {self.list_bookmarks()}")
+            if default is not MISSING:
+                return default
+            raise not_found("bookmark", name, self.list_bookmarks())
         return bookmark
 
     def create_bookmark(
@@ -54,11 +101,34 @@ class BookmarksLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> Bookmark:
+        """Create a bookmark (a start date on the game's start screen); staged until ``save()``.
+
+        Args:
+            date: The start date in HOI4's ``year.month.day.hour`` format.
+            picture: The sprite name of the bookmark picture.
+            filters: Body of the bookmark's ``filters`` block.
+            effect: Body of the ``effect`` block run when the bookmark starts.
+            countries: The selectable countries. Their tags and DLC lists are
+                checked and normalized.
+            path: The output file. Without it, ``common/bookmarks/<name>.txt``.
+            overwrite: Replace an existing bookmark of this name.
+
+        Returns:
+            The new bookmark.
+
+        Raises:
+            TypeError: ``countries`` holds something that is not a ``BookmarkCountry``; nothing changed.
+            AlreadyExistsError: A bookmark of this name exists and
+                ``overwrite`` is false.
+            ValueError: A country tag or a DLC name is not valid, or ``path``
+                is outside the mod.
+        """
         existing = next((item for item in self._bookmarks if item.name == name), None)
         if existing is not None and not overwrite:
-            raise ValueError(f"Bookmark '{name}' already exists")
-        if existing is not None:
-            self.delete_bookmark(name)
+            raise AlreadyExistsError(f"Bookmark '{name}' already exists")
+        # Every check comes before the old bookmark goes, so a call that
+        # raises leaves it as it was.
+        selected_countries = _checked_bookmark_countries("create_bookmark", countries or [])
         target = (
             self._output_path(path)
             if path is not None
@@ -67,10 +137,10 @@ class BookmarksLayer(CoreLayer):
             / "bookmarks"
             / f"{safe_file_stem(name, fallback='bookmark')}.txt"
         )
-        selected_countries = list(countries or [])
-        for country in selected_countries:
-            country.tag = require_bookmark_country_key(country.tag)
-            country.required_dlc = normalize_required_dlc(country.required_dlc)
+        filters = normalize_block_body(filters)
+        effect = normalize_block_body(effect)
+        if existing is not None:
+            self.delete_bookmark(name)
         bookmark = Bookmark(
             name=name,
             description=description,
@@ -78,8 +148,8 @@ class BookmarksLayer(CoreLayer):
             picture=picture,
             default_country=default_country,
             default=default,
-            filters=normalize_block_body(filters),
-            effect=normalize_block_body(effect),
+            filters=filters,
+            effect=effect,
             countries=selected_countries,
             path=target,
         )
@@ -89,14 +159,26 @@ class BookmarksLayer(CoreLayer):
         self._dirty.add("bookmarks")
         return bookmark
 
-    def update_bookmark(self, name: str, **kwargs) -> bool:
-        try:
-            bookmark = self.get_bookmark(name)
-        except KeyError:
-            return False
+    def update_bookmark(self, name: str, **fields: Unpack[BookmarkFields]) -> Bookmark:
+        """Patch fields of a bookmark; ``path=`` moves it to another file.
+
+        Returns:
+            The updated bookmark.
+
+        Raises:
+            NotFoundError: No bookmark is called ``name``.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        bookmark = self.get_bookmark(name)
         forbidden = {"raw_block", "source_index", "touched_fields"} & set(kwargs)
         if forbidden:
             raise ValueError(f"Internal bookmark fields: {sorted(forbidden)}")
+        _check_fields("update_bookmark", bookmark, kwargs, allow_path=True)
+        if "countries" in kwargs:
+            kwargs["countries"] = _checked_bookmark_countries(
+                "update_bookmark", kwargs["countries"]
+            )
         old_path = bookmark.path
         if "path" in kwargs:
             kwargs["path"] = self._output_path(kwargs["path"])
@@ -112,17 +194,42 @@ class BookmarksLayer(CoreLayer):
             self._dirty_bookmark_files.add(bookmark.path)
             self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
         self._dirty.add("bookmarks")
-        return True
+        return bookmark
 
-    def add_bookmark_country(self, bookmark_name: str, country: BookmarkCountry) -> None:
+    def add_bookmark_country(self, bookmark_name: str, country: BookmarkCountry) -> BookmarkCountry:
+        """Append a country entry to a bookmark.
+
+        Returns:
+            The added entry (the object passed in, now part of the bookmark).
+
+        Raises:
+            TypeError: ``country`` is not a ``BookmarkCountry``; nothing changed.
+            NotFoundError: No bookmark is called ``bookmark_name``.
+            AlreadyExistsError: The bookmark already has an entry for this tag
+                with the same ``required_dlc``; use ``update_bookmark_country()``.
+        """
+        _check_model("add_bookmark_country", country, "country", (BookmarkCountry,))
         bookmark = self.get_bookmark(bookmark_name)
-        country.tag = require_bookmark_country_key(country.tag)
-        country.required_dlc = normalize_required_dlc(country.required_dlc)
+        tag = require_bookmark_country_key(country.tag)
+        required_dlc = normalize_required_dlc(country.required_dlc)
+        if any(
+            existing.tag == tag and existing.required_dlc == required_dlc
+            for existing in bookmark.countries
+        ):
+            raise already_exists(
+                "bookmark country",
+                tag,
+                hint=f"Bookmark '{bookmark_name}' has an entry for it; "
+                "use update_bookmark_country() to change it.",
+            )
+        country.tag = tag
+        country.required_dlc = required_dlc
         bookmark.countries.append(country)
         if bookmark.path is not None:
             self._dirty_bookmark_files.add(bookmark.path)
             self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
         self._dirty.add("bookmarks")
+        return country
 
     def update_bookmark_country(
         self,
@@ -130,17 +237,28 @@ class BookmarksLayer(CoreLayer):
         tag: str,
         *,
         occurrence: int = 0,
-        **kwargs,
-    ) -> bool:
+        **fields: Unpack[BookmarkCountryFields],
+    ) -> BookmarkCountry:
+        """Patch one country entry of a bookmark (zero-based ``occurrence`` of ``tag``).
+
+        Returns:
+            The updated entry.
+
+        Raises:
+            NotFoundError: The bookmark, or that entry, does not exist.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
         bookmark = self.get_bookmark(bookmark_name)
         tag = require_bookmark_country_key(tag)
         matches = [country for country in bookmark.countries if country.tag == tag]
         if occurrence < 0 or occurrence >= len(matches):
-            return False
+            raise _missing_bookmark_country(bookmark, tag, occurrence, len(matches))
         country = matches[occurrence]
         forbidden = {"tag", "raw_block", "source_index", "touched_fields"} & set(kwargs)
         if forbidden:
             raise ValueError(f"Immutable/internal bookmark country fields: {sorted(forbidden)}")
+        _check_fields("update_bookmark_country", country, kwargs)
         if "available" in kwargs:
             kwargs["available"] = normalize_block_body(kwargs["available"])
         if "required_dlc" in kwargs:
@@ -151,7 +269,7 @@ class BookmarksLayer(CoreLayer):
             self._dirty_bookmark_files.add(bookmark.path)
             self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
         self._dirty.add("bookmarks")
-        return True
+        return country
 
     def delete_bookmark_country(
         self,
@@ -159,28 +277,37 @@ class BookmarksLayer(CoreLayer):
         tag: str,
         *,
         occurrence: int = 0,
-    ) -> bool:
+    ) -> None:
+        """Remove one country entry from a bookmark.
+
+        ``occurrence`` picks among repeated entries of the same tag (zero-based).
+
+        Raises:
+            NotFoundError: The bookmark, or that occurrence of ``tag`` in it,
+                does not exist.
+        """
         bookmark = self.get_bookmark(bookmark_name)
         tag = require_bookmark_country_key(tag)
         indices = [index for index, country in enumerate(bookmark.countries) if country.tag == tag]
         if occurrence < 0 or occurrence >= len(indices):
-            return False
+            raise _missing_bookmark_country(bookmark, tag, occurrence, len(indices))
         del bookmark.countries[indices[occurrence]]
         if bookmark.path is not None:
             self._dirty_bookmark_files.add(bookmark.path)
             self._dirty_bookmarks.add((bookmark.path, bookmark.source_index))
         self._dirty.add("bookmarks")
-        return True
 
-    def delete_bookmark(self, name: str) -> bool:
-        bookmark = next((item for item in self._bookmarks if item.name == name), None)
-        if bookmark is None:
-            return False
+    def delete_bookmark(self, name: str) -> None:
+        """Stage the deletion of a bookmark.
+
+        Raises:
+            NotFoundError: No bookmark is called ``name``.
+        """
+        bookmark = self.get_bookmark(name)
         self._bookmarks.remove(bookmark)
         if bookmark.path is not None:
             self._dirty_bookmark_files.add(bookmark.path)
         self._dirty.add("bookmarks")
-        return True
 
     def set_bookmark_date_range(
         self,
@@ -188,8 +315,12 @@ class BookmarksLayer(CoreLayer):
         end_date: str,
         *,
         path: str | Path = "common/defines/zz_bookmark_dates.lua",
-    ) -> Path:
-        """Stage START_DATE/END_DATE defines in the normal preview/save transaction."""
+    ) -> None:
+        """Stage START_DATE/END_DATE defines in the normal preview/save transaction.
+
+        Raises:
+            ValueError: A date is not a valid ``Y.M.D[.H]`` date.
+        """
 
         start = require_bookmark_date(start_date, label="bookmark start date")
         end = require_bookmark_date(end_date, label="bookmark end date")
@@ -198,4 +329,3 @@ class BookmarksLayer(CoreLayer):
             self._original_files[target] = self._read_noted_text(target)
         self._bookmark_date_defines = (target, start, end)
         self._dirty.add("bookmark_dates")
-        return target

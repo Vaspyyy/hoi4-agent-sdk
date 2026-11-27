@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 from pathlib import Path
 
 import pytest
 
 from hoi4 import (
+    NotFoundError,
     AdvisorRole,
     AirWing,
     ArmyCommanderRole,
@@ -17,21 +19,22 @@ from hoi4 import (
     DivisionUnit,
     Focus,
     Mod,
-    import_flag_to_mod,
-    import_portrait_to_mod,
-    write_portrait_gfx,
 )
+from hoi4.assets import import_flag_to_mod, import_portrait_to_mod, write_portrait_gfx
 from hoi4.characters import load_characters_file, serialize_characters_file
 from hoi4.oob import validate_oob
 
 Image = pytest.importorskip("PIL.Image")
 
 
+# Optional real data; the tests that need it are skipped when it is missing.
 GAME_ROOT = Path(
-    "/home/ransom/.local/share/Steam/steamapps/common/Hearts of Iron IV"
+    os.environ.get("HOI4_INSTALL_DIR")
+    or Path.home() / ".local/share/Steam/steamapps/common/Hearts of Iron IV"
 )
 EMPIRE_ROOT = Path(
-    "/home/ransom/.local/share/hoi4-agent-sdk/audit-corpus/Empire"
+    os.environ.get("HOI4_EMPIRE_MOD_DIR")
+    or Path.home() / ".local/share/hoi4-agent-sdk/audit-corpus/Empire"
 )
 
 
@@ -363,7 +366,7 @@ def test_runtime_released_country_is_not_treated_as_starting_country(
 ) -> None:
     mod = _build_complete_country(tmp_path)
     mod.set_state_owner(1, "OLD")
-    assert mod.delete_oob("ABC_1936")
+    mod.delete_oob("ABC_1936")
     tree = mod.create_focus_tree("old_focus", "OLD")
     mod.add_focus(
         tree.id,
@@ -398,7 +401,7 @@ def test_explicit_starting_lifecycle_retains_starting_package_requirements(
 ) -> None:
     mod = _build_complete_country(tmp_path)
     mod.set_state_owner(1, "OLD")
-    assert mod.delete_oob("ABC_1936")
+    mod.delete_oob("ABC_1936")
 
     codes = {
         finding.code
@@ -439,7 +442,7 @@ def test_runtime_release_validates_declared_capital_setup(
 ) -> None:
     mod = _build_complete_country(tmp_path)
     mod.set_state_owner(1, "OLD")
-    assert mod.delete_oob("ABC_1936")
+    mod.delete_oob("ABC_1936")
     tree = mod.create_focus_tree("old_focus", "OLD")
     mod.add_focus(
         tree.id,
@@ -530,7 +533,7 @@ def test_character_role_mutation_requires_occurrence_when_ambiguous(
     with pytest.raises(ValueError, match="pass occurrence"):
         mod.update_character_role("ABC_multi", "advisor", cost=75)
 
-    assert mod.update_character_role(
+    mod.update_character_role(
         "ABC_multi",
         "advisor",
         occurrence=1,
@@ -543,9 +546,9 @@ def test_character_role_mutation_requires_occurrence_when_ambiguous(
 def test_recruiting_character_requires_a_defined_country(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
 
-    with pytest.raises(KeyError, match="not defined"):
+    with pytest.raises(NotFoundError, match="Country 'ABC' not found"):
         mod.validate_country_package("ABC")
-    with pytest.raises(KeyError, match="Create or load the country first"):
+    with pytest.raises(NotFoundError, match="Create or load the country first"):
         mod.create_character("ABC", Character(id="ABC_orphan"))
 
     assert mod.create_character(
@@ -683,7 +686,7 @@ def test_base_mod_default_name_pool_is_respected_unless_replaced(tmp_path):
         finding.code for finding in mod.validate_country_package("ABC", check_geography=False).findings
     }
     (mod.mod_root / "descriptor.mod").write_text('replace_path="common/names"')
-    mod.reload()
+    mod.discard()
     assert "missing_country_name_pool" in {
         finding.code for finding in mod.validate_country_package("ABC", check_geography=False).findings
     }
@@ -724,13 +727,13 @@ def test_what_a_complete_country_needs_is_a_warning_that_still_blocks_completene
     from hoi4 import COUNTRY_PACKAGE_REQUIREMENT_CODES, VALIDATION_SEVERITIES
 
     # The game loads a country without any of these: none of them is an error.
-    assert COUNTRY_PACKAGE_REQUIREMENT_CODES == {
+    assert {
         "missing_country_leader",
         "insufficient_political_advisors",
         "insufficient_military_commanders",
         "missing_land_oob",
         "capital_not_cored",
-    }
+    } == COUNTRY_PACKAGE_REQUIREMENT_CODES
     assert {VALIDATION_SEVERITIES[code] for code in COUNTRY_PACKAGE_REQUIREMENT_CODES} == {
         "warning"
     }

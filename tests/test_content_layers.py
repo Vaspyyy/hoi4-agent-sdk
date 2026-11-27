@@ -6,6 +6,7 @@ from hoi4 import Mod
 from hoi4.config import Config, find_config
 from hoi4.layers import ContentLayers
 from hoi4.project import write_mod_descriptors
+from hoi4.errors import NotFoundError
 
 
 def put(root, relative, text):
@@ -62,15 +63,15 @@ def test_content_discovery_filters_replaced_vanilla_without_hiding_writable_file
     put(top, "descriptor.mod", f'replace_path="{replacement}"')
     mod = Mod(top, hoi4_install=game, base_mod_paths=[base] if layered else [])
 
-    assert mod.content_source(hidden.relative_to(game)) is None
-    assert mod.content_source(override.relative_to(game)) == writable
-    assert mod.content_source(sibling.relative_to(game)) == (
+    assert mod.resolve_content_path(hidden.relative_to(game)) is None
+    assert mod.resolve_content_path(override.relative_to(game)) == writable
+    assert mod.resolve_content_path(sibling.relative_to(game)) == (
         sibling if replacement == "common/scripted_triggers" else None
     )
     if not layered:
         # ContentLayers inventories only its configured runtime content roots.
-        assert mod.content_source(root_sibling.relative_to(game)) == root_sibling
-    assert mod.content_source(ordinary.relative_to(game)) == ordinary
+        assert mod.resolve_content_path(root_sibling.relative_to(game)) == root_sibling
+    assert mod.resolve_content_path(ordinary.relative_to(game)) == ordinary
     assert mod.content_files("common/scripted_triggers") == {
         "common/scripted_triggers/override.txt": writable
     }
@@ -82,7 +83,7 @@ def test_content_discovery_filters_replaced_vanilla_without_hiding_writable_file
         assert mod.content_files("common_extra") == {"common_extra/visible.txt": root_sibling}
     assert mod.content_files("events") == {"events/visible.txt": ordinary}
     with pytest.raises(ValueError, match="Unsafe content path"):
-        mod.content_source("../escape.txt")
+        mod.resolve_content_path("../escape.txt")
     with pytest.raises(ValueError, match="Unsafe content path"):
         mod.content_files("../escape")
 
@@ -92,15 +93,15 @@ def test_empty_replacement_directory_and_ordinary_fallback(tmp_path, layered):
     game, base, _, top = roots(tmp_path)
     source = put(game, "common/scripted_triggers/old.txt", "old = yes")
     mod = Mod(top, hoi4_install=game, base_mod_paths=[base] if layered else [])
-    assert mod.content_source("common/scripted_triggers/old.txt") == source
+    assert mod.resolve_content_path("common/scripted_triggers/old.txt") == source
     assert mod.content_files("common/scripted_triggers") == {
         "common/scripted_triggers/old.txt": source
     }
 
     put(top, "descriptor.mod", 'replace_path="common/scripted_triggers"')
     if layered:
-        mod.reload()
-    assert mod.content_source("common/scripted_triggers/old.txt") is None
+        mod.discard()
+    assert mod.resolve_content_path("common/scripted_triggers/old.txt") is None
     assert mod.content_files("common/scripted_triggers") == {}
     assert not (top / "common/scripted_triggers").exists()
 
@@ -112,7 +113,7 @@ def test_unlayered_discovery_rejects_unsafe_descriptor_replacement(tmp_path):
     put(top, "descriptor.mod", 'replace_path="../events"')
     mod = Mod(top, hoi4_install=game)
     with pytest.raises(ValueError, match="Unsafe content path"):
-        mod.content_source("events/local.txt")
+        mod.resolve_content_path("events/local.txt")
     with pytest.raises(ValueError, match="Unsafe content path"):
         mod.content_files("events")
 
@@ -124,9 +125,9 @@ def test_replaced_vanilla_script_ids_do_not_block_public_authoring(tmp_path, lay
     put(top, "descriptor.mod", 'replace_path="common/scripted_triggers"')
     source = put(tmp_path, "import.txt", "example = { always = yes }")
     mod = Mod(top, hoi4_install=game, base_mod_paths=[base] if layered else [])
-    mod.create_scripted_trigger("example", "always = yes")
-    with pytest.raises(ValueError, match="already queued"):
-        mod.create_scripted_trigger("example", "always = no", path="common/scripted_triggers/other.txt")
+    mod.create_definition("scripted_trigger", "example", "always = yes")
+    with pytest.raises(ValueError, match="already exists"):
+        mod.create_definition("scripted_trigger", "example", "always = no", path="common/scripted_triggers/other.txt")
     with pytest.raises(ValueError, match="conflict"):
         mod.import_script_file(source, "common/scripted_triggers/import.txt")
     result = mod.save(require_changes=True)
@@ -142,7 +143,7 @@ def test_replaced_vanilla_script_ids_do_not_block_public_authoring(tmp_path, lay
     # Without replacement the vanilla collision is active for both APIs.
     active = Mod(tmp_path / "active", hoi4_install=game, base_mod_paths=[base] if layered else [])
     with pytest.raises(ValueError, match="already exists"):
-        active.create_scripted_trigger("example", "always = yes")
+        active.create_definition("scripted_trigger", "example", "always = yes")
     with pytest.raises(ValueError, match="conflict"):
         active.import_script_file(source, "common/scripted_triggers/import.txt")
 
@@ -156,18 +157,18 @@ def test_state_fallback_save_and_reload_do_not_write_bases(tmp_path):
     assert mod.hoi4_install == game
     assert mod.get_state(1).owner == "ITA"
     assert mod.find_state("Latium")[0]["id"] == 1
-    assert mod.content_source("history/states/1.txt") == source
+    assert mod.resolve_content_path("history/states/1.txt") == source
     mod.set_state_owner(1, "ROM")
     result = mod.save(require_changes=True)
     assert result.written_files
     assert all(Path(path).is_relative_to(top) for path in result.written_files)
     assert source.read_text() == state("ITA")
     assert (game / "history/states/1.txt").read_text() == state("GER")
-    mod.reload()
+    mod.discard()
     assert mod.get_state(1).owner == "ROM"
     (top / "history/states/1.txt").unlink()
     source.write_text(state("FRA"))
-    mod.reload()
+    mod.discard()
     assert mod.get_state(1).owner == "FRA"
 
 
@@ -234,8 +235,8 @@ def test_inherited_scripts_edit_siblings_and_sources_preserved(tmp_path):
         mod.load_inherited_content(relative)
     assert not mod.preview()
     assert mod.get_idea("ancient_idea").path == top / "common/ideas/ancient.txt"
-    assert mod.update_event("ancient.1", title="new_title")
-    assert mod.update_focus("ancient_tree", "ancient_focus", cost=3)
+    mod.update_event("ancient.1", title="new_title")
+    mod.update_focus("ancient_tree", "ancient_focus", cost=3)
     result = mod.save(require_changes=True)
     assert result.written_files
     assert "ancient.2" in (top / "events/ancient.txt").read_text()
@@ -308,26 +309,30 @@ def test_delete_last_inherited_localization_preserves_empty_override(tmp_path, e
         comment = "Override comment"
     originals = {p: p.read_bytes() for p in (game_source, source)}
     mod = Mod(top, hoi4_install=game, base_mod_paths=[a, b])
-    assert mod.delete_loc("ancient")
-    assert mod.get_loc("ancient") is None
+    mod.delete_loc("ancient")
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
     assert mod.preview()
     result = mod.save(require_changes=True)
     print(result)
     assert target in result.written_files
     assert target.read_text(encoding="utf-8-sig") == f"# {comment}\nl_english:\n"
-    assert mod.get_loc("ancient") is None
-    mod.reload()
-    assert mod.get_loc("ancient") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
+    mod.discard()
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
     assert not mod.preview()
     assert all(p.read_bytes() == original for p, original in originals.items())
     # The retained header/comment baseline also survives adding a new entry.
-    mod.set_loc("new_key", "New", file_path=target)
+    mod.set_loc("new_key", "New", path=target)
     result = mod.save(require_changes=True)
     print(result)
     assert target in result.written_files
     assert comment in target.read_text(encoding="utf-8-sig")
     assert mod.get_loc("new_key") == "New"
-    assert mod.get_loc("ancient") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
 
 
 @pytest.mark.parametrize("mode", ["standalone", "top_only", "top_replace", "base_replace"])
@@ -340,12 +345,13 @@ def test_delete_last_localization_without_fallback_removes_file(tmp_path, mode):
             'replace_path="localisation"')
     target = put(top, relative, 'l_english:\n ancient:0 "Top"\n')
     mod = Mod(top, base_mod_paths=[] if mode == "standalone" else [a, b])
-    assert mod.delete_loc("ancient")
+    mod.delete_loc("ancient")
     result = mod.save(require_changes=True)
     print(result)
     assert not target.exists()
-    mod.reload()
-    assert mod.get_loc("ancient") is None
+    mod.discard()
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ancient")
     assert not mod.preview()
 
 

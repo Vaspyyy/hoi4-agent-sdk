@@ -1,34 +1,34 @@
 import pytest
-from hoi4 import Mod
+from hoi4 import Mod, ParseError
 from hoi4.states import read_state, serialize_state
 
 
 def test_scripted_trigger_transaction_preview_and_save(tmp_path):
     m = Mod(tmp_path)
     with m.transaction():
-        m.create_scripted_trigger("example", "always = yes")
+        m.create_definition("scripted_trigger", "example", "always = yes")
         assert "always = yes" in m.preview()
     assert not m.preview()
-    m.create_scripted_trigger("example", "always = yes")
-    m.create_scripted_trigger("sibling", "always = no")
+    m.create_definition("scripted_trigger", "example", "always = yes")
+    m.create_definition("scripted_trigger", "sibling", "always = no")
     with pytest.raises(ValueError):
-        m.create_scripted_trigger("example", "always = no")
+        m.create_definition("scripted_trigger", "example", "always = no")
     result = m.save(require_changes=True)
     assert len(result.written_files) == 1
-    m.create_scripted_trigger("example", "always = no", overwrite=True)
+    m.create_definition("scripted_trigger", "example", "always = no", overwrite=True)
     m.save(require_changes=True)
-    text = (tmp_path / "common/scripted_triggers/00_generated_triggers.txt").read_text()
+    text = (tmp_path / "common/scripted_triggers/00_sdk_generated.txt").read_text()
     assert "sibling" in text and "always = yes" not in text
 
 
 def test_scripted_trigger_rejects_escape_and_malformed(tmp_path):
     m = Mod(tmp_path)
     with pytest.raises(ValueError):
-        m.create_scripted_trigger("bad id", "always = yes")
+        m.create_definition("scripted_trigger", "bad id", "always = yes")
     with pytest.raises(ValueError):
-        m.create_scripted_trigger("okay", "always = yes", path="../escape.txt")
-    with pytest.raises(Exception):
-        m.create_scripted_trigger("okay", "AND = {")
+        m.create_definition("scripted_trigger", "okay", "always = yes", path="../escape.txt")
+    with pytest.raises(ParseError):
+        m.create_definition("scripted_trigger", "okay", "AND = {")
     assert not m.preview()
 
 

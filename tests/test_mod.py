@@ -15,7 +15,7 @@ from hoi4 import (
     VALIDATION_WARNING_CODES,
     ExternalModificationError,
 )
-from hoi4 import TECHNOLOGY_CATEGORIES, effect_block, scope_block
+from hoi4 import TECHNOLOGY_CATEGORIES
 from hoi4.config import Config, find_config
 from hoi4.validation import (
     validate_focus_tree,
@@ -25,6 +25,8 @@ from hoi4.validation import (
     validate_idea,
 )
 from hoi4.types import FocusTree
+from hoi4.errors import NotFoundError
+from hoi4 import effects
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -50,8 +52,9 @@ class TestModFocusTrees:
 
     def test_remove_focus(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.remove_focus("german_focus", "GER_anschluss")
-        assert mod.get_focus("german_focus", "GER_anschluss") is None
+        mod.remove_focus("german_focus", "GER_anschluss")
+        with pytest.raises(NotFoundError):
+            mod.get_focus("german_focus", "GER_anschluss")
 
     def test_update_focus(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
@@ -77,7 +80,7 @@ class TestModFocusTrees:
 
     def test_delete_focus_tree(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.delete_focus_tree("german_focus")
+        mod.delete_focus_tree("german_focus")
         assert "german_focus" not in mod.list_focus_trees()
 
     def test_get_focus_tree_not_found(self, tmp_mod):
@@ -118,8 +121,9 @@ class TestModLocalization:
     def test_delete_loc(self, tmp_mod):
         mod = tmp_mod.mod
         mod.set_loc("TEST_KEY", "Test Value")
-        assert mod.delete_loc("TEST_KEY")
-        assert mod.get_loc("TEST_KEY") is None
+        mod.delete_loc("TEST_KEY")
+        with pytest.raises(NotFoundError):
+            mod.get_loc("TEST_KEY")
 
     def test_search_loc(self, tmp_mod):
         mod = tmp_mod.mod
@@ -178,15 +182,18 @@ class TestModSave:
         assert str(result) == result.message
 
     def test_save_require_changes_raises_on_noop(self, tmp_mod):
-        with pytest.warns(RuntimeWarning, match="no dirty changes"):
-            with pytest.raises(RuntimeError, match="No changes written"):
-                tmp_mod.mod.save(require_changes=True)
+        with (
+            pytest.warns(RuntimeWarning, match="no dirty changes"),
+            pytest.raises(RuntimeError, match="No changes written"),
+        ):
+            tmp_mod.mod.save(require_changes=True)
 
     def test_discard_reverts_changes(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
         mod.add_focus("german_focus", Focus(id="GER_temp", x=1, y=1))
         mod.discard()
-        assert mod.get_focus("german_focus", "GER_temp") is None
+        with pytest.raises(NotFoundError):
+            mod.get_focus("german_focus", "GER_temp")
 
 
 class TestValidation:
@@ -325,9 +332,9 @@ class TestCatalogs:
     def test_effect_categories_have_name_and_effects(self):
         from hoi4 import EFFECT_CATEGORIES
 
-        for cat_name, effects in EFFECT_CATEGORIES:
+        for cat_name, entries in EFFECT_CATEGORIES:
             assert isinstance(cat_name, str)
-            for effect_name, effect_desc in effects:
+            for effect_name, _effect_desc in entries:
                 assert isinstance(effect_name, str)
 
     def test_modifier_categories_have_name_and_modifiers(self):
@@ -387,7 +394,7 @@ class TestConfig:
         assert mod.strict_loading is True
 
     def test_mod_from_config_not_found(self, tmp_path):
-        with pytest.raises(FileNotFoundError, match="No .hoi4.json"):
+        with pytest.raises(FileNotFoundError, match=r"No \.hoi4\.json"):
             Mod.from_config(tmp_path)
 
     def test_config_round_trip(self, tmp_path):
@@ -474,39 +481,55 @@ class TestPass1Fixes:
         mod.save()
         assert mod.preview() == ""
 
-    def test_update_nonexistent_country_returns_false(self, tmp_mod):
-        assert tmp_mod.mod.update_country("NOPE", name="X") is False
+    def test_update_nonexistent_country_raises(self, tmp_mod):
+        with pytest.raises(ValueError, match="Invalid country tag"):
+            tmp_mod.mod.update_country("NOPE", name="X")
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.update_country("NOP", name="X")
 
-    def test_update_nonexistent_event_returns_false(self, tmp_mod):
-        assert tmp_mod.mod.update_event("no.event", title="X") is False
+    def test_update_nonexistent_event_raises(self, tmp_mod):
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.update_event("no.event", title="X")
 
-    def test_update_nonexistent_idea_returns_false(self, tmp_mod):
-        assert tmp_mod.mod.update_idea("no_idea", icon="X") is False
+    def test_update_nonexistent_idea_raises(self, tmp_mod):
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.update_idea("no_idea", icon="X")
 
-    def test_delete_nonexistent_returns_false(self, tmp_mod):
+    def test_delete_nonexistent_raises(self, tmp_mod):
         mod = tmp_mod.mod
-        assert mod.delete_country("NOPE") is False
-        assert mod.delete_event("no.event") is False
-        assert mod.delete_idea("no_idea") is False
-        assert mod.delete_focus_tree("no_tree") is False
+        with pytest.raises(ValueError, match="Invalid country tag"):
+            mod.delete_country("NOPE")
+        with pytest.raises(NotFoundError):
+            mod.delete_country("NOP")
+        with pytest.raises(NotFoundError):
+            mod.delete_event("no.event")
+        with pytest.raises(NotFoundError):
+            mod.delete_idea("no_idea")
+        with pytest.raises(NotFoundError):
+            mod.delete_focus_tree("no_tree")
 
     def test_add_event_option_nonexistent_returns_false(self, tmp_mod):
-        assert tmp_mod.mod.add_event_option("no.event", EventOption()) is False
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.add_event_option("no.event", EventOption())
 
     def test_remove_focus_not_found(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.remove_focus("german_focus", "NONEXISTENT") is False
+        with pytest.raises(NotFoundError):
+            mod.remove_focus("german_focus", "NONEXISTENT")
 
     def test_get_focus_not_found(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.get_focus("german_focus", "NONEXISTENT") is None
+        with pytest.raises(NotFoundError):
+            mod.get_focus("german_focus", "NONEXISTENT")
 
     def test_delete_loc_nonexistent(self, tmp_mod):
-        assert tmp_mod.mod.delete_loc("NO_KEY") is False
+        with pytest.raises(NotFoundError):
+            tmp_mod.mod.delete_loc("NO_KEY")
 
     def test_set_event_namespace_nonexistent(self, tmp_mod):
         mod = tmp_mod.mod
-        mod.set_event_namespace("no.event", "ns")
+        with pytest.raises(NotFoundError):
+            mod.set_event_namespace("no.event", "ns")
         assert "events" not in mod._dirty
 
 
@@ -559,7 +582,7 @@ class TestPass2Fixes:
     def test_set_state_properties_rejects_unknown_kwargs(self, tmp_mod):
         mod = tmp_mod.with_states()
         with pytest.raises(TypeError, match="Unknown fields"):
-            mod.set_state_properties(1, nonexistent="bad")
+            mod.update_state(1, nonexistent="bad")
 
     def test_mod_on_empty_dir(self, tmp_path):
         mod = Mod(tmp_path)
@@ -601,7 +624,7 @@ class TestAgentFacingApis:
 
     def test_append_to_focus_reward(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.append_to_focus_reward("german_focus", "GER_rhineland", "add_stability = 0.05")
+        mod.append_to_focus_reward("german_focus", "GER_rhineland", "add_stability = 0.05")
         focus = mod.get_focus("german_focus", "GER_rhineland")
         assert "add_political_power = 50" in focus.completion_reward
         assert "add_stability = 0.05" in focus.completion_reward
@@ -647,23 +670,23 @@ class TestAgentFacingApis:
 
     def test_war_effect_helpers(self):
         assert (
-            Mod.effect_create_wargoal("fra")
+            effects.create_wargoal("fra")
             == "create_wargoal = { type = annex_everything target = FRA }"
         )
         assert (
-            Mod.effect_declare_war("ger")
+            effects.declare_war("ger")
             == "declare_war_on = { type = annex_everything target = GER }"
         )
         assert (
-            Mod.effect_declare_war_from("scl", "ita")
+            effects.declare_war_from("scl", "ita")
             == "SCL = { declare_war_on = { type = annex_everything target = ITA } }"
         )
-        assert "start_civil_war" in Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
-        assert Mod.effect_load_focus_tree("FB_AUS_focus") == (
+        assert "start_civil_war" in effects.start_civil_war("fascism", size=0.4, capital=8)
+        assert effects.load_focus_tree("FB_AUS_focus") == (
             "load_focus_tree = { tree = FB_AUS_focus keep_completed = no }\n"
             "mark_focus_tree_layout_dirty = yes"
         )
-        civil_war_tree = Mod.effect_spawn_civil_war_with_focus_tree(
+        civil_war_tree = effects.spawn_civil_war_with_focus_tree(
             "communism",
             "FB_AUS_focus",
             size=0.4,
@@ -679,96 +702,97 @@ class TestAgentFacingApis:
         )
         assert "mark_focus_tree_layout_dirty = yes" in civil_war_tree
         assert "D01 = {" not in civil_war_tree
-        assert Mod.effect_add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
-        assert Mod.effect_remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
-        assert Mod.effect_transfer_state(115, "scl") == "SCL = { transfer_state = 115 }"
-        assert Mod.effect_transfer_state_with_core(115, "scl") == (
+        assert effects.add_state_core(115, "sic") == "115 = { add_core_of = SIC }"
+        assert effects.remove_state_core(115, "sic") == "115 = { remove_core_of = SIC }"
+        assert effects.transfer_state(115, "scl") == "SCL = { transfer_state = 115 }"
+        assert effects.transfer_state_with_core(115, "scl") == (
             "SCL = { transfer_state = 115 }\n115 = { add_core_of = SCL }"
         )
-        assert "type = bunker" in Mod.effect_add_bunker(115, level=3)
-        assert scope_block(
-            "SCL", effect_block("declare_war_on", {"type": "annex_everything", "target": "ITA"})
+        assert "type = bunker" in effects.add_bunker(115, level=3)
+        assert effects.scope_block(
+            "SCL", effects.block("declare_war_on", {"type": "annex_everything", "target": "ITA"})
         ) == ("SCL = { declare_war_on = { type = annex_everything target = ITA } }")
 
     def test_equipment_and_technology_effect_helpers(self):
-        assert Mod.effect_add_political_power(100) == "add_political_power = 100"
-        assert Mod.effect_add_war_support(0.1) == "add_war_support = 0.1"
-        assert Mod.effect_add_stability(0.05) == "add_stability = 0.05"
-        assert Mod.effect_add_manpower(15000) == "add_manpower = 15000"
-        assert Mod.effect_schedule_country_event("sic.1", days=58, target="scl") == (
+        assert effects.add_political_power(100) == "add_political_power = 100"
+        assert effects.add_war_support(0.1) == "add_war_support = 0.1"
+        assert effects.add_stability(0.05) == "add_stability = 0.05"
+        assert effects.add_manpower(15000) == "add_manpower = 15000"
+        assert effects.schedule_country_event("sic.1", days=58, target="scl") == (
             "SCL = { country_event = { id = sic.1 days = 58 } }"
         )
-        assert 'division_template = { name = "Militia"' in Mod.effect_division_template(
+        assert 'division_template = { name = "Militia"' in effects.division_template(
             "Militia",
             "infantry = { x = 0 y = 0 }",
         )
         assert (
-            Mod.effect_create_unit("Militia", owner="scl")
+            effects.create_unit("Militia", owner="scl")
             == 'create_unit = { division = "Militia" owner = SCL }'
         )
-        equipment = Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="ger")
+        equipment = effects.add_equipment("infantry_equipment_0", 1000, producer="ger")
         assert (
             equipment
             == "add_equipment_to_stockpile = { type = infantry_equipment_0 amount = 1000 producer = GER }"
         )
-        variant_equipment = Mod.effect_add_equipment(
+        variant_equipment = effects.add_equipment(
             "light_tank_chassis_2", 100, "GER", "Panzer II Ausf. a"
         )
         assert 'variant_name = "Panzer II Ausf. a"' in variant_equipment
         assert (
-            Mod.effect_set_technology("infantry_weapons", 1)
+            effects.set_technology("infantry_weapons", 1)
             == "set_technology = { infantry_weapons = 1 }"
         )
-        assert Mod.effect_set_technology("infantry_weapons", 1, popup=False) == (
+        assert effects.set_technology("infantry_weapons", 1, popup=False) == (
             "set_technology = { infantry_weapons = 1 popup = no }"
         )
-        assert Mod.effect_set_technologies({"infantry_weapons": 1, "tech_support": 1}) == (
+        assert effects.set_technologies({"infantry_weapons": 1, "tech_support": 1}) == (
             "set_technology = { infantry_weapons = 1 tech_support = 1 }"
         )
-        assert Mod.effect_add_army_experience(25) == "army_experience = 25"
-        assert Mod.effect_add_navy_experience(25) == "navy_experience = 25"
-        assert Mod.effect_add_air_experience(25) == "air_experience = 25"
-        assert Mod.effect_set_politics("democratic", elections_allowed=True) == (
+        assert effects.add_army_experience(25) == "army_experience = 25"
+        assert effects.add_navy_experience(25) == "navy_experience = 25"
+        assert effects.add_air_experience(25) == "air_experience = 25"
+        assert effects.set_politics("democratic", elections_allowed=True) == (
             "set_politics = { ruling_party = democratic elections_allowed = yes }"
         )
-        with pytest.raises(ValueError, match="does not support elections_frequency"):
-            Mod.effect_set_politics("democratic", elections_frequency=48)
+        # HOI4's set_politics has no elections_frequency field.
+        with pytest.raises(TypeError, match="elections_frequency"):
+            effects.set_politics("democratic", elections_frequency=48)
         assert (
-            Mod.effect_create_faction("Mediterranean League")
+            effects.create_faction("Mediterranean League")
             == 'create_faction = "Mediterranean League"'
         )
-        assert Mod.effect_add_to_faction("ita") == "add_to_faction = ITA"
-        assert Mod.effect_add_target_to_faction("aus", "bay") == "AUS = { add_to_faction = BAY }"
-        assert Mod.effect_join_faction("bay", "aus") == "AUS = { add_to_faction = BAY }"
-        assert Mod.effect_release("slv") == "release = SLV"
-        assert Mod.effect_release_puppet("slv") == "release_puppet = SLV"
-        assert Mod.effect_end_puppet("slv", "yug") == "YUG = { end_puppet = SLV }"
-        assert Mod.effect_set_autonomy("slv", "autonomy_free", freedom_level=1.0) == (
+        assert effects.add_to_faction("ita") == "add_to_faction = ITA"
+        assert effects.add_target_to_faction("aus", "bay") == "AUS = { add_to_faction = BAY }"
+        assert effects.join_faction("bay", "aus") == "AUS = { add_to_faction = BAY }"
+        assert effects.release("slv") == "release = SLV"
+        assert effects.release_puppet("slv") == "release_puppet = SLV"
+        assert effects.end_puppet("slv", "yug") == "YUG = { end_puppet = SLV }"
+        assert effects.set_autonomy("slv", "autonomy_free", freedom_level=1.0) == (
             "set_autonomy = { target = SLV autonomy_state = autonomy_free freedom_level = 1.0 }"
         )
-        assert Mod.effect_convert_puppet_to_ally("slv", "yug", faction_leader="aus") == (
+        assert effects.convert_puppet_to_ally("slv", "yug", faction_leader="aus") == (
             "YUG = { end_puppet = SLV }\nAUS = { add_to_faction = SLV }"
         )
-        assert Mod.effect_white_peace("fra") == "white_peace = FRA"
+        assert effects.white_peace("fra") == "white_peace = FRA"
         assert (
-            Mod.effect_set_rule("can_create_factions", True)
+            effects.set_rule("can_create_factions", True)
             == "set_rule = { can_create_factions = yes }"
         )
-        assert Mod.effect_swap_idea("old_spirit", "new_spirit", target="ita") == (
+        assert effects.swap_idea("old_spirit", "new_spirit", target="ita") == (
             "ITA = { swap_ideas = { remove_idea = old_spirit add_idea = new_spirit } }"
         )
-        chain = Mod.effect_upgrade_idea_chain(["spirit_1", "spirit_2", "spirit_3"], target="ita")
+        chain = effects.upgrade_idea_chain(["spirit_1", "spirit_2", "spirit_3"], target="ita")
         assert "ITA = {" in chain
         assert "has_idea = spirit_2" in chain
         assert "remove_idea = spirit_2 add_idea = spirit_3" in chain
-        revolution = Mod.effect_spawn_revolution(
+        revolution = effects.spawn_revolution(
             "bay",
             [52],
             overlord="aus",
             manpower=15000,
             equipment={"infantry_equipment_0": 500},
             technologies={"infantry_weapons": 1},
-            division_template=Mod.effect_division_template("Militia", "infantry = { x = 0 y = 0 }"),
+            division_template=effects.division_template("Militia", "infantry = { x = 0 y = 0 }"),
             units=["Militia"],
             faction_leader="ger",
         )
@@ -776,7 +800,7 @@ class TestAgentFacingApis:
         assert "52 = { add_core_of = BAY }" in revolution
         assert "GER = { add_to_faction = BAY }" in revolution
         assert "BAY = { declare_war_on = { type = annex_everything target = AUS } }" in revolution
-        revolt = Mod.effect_convert_existing_or_spawn_revolt(
+        revolt = effects.convert_existing_or_spawn_revolt(
             "slv",
             [102],
             overlord="yug",
@@ -791,7 +815,7 @@ class TestAgentFacingApis:
 
     def test_revolution_helper_warns_without_playable_baseline(self):
         with pytest.warns(RuntimeWarning, match="unplayable shell"):
-            assert "BAY = { transfer_state = 52 }" in Mod.effect_spawn_revolution("bay", [52])
+            assert "BAY = { transfer_state = 52 }" in effects.spawn_revolution("bay", [52])
 
     def test_decision_chain_and_recovery_helpers(self, tmp_mod):
         mod = tmp_mod.mod
@@ -807,7 +831,7 @@ class TestAgentFacingApis:
                 },
                 {
                     "id": "SLO_launch_revolt",
-                    "complete_effect": Mod.effect_convert_existing_or_spawn_revolt(
+                    "complete_effect": effects.convert_existing_or_spawn_revolt(
                         "slv", [102], overlord="yug", manpower=1
                     ),
                 },
@@ -824,7 +848,7 @@ class TestAgentFacingApis:
         repair = mod.create_recovery_decision(
             "SLO_revolt_decisions",
             "SLO_repair_live_save",
-            effect=Mod.effect_load_focus_tree("SLO_focus"),
+            effect=effects.load_focus_tree("SLO_focus"),
             hidden=True,
             loc_name="Repair Slovenia Revolt",
         )
@@ -835,15 +859,15 @@ class TestAgentFacingApis:
     def test_tech_bonus_helper_validates_categories(self):
         assert "infantry_weapons" in TECHNOLOGY_CATEGORIES
         assert "infantry" not in TECHNOLOGY_CATEGORIES
-        assert "category = infantry_weapons" in Mod.effect_add_tech_bonus(
+        assert "category = infantry_weapons" in effects.add_tech_bonus(
             "rifle_bonus", category="infantry_weapons"
         )
         with pytest.raises(ValueError):
-            Mod.effect_add_tech_bonus("bad_bonus", category="infantry")
+            effects.add_tech_bonus("bad_bonus", category="infantry")
 
     def test_update_focus_tree(self, tmp_mod):
         mod = tmp_mod.with_focus_tree("GER_focus.txt")
-        assert mod.update_focus_tree("german_focus", continuous_focus_position="x = 0 y = 1000")
+        mod.update_focus_tree("german_focus", continuous_focus_position="x = 0 y = 1000")
         assert mod.get_focus_tree("german_focus").continuous_focus_position == "x = 0 y = 1000"
 
     def test_ensure_and_upsert_helpers_are_idempotent(self, tmp_mod):
@@ -852,11 +876,11 @@ class TestAgentFacingApis:
         assert tree.id == "scl_focus"
         assert mod.ensure_focus_tree("scl_focus", "SCL") is tree
 
-        focus = mod.upsert_focus(
+        focus = mod.ensure_focus(
             "scl_focus", Focus(id="SCL_start", x=1, y=1, completion_reward="add_stability = 0.05")
         )
         assert focus.id == "SCL_start"
-        mod.upsert_focus(
+        mod.ensure_focus(
             "scl_focus", Focus(id="SCL_start", x=2, y=3, completion_reward="add_war_support = 0.05")
         )
         assert mod.get_focus("scl_focus", "SCL_start").x == 2
@@ -906,7 +930,7 @@ class TestAgentFacingApis:
         assert branch[1].prerequisites == [["SCL_a"]]
         position = mod.place_continuous_focus_below_tree("scl_focus", padding=400)
         assert position == "x = 50 y = 800"
-        assert mod.assert_no_visual_overlap("scl_focus") is True
+        mod.assert_no_visual_overlap("scl_focus")
         mod.add_focus("scl_focus", Focus(id="SCL_overlap", x=4, y=3))
         with pytest.raises(ValueError, match="overlaps"):
             mod.assert_no_visual_overlap("scl_focus")
@@ -921,7 +945,7 @@ class TestAgentFacingApis:
         assert not any(error.code == "faction_scope_footgun" for error in bare_errors)
         iterated_errors = mod.validate_effect("every_country = { add_to_faction = ROOT }")
         assert [error.severity for error in iterated_errors if error.code == "faction_scope_footgun"] == ["info"]
-        scoped_errors = mod.validate_effect(Mod.effect_add_target_to_faction("AUS", "BAY"))
+        scoped_errors = mod.validate_effect(effects.add_target_to_faction("AUS", "BAY"))
         assert not any(error.code == "faction_scope_footgun" for error in scoped_errors)
         multiline_scoped_errors = mod.validate_effect("AUS = {\n\tadd_to_faction = BAY\n}")
         assert not any(error.code == "faction_scope_footgun" for error in multiline_scoped_errors)
@@ -964,16 +988,16 @@ class TestAgentFacingApis:
         mod.create_focus_tree("FB_AUS_focus", "AUS")
 
         missing_tree_errors = mod.validate_effect(
-            Mod.effect_start_civil_war("communism", capital=102)
+            effects.start_civil_war("communism", capital=102)
         )
         assert any(error.code == "civil_war_focus_tree_missing" for error in missing_tree_errors)
 
-        load_errors = mod.validate_effect(Mod.effect_load_focus_tree("MISSING_focus"))
+        load_errors = mod.validate_effect(effects.load_focus_tree("MISSING_focus"))
         assert any(error.code == "unknown_focus_tree_reference" for error in load_errors)
-        known_load_errors = mod.validate_effect(Mod.effect_load_focus_tree("FB_AUS_focus"))
+        known_load_errors = mod.validate_effect(effects.load_focus_tree("FB_AUS_focus"))
         assert not any(error.code == "unknown_focus_tree_reference" for error in known_load_errors)
         civil_war_with_tree_errors = mod.validate_effect(
-            Mod.effect_spawn_civil_war_with_focus_tree(
+            effects.spawn_civil_war_with_focus_tree(
                 "communism", "FB_AUS_focus", capital=102
             )
         )
@@ -1008,7 +1032,7 @@ class TestAgentFacingApis:
             "}\n",
             encoding="utf-8",
         )
-        state = tmp_mod.mod.patch_state_history(
+        state = tmp_mod.mod.update_state(
             52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"]
         )
         assert "owner = BAY" in tmp_mod.mod.preview()
@@ -1054,7 +1078,7 @@ class TestAgentFacingApis:
                         "add_ideas = missing_spirit",
                         "country_event = { id = missing.1 }",
                         "set_technology = { missing_tech = 1 }",
-                        Mod.effect_add_equipment("missing_equipment", 10),
+                        effects.add_equipment("missing_equipment", 10),
                     ]
                 ),
             ),
@@ -1071,7 +1095,7 @@ class TestAgentFacingApis:
         assert "unknown_technology_reference" in codes
         assert "unknown_equipment_reference" in codes
         assert "bad_idea_tooltip_pattern" in codes
-        assert mod.suggest_focus_icon("navy") == "GFX_custom_navy_goal"
+        assert mod.suggest_focus_icons("navy", count=1) == ["GFX_custom_navy_goal"]
 
     def test_focus_icon_scan_follows_the_files_on_disk(self, tmp_mod):
         """The scan is kept per file until the file changes, so it is never stale."""
@@ -1166,10 +1190,10 @@ class TestAgentFacingApis:
             y=2,
             completion_reward="\n".join(
                 [
-                    Mod.effect_load_focus_tree("FB_AUS_focus"),
-                    Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS"),
-                    Mod.effect_transfer_state_with_core(102, "SLV"),
-                    Mod.effect_declare_war_from("SLV", "YUG"),
+                    effects.load_focus_tree("FB_AUS_focus"),
+                    effects.convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS"),
+                    effects.transfer_state_with_core(102, "SLV"),
+                    effects.declare_war_from("SLV", "YUG"),
                 ]
             ),
         )
@@ -1188,7 +1212,7 @@ class TestAgentFacingApis:
         mod.create_focus_tree("alt_focus", "ALT")
         mod.add_focus("alt_focus", Focus(id="ALT_a"))
         mod.add_focus("alt_focus", Focus(id="ALT_b", x=1))
-        assert mod.set_focuses_mutually_exclusive("alt_focus", "ALT_a", "ALT_b")
+        mod.set_focuses_mutually_exclusive("alt_focus", "ALT_a", "ALT_b")
         assert mod.get_focus("alt_focus", "ALT_a").mutually_exclusive == [["ALT_b"]]
         assert mod.get_focus("alt_focus", "ALT_b").mutually_exclusive == [["ALT_a"]]
 
@@ -1340,7 +1364,7 @@ class TestModCountries:
             "ABC",
             "Override Land",
             overwrite=True,
-            allow_vanilla_override=True,
+            overwrite_vanilla=True,
         )
         preview = mod.preview()
 
@@ -1369,7 +1393,7 @@ class TestModCountries:
             issue.code == "leader_party_mismatch"
             for issue in tmp_mod.mod.validate()
         )
-        assert "stalinism" in Mod.leader_ideologies_for_party("communism")
+        assert "stalinism" in tmp_mod.mod.available_leader_ideologies("communism")
 
     def test_create_country_persists_research_slots(self, tmp_mod):
         mod = tmp_mod.mod
@@ -1399,7 +1423,7 @@ class TestModCountries:
         assert mod.country_tag_conflicts("SIC") == ["vanilla: SIC (SIC)"]
         with pytest.raises(ValueError, match="vanilla HOI4"):
             mod.create_country("SIC", "Sicily")
-        country = mod.create_country("SIC", "Sicily", allow_vanilla_override=True)
+        country = mod.create_country("SIC", "Sicily", overwrite_vanilla=True)
         assert country.tag == "SIC"
 
     def test_country_tag_conflicts_include_vanilla_country_name(self, tmp_path):
@@ -1433,7 +1457,7 @@ class TestModCountries:
         )
         mod = Mod(mod_root, hoi4_install=hoi4_root)
         mod.create_country("SCY", "Taken")
-        suggestion = mod.suggest_tag("Sicily")
+        suggestion = mod.suggest_tags("Sicily", count=1)[0]
         assert suggestion not in {"SIC", "SCY", "SRD"}
         assert len(suggestion) == 3
 
@@ -1459,7 +1483,7 @@ class TestModCountries:
 
     def test_delete_country(self, tmp_mod):
         mod = tmp_mod.with_country("WST")
-        assert mod.delete_country("WST")
+        mod.delete_country("WST")
         assert "WST" not in mod.list_countries()
 
     def test_save_persists_country(self, tmp_mod):
@@ -1528,7 +1552,8 @@ class TestModStates:
         vanilla_state.write_text(original, encoding="utf-8")
 
         mod = Mod(mod_root, hoi4_install=hoi4_root)
-        state = mod.set_state_owner(115, "GER")
+        assert mod.set_state_owner(115, "GER") is None
+        state = mod.get_state(115)
         target = mod_root / "history" / "states" / "115-Sicily.txt"
 
         assert state.path == target
@@ -1543,19 +1568,21 @@ class TestModStates:
 
     def test_set_state_owner(self, tmp_mod):
         mod = tmp_mod.with_states()
-        state = mod.set_state_owner(1, "SOV")
+        mod.set_state_owner(1, "SOV")
+        state = mod.get_state(1)
         assert state.owner == "SOV"
         assert "SOV" in state.cores
 
     def test_set_state_owner_no_core(self, tmp_mod):
         mod = tmp_mod.with_states()
-        state = mod.set_state_owner(1, "SOV", add_core=False)
+        mod.set_state_owner(1, "SOV", add_core=False)
+        state = mod.get_state(1)
         assert state.owner == "SOV"
         assert "SOV" not in state.cores
 
-    def test_set_state_properties(self, tmp_mod):
+    def test_update_state(self, tmp_mod):
         mod = tmp_mod.with_states()
-        mod.set_state_properties(1, manpower="9999999")
+        mod.update_state(1, manpower="9999999")
         state = mod.get_state(1)
         assert state.manpower == "9999999"
 
@@ -1588,10 +1615,10 @@ class TestModStates:
         assert matches[0]["matched"] == "display_name"
         assert matches[0]["source"] == "vanilla"
 
-    def test_set_state_properties_appends_cores(self, tmp_mod):
+    def test_update_state_add_cores_appends(self, tmp_mod):
         mod = tmp_mod.with_states()
         original = list(mod.get_state(1).cores)
-        mod.set_state_properties(1, cores=["SOV"])
+        mod.update_state(1, add_cores=["SOV"])
         state = mod.get_state(1)
         assert all(core in state.cores for core in original)
         assert "SOV" in state.cores
@@ -1603,10 +1630,9 @@ class TestModStates:
         mod.remove_state_core(1, "SOV")
         assert "SOV" not in mod.get_state(1).cores
 
-    def test_batch_set_owner(self, tmp_mod):
+    def test_set_state_owner_takes_many_states(self, tmp_mod):
         mod = tmp_mod.with_states()
-        results = mod.batch_set_owner([1, 2], "USA")
-        assert len(results) == 2
+        assert mod.set_state_owner([1, 2], "USA") is None
         assert mod.get_state(1).owner == "USA"
         assert mod.get_state(2).owner == "USA"
 
@@ -1708,7 +1734,7 @@ class TestModEvents:
         mod2.create_event(
             "sic.1",
             title="sic.1.t",
-            options=[EventOption(name="sic.1.a", effect=Mod.effect_transfer_state(115, "SCL"))],
+            options=[EventOption(name="sic.1.a", effect=effects.transfer_state(115, "SCL"))],
             overwrite=True,
         )
         mod2.save()
@@ -1753,7 +1779,7 @@ class TestModEvents:
 
         all_errors = mod.validate()
         assert any(error.code == "country_scope_core_effect" for error in all_errors)
-        suppressed = mod.validate(suppress_warnings=["country_scope_core_effect"])
+        suppressed = mod.validate(suppress=["country_scope_core_effect"])
         assert not any(error.code == "country_scope_core_effect" for error in suppressed)
         assert "country_scope_core_effect" in VALIDATION_WARNING_CODES
 
@@ -1763,7 +1789,7 @@ class TestModEvents:
         assert any(error.code == "history_set_owner_in_effect" for error in errors)
         suppressed = tmp_mod.mod.validate_effect(
             "SCL = { set_owner = 115 }",
-            suppress_warnings=["history_set_owner_in_effect"],
+            suppress=["history_set_owner_in_effect"],
         )
         assert suppressed == []
 
@@ -1799,7 +1825,7 @@ class TestModEvents:
         errors = mod.validate_effect("SCL = { declare_war_on = { target = ITA } }")
         assert any("missing required type" in error.message for error in errors)
         assert not any("unknown country tag 'SCL'" in error.message for error in errors)
-        assert mod.validate_effect(Mod.effect_declare_war_from("SCL", "ITA")) == []
+        assert mod.validate_effect(effects.declare_war_from("SCL", "ITA")) == []
         brace_errors = mod.validate_effect("SCL = { declare_war_on = { target = ITA }")
         assert any("Script syntax issue" in error.message for error in brace_errors)
 
@@ -1812,7 +1838,7 @@ class TestModEvents:
         )
         action = mod.create_on_action(
             "on_startup",
-            effect=Mod.effect_schedule_country_event("sic.1", days=58, target="SCL"),
+            effect=effects.schedule_country_event("sic.1", days=58, target="SCL"),
         )
         assert action.id == "on_startup"
         assert "country_event" in action.effect
@@ -1833,7 +1859,7 @@ class TestModEvents:
         mod.create_on_action("on_startup", effect="add_stability = 0.05")
         mod.save()
 
-        assert mod.delete_on_action("on_startup") is True
+        mod.delete_on_action("on_startup")
         mod.save()
 
         on_action_file = tmp_mod.root / "common" / "on_actions" / "mod_on_actions.txt"
@@ -1857,11 +1883,12 @@ class TestModEvents:
             ],
         )
 
-        assert mod.update_event_option("sic.1", 0, effect=Mod.effect_transfer_state(115, "SCL"))
-        assert mod.update_event_option(
+        mod.update_event_option("sic.1", 0, effect=effects.transfer_state(115, "SCL"))
+        mod.update_event_option(
             "sic.1", "sic.1.b", trigger="{ has_war = no }", effect="add_stability = 0.05"
         )
-        assert mod.update_event_option("sic.1", "missing", effect="noop = yes") is False
+        with pytest.raises(NotFoundError):
+            mod.update_event_option("sic.1", "missing", effect="noop = yes")
         event = mod.get_event("sic.1")
         assert event.options[0].effect == "SCL = { transfer_state = 115 }"
         assert event.options[1].trigger == "has_war = no"
@@ -1869,7 +1896,7 @@ class TestModEvents:
 
     def test_delete_event(self, tmp_mod):
         mod = tmp_mod.with_events()
-        assert mod.delete_event("mymod.1.1")
+        mod.delete_event("mymod.1.1")
         assert "mymod.1.1" not in mod.list_events()
 
     def test_add_event_option(self, tmp_mod):
@@ -1934,7 +1961,6 @@ class TestModIdeas:
         mod.create_idea(
             "TST_spirit",
             modifier={"stability_factor": 0.1},
-            desc="TST_spirit_desc",
             removal_cost=-1,
         )
         mod.save()
@@ -1980,7 +2006,7 @@ class TestModIdeas:
 
     def test_delete_idea(self, tmp_mod):
         mod = tmp_mod.with_ideas()
-        assert mod.delete_idea("GER_spirit_1")
+        mod.delete_idea("GER_spirit_1")
         assert "GER_spirit_1" not in mod.list_ideas()
 
     def test_save_persists_ideas(self, tmp_mod):
@@ -2043,13 +2069,13 @@ class TestModIdeas:
         idea = tmp_mod.mod.create_idea("generic_spirit", modifier={"x": 1})
         assert idea.path == tmp_mod.root / "common" / "ideas" / "mod_ideas.txt"
 
-    def test_set_idea_path_routes(self, tmp_mod):
+    def test_set_default_idea_file_routes(self, tmp_mod):
         target = tmp_mod.root / "common" / "ideas" / "custom.txt"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("ideas = {\n}\n")
         tmp_mod.mod.discard()
 
-        tmp_mod.mod.set_idea_path("LUX", target)
+        tmp_mod.mod.set_default_idea_file("LUX", target)
         idea = tmp_mod.mod.create_idea("LUX_spirit", modifier={"x": 1})
         assert idea.path == target
 
@@ -2159,7 +2185,7 @@ class TestIdeaValidation:
         errors = mod.validate(validate_icons=True)
 
         assert not any(error.code == "unknown_idea_icon" for error in errors)
-        assert mod.suggest_idea_icon("GFX_idea_vanila_valid") == "vanilla_valid"
+        assert mod.suggest_idea_icons("GFX_idea_vanila_valid", count=1) == ["vanilla_valid"]
 
 
 class TestEventValidation:
@@ -2358,19 +2384,19 @@ def test_save_rejects_external_changes_until_reload(tmp_path: Path) -> None:
     source = "ideas = { country = { custom_spirit = { desc = OLD_DESC } } }\n"
     path.write_text(source, encoding="utf-8")
     mod = Mod(tmp_path)
-    assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    mod.update_idea("custom_spirit")
 
     external = source.rstrip() + "\n# legacy writer changed this file\n"
     path.write_text(external, encoding="utf-8")
 
     with pytest.raises(ExternalModificationError, match="changed after Mod loaded"):
         mod.preview()
-    with pytest.raises(ExternalModificationError, match="Call reload"):
+    with pytest.raises(ExternalModificationError, match="Call discard"):
         mod.save()
     assert path.read_text(encoding="utf-8") == external
 
-    mod.reload()
-    assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    mod.discard()
+    mod.update_idea("custom_spirit")
     mod.save()
     assert path.read_text(encoding="utf-8") == external.replace(
         "{ desc = OLD_DESC }", "{}"

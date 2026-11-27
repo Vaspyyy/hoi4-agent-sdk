@@ -75,21 +75,21 @@ def test_extended_domains_load_update_preview_save_and_preserve_source(tmp_path:
         "DLC Two",
     ]
 
-    assert mod.update_ideology("custom", color=(9, 8, 7))
-    assert mod.update_dynamic_modifier(
+    mod.update_ideology("custom", color=(9, 8, 7))
+    mod.update_dynamic_modifier(
         "ABC_growth",
         modifier={"political_power_gain": 0.2, "future_setting": True},
     )
-    assert mod.update_bookmark_country(
+    mod.update_bookmark_country(
         "TEST_START", "ABC", occurrence=1, ideology="fascism"
     )
-    assert mod.update_bookmark_country(
+    mod.update_bookmark_country(
         "TEST_START", "ABC", required_dlc=["DLC Three", "DLC Four"]
     )
-    assert mod.update_bookmark_country(
+    mod.update_bookmark_country(
         "TEST_START", "---", history="UPDATED_OTHER_COUNTRIES_DESC"
     )
-    assert mod.update_bookmark(
+    mod.update_bookmark(
         "TEST_START", effect="{ randomize_weather = 54321 }"
     )
     preview = mod.preview()
@@ -134,7 +134,7 @@ def test_can_override_vanilla_ideology_into_mod_without_editing_game(tmp_path: P
     mod = Mod(mod_root, hoi4_install=game_root)
 
     assert mod.get_ideology("democratic").is_vanilla
-    assert mod.update_ideology("democratic", color=(2, 3, 4))
+    mod.update_ideology("democratic", color=(2, 3, 4))
     mod.save()
 
     assert vanilla_path.read_text(encoding="utf-8").count("1 1 1") == 1
@@ -168,7 +168,7 @@ def test_create_extended_content_and_transaction_rollback(tmp_path: Path) -> Non
 
     reloaded = Mod(tmp_path)
     with reloaded.transaction():
-        assert reloaded.update_dynamic_modifier(
+        reloaded.update_dynamic_modifier(
             "ABC_new",
             modifier={"stability_factor": 0.2},
         )
@@ -221,11 +221,11 @@ def test_existing_country_update_does_not_emit_duplicate_generated_tag_and_delet
     mod = Mod(tmp_path)
 
     with mod.transaction():
-        assert mod.update_country("ABC", capital=2)
+        mod.update_country("ABC", capital=2)
         preview = mod.preview()
         assert "00_generated_tags.txt" not in preview
 
-    assert mod.delete_country("ABC")
+    mod.delete_country("ABC")
     assert "custom_tags.txt" in mod.preview()
     mod.save()
     assert not tag_file.exists() or "ABC =" not in tag_file.read_text(encoding="utf-8")
@@ -242,7 +242,7 @@ def test_delete_dynamic_modifier_preserves_unrelated_content_in_same_file(
     )
     mod = Mod(tmp_path)
 
-    assert mod.delete_dynamic_modifier("ABC_growth")
+    mod.delete_dynamic_modifier("ABC_growth")
     mod.save()
 
     rendered = path.read_text(encoding="utf-8")
@@ -275,7 +275,7 @@ def test_country_color_and_idea_assignment_match_studio_files(tmp_path: Path) ->
 
     assert mod.get_country("ABC").color == (1, 2, 3)
     assert mod.get_country("ABC").ideas == ["old_idea"]
-    assert mod.update_country("ABC", color=(9, 8, 7), ideas=[])
+    mod.update_country("ABC", color=(9, 8, 7), ideas=[])
     mod.save()
 
     colors = colors_path.read_text(encoding="utf-8")
@@ -322,7 +322,7 @@ def test_bookmark_date_defines_participate_in_preview_transaction_and_save(
     target = tmp_path / "common/defines/zz_bookmark_dates.lua"
 
     with mod.transaction():
-        assert mod.set_bookmark_date_range("1940.1.1.12", "1960.1.1.1") == target
+        assert mod.set_bookmark_date_range("1940.1.1.12", "1960.1.1.1") is None
         preview = mod.preview()
         assert "START_DATE" in preview and "END_DATE" in preview
     assert not target.exists()
@@ -355,7 +355,7 @@ def test_updating_vanilla_country_creates_mod_override_not_game_write(
     original_history = history.read_bytes()
     mod = Mod(mod_root, hoi4_install=game_root)
 
-    assert mod.update_country("ABC", capital=2)
+    mod.update_country("ABC", capital=2)
     mod.save()
 
     assert definition.read_bytes() == original_definition
@@ -440,7 +440,7 @@ def test_existing_country_leader_uses_recruited_character_identity(tmp_path: Pat
     assert leader.name == "Actual Leader"
     assert leader.ideology == "old_subtype"
 
-    assert mod.update_country(
+    mod.update_country(
         "ABC",
         leader_name="Edited Leader",
         leader_ideology="new_subtype",

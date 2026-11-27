@@ -5,8 +5,10 @@ from __future__ import annotations
 import copy
 import dataclasses
 from pathlib import Path
-from typing import Optional
+from typing import Any, Unpack
+from collections.abc import Sequence
 
+from ..fields import FocusFields, FocusTreeFields
 from ..focus import FOCUS_KINDS
 from ..focus_layout import resolve_focus_positions, visual_overlap_issues
 from ..paths import (
@@ -17,9 +19,14 @@ from ..types import (
     Focus,
     FocusTree,
 )
+from ..errors import NotFoundError, already_exists, not_found
 from ._context import ContextLayer
-from ._effects import EffectsLayer
+from ._shared import MISSING, _D, _Missing
+from .. import effects
 from ._shared import (
+    _check_fields,
+    _check_model,
+    _require_items,
     _set_fields,
 )
 
@@ -38,32 +45,73 @@ def _require_focus_kind(tree: FocusTree, kind: str) -> None:
         )
 
 
-class FocusLayer(ContextLayer, EffectsLayer):
+def _require_new_focus_ids(tree: FocusTree, focuses: Sequence[Focus]) -> None:
+    """Raise ``AlreadyExistsError`` when a focus id is in ``tree`` or repeats in ``focuses``."""
+    taken = {focus.id for focus in tree.focuses}
+    for focus in focuses:
+        if focus.id in taken:
+            raise already_exists(
+                "focus",
+                focus.id,
+                hint=f"It is in focus tree '{tree.id}' (or twice in this call); "
+                "use update_focus() or ensure_focus() to change it.",
+            )
+        taken.add(focus.id)
+
+
+class FocusLayer(ContextLayer):
     """Focus tree authoring and layout."""
 
     # ── Focus Trees ──────────────────────────────────────────────
 
     def list_focus_trees(self) -> list[str]:
+        """Return the sorted ids of the mod's focus trees.
+
+        Game trees are not listed until ``load_inherited_content()`` loads
+        their file.
+        """
         return sorted(self._focus_trees.keys())
 
-    def get_focus_tree(self, tree_id: str) -> FocusTree:
+    def get_focus_tree(
+        self, tree_id: str, *, default: _D | _Missing = MISSING
+    ) -> FocusTree | _D:
+        """Return the focus tree ``tree_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+        """
         if tree_id not in self._focus_trees:
-            raise KeyError(
-                f"Focus tree '{tree_id}' not found. Available: {self.list_focus_trees()}"
-            )
+            if default is not MISSING:
+                return default
+            raise not_found("focus tree", tree_id, self.list_focus_trees())
         return self._focus_trees[tree_id]
 
     def create_focus_tree(
-        self, tree_id: str, country_tag: str, overwrite: bool = False
+        self, tree_id: str, tag: str, *, overwrite: bool = False
     ) -> FocusTree:
+        """Create an empty focus tree for the country ``tag``.
+
+        Returns:
+            The new tree.
+
+        Raises:
+            AlreadyExistsError: The tree exists and ``overwrite`` is false.
+            NotFoundError: A game install is configured and no one defines ``tag``.
+        """
         tree_id = require_script_id(tree_id, label="focus tree ID")
         existing = self._focus_trees.get(tree_id)
         if existing is not None and not overwrite:
-            raise ValueError(
-                f"Focus tree '{tree_id}' already exists. "
-                "Use overwrite=True to replace it or update_focus_tree()/add_focus() to patch it."
+            raise already_exists(
+                "focus tree",
+                tree_id,
+                hint="Use overwrite=True to replace it or update_focus_tree()/add_focus() "
+                "to patch it.",
             )
-        tag = require_country_tag(country_tag)
+        tag = self._require_country_reference(tag)
         path = (
             existing.path
             if existing is not None and existing.path is not None
@@ -79,32 +127,61 @@ class FocusLayer(ContextLayer, EffectsLayer):
         self._dirty_focus_trees.add(tree_id)
         return tree
 
-    def ensure_focus_tree(self, tree_id: str, country_tag: str, **kwargs) -> FocusTree:
-        """Create a focus tree if missing, otherwise patch tree-level fields."""
-        if tree_id in self._focus_trees:
-            if kwargs:
-                self.update_focus_tree(tree_id, **kwargs)
-            return self._focus_trees[tree_id]
-        tree = self.create_focus_tree(tree_id, country_tag)
-        if kwargs:
-            self.update_focus_tree(tree_id, **kwargs)
-        return tree
+    def ensure_focus_tree(self, tree_id: str, tag: str, **fields: Unpack[FocusTreeFields]) -> FocusTree:
+        """Create a focus tree if missing, otherwise patch tree-level fields.
 
-    def delete_focus_tree(self, tree_id: str) -> bool:
-        if tree_id not in self._focus_trees:
-            return False
-        tree = self._focus_trees.pop(tree_id)
+        Returns:
+            The created or updated tree.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: The tree exists for another country.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        existing = self.get_focus_tree(tree_id, default=None)
+        tag = require_country_tag(tag)
+        _check_fields(
+            "ensure_focus_tree",
+            existing or FocusTree(id=tree_id),
+            kwargs,
+            allow_path=True,
+            exclude={"country_tag", "kind"},
+        )
+        if existing is not None:
+            if existing.country_tag and existing.country_tag != tag:
+                raise ValueError(
+                    f"Focus tree '{tree_id}' belongs to '{existing.country_tag}', not '{tag}'; "
+                    "create a new tree instead."
+                )
+            return self.update_focus_tree(tree_id, **kwargs) if kwargs else existing
+        tree = self.create_focus_tree(tree_id, tag)
+        return self.update_focus_tree(tree_id, **kwargs) if kwargs else tree
+
+    def delete_focus_tree(self, tree_id: str) -> None:
+        """Stage the deletion of a focus tree.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+        """
+        tree = self.get_focus_tree(tree_id)
+        del self._focus_trees[tree_id]
         if tree.path:
             self._dirty_focus_files.add(tree.path)
         self._dirty.add("focus")
         self._dirty_focus_trees.discard(tree_id)
-        return True
 
-    def update_focus_tree(self, tree_id: str, **kwargs) -> bool:
-        """Patch tree-level fields; country selector reassignment is unsupported."""
-        tree = self._focus_trees.get(tree_id)
-        if tree is None:
-            return False
+    def update_focus_tree(self, tree_id: str, **fields: Unpack[FocusTreeFields]) -> FocusTree:
+        """Patch tree-level fields; country selector reassignment is unsupported.
+
+        Returns:
+            The updated tree.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        tree = self.get_focus_tree(tree_id)
         if "country_tag" in kwargs:
             raise TypeError(
                 "update_focus_tree() cannot update country_tag, even to the existing tag. "
@@ -120,6 +197,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 f"'{tree_id}' holds the top-level focus blocks of a file, not a focus_tree; "
                 f"it has no {', '.join(sorted(_TREE_ONLY_FIELDS & set(kwargs)))}"
             )
+        _check_fields("update_focus_tree", tree, kwargs, allow_path=True)
         old_path = tree.path
         if "path" in kwargs:
             kwargs["path"] = self._output_path(kwargs["path"])
@@ -131,44 +209,80 @@ class FocusLayer(ContextLayer, EffectsLayer):
             self._dirty_focus_files.add(tree.path)
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
-        return True
+        return tree
 
     # ── Focuses ──────────────────────────────────────────────────
 
-    def add_focus(self, tree_id: str, focus: Focus) -> None:
+    def add_focus(self, tree_id: str, focus: Focus) -> Focus:
+        """Append ``focus`` to a tree.
+
+        Returns:
+            The added focus (the object passed in, now part of the tree).
+
+        Raises:
+            TypeError: ``focus`` is not a ``Focus``; nothing changed.
+            NotFoundError: No focus tree has this id.
+            AlreadyExistsError: The tree already has a focus with this id;
+                use ``update_focus()`` or ``ensure_focus()``.
+        """
+        _check_model("add_focus", focus, "focus", (Focus,))
         tree = self.get_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
+        _require_new_focus_ids(tree, [focus])
         focus.touched = True
         tree.focuses.append(focus)
         tree.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
+        return focus
 
-    def remove_focus(self, tree_id: str, focus_id: str) -> bool:
+    def remove_focus(self, tree_id: str, focus_id: str) -> None:
+        """Remove one focus from a tree.
+
+        Raises:
+            NotFoundError: The tree or the focus does not exist.
+        """
         tree = self.get_focus_tree(tree_id)
-        for i, f in enumerate(tree.focuses):
-            if f.id == focus_id:
-                tree.focuses.pop(i)
-                tree.touched = True
-                self._dirty.add("focus")
-                self._dirty_focus_trees.add(tree_id)
-                return True
-        return False
+        tree.focuses.remove(self._require_focus(tree, focus_id))
+        tree.touched = True
+        self._dirty.add("focus")
+        self._dirty_focus_trees.add(tree_id)
 
-    def get_focus(self, tree_id: str, focus_id: str) -> Optional[Focus]:
+    def get_focus(
+        self, tree_id: str, focus_id: str, *, default: _D | _Missing = MISSING
+    ) -> Focus | _D:
+        """Return the focus ``focus_id`` of the tree ``tree_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: The tree or the focus does not exist.
+        """
+        try:
+            return self._require_focus(self.get_focus_tree(tree_id), focus_id)
+        except NotFoundError:
+            if default is not MISSING:
+                return default
+            raise
+
+    def update_focus(self, tree_id: str, focus_id: str, **fields: Unpack[FocusFields]) -> Focus:
+        """Patch fields of one focus.
+
+        Returns:
+            The updated focus.
+
+        Raises:
+            NotFoundError: The tree or the focus does not exist.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
         tree = self.get_focus_tree(tree_id)
-        for f in tree.focuses:
-            if f.id == focus_id:
-                return f
-        return None
-
-    def update_focus(self, tree_id: str, focus_id: str, **kwargs) -> bool:
-        focus = self.get_focus(tree_id, focus_id)
-        if focus is None:
-            return False
+        focus = self._require_focus(tree, focus_id)
         if "id" in kwargs:
             raise ValueError("Focus IDs are immutable; create a new focus instead")
-        tree = self.get_focus_tree(tree_id)
+        _check_fields("update_focus", focus, kwargs)
         if "kind" in kwargs:
             _require_focus_kind(tree, kwargs["kind"])
         _set_fields(focus, kwargs)
@@ -176,24 +290,60 @@ class FocusLayer(ContextLayer, EffectsLayer):
         tree.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
-        return True
+        return focus
 
-    def upsert_focus(self, tree_id: str, focus: Focus) -> Focus:
-        """Add a focus if missing, otherwise replace its modeled fields."""
-        existing = self.get_focus(tree_id, focus.id)
+    @staticmethod
+    def _require_focus_or_none(tree: FocusTree, focus_id: str) -> Focus | None:
+        return next((focus for focus in tree.focuses if focus.id == focus_id), None)
+
+    @staticmethod
+    def _require_focus(tree: FocusTree, focus_id: str) -> Focus:
+        """Return the focus ``focus_id`` of ``tree`` or raise ``NotFoundError``."""
+        for focus in tree.focuses:
+            if focus.id == focus_id:
+                return focus
+        raise not_found(
+            "focus",
+            focus_id,
+            (focus.id for focus in tree.focuses),
+            where=f"focus tree '{tree.id}'",
+            plural="focuses",
+        )
+
+    def ensure_focus(self, tree_id: str, focus: Focus) -> Focus:
+        """Add ``focus`` if the tree lacks its id, otherwise replace the modeled fields.
+
+        Returns:
+            The added focus, or the existing focus with the new fields.
+
+        Raises:
+            TypeError: ``focus`` is not a ``Focus``; nothing changed.
+            NotFoundError: No focus tree has this id.
+        """
+        _check_model("ensure_focus", focus, "focus", (Focus,))
+        existing = self._require_focus_or_none(self.get_focus_tree(tree_id), focus.id)
         if existing is None:
-            self.add_focus(tree_id, focus)
-            return focus
+            return self.add_focus(tree_id, focus)
         updates = {
             field.name: copy.deepcopy(getattr(focus, field.name))
             for field in dataclasses.fields(Focus)
             # ``kind`` is where the block lives, not content to replace.
             if field.name not in {"id", "raw_block", "touched", "kind"}
         }
-        self.update_focus(tree_id, focus.id, **updates)
-        return self.get_focus(tree_id, focus.id) or focus
+        return self.update_focus(tree_id, focus.id, **updates)
 
     def focus_tree_bounds(self, tree_id: str) -> dict[str, int]:
+        """Return the grid area the tree's focuses take, after resolving relative positions.
+
+        Returns:
+            ``min_x``, ``max_x``, ``min_y``, ``max_y``, ``width`` and
+            ``height`` in focus grid cells; all ``0`` for an empty tree.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+            ValueError: A focus position cannot be resolved (for example a
+                ``relative_position_id`` that points nowhere or in a circle).
+        """
         tree = self.get_focus_tree(tree_id)
         if not tree.focuses:
             return {"min_x": 0, "max_x": 0, "min_y": 0, "max_y": 0, "width": 0, "height": 0}
@@ -211,15 +361,27 @@ class FocusLayer(ContextLayer, EffectsLayer):
         }
 
     def place_continuous_focus_below_tree(
-        self, tree_id: str, padding: int = 400, x: int = 50
+        self, tree_id: str, *, padding: int = 400, x: int = 50
     ) -> str:
+        """Put the continuous focus box ``padding`` below the tree; return the position.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+        """
         bounds = self.focus_tree_bounds(tree_id)
         y = (bounds["max_y"] + 1) * 100 + padding
         position = f"x = {x} y = {y}"
         self.update_focus_tree(tree_id, continuous_focus_position=position)
         return position
 
-    def assert_no_visual_overlap(self, tree_id: str, *, min_continuous_padding: int = 100) -> bool:
+    def assert_no_visual_overlap(self, tree_id: str, *, min_continuous_padding: int = 100) -> None:
+        """Check that no two focuses of a tree are drawn on top of each other.
+
+        Raises:
+            NotFoundError: No focus tree has this id.
+            ValueError: Focuses overlap, or the continuous focus position is
+                closer than ``min_continuous_padding`` to the tree.
+        """
         tree = self.get_focus_tree(tree_id)
         layout = resolve_focus_positions(tree)
         layout.require_complete()
@@ -241,7 +403,6 @@ class FocusLayer(ContextLayer, EffectsLayer):
         )
         if issues:
             raise ValueError("; ".join(issues))
-        return True
 
     def auto_layout_branch(
         self,
@@ -254,23 +415,30 @@ class FocusLayer(ContextLayer, EffectsLayer):
         spacing_y: int = 1,
         chain_prerequisites: bool = True,
     ) -> list[Focus]:
+        """Place ``focuses`` in one column and chain their prerequisites.
+
+        The focuses are positioned, not added; pass them to ``add_focus()``
+        or ``insert_branch()`` afterwards. With ``anchor_focus_id`` the column
+        starts below that focus and the first focus requires it.
+
+        Returns:
+            The same focuses, positioned.
+
+        Raises:
+            NotFoundError: The tree or the anchor focus does not exist.
+        """
         tree = self.get_focus_tree(tree_id)
+        anchor = self._require_focus(tree, anchor_focus_id) if anchor_focus_id else None
         if not focuses:
             return []
         if x is None:
-            if anchor_focus_id:
-                anchor = self.get_focus(tree_id, anchor_focus_id)
-                x = anchor.x if anchor else 0
+            if anchor is not None:
+                x = anchor.x
             else:
                 x = max((focus.x for focus in tree.focuses), default=0) + 2
         if y_start is None:
-            if anchor_focus_id:
-                anchor = self.get_focus(tree_id, anchor_focus_id)
-                y_start = (
-                    (anchor.y + spacing_y)
-                    if anchor
-                    else max((focus.y for focus in tree.focuses), default=-1) + spacing_y
-                )
+            if anchor is not None:
+                y_start = anchor.y + spacing_y
             else:
                 y_start = max((focus.y for focus in tree.focuses), default=-1) + spacing_y
         previous = anchor_focus_id
@@ -290,21 +458,34 @@ class FocusLayer(ContextLayer, EffectsLayer):
         *,
         add_prerequisite: bool = True,
         relative_position: bool = True,
-    ) -> None:
+    ) -> Focus:
+        """Insert ``focus`` right after ``anchor_focus_id`` in the tree's file order.
+
+        By default the new focus requires the anchor and is positioned
+        relative to it.
+
+        Returns:
+            The inserted focus.
+
+        Raises:
+            TypeError: ``focus`` is not a ``Focus``; nothing changed.
+            NotFoundError: The tree or the anchor focus does not exist.
+            AlreadyExistsError: The tree already has a focus with this id.
+        """
+        _check_model("insert_focus_after", focus, "focus", (Focus,))
         tree = self.get_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
-        for idx, existing in enumerate(tree.focuses):
-            if existing.id == anchor_focus_id:
-                if add_prerequisite and not focus.prerequisites:
-                    focus.prerequisites = [[anchor_focus_id]]
-                if relative_position and not focus.relative_position_id:
-                    focus.relative_position_id = anchor_focus_id
-                focus.touched = True
-                tree.focuses.insert(idx + 1, focus)
-                self._dirty.add("focus")
-                self._dirty_focus_trees.add(tree_id)
-                return
-        raise KeyError(f"Focus '{anchor_focus_id}' not found in tree '{tree_id}'")
+        anchor = self._require_focus(tree, anchor_focus_id)
+        _require_new_focus_ids(tree, [focus])
+        if add_prerequisite and not focus.prerequisites:
+            focus.prerequisites = [[anchor_focus_id]]
+        if relative_position and not focus.relative_position_id:
+            focus.relative_position_id = anchor_focus_id
+        focus.touched = True
+        tree.focuses.insert(tree.focuses.index(anchor) + 1, focus)
+        self._dirty.add("focus")
+        self._dirty_focus_trees.add(tree_id)
+        return focus
 
     def insert_branch(
         self,
@@ -313,7 +494,24 @@ class FocusLayer(ContextLayer, EffectsLayer):
         focuses: list[Focus],
         *,
         chain_prerequisites: bool = True,
-    ) -> None:
+    ) -> list[Focus]:
+        """Insert a chain of focuses after ``anchor_focus_id``, each after the previous.
+
+        Returns:
+            The inserted focuses.
+
+        Raises:
+            TypeError: ``focuses`` holds something that is not a ``Focus``; nothing changed.
+            NotFoundError: The tree or the anchor focus does not exist.
+            AlreadyExistsError: A focus id is already in the tree or repeats
+                in ``focuses``; nothing is inserted.
+        """
+        focuses = _require_items("insert_branch", "focuses", focuses, (Focus,))
+        tree = self.get_focus_tree(tree_id)
+        self._require_focus(tree, anchor_focus_id)
+        for focus in focuses:
+            _require_focus_kind(tree, focus.kind)
+        _require_new_focus_ids(tree, focuses)
         previous = anchor_focus_id
         for focus in focuses:
             if chain_prerequisites and not focus.prerequisites:
@@ -322,26 +520,38 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 focus.relative_position_id = previous
             self.insert_focus_after(tree_id, previous, focus, add_prerequisite=False)
             previous = focus.id
+        return focuses
 
-    def append_to_focus_reward(self, tree_id: str, focus_id: str, effect: str) -> bool:
-        focus = self.get_focus(tree_id, focus_id)
-        if focus is None:
-            return False
+    def append_to_focus_reward(self, tree_id: str, focus_id: str, effect: str) -> Focus:
+        """Append ``effect`` to a focus's ``completion_reward``.
+
+        Returns:
+            The changed focus.
+
+        Raises:
+            NotFoundError: The tree or the focus does not exist.
+        """
+        tree = self.get_focus_tree(tree_id)
+        focus = self._require_focus(tree, focus_id)
         focus.completion_reward = "\n".join(
             part for part in [focus.completion_reward.strip(), effect.strip()] if part
         )
         focus.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
-        return True
+        return focus
 
     def set_focuses_mutually_exclusive(
         self, tree_id: str, focus_a_id: str, focus_b_id: str
-    ) -> bool:
-        focus_a = self.get_focus(tree_id, focus_a_id)
-        focus_b = self.get_focus(tree_id, focus_b_id)
-        if focus_a is None or focus_b is None:
-            return False
+    ) -> None:
+        """Make two focuses of a tree mutually exclusive, both ways.
+
+        Raises:
+            NotFoundError: The tree or one of the focuses does not exist.
+        """
+        tree = self.get_focus_tree(tree_id)
+        focus_a = self._require_focus(tree, focus_a_id)
+        focus_b = self._require_focus(tree, focus_b_id)
         if [focus_b_id] not in focus_a.mutually_exclusive:
             focus_a.mutually_exclusive.append([focus_b_id])
         if [focus_a_id] not in focus_b.mutually_exclusive:
@@ -350,17 +560,22 @@ class FocusLayer(ContextLayer, EffectsLayer):
         focus_b.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
-        return True
 
     def set_focus_loc(
         self,
         focus_id: str,
         name: str,
         description: str,
-        file_path: str | Path | None = None,
+        *,
+        path: str | Path | None = None,
     ) -> None:
-        self.set_loc(focus_id, name, file_path=file_path)
-        self.set_loc(f"{focus_id}_desc", description, file_path=file_path)
+        """Set a focus's name and ``<id>_desc`` text (English), optionally in ``path``.
+
+        Raises:
+            ValueError: ``path`` is outside ``localisation/english``.
+        """
+        self.set_loc(focus_id, name, path=path)
+        self.set_loc(f"{focus_id}_desc", description, path=path)
 
     def create_industrial_branch(
         self,
@@ -371,18 +586,51 @@ class FocusLayer(ContextLayer, EffectsLayer):
         state_id: int | None = None,
         grounded: bool = True,
     ) -> list[Focus]:
+        """Add a ready-made chain of four industry focuses for ``tag``; staged until ``save()``.
+
+        The focuses are ``<TAG>_map_domestic_industry``,
+        ``<TAG>_modernize_transport_links``, ``<TAG>_support_domestic_steel``
+        and ``<TAG>_precision_workshops``, with English names and
+        descriptions. The tree is created when it does not exist.
+
+        Args:
+            anchor_focus_id: Insert the chain after this focus. Without it,
+                the chain goes to the right of the existing focuses.
+            state_id: The state that gets the infrastructure and factories.
+                Defaults to the country's capital, else state 1.
+            grounded: Make the first focus cost 5 days instead of 10.
+
+        Returns:
+            The four added focuses.
+
+        Raises:
+            NotFoundError: ``anchor_focus_id`` is not in the tree.
+            AlreadyExistsError: One of the focus ids is already in the tree.
+            ValueError: ``tag`` is not a valid tag (when the tree is created).
+        """
         tag = tag.upper()
-        tree = (
-            self.get_focus_tree(tree_id)
-            if tree_id in self._focus_trees
-            else self.create_focus_tree(tree_id, tag)
-        )
-        context = self.get_country_context(tag)
+        # Check everything before the first change, so a call that raises
+        # leaves nothing staged (no new tree, no localisation).
+        existing = self.get_focus_tree(tree_id) if tree_id in self._focus_trees else None
+        if anchor_focus_id:
+            if existing is None:
+                raise not_found(
+                    "focus",
+                    anchor_focus_id,
+                    (),
+                    where=f"focus tree '{tree_id}'",
+                    plural="focuses",
+                )
+            self._require_focus(existing, anchor_focus_id)
+        current = existing.focuses if existing is not None else []
+        # Without a country (or a game install that defines it) there is no
+        # capital to build in; state 1 stands in, as before.
+        context = self.get_country_context(tag, default={})
         target_state = (
             state_id or context.get("capital") or (context.get("states") or [{}])[0].get("id") or 1
         )
-        y_base = max((focus.y for focus in tree.focuses), default=-1) + 1
-        x_base = 0 if not tree.focuses else max(focus.x for focus in tree.focuses) + 2
+        y_base = max((focus.y for focus in current), default=-1) + 1
+        x_base = 0 if not current else max(focus.x for focus in current) + 2
         prefix = tag
         focuses = [
             Focus(
@@ -401,7 +649,7 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 y=1,
                 cost=10,
                 search_filters=["FOCUS_FILTER_INDUSTRY"],
-                completion_reward=self.effect_add_infrastructure(int(target_state), 1),
+                completion_reward=effects.add_infrastructure(int(target_state), 1),
             ),
             Focus(
                 id=f"{prefix}_support_domestic_steel",
@@ -412,8 +660,8 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 search_filters=["FOCUS_FILTER_INDUSTRY"],
                 completion_reward="\n".join(
                     [
-                        self.effect_add_civilian_factory(int(target_state), 1),
-                        self.effect_add_industry_bonus(
+                        effects.add_civilian_factory(int(target_state), 1),
+                        effects.add_industry_bonus(
                             f"{prefix}_steel_industry_bonus", uses=1, bonus=0.5
                         ),
                     ]
@@ -428,8 +676,8 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 search_filters=["FOCUS_FILTER_INDUSTRY", "FOCUS_FILTER_RESEARCH"],
                 completion_reward="\n".join(
                     [
-                        self.effect_add_military_factory(int(target_state), 1),
-                        self.effect_add_industry_bonus(
+                        effects.add_military_factory(int(target_state), 1),
+                        effects.add_industry_bonus(
                             f"{prefix}_precision_tools_bonus", uses=1, bonus=0.5
                         ),
                     ]
@@ -454,6 +702,10 @@ class FocusLayer(ContextLayer, EffectsLayer):
                 "Small states must compete through skilled labor and precision tools rather than sheer scale.",
             ),
         }
+        if existing is not None:
+            _require_new_focus_ids(existing, focuses)
+        else:
+            self.create_focus_tree(tree_id, tag)
         for focus in focuses:
             name, desc = loc_text[focus.id]
             self.set_focus_loc(focus.id, name, desc)

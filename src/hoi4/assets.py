@@ -14,8 +14,9 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
+from .errors import Hoi4Error
 from .patching import (
     AssignmentSpan,
     append_assignment,
@@ -68,15 +69,15 @@ _EXPORT_FORMATS: dict[str, str] = {
 }
 
 
-class ImageBackendUnavailableError(RuntimeError):
+class ImageBackendUnavailableError(Hoi4Error, RuntimeError):
     """Raised when an image operation needs the optional Pillow dependency."""
 
 
-class UnsupportedImageFormatError(ValueError):
+class UnsupportedImageFormatError(Hoi4Error, ValueError):
     """Raised when an input or requested output is not supported safely."""
 
 
-class DDSExportUnsupportedError(RuntimeError):
+class DDSExportUnsupportedError(Hoi4Error, RuntimeError):
     """Raised when the active Pillow build cannot encode the requested DDS."""
 
 
@@ -92,6 +93,7 @@ class FlagAssetSet:
 
     @property
     def paths(self) -> tuple[Path, Path, Path]:
+        """The large, medium and small flag files, in that order."""
         return self.large, self.medium, self.small
 
 
@@ -108,7 +110,7 @@ def import_flag_to_mod(
     mod_root: str | Path,
     tag: str,
     src_image: str | Path,
-    vanilla_override: bool = False,
+    overwrite_vanilla: bool = False,
     *,
     ideologies: Iterable[str | None] | None = None,
     resize_mode: Literal["stretch", "cover", "contain"] = "stretch",
@@ -116,18 +118,18 @@ def import_flag_to_mod(
 ) -> tuple[FlagAssetSet, ...]:
     """Import a source image as the three TGA sizes HOI4 expects.
 
-    ``vanilla_override=True`` writes the base flag and the four vanilla ideology
+    ``overwrite_vanilla=True`` writes the base flag and the four vanilla ideology
     variants.  Alternatively, pass an explicit ``ideologies`` iterable where
     ``None`` means the unsuffixed base flag.
     """
 
     normalized_tag = require_country_tag(tag)
-    if ideologies is not None and vanilla_override:
-        raise ValueError("Pass either vanilla_override or ideologies, not both")
+    if ideologies is not None and overwrite_vanilla:
+        raise ValueError("Pass either overwrite_vanilla or ideologies, not both")
     selected_ideologies = (
         tuple(ideologies)
         if ideologies is not None
-        else ((None,) + VANILLA_FLAG_IDEOLOGIES if vanilla_override else (None,))
+        else ((None, *VANILLA_FLAG_IDEOLOGIES) if overwrite_vanilla else (None,))
     )
     if not selected_ideologies:
         raise ValueError("At least one flag variant is required")
@@ -171,7 +173,15 @@ def find_flag_path(
     ideology: str | None = None,
     size: Literal["large", "medium", "small"] = "large",
 ) -> Path | None:
-    """Return an existing flag path without leaving ``mod_root``."""
+    """Return an existing flag path without leaving ``mod_root``.
+
+    Looks for ``gfx/flags/[medium/|small/]<TAG>[_<ideology>].tga`` in the mod
+    only; ``None`` when there is no such file.
+
+    Raises:
+        ValueError: The tag, ideology or size is not valid.
+        NotADirectoryError: ``mod_root`` is not a folder.
+    """
 
     normalized_tag = require_country_tag(tag)
     normalized_ideology = _require_ideology(ideology)
@@ -193,7 +203,20 @@ def export_flag_from_mod(
     size: Literal["large", "medium", "small"] = "large",
     overwrite: bool = False,
 ) -> Path:
-    """Export a mod TGA flag to PNG, JPEG, TGA, BMP, or WebP."""
+    """Export a mod TGA flag to PNG, JPEG, TGA, BMP, or WebP; written at once.
+
+    The format follows the ending of ``destination``.
+
+    Returns:
+        The written file.
+
+    Raises:
+        FileNotFoundError: The mod has no such flag.
+        FileExistsError: ``destination`` exists and ``overwrite`` is false.
+        UnsupportedImageFormatError: The ending is not a supported format
+            (DDS is refused for flags).
+        ImageBackendUnavailableError: Pillow is not installed.
+    """
 
     source = find_flag_path(mod_root, tag, ideology=ideology, size=size)
     if source is None:
@@ -234,11 +257,8 @@ def import_portrait_to_mod(
 
     root = _require_mod_root(mod_root)
     image = _resize_image(_open_raster(src_image), size, resize_mode)
-    target = cast(
-        Path,
-        resolve_mod_output_path(
-            root, f"gfx/leaders/{normalized_tag}/{normalized_slug}.{output_format}"
-        ),
+    target = resolve_mod_output_path(
+        root, f"gfx/leaders/{normalized_tag}/{normalized_slug}.{output_format}"
     )
     pillow_format = output_format.upper()
     options: dict[str, object] = {}
@@ -258,7 +278,16 @@ def find_portrait_path(
     *,
     preference: Iterable[str] = ("dds", "tga"),
 ) -> Path | None:
-    """Find an existing portrait in a caller-defined format preference order."""
+    """Find an existing portrait in a caller-defined format preference order.
+
+    Looks for ``gfx/leaders/<TAG>/<name_slug>.<ext>`` in the mod only, trying
+    each extension of ``preference`` (``dds``, ``tga`` or ``png``); ``None``
+    when there is none.
+
+    Raises:
+        ValueError: The tag, slug or an extension is not valid.
+        NotADirectoryError: ``mod_root`` is not a folder.
+    """
 
     normalized_tag = require_country_tag(tag)
     normalized_slug = _require_asset_stem(name_slug, label="portrait slug")
@@ -267,12 +296,9 @@ def find_portrait_path(
         normalized_extension = str(extension).lower().lstrip(".")
         if normalized_extension not in {"dds", "tga", "png"}:
             raise ValueError(f"Unsupported portrait preference: {extension!r}")
-        candidate = cast(
-            Path,
-            resolve_mod_output_path(
-                root,
-                f"gfx/leaders/{normalized_tag}/{normalized_slug}.{normalized_extension}",
-            ),
+        candidate = resolve_mod_output_path(
+            root,
+            f"gfx/leaders/{normalized_tag}/{normalized_slug}.{normalized_extension}",
         )
         if candidate.is_file():
             return candidate
@@ -293,7 +319,17 @@ def export_portrait_from_mod(
 
     DDS-to-DDS exports copy the original bytes and therefore preserve compression
     and mipmaps without requiring Pillow.  Any newly encoded DDS has the limitation
-    documented by :data:`DDS_LIMITATION`.
+    documented by :data:`DDS_LIMITATION`. Written at once; the format follows
+    the ending of ``destination``.
+
+    Returns:
+        The written file.
+
+    Raises:
+        FileNotFoundError: The mod has no such portrait.
+        FileExistsError: ``destination`` exists and ``overwrite`` is false.
+        UnsupportedImageFormatError: The ending is not a supported format.
+        ImageBackendUnavailableError: Pillow is needed and not installed.
     """
 
     source = find_portrait_path(mod_root, tag, name_slug, preference=preference)
@@ -346,9 +382,8 @@ def write_portrait_gfx(
         label="portrait sprite name",
     )
     texture_path = selected_portrait.relative_to(root).as_posix()
-    output = cast(
-        Path,
-        resolve_mod_output_path(root, f"interface/{normalized_tag}_{normalized_slug}_portrait.gfx"),
+    output = resolve_mod_output_path(
+        root, f"interface/{normalized_tag}_{normalized_slug}_portrait.gfx"
     )
     content = (
         "spriteTypes = {\n"
@@ -373,7 +408,27 @@ def import_bookmark_picture_to_mod(
     dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
     overwrite: bool = True,
 ) -> BookmarkPictureAsset:
-    """Create a 180x104 bookmark texture and its ``spriteTypes`` declaration."""
+    """Create a 180x104 bookmark texture and its ``spriteTypes`` declaration.
+
+    Writes ``gfx/interface/<key>.<format>`` and
+    ``interface/<key>_bookmark.gfx`` at once, outside any ``Mod``
+    transaction; ``Mod`` has no staged version of this function.
+
+    Args:
+        sprite_name: Defaults to ``GFX_<bookmark_key>``.
+        resize_mode: ``"cover"`` crops to fill, ``"contain"`` pads, and
+            ``"stretch"`` distorts.
+
+    Returns:
+        The sprite name and the two written files.
+
+    Raises:
+        ValueError: The key, sprite name or format is not valid.
+        FileNotFoundError: ``src_image`` does not exist.
+        FileExistsError: A target exists and ``overwrite`` is false.
+        UnsupportedImageFormatError: The image cannot be read.
+        ImageBackendUnavailableError: Pillow is not installed.
+    """
 
     root = _require_mod_root(mod_root)
     normalized_key = _require_asset_stem(bookmark_key, label="bookmark key")
@@ -383,16 +438,10 @@ def import_bookmark_picture_to_mod(
     if output_format not in {"dds", "tga"}:
         raise ValueError("Bookmark output_format must be 'dds' or 'tga'")
 
-    texture = cast(
-        Path,
-        resolve_mod_output_path(
-            root, f"gfx/interface/{normalized_key.lower()}.{output_format}"
-        ),
+    texture = resolve_mod_output_path(
+        root, f"gfx/interface/{normalized_key.lower()}.{output_format}"
     )
-    gfx = cast(
-        Path,
-        resolve_mod_output_path(root, f"interface/{normalized_key.lower()}_bookmark.gfx"),
-    )
+    gfx = resolve_mod_output_path(root, f"interface/{normalized_key.lower()}_bookmark.gfx")
     image = _resize_image(_open_raster(src_image), BOOKMARK_PICTURE_SIZE, resize_mode)
     pillow_format = output_format.upper()
     options: dict[str, object] = {}
@@ -548,6 +597,16 @@ def upsert_sprite_type(
     repeated ``SpriteType`` keys. Every other byte of ``text`` is preserved, and
     an equivalent existing entry returns ``text`` unchanged. With
     ``overwrite=False`` a different existing entry raises ``FileExistsError``.
+    Text without a ``spriteTypes`` block gets one.
+
+    Returns:
+        The new text.
+
+    Raises:
+        FileExistsError: A different entry of that name exists and
+            ``overwrite`` is false.
+        ValueError: ``entry`` is not one block assignment, or does not
+            declare ``sprite_name``.
     """
 
     newline = "\r\n" if "\r\n" in text else "\n"
@@ -654,14 +713,14 @@ def plan_icon_asset(
         raise ValueError("Only focus icons have shine sprites")
     sprite_name = require_script_id(f"{spec.sprite_prefix}{stem}", label="sprite name")
 
-    texture = cast(Path, resolve_mod_output_path(root, f"{spec.texture_dir}/{stem}.dds"))
+    texture = resolve_mod_output_path(root, f"{spec.texture_dir}/{stem}.dds")
     texture_path = texture.relative_to(root).as_posix()
     gfx_relative = Path(
         gfx_file if gfx_file is not None else default_icon_gfx_path(root, kind)
     )
     if gfx_relative.suffix.lower() != ".gfx":
         raise ValueError("Sprite declaration files must use the .gfx extension")
-    gfx = cast(Path, resolve_mod_output_path(root, gfx_relative))
+    gfx = resolve_mod_output_path(root, gfx_relative)
     if not gfx.is_relative_to(root / "interface"):
         raise ValueError("Sprite declaration files must live under interface/")
     declarations = [(gfx, sprite_name, render_sprite_type(sprite_name, texture_path))]
@@ -875,7 +934,7 @@ def _require_pillow() -> tuple[Any, Any, type[Exception]]:
     try:
         Image = import_module("PIL.Image")
         ImageOps = import_module("PIL.ImageOps")
-        UnidentifiedImageError = getattr(import_module("PIL"), "UnidentifiedImageError")
+        UnidentifiedImageError = import_module("PIL").UnidentifiedImageError
     except (ImportError, AttributeError) as exc:
         raise ImageBackendUnavailableError(
             "Image operations require the optional Pillow dependency. Install Pillow and retry."

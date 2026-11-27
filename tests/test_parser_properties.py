@@ -281,7 +281,7 @@ def test_textio_round_trips_arbitrary_bytes(data: bytes) -> None:
 
 
 _line_content = st.text(
-    alphabet=st.sampled_from(list("ab =#{}\t") + ["\f", "\v", "\x1c", "\x85", "é", "€",
+    alphabet=st.sampled_from([*"ab =#{}\t", "\f", "\v", "\x1c", "\x85", "é", "€",
                                                    " ", "﻿"]),
     max_size=8,
 )
@@ -316,7 +316,7 @@ def test_editing_one_line_keeps_every_other_lines_bytes(
     edited = encode_text("\n".join(text_lines), like=raw)
     new_raw_lines = _RAW_LINE.findall(edited)
     assert len(new_raw_lines) == len(old_raw_lines)
-    for number, (old, new) in enumerate(zip(old_raw_lines, new_raw_lines)):
+    for number, (old, new) in enumerate(zip(old_raw_lines, new_raw_lines, strict=True)):
         if number != index:
             assert new == old
         else:

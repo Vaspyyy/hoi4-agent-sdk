@@ -39,7 +39,7 @@ def resolve_focus_positions(tree: FocusTree) -> FocusPositions:
                 reason = result.unresolved[current]
                 break
             if current in indices:
-                cycle = chain[indices[current] :] + [current]
+                cycle = [*chain[indices[current] :], current]
                 reason = "relative_position_id cycle: " + " -> ".join(cycle)
                 break
             if current not in focuses:

@@ -116,7 +116,7 @@ def test_unchanged_input_is_byte_identical(tmp_path: Path) -> None:
     assert serialize_decisions_file(categories, original=MISSION_SOURCE) == MISSION_SOURCE
 
     mod = Mod(tmp_path)
-    assert mod.update_decision("TST_hold_line")  # touch without changes
+    mod.update_decision("TST_hold_line")
     mod.save()
     assert path.read_text(encoding="utf-8") == MISSION_SOURCE
 
@@ -124,7 +124,7 @@ def test_unchanged_input_is_byte_identical(tmp_path: Path) -> None:
 def test_one_field_edit_preserves_comments_unknown_keys_and_repeats(tmp_path: Path) -> None:
     path = write_source(tmp_path)
     mod = Mod(tmp_path)
-    assert mod.update_decision("TST_hold_line", days_mission_timeout=120)
+    mod.update_decision("TST_hold_line", days_mission_timeout=120)
     mod.save()
     text = path.read_text(encoding="utf-8")
     assert text == MISSION_SOURCE.replace(
@@ -152,7 +152,7 @@ def test_every_new_field_round_trips_through_update(tmp_path: Path) -> None:
         "highlight_states": "highlight_state_targets = { state = 1 }",
         "priority": 3,
     }
-    assert mod.update_decision("TST_hold_line", **changes)
+    mod.update_decision("TST_hold_line", **changes)
     targeted = {
         "targets": ("FRA", "ENG", "SOV"),
         "target_array": "",
@@ -169,7 +169,7 @@ def test_every_new_field_round_trips_through_update(tmp_path: Path) -> None:
         "cancel_if_not_visible": False,
         "remove_trigger": "always = no",
     }
-    assert mod.update_decision("TST_pressure", **targeted)
+    mod.update_decision("TST_pressure", **targeted)
     mod.save()
     text = path.read_text(encoding="utf-8")
     assert "# Hold the line or lose stability" in text

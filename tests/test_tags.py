@@ -35,14 +35,14 @@ def test_inherited_commented_registration(tmp_path, monkeypatch, suffix, filenam
     mod = Mod(tmp_path / 'mod', **kwargs)
     assert not mod.is_country_tag_available('SIC')
     assert mod.is_country_tag_available('IGN')
-    assert mod.suggest_tag('Sicily') != 'SIC'
+    assert mod.suggest_tags('Sicily', count=1)[0] != 'SIC'
     assert 'SIC' not in mod.suggest_tags('Sicily')
     # Loading a country caches it; inspect resolution independently of creation.
     assert Mod(tmp_path / 'mod', **kwargs).get_country('SIC').color == (1, 2, 3)
-    with pytest.raises(ValueError, match='allow_vanilla_override'):
+    with pytest.raises(ValueError, match='overwrite_vanilla'):
         mod.create_country('SIC', 'Sicily')
     assert mod.preview() == ''
-    assert mod.create_country('SIC', 'Sicily', allow_vanilla_override=True).tag == 'SIC'
+    assert mod.create_country('SIC', 'Sicily', overwrite_vanilla=True).tag == 'SIC'
     assert tags.read_text(encoding='utf-8') == original
     assert definition.read_text(encoding='utf-8') == 'color = { 1 2 3 }\n'
 

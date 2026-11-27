@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from hoi4 import MapBuilding, MapEditReport, Mod, Railway
+from hoi4 import MapBuilding, MapEditReport, Mod, NotFoundError, Railway, State, StrategicRegion
 from hoi4.map_editing import (
     append_list_tokens,
     parse_strategic_regions,
@@ -201,7 +201,7 @@ def test_create_state_moves_province_data_and_saves_source_preserving(tmp_path: 
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        new_id = mod.create_state([3], name="Gamma Coast", manpower=250)
+        new_id = mod.create_state([3], name="Gamma Coast", manpower=250).id
 
     assert new_id == 3
     assert mod.get_state(1).provinces == [1, 2]
@@ -273,7 +273,7 @@ def test_create_state_validates_inputs_and_is_atomic(tmp_path: Path) -> None:
         mod.create_state([1, 2, 3], name="Everything")
     # A failure after provinces moved (bad localisation path) rolls back.
     with pytest.raises(ValueError, match="localisation"):
-        mod.create_state([3], name="Rollback", localisation_file="notes.txt")
+        mod.create_state([3], name="Rollback", loc_path="notes.txt")
 
     assert mod.get_state(1).provinces == [1, 2, 3]
     assert 3 not in mod.list_states()
@@ -286,7 +286,7 @@ def test_explicit_state_id_and_split_state(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="do not belong"):
         mod.split_state(1, [4], name="Wrong")
-    new_id = mod.split_state(2, [6], name="South Beta", state_id=10)
+    new_id = mod.split_state(2, [6], name="South Beta", state_id=10).id
 
     assert new_id == 10
     assert mod.get_state(2).provinces == [4, 5]
@@ -352,7 +352,9 @@ def test_delete_empty_states_shadows_inherited_file(tmp_path: Path) -> None:
 
 def test_delete_empty_mod_only_state_removes_file(tmp_path: Path) -> None:
     mod = _mod(tmp_path)
-    new_id = mod.create_state([3], name="Temp")
+    created_state = mod.create_state([3], name="Temp")
+    assert isinstance(created_state, State)
+    new_id = created_state.id
     mod.save()
     created = tmp_path / "mod/history/states/3-Temp.txt"
     assert created.is_file()
@@ -386,7 +388,8 @@ def test_transaction_rolls_back_map_edits(tmp_path: Path) -> None:
 def test_strategic_region_listing_and_moves(tmp_path: Path) -> None:
     mod = _mod(tmp_path)
 
-    regions = mod.list_strategic_regions()
+    assert mod.list_strategic_regions() == [1, 2]
+    regions = [mod.get_strategic_region(region_id) for region_id in mod.list_strategic_regions()]
     assert [(region.id, region.provinces) for region in regions] == [
         (1, (1, 2, 3, 4, 5, 6)),
         (2, (7,)),
@@ -411,9 +414,9 @@ def test_strategic_region_listing_and_moves(tmp_path: Path) -> None:
 def test_create_strategic_region_copies_weather(tmp_path: Path) -> None:
     mod = _mod(tmp_path)
 
-    region_id = mod.create_strategic_region("Eastern Hills", [4, 5])
+    created = mod.create_strategic_region("Eastern Hills", [4, 5])
 
-    assert region_id == 3
+    assert isinstance(created, StrategicRegion) and created.id == 3
     region = mod.get_strategic_region(3)
     assert region.provinces == (4, 5) and region.has_weather
     assert region.name == "STRATEGICREGION_3"
@@ -474,10 +477,17 @@ def test_railway_editing_checks_adjacency_and_keeps_other_lines(tmp_path: Path) 
         mod.add_railway(9, [1, 3])
     added = mod.add_railway(3, [1, 3, 6])
     assert added == Railway(level=3, provinces=(1, 3, 6), index=2)
-    assert mod.set_railway_level([6, 5, 4], 4) == 1
-    assert mod.remove_railway(mod.list_railways()[0]) == 1
-    with pytest.raises(KeyError):
+    assert mod.set_railway_level([6, 5, 4], 4) is None
+    assert any(
+        railway.level == 4 and railway.provinces == (4, 5, 6) for railway in mod.list_railways()
+    )
+    railways = len(mod.list_railways())
+    assert mod.remove_railway(mod.list_railways()[0]) is None
+    assert len(mod.list_railways()) == railways - 1
+    with pytest.raises(NotFoundError):
         mod.remove_railway([2, 3])
+    with pytest.raises(NotFoundError):
+        mod.set_railway_level([2, 3], 2)
     mod.save()
 
     assert (tmp_path / "mod/map/railways.txt").read_text(encoding="utf-8") == (
@@ -511,8 +521,14 @@ def test_map_buildings_add_list_remove(tmp_path: Path) -> None:
     assert added.index == 4 and added.z == 2.5
     with pytest.raises(ValueError):
         mod.remove_map_buildings()
-    assert mod.remove_map_buildings(state_id=2, building="arms_factory") == 2
-    with pytest.raises(KeyError, match="stale"):
+    assert len(mod.list_map_buildings(state_id=2)) == 3
+    assert mod.remove_map_buildings(state_id=2, building="arms_factory") is None
+    assert [entry.building for entry in mod.list_map_buildings(state_id=2)] == ["bunker"]
+    with pytest.raises(NotFoundError, match="No building position matches state 2"):
+        mod.remove_map_buildings(state_id=2, building="arms_factory")
+    with pytest.raises(NotFoundError, match="State 42 not found"):
+        mod.remove_map_buildings(state_id=42)
+    with pytest.raises(NotFoundError, match="stale"):
         mod.remove_map_buildings(entries=[added])
     mod.save()
 
@@ -702,11 +718,11 @@ def test_replace_path_hides_inherited_states_and_regions(tmp_path: Path) -> None
     )
     mod = Mod(mod_root, hoi4_install=tmp_path / "game")
 
-    assert [region.path for region in mod.list_strategic_regions()] == [
+    assert [mod.get_strategic_region(i).path for i in mod.list_strategic_regions()] == [
         "map/strategicregions/1-All.txt"
     ]
     assert not MAP_CODES & set(_codes(mod))
-    assert mod.create_state([4], name="Middle") == 3
+    assert mod.create_state([4], name="Middle").id == 3
 
 
 def test_validation_accepts_vanilla_lake_floating_harbor_and_empty_region_shapes() -> None:

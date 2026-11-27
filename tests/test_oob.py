@@ -26,6 +26,7 @@ from hoi4.oob import (
     serialize_oob,
     validate_oob,
 )
+from hoi4.errors import NotFoundError
 
 
 OOB = """division_template = {
@@ -280,7 +281,7 @@ def test_mod_update_oob_patches_navy_without_clobbering_unknown_content(
     fleets = copy.deepcopy(mod.get_oob("ABC_1936").fleets)
     fleets[0].task_forces[0].ships[0].name = "SMS New"
 
-    assert mod.update_oob("ABC_1936", fleets=fleets)
+    mod.update_oob("ABC_1936", fleets=fleets)
     mod.save()
     rendered = (tmp_path / "history/units/ABC_1936.txt").read_text(encoding="utf-8")
 
@@ -951,18 +952,19 @@ def test_mod_authors_separate_dlc_aware_naval_and_air_oobs(tmp_path: Path) -> No
         "ABC_air", "air", ("By Blood Alone",), ()
     ) in references
     assert find_equipment_variants(history) == (variant,)
-    assert mod.unassign_country_oob(
+    mod.unassign_country_oob(
         "ABC",
         "ABC_air",
         kind="air",
         required_dlc=("By Blood Alone",),
     )
-    assert not mod.unassign_country_oob(
-        "ABC",
-        "ABC_air",
-        kind="air",
-        required_dlc=("By Blood Alone",),
-    )
+    with pytest.raises(NotFoundError):
+        mod.unassign_country_oob(
+            "ABC",
+            "ABC_air",
+            kind="air",
+            required_dlc=("By Blood Alone",),
+        )
 
 
 def _write_minimal_naval_context(root: Path) -> None:
@@ -1419,7 +1421,17 @@ def test_create_oob_same_reference_overwrite_succeeds(tmp_path: Path, kind: str)
     assert serialize_oob(Mod(tmp_path).get_oob("ABC_old")) == serialize_oob(replacement)
 
 
-def test_create_oob_preserves_unknown_country_defaults(tmp_path: Path) -> None:
+def test_create_oob_never_invents_the_country_it_assigns_to(tmp_path: Path) -> None:
+    # Assigning writes the country's history, so the country must exist; an
+    # empty one is no longer invented (it would replace the game's history).
     mod = Mod(tmp_path)
-    mod.create_oob("ABC_new", "ABC", **_atomic_oob_content("land", "Accepted"))
+    with pytest.raises(NotFoundError, match="Country 'ABC' not found"):
+        mod.create_oob("ABC_new", "ABC", **_atomic_oob_content("land", "Accepted"))
+    assert mod.list_oobs() == []
+    assert mod.list_countries() == []
+    assert mod.preview() == ""
+    # Without assigning, the tag is only a label (it may be the game's).
+    mod.create_oob("ABC_new", "ABC", assign=False, **_atomic_oob_content("land", "Accepted"))
+    mod.create_country("ABC", "Abcland")
+    mod.assign_country_oob("ABC", "ABC_new")
     assert mod.get_country("ABC").oob == "ABC_new"

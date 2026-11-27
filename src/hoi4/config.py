@@ -19,14 +19,21 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
+from collections.abc import Mapping
+from typing import Any
 
 DEFAULT_CONFIG_FILENAME = ".hoi4.json"
 
 
 class Config:
-    mod_path: Optional[Path]
-    hoi4_install: Optional[Path]
+    """The paths a ``.hoi4.json`` file holds: the mod, the game install and the base mods.
+
+    Raises ``ValueError`` when ``base_mod_paths`` is a single string instead
+    of a list.
+    """
+
+    mod_path: Path | None
+    hoi4_install: Path | None
 
     def __init__(
         self,
@@ -41,15 +48,23 @@ class Config:
         self.base_mod_paths = tuple(Path(path) for path in base_mod_paths)
 
     @classmethod
-    def from_dict(cls, data: dict) -> Config:
+    def from_dict(cls, data: Mapping[str, Any]) -> Config:
+        """Build a config from the keys of a ``.hoi4.json`` file; missing keys stay empty.
+
+        Paths are taken as they are; ``find_config()`` resolves relative ones.
+
+        Raises:
+            ValueError: ``base_mod_paths`` is a string instead of a list.
+        """
         return cls(
             mod_path=data.get("mod_path"),
             hoi4_install=data.get("hoi4_install"),
             base_mod_paths=data.get("base_mod_paths", ()),
         )
 
-    def to_dict(self) -> dict:
-        d: dict = {}
+    def to_dict(self) -> dict[str, str | list[str]]:
+        """Return the set paths as ``.hoi4.json`` keys, as text; unset ones are left out."""
+        d: dict[str, str | list[str]] = {}
         if self.mod_path:
             d["mod_path"] = str(self.mod_path)
         if self.hoi4_install:
@@ -59,11 +74,12 @@ class Config:
         return d
 
     def save(self, path: str | Path) -> None:
+        """Write the config as JSON to ``path``, replacing the file."""
         p = Path(path)
         p.write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
 
 
-def find_config(start: str | Path | None = None) -> Optional[Config]:
+def find_config(start: str | Path | None = None) -> Config | None:
     """Search for .hoi4.json starting from `start` dir, walking up to root.
 
     If start is None, uses the current working directory. Relative mod and

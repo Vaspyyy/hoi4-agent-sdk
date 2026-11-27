@@ -5,7 +5,7 @@ Country Tag Management
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from .layers import ContentView, as_view
 from .patching import replace_assignment, top_level_assignments
@@ -78,7 +78,7 @@ def tag_file_mapping(root: Path | ContentView) -> dict[str, str]:
 
 def resolve_country_filename(
     base: Path | ContentView, tag: str, mapping: dict[str, str] | None = None
-) -> Optional[Path]:
+) -> Path | None:
     view = as_view(base)
     assert view is not None
     mapping = mapping if mapping is not None else tag_file_mapping(view)
@@ -101,17 +101,6 @@ def load_mod_tags(mod_root: Path) -> list[str]:
         return []
     for f in d.glob("*.txt"):
         tags.update(tag for tag, _ in country_tag_entries(read_text(f)))
-    return sorted(tags)
-
-
-def load_all_tags(
-    hoi4_install: Path | ContentView | None, mod_root: Optional[Path]
-) -> list[str]:
-    tags: set[str] = set()
-    if hoi4_install:
-        tags.update(load_vanilla_tags(hoi4_install))
-    if mod_root:
-        tags.update(load_mod_tags(mod_root))
     return sorted(tags)
 
 

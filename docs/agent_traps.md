@@ -1,6 +1,71 @@
 # Common AI Agent Mistakes
 
-Use this page when generated content is valid Paradox script but likely wrong gameplay.
+Use this page when generated content is valid Paradox script but likely wrong
+gameplay, or when a call raises where you did not expect it. The examples
+assume this setup:
+
+```python
+from hoi4 import EventOption, Focus, Mod, effects
+
+mod = Mod("/path/to/my_mod", hoi4_install="/path/to/Hearts of Iron IV")
+```
+
+## Lookups Raise; They Do Not Return None
+
+`get_x(id)` raises `NotFoundError` for a missing id. It is a `KeyError`, and
+its message names close matches, so a typo shows at once. Do not wrap a lookup
+in `try`/`except` to test for existence; pass `default=None`:
+
+```python
+from hoi4 import NotFoundError
+
+event = mod.get_event("my_mod.1", default=None)
+if event is None:
+    mod.create_event("my_mod.1", title="my_mod.1.t", description="my_mod.1.d")
+
+try:
+    mod.get_focus_tree("german_focs")
+except NotFoundError as error:
+    print(error.suggestions)  # close matches, when there are any
+```
+
+`update_x()`, `delete_x()`, `remove_x()` and the other changes raise
+`NotFoundError` the same way, also for a missing child (a focus in a tree, an
+option of an event). They never return `False`.
+
+## Create Twice Raises
+
+`create_x(id, ...)` raises `AlreadyExistsError` (a `ValueError`) for an id that
+exists. A script that may run twice should use `ensure_x()`, which creates the
+object or patches it and returns it either way. Pass `overwrite=True` only to
+replace an object on purpose:
+
+```python
+mod.ensure_idea("TAG_reform", category="country", modifier={"stability_factor": 0.05})
+mod.ensure_idea("TAG_reform", modifier={"stability_factor": 0.10})  # patches, no error
+mod.create_idea("TAG_reform", modifier={}, overwrite=True)         # replaces on purpose
+```
+
+Deleting game content (a game country, ideology, OOB or localisation key)
+raises `ReadOnlyError`. Override it instead: `set_loc()` for a text,
+`update_country()` for a country.
+
+## Game Focus Trees Are Not Visible to Lookups
+
+`get_focus_tree("german_focus")` raises `NotFoundError` even with the game
+configured, because the game's focus files are not loaded. Copy the file into
+the mod first; the copy is staged until `save()`:
+
+```python
+mod.load_inherited_content("common/national_focus/germany.txt")
+tree = mod.get_focus_tree("german_focus")
+```
+
+## Effect Builders Live in `hoi4.effects`
+
+The builders are functions of the `hoi4.effects` module, not methods of `Mod`:
+call `effects.transfer_state(52, "BAY")` after `from hoi4 import effects`.
+Each one returns the script text as a `str` and changes nothing.
 
 ## Faction Direction
 
@@ -15,8 +80,8 @@ effect = "add_to_faction = BAY"
 Good:
 
 ```python
-Mod.effect_add_target_to_faction("AUS", "BAY")  # AUS = { add_to_faction = BAY }
-Mod.effect_join_faction("BAY", "AUS")           # Same output, named by intent.
+effects.add_target_to_faction("AUS", "BAY")  # AUS = { add_to_faction = BAY }
+effects.join_faction("BAY", "AUS")           # Same output, named by intent.
 ```
 
 Validation advice (`info`, shown with `validate(advice=True)`): `faction_scope_footgun` for `add_to_faction` inside a country iterator (`every_country`, `random_country`, ...), where every matched country adds the target to its own faction.
@@ -33,7 +98,7 @@ add_core_of = BAY
 Good runtime effect:
 
 ```python
-Mod.effect_transfer_state_with_core(52, "BAY")
+effects.transfer_state_with_core(52, "BAY")
 ```
 
 Good pre-game history edit:
@@ -42,12 +107,16 @@ Good pre-game history edit:
 mod.set_state_owner(52, "BAY")
 ```
 
-Both state edits change only the statements they touch, so unrelated vanilla text such as unusual `victory_points` formatting stays as it was. To set the owner and several cores in one call, queue `patch_state_history()` and save with the same `Mod` instance:
+State edits change only the statements they touch, so unrelated vanilla text such as unusual `victory_points` formatting stays as it was. To set the owner and several cores in one call, queue `update_state()` and save with the same `Mod` instance:
 
 ```python
-mod.patch_state_history(52, owner="BAY", add_cores=["BAY"], remove_cores=["AUS"])
+mod.update_state(42, owner="FRA", add_cores=["FRA"], remove_cores=["GER"])
 mod.save(require_changes=True)
 ```
+
+A core in `remove_cores` that the state does not have raises `NotFoundError`.
+`update_state(42, cores=[...])` replaces the whole list; use `add_cores=` to
+add one.
 
 ## Idea Replacement Tooltips
 
@@ -63,8 +132,8 @@ add_ideas = crisis_4
 Good:
 
 ```python
-Mod.effect_swap_idea("crisis_3", "crisis_4", target="ITA")
-Mod.effect_upgrade_idea_chain(["crisis_1", "crisis_2", "crisis_3", "crisis_4"], target="ITA")
+effects.swap_idea("crisis_3", "crisis_4", target="ITA")
+effects.upgrade_idea_chain(["crisis_1", "crisis_2", "crisis_3", "crisis_4"], target="ITA")
 ```
 
 Validation advice (`info`): `bad_idea_tooltip_pattern`.
@@ -119,15 +188,16 @@ Good:
 
 ```python
 mod.create_idea(
-    "TAG_crisis",
+    "TAG_unrest",
     icon="generic_political_support",
     modifier={"stability_factor": -0.05},
 )
 ```
 
 The matching `interface/*.gfx` declaration remains
-`GFX_idea_generic_political_support`. The compatibility `icon=` argument also
-accepts the prefixed spelling, but normalizes it before writing.
+`GFX_idea_generic_political_support`. The `icon=` argument names the
+`picture` stem; it also accepts the prefixed spelling, but strips the prefix
+before writing.
 `invalid_idea_picture_prefix` rejects the broken on-disk form, while
 `unknown_idea_icon` checks the correctly resolved full sprite key.
 
@@ -167,11 +237,15 @@ equipment variant" and silently skips the ships.
 ## A New Tag Is Not a Complete Country
 
 Every tag created through the SDK is package-validated during normal
-`validate()` and the release gate. Before reporting success, require:
+`validate()` and the release gate. Before reporting success, require a
+complete report:
 
 ```python
-report = mod.validate_country_package(tag)
-assert report.complete, report.to_dict()
+def require_complete_country(mod, tag):
+    report = mod.validate_country_package(tag)
+    if not report.complete:
+        raise RuntimeError(f"{tag} is not complete: {report.unmet_requirements}")
+    return report
 ```
 
 This proves structural completeness only. Check
@@ -246,12 +320,14 @@ decisions are edited where they are.
 ## Shared and Joint Focuses
 
 Top-level `shared_focus`, `joint_focus` and bare `focus` blocks are not inside
-a `focus_tree`. The SDK loads them into one container per file:
+a `focus_tree`. The SDK loads them into one container per file. A game file
+must be copied into the mod first, like any game focus file:
 
 ```python
-tree = mod.get_focus_tree("shared_focuses")   # file common/national_focus/shared_focuses.txt
-tree.kind                                     # "file"
-mod.update_focus("shared_focuses", "SH_one", cost=3.5)
+mod.load_inherited_content("common/national_focus/baltic_shared.txt")
+tree = mod.get_focus_tree("baltic_shared")    # file common/national_focus/baltic_shared.txt
+print(tree.kind)                              # "file"
+mod.update_focus("baltic_shared", "BALTIC_rejoin_the_railways", cost=3.5)
 ```
 
 The container's ID is the file name without `.txt`. The game has no focus tree
@@ -286,14 +362,14 @@ This can create a country with no units, equipment, techs, or manpower.
 Good:
 
 ```python
-Mod.effect_spawn_revolution(
+effects.spawn_revolution(
     "BAY",
     [52],
     overlord="AUS",
     manpower=15000,
     equipment={"infantry_equipment_0": 500},
     technologies={"infantry_weapons": 1},
-    division_template=Mod.effect_division_template("Militia", "infantry = { x = 0 y = 0 }"),
+    division_template=effects.division_template("Militia", "infantry = { x = 0 y = 0 }"),
     units=["Militia"],
 )
 ```
@@ -307,13 +383,13 @@ Focus tree selectors such as `original_tag = AUS` are not enough for many dynami
 Bad:
 
 ```python
-Mod.effect_start_civil_war("communism", size=0.4, capital=4)
+effects.start_civil_war("communism", size=0.4, capital=4)
 ```
 
 Good:
 
 ```python
-Mod.effect_spawn_civil_war_with_focus_tree(
+effects.spawn_civil_war_with_focus_tree(
     "communism",
     "FB_AUS_focus",
     size=0.4,
@@ -335,7 +411,7 @@ Do not assume a tag is unreleased. Vanilla paths may release a tag as a puppet o
 Good:
 
 ```python
-Mod.effect_convert_existing_or_spawn_revolt(
+effects.convert_existing_or_spawn_revolt(
     "SLV",
     [102, 103],
     overlord="YUG",
@@ -347,7 +423,7 @@ Mod.effect_convert_existing_or_spawn_revolt(
 For non-war conversions:
 
 ```python
-Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
+effects.convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
 ```
 
 Validation advice (`info`): `revolt_state_already_owned` when a transfer effect gives a state to the country that already owns it in loaded history.
@@ -384,12 +460,19 @@ Validation advice (`info`, shown with `validate(advice=True)`):
 After adding generated branches:
 
 ```python
+mod.ensure_focus_tree("TAG_focus", "GER")
+mod.ensure_focus("TAG_focus", Focus(id="TAG_anchor", x=5, y=0))
+focuses = [Focus(id="TAG_step_1"), Focus(id="TAG_step_2")]
 branch = mod.auto_layout_branch("TAG_focus", focuses, anchor_focus_id="TAG_anchor")
 for focus in branch:
-    mod.upsert_focus("TAG_focus", focus)
+    mod.ensure_focus("TAG_focus", focus)
 mod.place_continuous_focus_below_tree("TAG_focus", padding=400)
 mod.assert_no_visual_overlap("TAG_focus")
 ```
+
+`auto_layout_branch()` only sets positions and prerequisites on the `Focus`
+objects; `ensure_focus()` adds them. An `anchor_focus_id` the tree does not
+have raises `NotFoundError`.
 
 Validation warning: `visual_overlap` if normal focuses collide. Advice (`info`): `continuous_focus_position_high` if continuous focuses are too high.
 

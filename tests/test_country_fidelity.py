@@ -244,8 +244,8 @@ def test_one_field_edit_changes_only_that_value(tmp_path: Path) -> None:
     path = _write(mod_root / "common/characters/ABC.txt", CHARACTERS)
     mod = Mod(mod_root)
 
-    assert mod.update_character_role("ABC_rommel", "field_marshal", skill=5)
-    assert mod.update_character("ABC_rommel", name="ABC_desert_fox")
+    mod.update_character_role("ABC_rommel", "field_marshal", skill=5)
+    mod.update_character("ABC_rommel", name="ABC_desert_fox")
 
     rendered = _rendered(mod)[path]
     assert rendered == CHARACTERS.replace("skill = 4", "skill = 5").replace(
@@ -289,7 +289,7 @@ def test_inherited_history_with_an_open_block_loads_edits_and_saves_well_formed(
 
     mod.save()
     assert not parse(override.read_text(encoding="utf-8")).problems
-    mod.reload()
+    mod.discard()
     assert mod.get_country("ABC").capital == 111
     fresh = Mod(mod_root, hoi4_install=game)
     assert fresh.get_country("ABC").capital == 111
@@ -467,7 +467,7 @@ def test_vanilla_character_ids_with_non_ascii_letters_can_be_edited(tmp_path: Pa
     mod = Mod(tmp_path / "mod", hoi4_install=game)
     character = mod.get_character("ABC_josé_garcía")
     assert isinstance(character.roles[0], CountryLeaderRole)
-    assert mod.update_character_role(
+    mod.update_character_role(
         "ABC_josé_garcía", "country_leader", ideology="conservatism"
     )
     with pytest.raises(ValueError):
@@ -504,7 +504,7 @@ def test_adding_an_idea_and_a_technology_keeps_the_comments_in_both_blocks(tmp_p
 def test_adding_a_trait_keeps_the_comments_in_the_list(tmp_path: Path) -> None:
     path = _write(tmp_path / "common/characters/ABC.txt", CHARACTERS)
     mod = Mod(tmp_path)
-    assert mod.update_character_role(
+    mod.update_character_role(
         "ABC_rommel", "field_marshal", traits=["armor_officer", "trickster"]
     )
     mod.save(require_changes=True)

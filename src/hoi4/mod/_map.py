@@ -6,11 +6,14 @@ import math
 import re
 import textwrap
 import warnings
+from itertools import pairwise
 from pathlib import Path
 from collections.abc import Callable
 from functools import partial
-from typing import Any, Sequence, TypeVar
+from typing import Any, TypeVar, Unpack
+from collections.abc import Sequence
 
+from ..fields import CreateStateOptions
 from .._disk_cache import DiskAnalysis
 from ..map_editing import (
     BUILDINGS_FILE,
@@ -64,9 +67,11 @@ from ..paths import (
 )
 from ..types import (
     State,
-    ValidationError,
+    ValidationIssue,
 )
+from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._catalogs import CatalogsLayer
+from ._shared import MISSING, _D, _Missing, _check_field_names, _typed_dict_keys
 from ._states import StatesLayer
 from ..textio import read_text
 
@@ -81,6 +86,12 @@ _REGIONS_ON_DISK = DiskAnalysis(
     "strategic_regions", encode_strategic_regions, decode_strategic_regions
 )
 _BUILDINGS_ON_DISK = DiskAnalysis("map_buildings", encode_map_buildings, decode_map_buildings)
+
+
+def _unknown_province(province: int) -> NotFoundError:
+    return NotFoundError(
+        f"Province {province} is not in definition.csv.", kind="province", id=province
+    )
 
 
 class MapLayer(StatesLayer, CatalogsLayer):
@@ -99,12 +110,12 @@ class MapLayer(StatesLayer, CatalogsLayer):
         resources: dict[str, str | int | float] | None = None,
         buildings: str = "",
         impassable: bool = False,
-        localisation_file: str | Path | None = None,
+        loc_path: str | Path | None = None,
         allow_empty_source: bool = False,
         delete_empty_states: bool = False,
         reassign_map_buildings: bool = True,
-    ) -> int:
-        """Queue a new state made of ``provinces`` and return its ID.
+    ) -> State:
+        """Queue a new state made of ``provinces`` and return it.
 
         Provinces leave their current states together with their victory
         points and province-level history buildings. ``owner``/``cores`` left
@@ -112,7 +123,33 @@ class MapLayer(StatesLayer, CatalogsLayer):
         ``name`` is written as ``STATE_<id>`` localisation. Map building
         positions inside moved provinces are reassigned; anything skipped is
         reported through :class:`RuntimeWarning`. Use :meth:`move_provinces`
-        when the full :class:`MapEditReport` is needed.
+        when the full :class:`MapEditReport` is needed. Staged until ``save()``.
+
+        Args:
+            state_category: The category id, such as ``"rural"`` or ``"city"``.
+            manpower: A non-negative whole number.
+            state_id: The new id. Defaults to one above the highest id.
+            resources: Resource amounts by name, such as ``{"steel": 8}``.
+            buildings: Body of the ``buildings`` block in the state history.
+            loc_path: The localisation file for the name.
+            allow_empty_source: Keep a source state that loses every province
+                (reported as a warning) instead of raising.
+            delete_empty_states: Delete such a state instead (reported).
+            reassign_map_buildings: Move building positions inside the moved
+                provinces to the new state.
+
+        Returns:
+            The new state.
+
+        Raises:
+            AlreadyExistsError: ``state_id`` is taken.
+            FileExistsError: The state file the new state needs is on disk.
+            NotFoundError: A province is not on the map (or, without a
+                ``definition.csv``, belongs to no state).
+            ValueError: ``name`` is empty, a value is not valid, no province
+                is given, a province is not a land province, or a source
+                state would be left empty without ``allow_empty_source`` or
+                ``delete_empty_states``.
         """
 
         if not isinstance(name, str) or not name.strip():
@@ -130,7 +167,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
             if isinstance(state_id, bool) or not isinstance(state_id, int) or state_id <= 0:
                 raise ValueError(f"state_id must be a positive integer, got {state_id!r}")
             if state_id in effective_ids:
-                raise ValueError(f"State {state_id} already exists")
+                raise AlreadyExistsError(f"State {state_id} already exists")
             new_id = state_id
         target_path = resolve_mod_output_path(
             self.mod_root,
@@ -182,13 +219,13 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 delete_empty_states=delete_empty_states,
                 reassign_map_buildings=reassign_map_buildings,
             )
-            self.set_loc(f"STATE_{new_id}", name.strip(), file_path=localisation_file)
+            self.set_loc(f"STATE_{new_id}", name.strip(), path=loc_path)
         except Exception:
             self._restore(snapshot)
             raise
         for message in report.warnings:
             warnings.warn(message, RuntimeWarning, stacklevel=2)
-        return new_id
+        return self.get_state(new_id)
 
     def move_provinces(
         self,
@@ -204,6 +241,17 @@ class MapLayer(StatesLayer, CatalogsLayer):
         A source state that would lose every province raises ``ValueError``
         unless ``delete_empty_states=True`` (delete it; reported) or
         ``allow_empty_source=True`` (keep it empty; reported as a warning).
+        A state of the game or a base mod is copied into the mod first.
+        Staged until ``save()``; on an error nothing changes.
+
+        Returns:
+            What moved, what was deleted, and warnings.
+
+        Raises:
+            NotFoundError: ``to_state`` does not exist, or a province is not on
+                the map.
+            ValueError: A province is not a land province, already belongs
+                to ``to_state``, or would leave its state empty (see above).
         """
 
         province_list = self._normalize_province_ids(provinces)
@@ -230,9 +278,24 @@ class MapLayer(StatesLayer, CatalogsLayer):
         state_id: int,
         provinces: Sequence[int],
         /,
-        **create_state_kwargs: Any,
-    ) -> int:
-        """Create a new state from some of ``state_id``'s provinces."""
+        **fields: Unpack[CreateStateOptions],
+    ) -> State:
+        """Create a new state from some of ``state_id``'s provinces and return it.
+
+        ``fields`` are the keyword arguments of ``create_state()`` (``name``
+        is required). Staged until ``save()``.
+
+        Raises:
+            NotFoundError: The state does not exist.
+            ValueError: A province does not belong to the state, or
+                ``create_state()`` refuses the call.
+            AlreadyExistsError: ``create_state()`` refuses the call (a taken
+                ``state_id``).
+        """
+        create_state_kwargs: dict[str, Any] = dict(fields)
+        _check_field_names(
+            "split_state", create_state_kwargs, _typed_dict_keys(CreateStateOptions)
+        )
 
         province_list = self._normalize_province_ids(provinces)
         state = self.get_state(state_id)
@@ -243,8 +306,16 @@ class MapLayer(StatesLayer, CatalogsLayer):
             )
         return self.create_state(province_list, **create_state_kwargs)
 
-    def list_strategic_regions(self) -> list[StrategicRegion]:
-        """Return effective strategic regions (mod files override base files)."""
+    def list_strategic_regions(self) -> list[int]:
+        """Return the sorted ids of the effective strategic regions.
+
+        Mod files override base files; ``get_strategic_region(id)`` returns one.
+        """
+
+        return sorted({region.id for region in self._effective_strategic_regions()})
+
+    def _effective_strategic_regions(self) -> list[StrategicRegion]:
+        """Every effective strategic region, sorted by id and file."""
 
         regions: list[StrategicRegion] = []
         for relative in self._strategic_region_files():
@@ -257,25 +328,54 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 continue
         return sorted(regions, key=lambda region: (region.id, region.path))
 
-    def get_strategic_region(self, region_id: int) -> StrategicRegion:
-        for region in self.list_strategic_regions():
+    def get_strategic_region(
+        self, region_id: int, *, default: _D | _Missing = MISSING
+    ) -> StrategicRegion | _D:
+        """Return the effective strategic region ``region_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No strategic region has this id.
+        """
+        for region in self._effective_strategic_regions():
             if region.id == region_id:
                 return region
-        raise KeyError(f"Strategic region {region_id} not found")
+        if default is not MISSING:
+            return default
+        raise not_found(
+            "strategic region",
+            region_id,
+            self.list_strategic_regions(),
+        )
 
     def move_provinces_to_strategic_region(
         self,
         provinces: Sequence[int],
         region_id: int,
     ) -> StrategicRegion:
-        """Queue moving land or sea provinces into strategic region ``region_id``."""
+        """Queue moving land or sea provinces into strategic region ``region_id``.
+
+        The provinces leave the regions they are in now. Staged until ``save()``.
+
+        Returns:
+            The region with its new provinces.
+
+        Raises:
+            NotFoundError: The region does not exist, or a province is not on
+                the map.
+            ValueError: A province id is not a positive whole number, or none
+                was given.
+        """
 
         province_list = self._normalize_province_ids(provinces)
         self._require_known_provinces(province_list)
-        regions = self.list_strategic_regions()
+        regions = self._effective_strategic_regions()
         target = next((region for region in regions if region.id == region_id), None)
         if target is None:
-            raise KeyError(f"Strategic region {region_id} not found")
+            raise not_found("strategic region", region_id, (region.id for region in regions))
         texts = self._strategic_region_removals(regions, province_list, skip=target)
         additions = [province for province in province_list if province not in target.provinces]
         if additions:
@@ -292,20 +392,35 @@ class MapLayer(StatesLayer, CatalogsLayer):
         *,
         region_id: int | None = None,
         weather: str | None = None,
-        localisation_file: str | Path | None = None,
-    ) -> int:
-        """Queue a new strategic region and return its ID.
+        loc_path: str | Path | None = None,
+    ) -> StrategicRegion:
+        """Queue a new strategic region and return it.
 
         ``weather`` may be a ``weather = { ... }`` assignment or its body. When
         omitted, the weather block of the region currently holding most of the
-        provinces is copied verbatim.
+        provinces is copied verbatim. The provinces leave their current
+        regions, and ``name`` is written as ``STRATEGICREGION_<id>``
+        localisation. Staged until ``save()``.
+
+        Args:
+            region_id: The new id. Defaults to one above the highest id.
+            loc_path: The localisation file for the name.
+
+        Returns:
+            The new region.
+
+        Raises:
+            AlreadyExistsError: ``region_id`` is taken.
+            FileExistsError: The region file the new region needs exists.
+            NotFoundError: A province is not on the map.
+            ValueError: ``name`` is empty, or an id is not a positive whole number.
         """
 
         if not isinstance(name, str) or not name.strip():
             raise ValueError("create_strategic_region() requires a non-empty name")
         province_list = self._normalize_province_ids(provinces)
         self._require_known_provinces(province_list)
-        regions = self.list_strategic_regions()
+        regions = self._effective_strategic_regions()
         existing = {region.id for region in regions}
         if region_id is None:
             new_id = max(existing, default=0) + 1
@@ -313,7 +428,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
             if isinstance(region_id, bool) or not isinstance(region_id, int) or region_id <= 0:
                 raise ValueError(f"region_id must be a positive integer, got {region_id!r}")
             if region_id in existing:
-                raise ValueError(f"Strategic region {region_id} already exists")
+                raise AlreadyExistsError(f"Strategic region {region_id} already exists")
             new_id = region_id
         relative = (
             f"{STRATEGIC_REGIONS_DIR}/{new_id}-"
@@ -348,32 +463,55 @@ class MapLayer(StatesLayer, CatalogsLayer):
         texts[relative] = render_strategic_region(
             new_id, f"STRATEGICREGION_{new_id}", province_list, weather_text
         )
-        self.set_loc(f"STRATEGICREGION_{new_id}", name.strip(), file_path=localisation_file)
+        self.set_loc(f"STRATEGICREGION_{new_id}", name.strip(), path=loc_path)
         for path, text in texts.items():
             self._queue_map_text(path, text)
-        return new_id
+        return self.get_strategic_region(new_id)
 
     def list_supply_nodes(self) -> list[int]:
+        """Return the sorted provinces with a supply node in the effective ``map/supply_nodes.txt``, each once."""
         text = self._map_text(SUPPLY_NODES_FILE)
-        return [] if text is None else [province for _, province in parse_supply_nodes(text)]
+        return [] if text is None else sorted({province for _, province in parse_supply_nodes(text)})
 
-    def add_supply_node(self, province: int) -> None:
-        """Queue a ``map/supply_nodes.txt`` entry for a land province."""
+    def add_supply_node(self, province: int) -> int:
+        """Queue a ``map/supply_nodes.txt`` entry for a land province.
+
+        Returns:
+            The province id of the new supply node.
+
+        Raises:
+            NotFoundError: The province is not in ``definition.csv``.
+            AlreadyExistsError: The province already has a supply node.
+            ValueError: The province is not a land province.
+        """
 
         province = self._require_land_province(province)
         text = self._map_text(SUPPLY_NODES_FILE) or ""
         if any(value == province for _, value in parse_supply_nodes(text)):
-            raise ValueError(f"Province {province} already has a supply node")
+            raise already_exists("supply node", province, hint=f"Province {province} has one.")
         self._queue_map_text(SUPPLY_NODES_FILE, add_supply_node_text(text, province))
+        return province
 
     def remove_supply_node(self, province: int) -> None:
+        """Remove the supply node of ``province``; staged until ``save()``.
+
+        Raises:
+            NotFoundError: The province has no supply node.
+        """
         text = self._map_text(SUPPLY_NODES_FILE)
         updated, removed = remove_supply_node_text(text or "", province)
         if not removed:
-            raise KeyError(f"Province {province} has no supply node")
+            raise NotFoundError(
+                f"Province {province} has no supply node.", kind="supply node", id=province
+            )
         self._queue_map_text(SUPPLY_NODES_FILE, updated)
 
     def list_railways(self) -> list[Railway]:
+        """Return the lines of the effective ``map/railways.txt``, in file order.
+
+        Railways have no ids, so the objects are returned; pass one to
+        ``remove_railway()`` or ``set_railway_level()``.
+        """
         text = self._map_text(RAILWAYS_FILE)
         return [] if text is None else parse_railways(text)[0]
 
@@ -388,7 +526,17 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
         Consecutive provinces must be adjacent when the effective province map
         (and the optional ``map`` extra) is available; otherwise that check is
-        skipped.
+        skipped. Staged until ``save()``.
+
+        Returns:
+            The new line.
+
+        Raises:
+            NotFoundError: A province is not in ``definition.csv``.
+            ValueError: ``level`` is not between 1 and the game's maximum,
+                the route has fewer than two provinces or repeats one, a
+                province is not a land province, or two neighbours in the
+                route are not adjacent.
         """
 
         if isinstance(level, bool) or not isinstance(level, int) or not (
@@ -403,24 +551,32 @@ class MapLayer(StatesLayer, CatalogsLayer):
         if check_adjacency:
             graph = self._optional_land_adjacency()
             if graph is not None:
-                for left, right in zip(route, route[1:]):
+                for left, right in pairwise(route):
                     if right not in graph.get(left, set()):
                         raise ValueError(f"Provinces {left} and {right} are not adjacent")
         text = append_line(self._map_text(RAILWAYS_FILE) or "", render_railway(level, route))
         self._queue_map_text(RAILWAYS_FILE, text)
         return Railway(level=level, provinces=tuple(route), index=len(split_lines(text)) - 1)
 
-    def remove_railway(self, railway: Railway | Sequence[int]) -> int:
+    def remove_railway(self, railway: Railway | Sequence[int]) -> None:
         """Remove railway lines matching a listed ``Railway`` or a province route.
 
-        A route matches in either direction. Returns the number of removed lines.
+        A route matches in either direction.
+
+        Raises:
+            NotFoundError: No railway line matches.
         """
 
         text, matches = self._match_railways(railway)
         self._queue_map_text(RAILWAYS_FILE, remove_lines(text, (item.index for item in matches)))
-        return len(matches)
 
-    def set_railway_level(self, railway: Railway | Sequence[int], level: int) -> int:
+    def set_railway_level(self, railway: Railway | Sequence[int], level: int) -> None:
+        """Set the level of every railway line matching a ``Railway`` or a province route.
+
+        Raises:
+            NotFoundError: No railway line matches.
+            ValueError: ``level`` is not between 1 and the game's maximum.
+        """
         if isinstance(level, bool) or not isinstance(level, int) or not (
             1 <= level <= MAX_RAILWAY_LEVEL
         ):
@@ -429,9 +585,13 @@ class MapLayer(StatesLayer, CatalogsLayer):
         for item in matches:
             text = set_railway_level_text(text, item.index, level)
         self._queue_map_text(RAILWAYS_FILE, text)
-        return len(matches)
 
     def list_map_buildings(self, state_id: int | None = None) -> list[MapBuilding]:
+        """Return the building positions of the effective ``map/buildings.txt``, in file order.
+
+        Positions have no ids, so the objects are returned. ``state_id``
+        keeps only the positions of that state.
+        """
         text = self._map_text(BUILDINGS_FILE)
         if text is None:
             return []
@@ -446,9 +606,26 @@ class MapLayer(StatesLayer, CatalogsLayer):
         y: float,
         z: float,
         rotation: float,
+        *,
         adjacent_sea_province: int = 0,
     ) -> MapBuilding:
-        """Queue a ``map/buildings.txt`` position (``z`` is the north-south axis)."""
+        """Queue a ``map/buildings.txt`` position (``z`` is the north-south axis).
+
+        Coordinates are map pixels, rounded to two decimals; ``rotation`` is
+        in radians. ``adjacent_sea_province`` is the sea province of a naval
+        base (for a floating harbour: its land province); ``0`` for none.
+        Staged until ``save()``.
+
+        Returns:
+            The new position.
+
+        Raises:
+            NotFoundError: The state does not exist, or
+                ``adjacent_sea_province`` is not on the map.
+            ValueError: The building type is not a valid name, a coordinate
+                is not a finite number, or ``adjacent_sea_province`` is not a
+                province of the right kind.
+        """
 
         self.get_state(state_id)
         if not isinstance(building, str) or not re.fullmatch(r"[A-Za-z0-9_]+", building):
@@ -463,7 +640,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         if adjacent_sea_province:
             kind = self._effective_province_types().get(adjacent_sea_province)
             if self._effective_province_types() and kind is None:
-                raise KeyError(f"Province {adjacent_sea_province} is not in definition.csv")
+                raise _unknown_province(adjacent_sea_province)
             # Floating harbors reference their coastal land province instead.
             expected = "land" if building == "floating_harbor" else "sea"
             if kind is not None and kind != expected:
@@ -489,20 +666,30 @@ class MapLayer(StatesLayer, CatalogsLayer):
         building: str | None = None,
         *,
         entries: Sequence[MapBuilding] = (),
-    ) -> int:
-        """Remove building positions by state/type filters or listed entries."""
+    ) -> None:
+        """Remove building positions by state/type filters or listed entries.
+
+        Raises:
+            NotFoundError: The state does not exist, a listed entry is stale,
+                or no building position matches the filters.
+            ValueError: No filter and no entries were given.
+        """
 
         if state_id is None and building is None and not entries:
             raise ValueError("remove_map_buildings() requires state_id, building, or entries")
+        if state_id is not None:
+            self.get_state(state_id)
         text = self._map_text(BUILDINGS_FILE)
         parsed = parse_map_buildings(text or "")[0]
         if entries:
             current = set(parsed)
             stale = [entry for entry in entries if entry not in current]
             if stale:
-                raise KeyError(
+                raise NotFoundError(
                     "Map building entries are stale or missing: "
-                    + ", ".join(f"line {entry.index + 1}" for entry in stale)
+                    + ", ".join(f"line {entry.index + 1}" for entry in stale),
+                    kind="map building",
+                    id=stale[0].index,
                 )
             indices = {entry.index for entry in entries}
         else:
@@ -512,9 +699,19 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 if (state_id is None or entry.state_id == state_id)
                 and (building is None or entry.building == building)
             }
-        if indices and text is not None:
-            self._queue_map_text(BUILDINGS_FILE, remove_lines(text, indices))
-        return len(indices)
+        if not indices or text is None:
+            wanted = " and ".join(
+                part
+                for part in (
+                    f"state {state_id}" if state_id is not None else "",
+                    f"building '{building}'" if building is not None else "",
+                )
+                if part
+            )
+            raise NotFoundError(
+                f"No building position matches {wanted}.", kind="map building", id=building
+            )
+        self._queue_map_text(BUILDINGS_FILE, remove_lines(text, indices))
 
     def _map_result(
         self,
@@ -530,7 +727,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
         if relative in self._map_file_updates:
             return compute(self._map_file_updates[relative])
-        source = self.content_source(relative)
+        source = self.resolve_content_path(relative)
         if source is None or (
             not source.is_relative_to(self.mod_root)
             and self._mod_hides_inherited(Path(relative))
@@ -543,7 +740,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
 
         if relative in self._map_file_updates:
             return self._map_file_updates[relative]
-        source = self.content_source(relative)
+        source = self.resolve_content_path(relative)
         if source is None or (
             not source.is_relative_to(self.mod_root)
             and self._mod_hides_inherited(Path(relative))
@@ -616,8 +813,10 @@ class MapLayer(StatesLayer, CatalogsLayer):
             return
         unknown = [province for province in provinces if province not in types]
         if unknown:
-            raise KeyError(
-                f"Province(s) {', '.join(map(str, unknown))} are not in definition.csv"
+            raise NotFoundError(
+                f"Province(s) {', '.join(map(str, unknown))} are not in definition.csv.",
+                kind="province",
+                id=unknown[0],
             )
 
     def _require_land_province(self, province: int) -> int:
@@ -626,7 +825,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         if types:
             kind = types.get(province)
             if kind is None:
-                raise KeyError(f"Province {province} is not in definition.csv")
+                raise _unknown_province(province)
             if kind != "land":
                 raise ValueError(f"Province {province} is a {kind} province, not land")
         return province
@@ -649,7 +848,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 if item.provinces == route or item.provinces == route[::-1]
             ]
         if text is None or not matches:
-            raise KeyError(f"No railway matches {railway!r}")
+            raise NotFoundError(f"No railway matches {railway!r}.", kind="railway", id=railway)
         return text, matches
 
     def _effective_state_provinces(self) -> tuple[dict[int, tuple[int, ...]], dict[int, str]]:
@@ -685,7 +884,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
         for province in provinces:
             kind = types.get(province)
             if types and kind is None:
-                raise KeyError(f"Province {province} is not in definition.csv")
+                raise _unknown_province(province)
             if kind is not None and kind != "land":
                 raise ValueError(
                     f"Province {province} is a {kind} province; only land provinces belong to states"
@@ -696,9 +895,11 @@ class MapLayer(StatesLayer, CatalogsLayer):
                 if target_id in current:
                     raise ValueError(f"Province {province} already belongs to state {target_id}")
                 if not types:
-                    raise KeyError(
+                    raise NotFoundError(
                         f"Province {province} belongs to no state and no definition.csv "
-                        "is available to confirm it exists"
+                        "is available to confirm it exists.",
+                        kind="province",
+                        id=province,
                     )
             for state_id in sources:
                 plan.setdefault(state_id, []).append(province)
@@ -897,12 +1098,12 @@ class MapLayer(StatesLayer, CatalogsLayer):
             ]
         return []
 
-    def _validate_map_editing(self) -> list[ValidationError]:
+    def _validate_map_editing(self) -> list[ValidationIssue]:
         """Map-geometry reference checks (states, regions, supply, rails, buildings)."""
 
         province_types = self._effective_province_types()
         state_provinces, state_paths = self._effective_state_provinces()
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         region_files = self._strategic_region_files()
         regions: list[StrategicRegion] | None = None
         if region_files:
@@ -920,7 +1121,7 @@ class MapLayer(StatesLayer, CatalogsLayer):
                     regions.extend(found)
                 except ParseError as error:
                     errors.append(
-                        ValidationError(
+                        ValidationIssue(
                             message=f"Could not parse strategic region file {relative}: {error}",
                             severity="error",
                             code="strategic_region_parse_error",

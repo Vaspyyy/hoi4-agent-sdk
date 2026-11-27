@@ -54,7 +54,7 @@ def test_sibling_edit_does_not_duplicate_idea_without_known_keys(tmp_path: Path)
     path = _write(tmp_path, "common/ideas/probe.txt", PROBE)
     mod = Mod(tmp_path)
 
-    assert mod.update_idea("other_spirit", modifier={"stability_factor": 0.2})
+    mod.update_idea("other_spirit", modifier={"stability_factor": 0.2})
 
     assert _render(mod, path) == PROBE.replace("stability_factor = 0.1", "stability_factor = 0.2")
 
@@ -77,7 +77,7 @@ def test_any_category_block_is_an_idea(tmp_path: Path, body: str) -> None:
     mod = Mod(tmp_path)
     assert set(mod.list_ideas()) == {"odd_spirit", "plain"}
 
-    assert mod.update_idea("plain", icon="y")
+    mod.update_idea("plain", icon="y")
     assert _render(mod, path) == text.replace("picture = x", "picture = y")
 
     mod.delete_idea("odd_spirit")

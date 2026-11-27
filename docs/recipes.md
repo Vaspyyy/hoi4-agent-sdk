@@ -2,6 +2,9 @@
 
 Copyable workflows for common modding tasks. Read only the recipe relevant to the current task.
 
+Each recipe starts with its own `mod = Mod(...)`. Later snippets in a recipe
+section reuse that `mod` and the imports above them.
+
 ## Common Recipes
 
 ### Source a Flag Without Paid Generation
@@ -10,6 +13,7 @@ Search first and inspect the returned source page for the intended country,
 date, design, creator, and reuse terms. This example selects a known file to
 demonstrate the API; choose a historically appropriate file for the actual mod.
 
+<!-- doc-test: skip (needs the network) -->
 ```python
 from hoi4 import CommonsImageClient, Mod
 
@@ -49,8 +53,11 @@ files survive `Mod` dry runs; only the imported game assets are transactional.
 ### Create a Complete New Country with Focus Tree
 
 Prepare the referenced local flag and portrait files first. They can be
-reviewed internet/local sources or explicitly requested generated artwork;
-the `assets/candidates/` paths below are illustrative prepared inputs.
+reviewed internet/local sources or explicitly requested generated artwork.
+This recipe reads them from the mod project's `assets/candidates/` folder:
+`ZAR_flag.png`, `ZAR_leader_1.png`, `ZAR_advisor_1.png`,
+`ZAR_advisor_1_small.png`, `ZAR_advisor_2.png`, `ZAR_advisor_2_small.png`,
+`ZAR_commander_1.png` and `ZAR_commander_2.png`.
 
 ```python
 from pathlib import Path
@@ -66,7 +73,7 @@ candidate_dir = root / "assets" / "candidates"
 mod = Mod(root, hoi4_install="/path/to/Hearts of Iron IV")
 
 mod.create_country("ZAR", "Zarland", adjective="Zarlandian",
-                   color=(200, 50, 50), capital=100,
+                   color=(200, 50, 50), capital=100,  # state 100 is Iceland
                    leader_name="General Zar", leader_ideology="despotism",
                    technologies={
                        "early_ship_hull_light": 1,
@@ -139,7 +146,7 @@ mod.create_oob(
     )],
     divisions=[DivisionUnit(
         "Zar Infantry",
-        location=1234,  # land province in owned state 100
+        location=4861,  # land province in owned state 100
         name="1st Zar Division",
         start_equipment_factor=1.0,
     )],
@@ -162,10 +169,10 @@ mod.create_oob(
     required_dlc=("Man the Guns",),
     fleets=[Fleet(
         name="Zar Navy",
-        naval_base=1234,
+        naval_base=4861,
         task_forces=[TaskForce(
             name="Zar Squadron",
-            location=1234,
+            location=4861,
             ships=[Ship(
                 name="ZNS Independence",
                 definition="destroyer",
@@ -186,10 +193,10 @@ mod.create_oob(
     excluded_dlc=("Man the Guns",),
     fleets=[Fleet(
         name="Zar Navy",
-        naval_base=1234,
+        naval_base=4861,
         task_forces=[TaskForce(
             name="Zar Squadron",
-            location=1234,
+            location=4861,
             ships=[Ship(
                 name="ZNS Independence",
                 definition="destroyer",
@@ -241,7 +248,7 @@ mod.add_focus("zar_focus", Focus(id="ZAR_militarize", x=5, y=0, cost=10,
     completion_reward="army_experience = 25"))
 mod.add_focus("zar_focus", Focus(id="ZAR_conquer", x=5, y=1, cost=10,
     prerequisites=[["ZAR_militarize"]],
-    completion_reward="create_wargoal = { type = annex_everything target = NEI }"))
+    completion_reward="create_wargoal = { type = annex_everything target = DEN }"))
 
 package = mod.validate_country_package("ZAR")
 assert package.complete, package.to_dict()
@@ -270,10 +277,12 @@ fails as `missing_country_activation`.
 ### Modify Vanilla State Ownership
 
 ```python
-mod = Mod("/path/to/my_mod", hoi4_install="/opt/steam/hoi4")
+from hoi4 import Mod
 
-mod.set_state_owner(52, "GER")
-mod.set_state_properties(52, cores=["GER", "AUT"])
+mod = Mod("/path/to/my_mod", hoi4_install="/path/to/Hearts of Iron IV")
+
+mod.set_state_owner(4, "GER")                      # 4 is Austria
+mod.update_state(4, add_cores=["GER", "BAY"])
 
 print(mod.preview())
 mod.save()
@@ -303,6 +312,8 @@ Idea `icon=` values are bare `picture` stems. HOI4 resolves
 ### Create Event Chain
 
 ```python
+from hoi4 import EventOption, Mod
+
 mod = Mod("/path/to/my_mod")
 
 mod.create_event("rebellion.1",
@@ -340,10 +351,10 @@ mod.save()
 ### Batch State Transfer Between Countries
 
 ```python
-mod = Mod("/path/to/my_mod", hoi4_install="/opt/steam/hoi4")
+mod = Mod("/path/to/my_mod", hoi4_install="/path/to/Hearts of Iron IV")
 
 states_to_transfer = [1, 2, 3, 4, 5, 6]
-mod.batch_set_owner(states_to_transfer, "SOV", add_core=True)
+mod.set_state_owner(states_to_transfer, "SOV", add_core=True)
 
 print(mod.preview())
 mod.save()
@@ -351,9 +362,16 @@ mod.save()
 
 ### Read Existing Mod Data and Add Focus
 
-```python
-mod = Mod("/path/to/my_mod")
+A focus tree the game ships is not visible to the lookups until its file is
+copied into the mod with `load_inherited_content()`. The copy is staged: it is
+written by `save()`, with every other tree and focus of that file.
 
+```python
+from hoi4 import Focus, Mod
+
+mod = Mod("/path/to/my_mod", hoi4_install="/path/to/Hearts of Iron IV")
+
+mod.load_inherited_content("common/national_focus/germany.txt")
 tree = mod.get_focus_tree("german_focus")
 existing = mod.get_focus("german_focus", "GER_anschluss")
 
@@ -368,9 +386,11 @@ mod.add_focus("german_focus", Focus(
         transfer_state = 52
     """,
 ))
-mod.set_loc("GER_super_focus", "Total German Domination")
+mod.set_focus_loc("GER_super_focus", "Total German Domination", "Germany above all.")
 
 errors = mod.validate()
+if any(error.severity == "error" for error in errors):
+    raise RuntimeError(errors)
 print(mod.preview())
 mod.save()
 ```
@@ -380,105 +400,116 @@ mod.save()
 Prefer patch-style helpers over manual tree rewrites when modifying existing vanilla-style focus trees:
 
 ```python
+from hoi4 import effects
+
+mod.ensure_focus_tree("lux_focus", "LUX")
+mod.ensure_focus("lux_focus", Focus(id="LUX_industry_anchor", x=2, y=0))
 branch = [
     Focus(id="LUX_modernize_transport_links", x=0, y=1,
           icon="GFX_goal_generic_construct_infrastructure",
-          completion_reward=Mod.effect_add_infrastructure(8, 1)),
+          completion_reward=effects.add_infrastructure(8, 1)),
     Focus(id="LUX_support_domestic_steel", x=0, y=1,
           icon="GFX_goal_generic_production",
           completion_reward="\n".join([
-              Mod.effect_add_civilian_factory(8, 1),
-              Mod.effect_add_industry_bonus("LUX_steel_bonus", uses=1),
+              effects.add_civilian_factory(8, 1),
+              effects.add_industry_bonus("LUX_steel_bonus", uses=1),
           ])),
 ]
 
-mod.insert_branch("lux_focus", "LUX_existing_industry_anchor", branch)
+mod.insert_branch("lux_focus", "LUX_industry_anchor", branch)
 for focus in branch:
     mod.set_focus_loc(focus.id, "Readable Name", "Readable description.")
 ```
 
-For a quick grounded industrial branch:
+For a quick grounded industrial branch (it is an alternative to the branch
+above: it adds focuses with fixed ids such as `LUX_modernize_transport_links`,
+so a tree that has them already raises `AlreadyExistsError`):
 
 ```python
-mod.create_industrial_branch("lux_focus", "LUX", anchor_focus_id="LUX_existing_anchor")
+mod.ensure_focus_tree("lux_quick_focus", "LUX")
+mod.ensure_focus("lux_quick_focus", Focus(id="LUX_economy_anchor", x=6, y=0))
+mod.create_industrial_branch("lux_quick_focus", "LUX", anchor_focus_id="LUX_economy_anchor")
 ```
 
-Use `get_country_context("LUX")` before generating content. It returns country basics, owned/core states, matching ideas/advisors/designers, localization, and matching focus trees from the mod and vanilla install. By default it is read-only. `get_state()` and validation also read vanilla fallback states without copying them. Use `get_country_context("LUX", copy_states=True)` or `ensure_country_states_in_mod("LUX")` to queue state overrides, review them with `preview()`, and persist them with `save()` before direct state-file work.
+Use `get_country_context("LUX")` before generating content. It returns country basics, owned/core states, matching ideas/advisors/designers, localization, and matching focus trees from the mod and vanilla install. By default it is read-only. `get_state()` and validation also read vanilla fallback states without copying them. Use `get_country_context("LUX", copy_states=True)` or `copy_country_states_to_mod("LUX")` to queue state overrides, review them with `preview()`, and persist them with `save()` before direct state-file work.
 
 Effect builders:
 
 ```python
-Mod.effect_add_civilian_factory(8, 1)
-Mod.effect_add_military_factory(8, 1)
-Mod.effect_add_infrastructure(8, 1)
-Mod.effect_add_bunker(8, 3)
-Mod.effect_add_state_building(8, "bunker", level=3, province=1234)
-Mod.effect_transfer_state_with_core(8, "LUX")
-Mod.effect_transfer_state(8, "LUX")
-Mod.effect_add_state_core(8, "LUX")
-Mod.effect_remove_state_core(8, "GER")
-Mod.effect_add_political_power(100)
-Mod.effect_add_war_support(0.1)
-Mod.effect_add_stability(0.05)
-Mod.effect_add_manpower(15000)
-Mod.effect_add_equipment("infantry_equipment_0", 1000, producer="GER")
-Mod.effect_set_technology("infantry_weapons", 1, popup=False)
-Mod.effect_add_industry_bonus("LUX_industry_bonus", uses=1, bonus=0.5)
-Mod.effect_add_tech_bonus("LUX_rifle_bonus", category="infantry_weapons", uses=1, bonus=0.5)
-Mod.effect_add_timed_idea("LUX_recovery_spirit", days=365)
-Mod.effect_create_wargoal("GER")
-Mod.effect_declare_war("GER")
-Mod.effect_declare_war_from("LUX", "GER")
-Mod.effect_start_civil_war("fascism", size=0.4, capital=8)
-Mod.effect_load_focus_tree("TAG_focus")
-Mod.effect_spawn_civil_war_with_focus_tree("communism", "TAG_rebel_focus", capital=8)
-Mod.effect_release("SLV")
-Mod.effect_release_puppet("SLV")
-Mod.effect_end_puppet("SLV", "YUG")
-Mod.effect_set_autonomy("SLV", "autonomy_free")
-Mod.effect_convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
-Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)
-Mod.scope_block("LUX", Mod.effect_declare_war("GER"))
-Mod.effect_block("declare_war_on", {"type": "annex_everything", "target": "GER"})
+effects.add_civilian_factory(8, 1)
+effects.add_military_factory(8, 1)
+effects.add_infrastructure(8, 1)
+effects.add_bunker(8, 3)
+effects.add_state_building(8, "bunker", level=3, province=6583)
+effects.transfer_state_with_core(8, "LUX")
+effects.transfer_state(8, "LUX")
+effects.add_state_core(8, "LUX")
+effects.remove_state_core(8, "GER")
+effects.add_political_power(100)
+effects.add_war_support(0.1)
+effects.add_stability(0.05)
+effects.add_manpower(15000)
+effects.add_equipment("infantry_equipment_0", 1000, producer="GER")
+effects.set_technology("infantry_weapons", 1, popup=False)
+effects.add_industry_bonus("LUX_industry_bonus", uses=1, bonus=0.5)
+effects.add_tech_bonus("LUX_rifle_bonus", category="infantry_weapons", uses=1, bonus=0.5)
+effects.add_timed_idea("LUX_recovery_spirit", days=365)
+effects.create_wargoal("GER")
+effects.declare_war("GER")
+effects.declare_war_from("LUX", "GER")
+effects.start_civil_war("fascism", size=0.4, capital=8)
+effects.load_focus_tree("TAG_focus")
+effects.spawn_civil_war_with_focus_tree("communism", "TAG_rebel_focus", capital=8)
+effects.release("SLV")
+effects.release_puppet("SLV")
+effects.end_puppet("SLV", "YUG")
+effects.set_autonomy("SLV", "autonomy_free")
+effects.convert_puppet_to_ally("SLV", "YUG", faction_leader="AUS")
+effects.convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)
+effects.scope_block("LUX", effects.declare_war("GER"))
+effects.block("declare_war_on", {"type": "annex_everything", "target": "GER"})
 mod.validate_effect("LUX = { declare_war_on = { target = GER } }")
 ```
 
-`set_state_owner()` modifies state history files before game start. In event, decision, and focus effects, use `transfer_state`, preferably through `Mod.effect_transfer_state(...)`; `set_owner = ...` is not a runtime effect.
+`set_state_owner()` modifies state history files before game start. In event, decision, and focus effects, use `transfer_state`, preferably through `effects.transfer_state(...)`; `set_owner = ...` is not a runtime effect.
 
 ### Small Country Focus Tree Template
 
 Small countries usually play better with short setup focuses, visible branch choices, and concrete rewards. Avoid a single long 70-day line.
 
-```python
-tree = mod.ensure_focus_tree("tag_focus", "TAG")
+This template builds a tree for Luxembourg (`LUX`, state 8); put your own tag
+and states in.
 
-root = Focus(id="TAG_assess_the_state", x=5, y=0, cost=5,
+```python
+tree = mod.ensure_focus_tree("lux_small_focus", "LUX")
+
+root = Focus(id="LUX_assess_the_state", x=5, y=0, cost=5,
              icon="GFX_goal_generic_political_pressure",
-             completion_reward=Mod.effect_add_political_power(50))
-industry = Focus(id="TAG_expand_workshops", x=3, y=1, cost=5,
-                 requires="TAG_assess_the_state",
+             completion_reward=effects.add_political_power(50))
+industry = Focus(id="LUX_expand_workshops", x=3, y=1, cost=5,
+                 requires="LUX_assess_the_state",
                  icon="GFX_goal_generic_construct_civ_factory",
-                 completion_reward=Mod.effect_add_civilian_factory(123, 1))
-army = Focus(id="TAG_arm_the_militia", x=7, y=1, cost=5,
-             requires="TAG_assess_the_state",
+                 completion_reward=effects.add_civilian_factory(8, 1))
+army = Focus(id="LUX_arm_the_militia", x=7, y=1, cost=5,
+             requires="LUX_assess_the_state",
              icon="GFX_goal_generic_small_arms",
              completion_reward="\n".join([
-                 Mod.effect_add_army_experience(15),
-                 Mod.effect_add_equipment("infantry_equipment_0", 500),
+                 effects.add_army_experience(15),
+                 effects.add_equipment("infantry_equipment_0", 500),
              ]))
-foreign_a = Focus(id="TAG_seek_neighbor_support", x=4, y=2, cost=10,
-                  requires="TAG_expand_workshops",
-                  completion_reward=Mod.effect_add_target_to_faction("ALLY", "TAG"))
-foreign_b = Focus(id="TAG_stay_independent", x=6, y=2, cost=10,
-                  requires="TAG_arm_the_militia",
-                  completion_reward=Mod.effect_add_war_support(0.05))
+foreign_a = Focus(id="LUX_seek_neighbor_support", x=4, y=2, cost=10,
+                  requires="LUX_expand_workshops",
+                  completion_reward=effects.add_target_to_faction("FRA", "LUX"))
+foreign_b = Focus(id="LUX_stay_independent", x=6, y=2, cost=10,
+                  requires="LUX_arm_the_militia",
+                  completion_reward=effects.add_war_support(0.05))
 
 for focus in [root, industry, army, foreign_a, foreign_b]:
-    mod.upsert_focus("tag_focus", focus)
+    mod.ensure_focus("lux_small_focus", focus)
 
-mod.set_focuses_mutually_exclusive("tag_focus", "TAG_seek_neighbor_support", "TAG_stay_independent")
-mod.place_continuous_focus_below_tree("tag_focus", padding=400)
-mod.assert_no_visual_overlap("tag_focus")
+mod.set_focuses_mutually_exclusive("lux_small_focus", "LUX_seek_neighbor_support", "LUX_stay_independent")
+mod.place_continuous_focus_below_tree("lux_small_focus", padding=400)
+mod.assert_no_visual_overlap("lux_small_focus")
 ```
 
 Use varied icons, 35-day setup focuses (`cost=5`), at least one meaningful branch choice, and rewards that change gameplay. Always add localization for every focus.
@@ -488,13 +519,15 @@ Use varied icons, 35-day setup focuses (`cost=5`), at least one meaningful branc
 Dynamic civil-war countries often do not match normal focus tree selectors. Pair the civil war effect with a runtime tree load:
 
 ```python
-reward = Mod.effect_spawn_civil_war_with_focus_tree(
+mod.ensure_focus_tree("aus_revolt_focus", "AUS")
+mod.ensure_focus("aus_revolt_focus", Focus(id="AUS_arm_the_cells", x=0, y=0))
+reward = effects.spawn_civil_war_with_focus_tree(
     "communism",
     "FB_AUS_focus",
     size=0.4,
     capital=4,
 )
-mod.append_to_focus_reward("AUS_focus", "AUS_arm_the_cells", reward)
+mod.append_to_focus_reward("aus_revolt_focus", "AUS_arm_the_cells", reward)
 ```
 
 The helper nests `load_focus_tree` inside `start_civil_war`. HOI4 executes
@@ -504,7 +537,7 @@ guessed `D01`-style dynamic tag is needed.
 If a revolt tag may already exist, use the existing-or-spawn helper instead of assuming the tag is unreleased:
 
 ```python
-effect = Mod.effect_convert_existing_or_spawn_revolt(
+effect = effects.convert_existing_or_spawn_revolt(
     "SLV",
     [102, 103],
     overlord="YUG",
@@ -520,10 +553,11 @@ mod.create_event("slv.10", is_triggered_only=True,
 Use `create_decision_chain()` for staged revolt/campaign decisions instead of hand-writing flags:
 
 ```python
+mod.create_decision_category("slv_revolt")
 mod.create_decision_chain("slv_revolt", [
     {"id": "SLV_organize_cells", "complete_effect": "add_political_power = 25", "event": "slv.1"},
     {"id": "SLV_launch_revolt",
-     "complete_effect": Mod.effect_convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
+     "complete_effect": effects.convert_existing_or_spawn_revolt("SLV", [102], overlord="YUG", manpower=5000)},
 ], final_event="slv.99")
 ```
 
@@ -533,7 +567,7 @@ For live-save migrations, create a visible repair decision or a hidden one trigg
 mod.create_recovery_decision(
     "slv_revolt",
     "SLV_repair_focus_tree",
-    effect=Mod.effect_load_focus_tree("SLV_focus"),
+    effect=effects.load_focus_tree("SLV_focus"),
     hidden=True,
     loc_name="Repair Slovenia Revolt",
 )

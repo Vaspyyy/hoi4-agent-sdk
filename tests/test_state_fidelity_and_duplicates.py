@@ -54,7 +54,7 @@ def test_manpower_edit_changes_only_manpower_and_preserves_history(tmp_path: Pat
     )
     mod = Mod(tmp_path)
 
-    mod.set_state_properties(52, manpower="11")
+    mod.update_state(52, manpower="11")
     assert mod.preview().count("victory_points") == 0
     mod.save(require_changes=True)
 
@@ -231,7 +231,7 @@ def test_duplicate_ids_retain_both_sources_and_validate(
 def test_strict_loading_rejects_duplicate_ids(tmp_path: Path, section: str) -> None:
     _make_duplicate(tmp_path, section)
 
-    with pytest.raises(RuntimeError, match="Duplicate .* ID"):
+    with pytest.raises(RuntimeError, match=r"Duplicate .* ID"):
         Mod(tmp_path, strict_loading=True)
 
 
@@ -254,12 +254,12 @@ def test_repeated_decision_category_with_unique_decisions_is_not_a_duplicate(
 
     # Each decision is edited in the file that holds it; the other file of the
     # shared category is left alone.
-    assert mod.update_decision("second_decision", cost=4)
+    mod.update_decision("second_decision", cost=4)
     preview = mod.preview()
     assert "b.txt" in preview
     assert "a.txt" not in preview
 
-    assert mod.update_decision("first_decision", cost=3)
+    mod.update_decision("first_decision", cost=3)
     mod.save()
     assert (tmp_path / "common/decisions/a.txt").read_text(encoding="utf-8") == (
         "shared_category = { first_decision = { cost = 3 } }\n"

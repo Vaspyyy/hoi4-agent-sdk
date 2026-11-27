@@ -1,0 +1,13 @@
+state = {
+	id = 4
+	name = "STATE_4"
+	manpower = 100000
+	state_category = town
+	history = {
+		owner = AUS
+		add_core_of = AUS
+		add_core_of = GER
+		victory_points = { 704 1 }
+	}
+	provinces = { 704 732 }
+}

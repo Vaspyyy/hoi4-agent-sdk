@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 from ..countries import (
     country_file_paths,
@@ -33,7 +33,9 @@ from ..textio import read_text
 from ..types import (
     Country,
 )
+from ..errors import not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 
 
 def _normalize_name_token(name: str) -> str:
@@ -46,13 +48,25 @@ class CountriesLayer(CoreLayer):
     # ── Countries ────────────────────────────────────────────────
 
     def list_countries(self) -> list[str]:
+        """Return the sorted tags of the countries loaded so far.
+
+        That is every country the mod defines, plus each game or base-mod
+        country a lookup has loaded; use ``is_country_tag_available()`` to
+        ask about a tag.
+        """
         return sorted(self._countries.keys())
 
     def is_country_tag_available(self, tag: str) -> bool:
+        """Whether no one (the mod, a base mod or the game) defines ``tag`` yet."""
         tag = tag.upper()
         return tag not in self._countries and tag not in self._vanilla_tags
 
     def country_tag_conflicts(self, tag: str) -> list[str]:
+        """Describe who already defines ``tag``, one line each; empty when it is free.
+
+        The lines read ``"mod: ABC (Name)"`` and ``"vanilla: ABC (Name)"``;
+        ``vanilla`` covers the game and the base mods.
+        """
         tag = tag.upper()
         conflicts: list[str] = []
         if tag in self._countries:
@@ -71,13 +85,13 @@ class CountriesLayer(CoreLayer):
             conflicts.append(f"vanilla: {tag} ({label})")
         return conflicts
 
-    def suggest_tag(self, name: str) -> str:
-        suggestions = self.suggest_tags(name, count=1)
-        if not suggestions:
-            raise ValueError("No available 3-character country tags remain")
-        return suggestions[0]
+    def suggest_tags(self, name: str, *, count: int = 5) -> list[str]:
+        """Suggest ``count`` free three-letter country tags built from the letters of ``name``.
 
-    def suggest_tags(self, name: str, count: int = 5) -> list[str]:
+        The first ones come from ``name`` itself (its first letters, its
+        consonants and similar); the rest start with its first letter. No
+        suggestion is defined by the mod, a base mod or the game.
+        """
         taken = set(self._countries) | self._vanilla_tags
         token = _normalize_name_token(name)
         candidates: list[str] = []
@@ -114,10 +128,27 @@ class CountriesLayer(CoreLayer):
                         return candidates[:count]
         return candidates[:count]
 
-    def get_country(self, tag: str) -> Country:
+    def get_country(self, tag: str, *, default: _D | _Missing = MISSING) -> Country | _D:
+        """Return the country ``tag`` of the mod, a base mod or the game.
+
+        A country of the game or a base mod is read on first use. A tag that
+        no one defines is never invented.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when no one
+                defines ``tag``.
+
+        Raises:
+            NotFoundError: No one defines ``tag`` and no default was given.
+            ValueError: ``tag`` is not a valid tag.
+        """
         tag = require_country_tag(tag)
         if tag in self._countries:
             return self._countries[tag]
+        if not self._is_known_country_tag(tag):
+            if default is not MISSING:
+                return default
+            raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
         country = read_country(
             self.mod_root,
             tag,
@@ -146,9 +177,14 @@ class CountriesLayer(CoreLayer):
         female_names: Sequence[str] = (),
         callsigns: Sequence[str] = (),
     ) -> None:
-        """Define random character and ace names for one country tag."""
+        """Define random character and ace names for one country tag.
 
-        tag = require_country_tag(tag)
+        Raises:
+            NotFoundError: A game install is configured and no one defines ``tag``.
+            ValueError: ``tag`` is invalid, or a required list is empty.
+        """
+
+        tag = self._require_country_reference(tag)
 
         def values(items: Sequence[str], *, required: bool, label: str) -> str:
             normalized = tuple(
@@ -294,20 +330,6 @@ class CountriesLayer(CoreLayer):
             setattr(country, field_name, target)
             self._original_files.setdefault(target, self._read_noted_text(target))
 
-    @staticmethod
-    def default_leader_ideology(ruling_party: str) -> str:
-        return LEADER_IDEOLOGIES_BY_PARTY.get(
-            ruling_party, LEADER_IDEOLOGIES_BY_PARTY["democratic"]
-        )[0]
-
-    @staticmethod
-    def leader_ideologies_for_party(ruling_party: str) -> tuple[str, ...]:
-        return LEADER_IDEOLOGIES_BY_PARTY.get(ruling_party, ())
-
-    @staticmethod
-    def ruling_parties() -> tuple[str, ...]:
-        return RULING_PARTIES
-
     def available_ruling_parties(self, *, include_vanilla: bool = True) -> tuple[str, ...]:
         """Return ideology groups available to this mod, including custom groups."""
 
@@ -326,13 +348,52 @@ class CountriesLayer(CoreLayer):
             ideology = self._vanilla_ideologies.get(ruling_party)
         if ideology is not None:
             return tuple(subtype.name for subtype in ideology.types)
-        return self.leader_ideologies_for_party(ruling_party)
+        return LEADER_IDEOLOGIES_BY_PARTY.get(ruling_party, ())
 
     def _default_leader_ideology_for_party(self, ruling_party: str) -> str:
         available = self.available_leader_ideologies(ruling_party)
         if available:
             return available[0]
-        return self.default_leader_ideology(ruling_party)
+        # An unknown party falls back to the first democratic subtype;
+        # validate() reports the unknown party.
+        return LEADER_IDEOLOGIES_BY_PARTY["democratic"][0]
+
+    def _country_tag_candidates(self) -> set[str]:
+        """Every tag the mod, a base mod or the game defines."""
+        tags = set(self._countries) | set(self._vanilla_tags)
+        for mapping in self._country_tag_mappings.values():
+            tags.update(mapping)
+        return tags
+
+    def _require_known_country(self, tag: str) -> str:
+        """Return the normalized tag, or raise ``NotFoundError`` if no one defines it."""
+        tag = require_country_tag(tag)
+        if not self._is_known_country_tag(tag):
+            raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
+        return tag
+
+    def _require_country_reference(self, tag: str) -> str:
+        """Return the normalized tag of a country that a new object refers to.
+
+        Raises ``NotFoundError`` when the SDK knows no one defines it: the
+        mod, a base mod and the configured game do not. Without a configured
+        game install (or one without a country tag list) the tag may be the
+        game's, so it is accepted and ``validate()`` checks it.
+        """
+        tag = require_country_tag(tag)
+        if (
+            self.hoi4_install is not None
+            and self._vanilla_tags
+            and not self._is_known_country_tag(tag)
+        ):
+            raise not_found(
+                "country",
+                tag,
+                self._country_tag_candidates(),
+                plural="countries",
+                hint="Create it with create_country() first.",
+            )
+        return tag
 
     def _is_known_country_tag(self, tag: str) -> bool:
         return (

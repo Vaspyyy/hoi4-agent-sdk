@@ -32,10 +32,16 @@ is built on it:
 ## `hoi4.textio`: byte-exact files
 
 ```python
-from hoi4.textio import read_text, decode_text, encode_text, detect_format, write_text
+from pathlib import Path
 
+from hoi4.textio import decode_text, detect_format, encode_text, read_text, write_text
+
+path = Path("/path/to/my_mod/descriptor.mod")
+original = path.read_bytes()
 text = read_text(path)                    # "\n" line endings, no BOM, nothing dropped
-data = encode_text(new_text, like=path.read_bytes())
+assert decode_text(original) == text
+new_text = text + 'tags = { "Alternative History" }\n'
+data = encode_text(new_text, like=original)
 detect_format(data)                       # TextFormat(encoding, bom, newline, mixed_newlines, stray_bytes)
 write_text(path, new_text, like=original) # encode_text, then write; returns the bytes
 ```
@@ -83,9 +89,10 @@ mod, the new file copies the format of the file it shadows.
 ```python
 from hoi4.syntax import parse
 
+text = "focus_tree = {\n\tid = my_tree\n\tfocus = { id = TAG_start x = 1 y = 0 }\n}\n"
 doc = parse(text)            # never raises
 for item in doc.root.items:  # Assignment | Scalar | Block | Tagged, in source order
-    ...
+    print(type(item).__name__)
 focus = doc.root.block("focus_tree").first("focus")
 focus.start, focus.end       # exact offsets into text
 focus.block.scalar("id")     # value of the first `id = ...`
@@ -177,8 +184,10 @@ The loading policy built on this:
 ## `hoi4.patching`: change one statement
 
 ```python
-from hoi4.patching import top_level_assignments, set_scalar, set_block, sync_body
+from hoi4.patching import set_block, set_scalar, top_level_assignments
 
+text = "id = TAG_start\ncost = 10 # weeks\ncompletion_reward = { add_stability = 0.05 }\n"
+body = text
 text = set_scalar(text, "cost", "7.2")           # only the value span changes
 text = set_block(text, "completion_reward", "add_political_power = 50")
 for span in top_level_assignments(body):         # AssignmentSpan, depth zero

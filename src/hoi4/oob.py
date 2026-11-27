@@ -8,7 +8,8 @@ import textwrap
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Callable, Literal, Sequence, TypeVar
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, Protocol, TypeVar
 
 from .patching import (
     AssignmentSpan,
@@ -23,9 +24,16 @@ from .patching import (
 from .script import pdx_string, pdx_value
 from .syntax import as_scalar, parse, require_entry, require_key
 from .textio import read_text
-from .types import ValidationError
+from .types import ValidationIssue
 
-_T = TypeVar("_T")
+class _SourceBlock(Protocol):
+    """A model item that remembers the script block it was read from."""
+
+    source_index: int
+    raw_block: str
+
+
+_T = TypeVar("_T", bound=_SourceBlock)
 AssignedOOBKind = Literal["land", "naval", "air"]
 OOBKind = Literal["land", "naval", "air", "mixed"]
 _OOB_ASSIGNMENT_KEYS: dict[str, AssignedOOBKind] = {
@@ -70,6 +78,8 @@ class EquipmentVariant:
 
 @dataclass(frozen=True)
 class Battalion:
+    """One battalion or support company of a division template, at grid cell ``x``, ``y``."""
+
     unit_type: str
     x: int
     y: int
@@ -102,6 +112,11 @@ class _SourceItem:
 
 @dataclass
 class DivisionTemplate(_SourceItem):
+    """A ``division_template``: its name, battalions and support companies.
+
+    ``raw_block``, ``touched_fields`` and ``source_index`` are bookkeeping.
+    """
+
     name: str
     battalions: list[Battalion] = field(default_factory=list)
     support: list[Battalion] = field(default_factory=list)
@@ -116,6 +131,12 @@ class DivisionTemplate(_SourceItem):
 
 @dataclass
 class DivisionUnit(_SourceItem):
+    """One division at the start: its template name, the province it stands in, and its state.
+
+    The factors are fractions from 0 to 1. ``raw_block``,
+    ``touched_fields`` and ``source_index`` are bookkeeping.
+    """
+
     division_template: str
     location: int
     name: str = ""
@@ -131,6 +152,8 @@ class DivisionUnit(_SourceItem):
 
 @dataclass
 class ShipEquipment(_SourceItem):
+    """The hull of a ship: equipment type, amount, owner and the variant name (``version_name``)."""
+
     equipment_type: str
     amount: int = 1
     owner: str = ""
@@ -145,6 +168,8 @@ class ShipEquipment(_SourceItem):
 
 @dataclass
 class Ship(_SourceItem):
+    """One ship of a task force: name, ship definition (``ship``, ``submarine`` ...) and equipment."""
+
     name: str
     definition: str
     equipment: list[ShipEquipment] = field(default_factory=list)
@@ -158,6 +183,8 @@ class Ship(_SourceItem):
 
 @dataclass
 class TaskForce(_SourceItem):
+    """A task force of a fleet, starting in province ``location``, with its ships."""
+
     name: str
     location: int
     ships: list[Ship] = field(default_factory=list)
@@ -170,6 +197,8 @@ class TaskForce(_SourceItem):
 
 @dataclass
 class Fleet(_SourceItem):
+    """A fleet: its home naval base province and its task forces."""
+
     name: str
     naval_base: int
     task_forces: list[TaskForce] = field(default_factory=list)
@@ -182,6 +211,8 @@ class Fleet(_SourceItem):
 
 @dataclass
 class AirWing(_SourceItem):
+    """Planes of one equipment type based in state ``location`` (an air base state)."""
+
     location: int
     equipment_type: str
     amount: int
@@ -198,6 +229,12 @@ class AirWing(_SourceItem):
 
 @dataclass
 class OrderOfBattle:
+    """An order of battle file (``history/units``): land, naval or air content of one country.
+
+    ``required_dlc`` and ``excluded_dlc`` gate the country's assignment of
+    it. ``path``, ``raw_text`` and ``touched_fields`` are bookkeeping.
+    """
+
     name: str
     country_tag: str = ""
     templates: list[DivisionTemplate] = field(default_factory=list)
@@ -583,7 +620,11 @@ def serialize_oob(oob: OrderOfBattle) -> str:
             parts.append(f"units = {{\n{units_body}\n}}")
         if oob.air_wings:
             parts.append(_serialize_air_wings(oob.air_wings))
-        return "\n\n".join(parts) + ("\n" if parts else "")
+        if not parts:
+            # An order of battle without content is still a file: a country
+            # that is assigned it must find it.
+            return "units = {\n}\n"
+        return "\n\n".join(parts) + "\n"
     if not oob.touched_fields:
         return text
     if "templates" in oob.touched_fields:
@@ -671,7 +712,7 @@ def validate_oob(
     oob: OrderOfBattle,
     *,
     known_templates: set[str] | None = None,
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Check one OOB file on its own.
 
     ``known_templates`` names division templates defined outside this file
@@ -680,7 +721,7 @@ def validate_oob(
     use a template of this file.
     """
 
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     inferred_kind = _infer_oob_kind(
         oob.templates,
         oob.divisions,
@@ -1395,7 +1436,7 @@ def _source_owners(
 
     named: dict[int, list[_T]] = {}
     for item in items:
-        index: int = getattr(item, "source_index")
+        index: int = item.source_index
         if index >= 0:
             named.setdefault(index, []).append(item)
     owners: dict[int, _T] = {}
@@ -1406,7 +1447,7 @@ def _source_owners(
                 group,
                 key=lambda item: (
                     getattr(item, "_copy_depth", 0),
-                    _changed_lines(getattr(item, "raw_block"), patch, item),
+                    _changed_lines(item.raw_block, patch, item),
                 ),
             )
         owners[index] = owner
@@ -1895,8 +1936,8 @@ def _issue(
     code: str,
     *,
     severity: str = "error",
-) -> ValidationError:
-    return ValidationError(
+) -> ValidationIssue:
+    return ValidationIssue(
         message=f"OOB '{oob.name}': {message}",
         severity=severity,
         code=code,

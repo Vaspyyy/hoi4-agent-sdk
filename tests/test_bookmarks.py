@@ -226,7 +226,7 @@ def test_lua_date_patch_appends_when_assignments_are_only_commented() -> None:
 
 @pytest.mark.parametrize("expression", ["get_date()", '"1936.1.1.12" .. suffix', "[=[1936.1.1.12]=]"])
 def test_lua_date_patch_rejects_computed_or_unsupported_rhs(expression: str) -> None:
-    with pytest.raises(ValueError, match="Unsupported Lua expression for NDefines.NGame.START_DATE"):
+    with pytest.raises(ValueError, match=r"Unsupported Lua expression for NDefines\.NGame\.START_DATE"):
         patch_bookmark_dates_defines(
             f"NDefines.NGame.START_DATE = {expression}\n",
             start_date="1940.1.1.12", end_date="1960.1.1.1",
@@ -238,7 +238,7 @@ def test_lua_date_patch_rejects_computed_or_unsupported_rhs(expression: str) -> 
     ["== false", "~= nil", "< other", ">= other", ".. suffix", "and other"],
 )
 def test_lua_date_patch_rejects_operator_continued_on_next_line(continuation: str) -> None:
-    with pytest.raises(ValueError, match="Unsupported Lua expression for NDefines.NGame.START_DATE"):
+    with pytest.raises(ValueError, match=r"Unsupported Lua expression for NDefines\.NGame\.START_DATE"):
         patch_bookmark_dates_defines(
             f'NDefines.NGame.START_DATE = "1936.1.1.12"\n    {continuation}\n',
             start_date="1940.1.1.12", end_date="1960.1.1.1",
@@ -324,11 +324,11 @@ def test_country_deletion_preview_save_reload(
     removed = original_countries[target]
     survivors = original_countries[:target] + original_countries[target + 1:]
 
-    assert mod.delete_bookmark_country(
+    mod.delete_bookmark_country(
         "BOOKMARK_NAME", removed.tag, occurrence=1 if case == "second_variant" else 0,
     )
     if edit_bookmark:
-        assert mod.update_bookmark("BOOKMARK_NAME", description="UPDATED_DESC")
+        mod.update_bookmark("BOOKMARK_NAME", description="UPDATED_DESC")
     preview = mod.preview()
     assert "common/bookmarks/test.txt" in preview
     assert any(
@@ -375,7 +375,7 @@ def test_new_same_tag_country_is_appended_without_reusing_source_occurrence(
     path.write_text(SOURCE, encoding="utf-8")
     mod = Mod(tmp_path)
     if delete_existing:
-        assert mod.delete_bookmark_country("BOOKMARK_NAME", "GER", occurrence=1)
+        mod.delete_bookmark_country("BOOKMARK_NAME", "GER", occurrence=1)
     added = BookmarkCountry(tag="GER", history="NEW_VARIANT", required_dlc=["New DLC"])
     mod.add_bookmark_country("BOOKMARK_NAME", added)
     assert added.source_index is None

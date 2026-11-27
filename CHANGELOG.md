@@ -6,8 +6,143 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed (breaking, 0.7.0)
+
+The public API of `hoi4.Mod` was cleaned up: one error hierarchy, lookups and
+changes that raise instead of returning `False` or `None`, return values that
+say what you got, no duplicate entry points, and the script builders moved to
+`hoi4.effects`. Every row below is one old call and what to write instead.
+
+| Old call (0.6) | New call (0.7) | Why |
+|---|---|---|
+| `except KeyError` / `except IndexError` around a lookup | `except hoi4.NotFoundError` (still a `KeyError`, no longer an `IndexError`) | One error for "not there"; the message names close matches instead of every id |
+| `get_on_action(..., occurrence=n)`, `update_on_action(..., occurrence=n)`, `delete_on_action(..., occurrence=n)` out of range: `IndexError` | `NotFoundError` | One error for "not there" |
+| `add_character_role(..., instance_occurrence=n)` and the other role methods with a missing instance: `IndexError` | `NotFoundError` | One error for "not there" |
+| `mod.declare_war(target, wg)`, `mod.create_wargoal(target, wg)`, `mod.start_civil_war(ideology, size, capital)` | `effects.declare_war(...)`, `effects.create_wargoal(...)`, `effects.start_civil_war(...)` | Deprecated aliases of the builders |
+| `mod.validate(suppress_warnings=[...])`, `mod.validate_effect(script, suppress_warnings=[...])` | `suppress=[...]` | Older name of the same list |
+| `mod.validate(None, False, True, "release")` (options by position) | `mod.validate(validate_icons=False, strict_localization=True, stage="release")` | Every option of `validate()` and `validate_effect()` is keyword-only |
+| `mod.create_idea(idea_id, ..., desc="X_desc")` | drop the argument; `mod.set_loc("X_desc", text)` | It was accepted only when it was the fixed key and never written |
+| `mod.update_idea(id, desc="X_desc")`, `mod.ensure_idea(existing_id, desc=...)` | raise `TypeError`; `mod.set_loc("X_desc", text)`. To drop an old `desc =` line from a file, rewrite the idea: `mod.update_idea(id)` | Same reason: the value was set on the object and never written |
+| `mod.update_country(tag, color_ui=...)` for a country the mod adds: accepted, nothing written | raises `ValueError`; only a country in the colour table `common/countries/colors.txt` has a UI colour | No silent no-op |
+| `mod.create_country(..., popularities=5)`, `ideas=[123]`, `mod.update_country(tag, technologies=None)`: an error in the middle of the call or later in `preview()`, with the country already changed; `color=(1, 2)`: grey written without a word | `TypeError` (a list or mapping of the wrong shape) or `ValueError` (a colour that is not three numbers from 0 to 255) before anything changes | A call that raises changes nothing |
+| `mod.create_decision_chain(cat, [{"id": "s1", "cots": 7}])` (a misspelled step key) silently ignored | raises `TypeError` that names the method, the step and the valid keys | A typo made wrong content without a word |
+| `mod.create_decision_chain(cat, ["d1", "d1"])` writing one decision that can never show | raises `AlreadyExistsError` before anything changes | No silent duplicate |
+| `mod.create_decision_chain(game_category, steps)`, `mod.create_recovery_decision(game_category, id, ...)` writing an empty definition over a category of the game or a base mod | add the decisions and leave the category's definition alone, like `create_decision()`; pass `category_icon=` to the chain to define it in the mod on purpose | The empty definition replaced the game's icon and conditions |
+| `mod.create_mission(..., typo=1)`, `mod.create_targeted_decision(..., typo=1)`, `mod.split_state(id, provinces, typo=1)` raising `TypeError: ...create_decision() got an unexpected keyword argument` | `TypeError("create_mission(): Unknown fields: [...]. Valid: [...]")` | The message names the method that was called |
+| `mod.create_ideology(id, types=["x"])`, `mod.create_event(id, options=["x"])`, `mod.create_bookmark(name, countries=["x"])` and the same fields in `update_*`: accepted, then `AttributeError` in `preview()` and `save()` | raise `TypeError` at the call (the list must hold `SubIdeology`, `EventOption`, `BookmarkCountry` and so on) | The mod could not be saved any more |
+| `mod.delete_character(id)` of a game character returning `False` unless a lookup had loaded it before | deletes it (an override is written), whatever was called before | The same call gave two answers |
+| `mod.create_oob(name, tag)` without content: no file written, but the country was assigned the name | writes the file with an empty `units = { }` | The country pointed at a file that did not exist |
+| `mod.set_state_owner(state_id=...)` (keyword) | `mod.set_state_owner(state_ids=...)`, or pass it by position | The argument takes one id or a list |
+| `mod.preview()` listing the files in an order that changed from run to run | lists them in path order | The same edits give the same text |
+| `mod.create_bookmark(name, ..., overwrite=True)` that raised (a wrong entry in `countries`, a path outside the mod): the bookmark that was there was gone, and the next `save()` wrote an empty file over it | the old bookmark stays as it was; the caller's `BookmarkCountry` objects are not changed either | A call that raises changes nothing |
+| `mod.update_bookmark(name, countries=[...])`: accepted, then `preview()` and `save()` raised `ValueError: Unknown bookmark field` | replaces the bookmark's country entries | No field that is accepted and cannot be written |
+| A model handed over whole with a wrong item in one of its lists, at any depth (`mod.create_character(tag, character)` with a wrong `character.portraits` or `character.instances[0].portraits`, an `EventOption` whose `conditional_names` holds a string, a `DivisionTemplate` whose `battalions` holds a string), or a string where the model belongs (`mod.add_focus(tree, "x")`, `ensure_focus`, `insert_focus_after`, `insert_branch`, `add_character_role`, `add_character_instance`, `add_event_option`, `add_bookmark_country`, `create_equipment_variant`): `AttributeError`, at the call or later in `preview()` | `TypeError` at the call that names the argument (`create_character(): character.instances[0].portraits must hold CharacterPortrait objects`) | Same rule as for the list arguments |
+| `mod.update_x(id, field=None)` for a field that cannot be empty (`update_event(options=None)`, `update_focus(x=None)`, `update_bookmark(countries=None)`, `update_character(portraits=None)`, `update_character_role(..., traits=None)`): accepted; then `preview()` and `save()` raised, or the content was deleted without a word, or `None = {` was written | raises `TypeError("update_x(): field cannot be None ...")` before anything changes; pass an empty list, dict or string to clear a field. `None` still clears a field whose type allows it (`update_event(fire_only_once=None)`) | No field value that is accepted and cannot be written |
+| `effects.set_politics(party, elections_frequency=n)` | drop the argument | HOI4's `set_politics` has no such field; the argument only raised |
+| `Mod.ruling_parties()` | `mod.available_ruling_parties()` | Hard-coded table; the replacement reads the real ideologies |
+| `Mod.leader_ideologies_for_party(party)` | `mod.available_leader_ideologies(party)` | Hard-coded table; the replacement reads the real ideologies |
+| `Mod.default_leader_ideology(party)` | `mod.available_leader_ideologies(party)[0]` (an unknown party has none: check the result before taking the first) | Answered `liberalism` for any unknown party |
+| `mod.suggest_tag(name)` | `mod.suggest_tags(name, count=1)[0]` | One-line wrapper |
+| `mod.suggest_focus_icon(query)` | `mod.suggest_focus_icons(query, count=1)[0]` | One-line wrapper |
+| `mod.suggest_idea_icon(query)` | `mod.suggest_idea_icons(query, count=1)[0]` | One-line wrapper |
+| `Mod.effect_block(...)`, `Mod.scope_block(...)` | `effects.block(...)`, `effects.scope_block(...)` | Pass-throughs to the module functions |
+| `hoi4.import_flag_to_mod(mod_root, ...)`, `hoi4.import_portrait_to_mod(mod_root, ...)`, `hoi4.write_portrait_gfx(mod_root, ...)` | `mod.import_flag_to_mod(...)` and friends (staged), or `hoi4.assets.import_flag_to_mod(...)` (writes at once) | Same names as the `Mod` methods but write at once and bypass transactions; no longer in `hoi4.__all__` |
+| `hoi4.version`, `hoi4.PackageNotFoundError` | `importlib.metadata.version`, `importlib.metadata.PackageNotFoundError` | Leaked imports |
+| `if mod.delete_x(id): ...` (bookmark, character, country, decision, dynamic_modifier, event, focus_tree, idea, ideology, loc, on_action, oob) returning `bool` | `mod.delete_x(id)` returns `None`; a missing target raises `NotFoundError` | A `False` that nobody checked hid typos |
+| `mod.delete_bookmark_country(name, tag, occurrence=n)`, `mod.delete_character_instance(id, n)` returning `False` for a missing entry | return `None`; a missing entry raises `NotFoundError` | Same rule for a missing child as for a missing parent |
+| `mod.delete_definition(kind, id)` returning the `Path` | returns `None` | `delete_*` returns nothing |
+| `mod.delete_country(tag)` with an invalid tag returning `False` | raises `ValueError` | An invalid tag is a mistake, not "not there" |
+| `mod.delete_country("GER")`, `mod.delete_ideology("fascism")`, `mod.delete_oob("GER_1936")` on game content: `False` or `ValueError` | `ReadOnlyError` (a `ValueError`) | Says why: game content is overridden, not deleted |
+| `mod.delete_loc(key)` for a key only the game defines: `False` | `ReadOnlyError`; override the text with `set_loc()` | Says why |
+| `if mod.update_x(id, **fields): ...` (bookmark, bookmark_country, character, character_instance, character_role, country, decision, decision_category, dynamic_modifier, event, event_option, focus, focus_tree, idea, ideology, on_action, oob) returning `bool` | `obj = mod.update_x(id, **fields)` returns the changed object; a missing target raises `NotFoundError` | The object is what a caller wants next; `assert mod.update_x(...)` keeps passing |
+| `mod.update_focus(tree, missing_focus, ...)`, `update_event_option(event, 5, ...)`, `update_bookmark_country(name, missing_tag, ...)`, `update_character_instance(id, 5, ...)`, `update_character_role(id, missing_role, ...)` returning `False` | raise `NotFoundError` | Same rule for a missing child as for a missing parent |
+| `mod.update_country("NOPE", ...)` (invalid tag) returning `False` | raises `ValueError` | An invalid tag is a mistake, not "not there" |
+| `TypeError("Unknown fields: [...]")` without the method, or raised after part of the change was made | `TypeError("update_x(): Unknown fields: [...]. Valid: [...]")`, raised before anything changes | The message names the method and the valid fields |
+| `update_x(touched=..., touched_fields=..., source_index=..., _source_body=..., is_vanilla=...)`, `update_decision_category(paths=...)` | not accepted (`TypeError` or `ValueError`) | Bookkeeping, not content |
+| `mod.update_decision(id, path=...)` silently ignored | raises `TypeError`; a decision stays in its file | No silent no-op |
+| `mod.add_focus(tree, focus)` returning `None`, adding a second focus with the same id | returns the `Focus`; an id the tree has raises `AlreadyExistsError` | No silent duplicate |
+| `mod.insert_focus_after(...)`, `mod.insert_branch(...)` returning `None` | return the inserted `Focus` / `list[Focus]`; a duplicate id raises `AlreadyExistsError` before anything is inserted | Returns say what you got |
+| `mod.auto_layout_branch(..., anchor_focus_id=missing)` writing a prerequisite to a focus that does not exist | raises `NotFoundError` | No dangling prerequisite |
+| `mod.remove_focus(tree, id)` returning `bool` | returns `None`; a missing focus raises `NotFoundError` | `remove_*` returns nothing |
+| `mod.append_to_focus_reward(...)` returning `bool` | returns the `Focus`; a missing focus raises `NotFoundError` | Returns say what you got |
+| `mod.set_focuses_mutually_exclusive(...)` returning `bool` | returns `None`; a missing focus raises `NotFoundError` | `set_*` returns nothing |
+| `assert mod.assert_no_visual_overlap(tree)` (it returned `True`) | `mod.assert_no_visual_overlap(tree)` returns `None` and raises `ValueError` as before | The `True` carried no information |
+| `mod.add_event_option(event, option)` returning `bool`, adding a second option with the same name | returns the `EventOption`; a missing event raises `NotFoundError`, a duplicate name `AlreadyExistsError` | No silent duplicate |
+| `mod.set_event_namespace(missing, ns)` silently doing nothing | raises `NotFoundError` | No silent no-op |
+| `mod.add_bookmark_country(name, bc)` returning `None`, adding a second entry for the same tag | returns the `BookmarkCountry`; the same tag with the same `required_dlc` raises `AlreadyExistsError` | No silent duplicate |
+| `mod.set_bookmark_date_range(...)` returning the `Path` | returns `None` | `set_*` returns nothing |
+| `mod.add_supply_node(province)` returning `None` | returns the province id; an existing node raises `AlreadyExistsError` (a `ValueError`, as before) | Returns say what you got |
+| `n = mod.remove_map_buildings(...)`, `n = mod.remove_railway(...)`, `n = mod.set_railway_level(...)` returning a count | return `None`; a missing state, a stale entry or no match raises `NotFoundError` | A `0` hid a wrong filter |
+| `mod.remove_state_core(id, tag)` returning the `State`, and copying the game's state file into the mod when `tag` was not a core | returns `None`; a tag that is not a core raises `NotFoundError` and nothing is copied | No silent no-op |
+| `mod.add_state_core(id, tag)` for a tag that is a core already: no error, and the game's state file copied into the mod | raises `AlreadyExistsError` and nothing is copied | No silent no-op |
+| `mod.set_state_owner(id, tag)` with the owner (and core) the state has, `mod.update_state(id, **fields)` with the values it has: the game's state file copied into the mod | nothing is staged; no error | Setting a value to what it is changes nothing |
+| `mod.update_state(id, raw_text=...)` | not accepted (`TypeError`); `history=` (the script of the history block) still is | Bookkeeping, not content |
+| `mod.list_bookmarks()`, `mod.list_supply_nodes()` in file order (a bookmark name could repeat) | sorted, each once | `list_*` returns sorted ids |
+| `mod.create_industrial_branch(...)`, `create_decision_chain(...)`, `create_recovery_decision(...)`, `create_country(...)`, `create_decision(..., targets=bad)` leaving part of their work staged (a new tree, localisation, a category, earlier steps, the country) when they raise | check everything first; a call that raises stages nothing | Atomic |
+| `mod.create_decision_chain(..., path=p)` with a step that exists: `TypeError` halfway | the step is updated in place and moves with its category to `p` | It always failed |
+| `except RuntimeError` around `save()` / `preview()` refusals (`require_changes=True` with nothing to write, a file that failed to load, a new syntax problem, definitions skipped while loading, a partial `colors.txt`) and around `Mod(..., strict_loading=True)` | `except hoi4.SaveRefusedError` / `except hoi4.LoadError` (both still a `RuntimeError`) | Every SDK error is a `Hoi4Error` |
+| `mod.remove_character_role(...)` returning `bool` | returns `None`; a missing role raises `NotFoundError` | `remove_*` returns nothing |
+| `mod.unassign_country_oob(...)` returning `bool` | returns `None`; a missing assignment raises `NotFoundError` | No `False` |
+| `mod.assign_country_oob(tag, name)` with an undefined country inventing an empty one | raises `NotFoundError`; with a game install an unknown OOB raises too | No silent invention |
+| `mod.create_equipment_variant(tag, v)` with an undefined country inventing an empty one | raises `NotFoundError` | No silent invention |
+| `mod.create_decision(category, ...)` with a category the mod does not define writing an empty category definition (which replaced the game's) | extends the category without a definition; with a game install, a category no one defines raises `NotFoundError` ("create it with `create_decision_category()` first") | No silent invention; the game's category keeps its icon and triggers |
+| `mod.create_focus_tree(id, tag)`, `mod.create_oob(name, tag)`, `mod.add_state_core(id, tag)`, `mod.set_state_owner(id, tag)`, `mod.set_country_name_pool(tag, ...)` with a tag no one defines | with a game install: `NotFoundError`; without one the tag may be the game's and is accepted (`validate()` checks it) | Catch a typo in a tag at the call |
+| `mod.get_focus(tree, id)`, `mod.get_loc(key)`, `mod.get_definition(kind, id)` returning `None` when missing | raise `NotFoundError`; pass `default=None` for the old result: `mod.get_loc(key, default=None)` | A `None` nobody checks turns into an `AttributeError` far from the cause |
+| `mod.get_focus(missing_tree, id)` raising while a missing focus returned `None` | both raise `NotFoundError`; `default=` covers both | One rule per lookup |
+| `mod.get_country("ZZX")` returning an empty `Country` and caching it (it then showed up in `list_countries()`) | raises `NotFoundError`; `default=` returns the default; nothing is cached | A lookup never invents |
+| `mod.get_country_context("ZZX")` answering for a country no one defines | raises `NotFoundError`; `default=` returns the default | A lookup never invents |
+| every `get_x(id)` | takes a keyword-only `default=`; `get_x(id, default=None)` returns `None` instead of raising | The `dict.get` convention keeps the "or None" use |
+| `mod.create_oob(name, tag)` (it assigns by default) for a country no one defines, inventing that country | raises `NotFoundError`; pass `assign=False` to create the file only | No silent invention |
+| `mod.delete_character(id)` of a character whose country no one defines, inventing that country to drop the recruitment | deletes the character; there is no recruitment list to change | No silent invention |
+| `mod.upsert_focus(tree, focus)` | `mod.ensure_focus(tree, focus)` | Same idea as every other `ensure_*` |
+| `mod.ensure_focus_tree(id, other_tag)`, `mod.ensure_decision(other_category, id)` on an existing object silently ignoring the different parent | raise `ValueError` naming both | No silent no-op |
+| `mod.ensure_focus_tree(id, tag, bad_field=1)` creating the tree before raising | raises `TypeError` before anything changes | Atomic |
+| `mod.ensure_event/idea/decision/decision_category/on_action(new_id, bad_field=1)` raising `TypeError: EventsLayer.create_event() got an unexpected keyword argument` | `TypeError("ensure_event(): Unknown fields: [...]. Valid: [...]")` on both the create and the update path | The message names the method that was called |
+| `mod.create_scripted_trigger(id, body, ...)` | `mod.create_definition("scripted_trigger", id, body, ...)`; its default file is `common/scripted_triggers/00_sdk_generated.txt` (it was `00_generated_triggers.txt`) | A second writer with its own cache and file for the same thing |
+| `mod.create_scripted_effect(id, body, ...)`, `create_country_leader_trait`, `create_unit_leader_trait`, `create_technology`, `create_sub_unit` | `mod.create_definition("scripted_effect" / "country_leader_trait" / "unit_leader_trait" / "technology" / "sub_unit", id, body, ...)` | One-line wrappers |
+| `path = mod.create_definition(...)` (also `create_static_modifier`, `create_opinion_modifier`, `create_ai_strategy`, `create_scripted_localisation`, `update_definition`) returning the `Path` | return the `ScriptDefinition`; its `source_path` is the file | Returns say what you got |
+| `mod.create_definition(kind, id, ...)` on an existing id: `ValueError` | `AlreadyExistsError` (a `ValueError`) | One error for "already there" |
+| `mod.create_definition(kind, id, ..., overwrite=True)` for an id defined in two files | raises `ValueError` | Overwriting one copy would leave the other |
+| `for d in mod.list_definitions(kind): d.id` (objects) | `mod.list_definitions(kind)` returns sorted ids; `mod.get_definition(kind, id)` returns one | `list_*` returns ids |
+| `mod.create_country(tag, name, "Adj", (1, 2, 3), ...)` (options by position) | `mod.create_country(tag, name, adjective="Adj", color=(1, 2, 3), ...)` | Options after the identifying arguments are keyword-only |
+| `mod.create_event(event_id, "title", ...)`, `mod.create_idea(idea_id, "icon", {...}, ...)` | `mod.create_event(event_id, title="title", ...)`, `mod.create_idea(idea_id, icon="icon", modifier={...}, ...)` | Keyword-only options |
+| `mod.create_focus_tree(id, tag, True)`, `mod.save(True)`, `mod.find_state(q, False, 5)`, `mod.state_index(False)`, `mod.get_state_name_map(False)`, `mod.place_continuous_focus_below_tree(id, 400, 50)`, `mod.add_map_building(..., rotation, 7)`, `mod.suggest_tags(name, 3)` (also `suggest_focus_icons`, `suggest_idea_icons`) | the same options by keyword: `overwrite=`, `require_changes=`, `include_vanilla=`, `limit=`, `padding=`, `x=`, `adjacent_sea_province=`, `count=` | Keyword-only options |
+| `mod.create_focus_tree(id, country_tag=...)`, `mod.ensure_focus_tree(id, country_tag=...)`, `mod.create_oob(name, country_tag=...)`, `mod.create_equipment_variant(country_tag=..., variant=...)` | `tag=` | One name per concept (`update_oob(country_tag=)` keeps the model's field name) |
+| `mod.set_loc(key, value, "localisation/...yml")`, `set_loc(..., file_path=...)`, `mod.set_focus_loc(id, name, desc, file_path)` | `path=` (keyword-only) | One name per concept |
+| `mod.create_state(..., localisation_file=...)`, `mod.create_strategic_region(..., localisation_file=...)` | `loc_path=` | One name per concept |
+| `mod.create_country(..., allow_vanilla_override=True)`, `mod.import_flag_to_mod(tag, src, True)` / `vanilla_override=True` (also `hoi4.assets.import_flag_to_mod`), `mod.set_loc(..., replace=True)` | `overwrite_vanilla=True` (keyword-only) | One name for "override the game's content" |
+| `except ValueError` around `create_x(id, ...)` for an existing id (country, character, bookmark, decision, decision category, dynamic modifier, event, focus tree, idea, ideology, on-action, OOB, state, strategic region, equipment variant) | `except hoi4.AlreadyExistsError` (still a `ValueError`) | One error for "already there" |
+| `state = mod.set_state_owner(id, tag, True)` returning the `State` | `mod.set_state_owner(id, tag, add_core=True)` returns `None`; it takes one id or a list; `mod.get_state(id)` returns the state | One setter for one or many states |
+| `mod.batch_set_owner(ids, tag, add_core)` | `mod.set_state_owner(ids, tag, add_core=...)` | A loop over `set_state_owner` |
+| `mod.patch_state_history(id, owner=, add_cores=, remove_cores=)` | `mod.update_state(id, owner=, add_cores=, remove_cores=)`; a core in `remove_cores` that is not there raises `NotFoundError` | Same mechanism as the other setters |
+| `mod.set_state_properties(id, **fields)` returning `True`, appending to list fields such as `cores` | `mod.update_state(id, **fields)` returns the `State` and replaces list fields; `add_cores=[...]` appends | A `set` that appended was surprising; `update_*` returns the object |
+| `set_state_properties(id, _victory_points_requested=...)` | not accepted | Bookkeeping, not content |
+| `mod.set_idea_path(tag, path)` | `mod.set_default_idea_file(tag, path)`; with a game install an undefined tag raises `NotFoundError` | Says what it does |
+| `mod.ensure_country_states_in_mod(tag)` | `mod.copy_country_states_to_mod(tag)` | Says what it does; it is not an `ensure_*` |
+| `mod.content_source(relative)` | `mod.resolve_content_path(relative)` (still returns `None` when no layer has the file) | A path resolver, not a lookup of content |
+| `new_id = mod.create_state(...)`, `mod.create_strategic_region(...)`, `mod.split_state(...)` returning the id | return the `State` / `StrategicRegion`; use `.id` | `create_*` returns the object |
+| `for region in mod.list_strategic_regions(): region.id` (objects) | `mod.list_strategic_regions()` returns sorted ids; `mod.get_strategic_region(id)` returns one | `list_*` returns ids |
+| `hoi4.ValidationError` (also `hoi4.types.ValidationError`) | `hoi4.ValidationIssue` (no alias) | It is a finding, not an exception; `except ValidationError` read like a bug |
+| `Mod.effect_<name>(...)` / `mod.effect_<name>(...)` (the 52 builders, e.g. `Mod.effect_add_political_power(50)`, `Mod.effect_transfer_state(115, "SCL")`) | `from hoi4 import effects`, then `effects.<name>(...)` (`effects.add_political_power(50)`, `effects.transfer_state(115, "SCL")`) | The builders never used the mod; as static methods they made `Mod` 52 names longer. Same arguments, same output |
+| `hoi4.effect_block(name, fields)`, `hoi4.script.effect_block(...)` | `effects.block(name, fields)` | One home for every builder |
+| `effects.add_coastal_bunker(x, state_id, level)` (a stray first parameter left from its time as a method) | `effects.add_coastal_bunker(state_id, level)`, like `effects.add_bunker()` | It shifted every argument |
+| `hoi4.scope_block(scope, *effects)`, `hoi4.script.scope_block(...)` | `effects.scope_block(scope, *effects)` | One home for every builder |
+| `hoi4.bookmarks.load_bookmarks`, `hoi4.decisions.write_decisions_file`, `hoi4.focus.write_focus_tree`, `hoi4.ideologies.load_ideologies`, `hoi4.localisation.delete_localization_keys`, `hoi4.on_actions.write_on_actions_file`, `hoi4.states.ensure_state_in_mod`, `hoi4.states.patch_state_history_owner_cores`, `hoi4.tags.load_all_tags`, `hoi4.validation.collect_character_ids` | the `Mod` method that does the job (`mod.list_bookmarks()`, `mod.save()`, `mod.update_state()`, ...); `load_all_tags` and `ensure_state_in_mod` have no one-to-one replacement: use `mod.list_countries()` / `mod.get_country()` and the state setters | Unused module functions that bypassed the `Mod` staging |
+
 ### Added
 
+- `hoi4.errors` with `Hoi4Error` (the base of every SDK error),
+  `NotFoundError` (also a `KeyError`), `AlreadyExistsError` and
+  `ReadOnlyError` (both also a `ValueError`), exported from `hoi4`.
+  `NotFoundError` has `kind`, `id` and `suggestions`, and its message names up
+  to five close matches and the number of known ids instead of the whole list.
+  `ParseError`, `ExternalModificationError`, the image, Commons and Gemini
+  errors, `OperationCancelled`, `MapRenderCancelled` and `GenerationCancelled`
+  derive from `Hoi4Error` now.
+- `scripts/check_removed_api_names.py [paths...]` lists every call or
+  mention of a name the 0.7.0 cleanup removed or renamed, and every renamed
+  keyword argument, in Python files and Markdown. Run it on your own scripts
+  to find what the table above asks you to change.
 - A disk cache of what validation reads out of the game's own files (and
   base mods): references, division templates, sprites, characters, states,
   map data and localisation. A new process reads the stored results instead

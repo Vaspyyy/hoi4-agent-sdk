@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from hoi4.ideas import (
     detect_ideas_container,
     read_ideas_file,
@@ -66,7 +68,7 @@ class TestReadIdeasFile:
         assert container == "ideas"
 
     def test_reads_from_ideas_dir(self):
-        ideas, container = read_ideas_file(FIXTURES / "common" / "national_ideas" / "ger_ideas.txt")
+        _ideas, container = read_ideas_file(FIXTURES / "common" / "national_ideas" / "ger_ideas.txt")
         assert container == "country_ideas"
 
     def test_reads_nested_designer_category(self, tmp_path):
@@ -294,7 +296,11 @@ def test_mod_description_edit_does_not_rebuild_unrelated_nested_blocks(
     from hoi4 import Mod
 
     mod = Mod(tmp_path)
-    assert mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    # ``desc`` cannot be set (it is localisation); a rewrite of the idea
+    # drops the old ``desc =`` line and nothing else.
+    with pytest.raises(TypeError, match="set_loc"):
+        mod.update_idea("custom_spirit", desc="custom_spirit_desc")
+    mod.update_idea("custom_spirit")
     mod.save()
 
     assert path.read_text(encoding="utf-8") == original.replace(
@@ -319,7 +325,7 @@ def test_modifier_merge_preserves_nested_unmodeled_modifier_content(tmp_path: Pa
     from hoi4 import Mod
 
     mod = Mod(tmp_path)
-    assert mod.update_idea(
+    mod.update_idea(
         "custom_spirit",
         modifier={"political_power_gain": 0.2},
         merge_modifier=True,

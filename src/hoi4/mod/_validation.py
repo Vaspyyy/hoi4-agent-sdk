@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 from .. import _disk_cache
 from .._disk_cache import NAMES_ON_DISK
@@ -49,7 +49,7 @@ from ..types import (
     EventOption,
     Focus,
     FocusTree,
-    ValidationError,
+    ValidationIssue,
 )
 from ..validation import (
     DEFAULT_FOCUS_SEARCH_FILTERS,
@@ -86,14 +86,14 @@ _LOCALIZATION_HEADER_RE = re.compile(r"^l_[A-Za-z_]+\s*:")
 
 def _source_file_findings(
     path: Path, relative: str, text: str
-) -> tuple[ValidationError, ...]:
+) -> tuple[ValidationIssue, ...]:
     """Syntax and layout errors of one script file of the mod."""
 
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     for issue in validate_script_syntax(text):
         location = _ISSUE_LOCATION_RE.search(issue)
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=f"{path}: {issue}",
                 severity="error",
                 code="script_syntax",
@@ -111,7 +111,7 @@ def _source_file_findings(
         has_unsupported_dynamic_ideas = False
     if has_unsupported_dynamic_ideas:
         errors.append(
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"{path}: dynamic_country_ideas is not a HOI4 construct. "
                     "Migrate this content to common/dynamic_modifiers and use "
@@ -144,7 +144,7 @@ def _source_file_findings(
                             continue
                         absolute = body_offset + character_span.body_start + role_span.start
                         errors.append(
-                            ValidationError(
+                            ValidationIssue(
                                 message=(
                                     f"{path}: character '{character_span.key}' uses "
                                     "unsupported top-level 'roles ='. Declare "
@@ -183,7 +183,7 @@ def _source_file_findings(
                     continue
                 absolute = category_span.body_start + metadata.start
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"{path}: decision category '{category_span.key}' "
                             f"declares '{metadata.key}' beside its decisions. Move "
@@ -211,7 +211,7 @@ def _source_file_findings(
                 continue
             body_offset = text.find("{", politics_start) + 1
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"{path}: set_politics does not support "
                         "elections_frequency in current HOI4."
@@ -241,10 +241,10 @@ def _assigned_idea_line(history: str, idea_id: str) -> int | None:
     return None
 
 
-def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
+def _validate_source_tree(mod_root: Path) -> list[ValidationIssue]:
     """Validate script and localization files even when no model loader owns them."""
 
-    errors: list[ValidationError] = []
+    errors: list[ValidationIssue] = []
     script_paths: set[Path] = set()
     for directory_name in ("common", "events", "history", "interface"):
         directory = mod_root / directory_name
@@ -273,7 +273,7 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
             raw = path.read_bytes()
             if not raw.startswith(b"\xef\xbb\xbf"):
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=f"Localization file is missing a UTF-8 BOM: {path}",
                         severity="error",
                         code="localization_bom",
@@ -285,7 +285,7 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
                 text = raw.decode("utf-8-sig")
             except UnicodeDecodeError as error:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=f"Localization file is not valid UTF-8: {path}: {error}",
                         severity="error",
                         code="localization_encoding",
@@ -304,7 +304,7 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
             )
             if not _LOCALIZATION_HEADER_RE.match(first_content):
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=f"Localization file has no l_<language>: header: {path}",
                         severity="error",
                         code="localization_header",
@@ -321,7 +321,7 @@ def _validate_source_tree(mod_root: Path) -> list[ValidationError]:
                 and header != folder
             ):
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Localization file header 'l_{header}:' does not match its "
                             f"folder localisation/{folder}; HOI4 expects 'l_{folder}:': {path}"
@@ -354,7 +354,7 @@ def _event_namespaces(text: str) -> frozenset[str]:
 class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLayer, MapLayer):
     """The staged ``validate()`` entry point and related reports."""
 
-    def _validate_country_colors_shadow(self) -> list[ValidationError]:
+    def _validate_country_colors_shadow(self) -> list[ValidationIssue]:
         if self._base_content is None:
             return []
         mod_colors = self.mod_root / "common" / "countries" / "colors.txt"
@@ -372,7 +372,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         ):
             return []
 
-        def parse_tags(path: Path) -> tuple[set[str] | None, ValidationError | None]:
+        def parse_tags(path: Path) -> tuple[set[str] | None, ValidationIssue | None]:
             try:
                 text = read_text(path)
                 if path.is_relative_to(self.mod_root):
@@ -381,7 +381,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             except Exception as error:
                 return (
                     None,
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Failed to validate country colors file {path}: "
                             f"{type(error).__name__}: {error}"
@@ -407,7 +407,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         if len(missing) > 8:
             sample += ", …"
         return [
-            ValidationError(
+            ValidationIssue(
                 message=(
                     f"{mod_colors} defines {len(mod_tags)} country color entries but "
                     f"the configured HOI4 install defines {len(vanilla_tags)}. HOI4 "
@@ -482,7 +482,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
     def _focus_localization_findings(
         self, tree: FocusTree, focus: Focus
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Report a focus whose name or description key exists nowhere.
 
         The game names a focus by its ``text = KEY`` when it has one, else by
@@ -496,10 +496,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             text_key = parse(focus.raw_block).root.scalar("text", fold=True) or ""
         name_keys = [key for key in (text_key, focus.id) if key]
         file_path = str(tree.path) if tree.path else None
-        findings: list[ValidationError] = []
+        findings: list[ValidationIssue] = []
         if not any(self._has_loc(key) for key in name_keys):
             findings.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"No localization found for focus '{focus.id}' "
                         f"(looked for {' or '.join(repr(key) for key in name_keys)})"
@@ -513,7 +513,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         desc_keys = [f"{key}_desc" for key in name_keys]
         if not any(self._has_loc(key) for key in desc_keys):
             findings.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"No description localization found for focus '{focus.id}' "
                         f"(looked for {' or '.join(repr(key) for key in desc_keys)})"
@@ -528,7 +528,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
     def validate(
         self,
-        suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
+        *,
         validate_icons: bool = False,
         strict_localization: bool = False,
         stage: ValidationStage = "package",
@@ -537,10 +537,9 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         liveness_localization_allowlist: Sequence[str] = (),
         progress: ProgressCallback | None = None,
         cancelled: CancelCallback | None = None,
-        *,
         advice: bool = False,
         suppress: Sequence[str] = (),
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Check the mod and return its findings.
 
         Each finding has a registered ``code`` and the severity of that code
@@ -553,7 +552,10 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         of a code (``"visual_overlap"``) or only those about one object
         (``"missing_localization:TAG_my_focus"``). Errors cannot be
         suppressed, and an unknown code raises ``ValueError``.
-        ``suppress_warnings`` is the older name of the same list.
+
+        Raises:
+            ValueError: A ``suppress`` entry names an unknown code.
+            OperationCancelled: ``cancelled()`` returned true.
         """
 
         # Checks share data built once per run (``_validation_run``); a
@@ -563,7 +565,6 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
             self._validation_run = {}
         try:
             return self._validate_once(
-                suppress_warnings=suppress_warnings,
                 validate_icons=validate_icons,
                 strict_localization=strict_localization,
                 stage=stage,
@@ -583,7 +584,6 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
     def _validate_once(
         self,
-        suppress_warnings: list[str] | tuple[str, ...] | set[str] | None = None,
         validate_icons: bool = False,
         strict_localization: bool = False,
         stage: ValidationStage = "package",
@@ -595,15 +595,15 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         *,
         advice: bool = False,
         suppress: Sequence[str] = (),
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """One validation run; see :meth:`validate`."""
 
         stage = require_validation_stage(stage)
         # Fail on a bad suppression before the long run, not after it.
-        validation_suppressions(suppression_entries(suppress_warnings, suppress))
+        validation_suppressions(suppression_entries(suppress))
         for name in _LOC_KEY_INDEXES:
             self._scan_cache.pop(name, None)
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         phase_total = 12 + (1 if self.hoi4_install is not None else 0)
         if stage == "build":
             phase_total -= 1
@@ -643,7 +643,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         for diagnostic in self._load_diagnostics:
             if diagnostic.error_type != "DuplicateIdentifierError":
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Failed to load {diagnostic.section} file "
                             f"{diagnostic.path}: {diagnostic.error_type}: "
@@ -656,7 +656,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 )
                 continue
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=diagnostic.message,
                     severity="error",
                     code=duplicate_codes.get(
@@ -745,7 +745,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         errors.extend(
             validate_tag_definition_targets(
                 self.mod_root,
-                exists=lambda relative: self.content_source(relative) is not None,
+                exists=lambda relative: self.resolve_content_path(relative) is not None,
             )
         )
         errors.extend(
@@ -770,7 +770,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 state = self.get_state(state_id)
             except (KeyError, OSError, ValueError) as error:
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=f"Could not validate state {state_id}: {error}",
                         severity="error",
                         code="state_load_error",
@@ -855,7 +855,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                     else ""
                 )
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Idea '{idea.id}' picture stem '{idea.icon}' did not "
                             f"resolve to sprite '{resolve_idea_sprite(idea.icon)}'."
@@ -888,7 +888,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                         else None
                     )
                     errors.append(
-                        ValidationError(
+                        ValidationIssue(
                             message=f"Country '{country.tag}' assigns unknown idea '{idea_id}'",
                             severity="warning",
                             code="unknown_assigned_idea",
@@ -926,7 +926,13 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 for focus in tree.focuses
                 if focus.icon not in known_focus_icons
             }:
-                icon_suggestions[icon] = self.suggest_focus_icon(icon)
+                suggestions = self.suggest_focus_icons(icon, count=1)
+                if not suggestions:
+                    raise ValueError(
+                        "No focus icons available from mod, vanilla install, "
+                        "or built-in fallback list"
+                    )
+                icon_suggestions[icon] = suggestions[0]
 
         search_filters = self._known_focus_search_filters()
         # One mistake, one finding: a focus id that is defined twice was
@@ -978,7 +984,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 if validate_icons and known_focus_icons and focus.icon not in known_focus_icons:
                     suggestion = icon_suggestions[focus.icon]
                     errors.append(
-                        ValidationError(
+                        ValidationIssue(
                             message=f"Focus '{focus.id}' icon '{focus.icon}' was not found. Suggested close match: {suggestion}",
                             severity="warning",
                             code="unknown_focus_icon",
@@ -1028,7 +1034,7 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
         check_cancelled(cancelled, operation="validation")
         findings = _filter_validation_errors(
-            errors, suppress_warnings=suppress_warnings, suppress=suppress, advice=advice
+            errors, suppress=suppress, advice=advice
         )
         for name in _LOC_KEY_INDEXES:
             self._scan_cache.pop(name, None)
@@ -1064,12 +1070,16 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         start_offset: int = 0,
         incremental: bool = False,
         require_fresh: bool = False,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Return HOI4 engine errors attributable to files in this mod.
 
         ``incremental=True`` retains the trailing record until the next header.
         Use ``parse_hoi4_error_log`` to obtain a report with a resume offset;
         this facade returns only validation errors. The default flushes EOF.
+
+        Raises:
+            FileNotFoundError: ``log_path`` does not exist.
+            ValueError: ``start_offset`` is outside the log.
         """
 
         from ..game_log import parse_hoi4_error_log

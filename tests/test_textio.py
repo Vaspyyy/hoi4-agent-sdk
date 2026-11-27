@@ -273,7 +273,7 @@ def test_random_bytes_round_trip_and_survive_line_edits() -> None:
         new = _random_line_text(rng) or "x"
         if new + terminator == old:
             continue
-        edited_text = "".join(lines[:index] + [new + terminator] + lines[index + 1 :])
+        edited_text = "".join([*lines[:index], new + terminator, *lines[index + 1 :]])
         edited = encode_text(edited_text, like=data)
         assert edited.startswith(BOM) == data.startswith(BOM)
         before, after = _raw_lines(data), _raw_lines(edited)
@@ -300,6 +300,6 @@ def test_random_bytes_read_back_when_the_bom_is_added_or_removed() -> None:
         # A line that reads the same either way keeps its bytes.
         before, after = _raw_lines(data), _raw_lines(result)
         assert len(after) == len(before)
-        for old_line, new_line in zip(before, after):
+        for old_line, new_line in zip(before, after, strict=True):
             if new_line != old_line:
                 assert decode_text(old_line) != decode_text(BOM + old_line)

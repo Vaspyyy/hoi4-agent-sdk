@@ -34,14 +34,15 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterable, Iterator, Literal, Mapping, Sequence, cast
+from typing import Any, Literal, cast
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 
 from ._disk_cache import cache_root, disk_cache_enabled
 from ._script_corpus import script_blocks
 from .script_scopes import ScriptStatement, walk_script
 from .syntax import Assignment, Block, Tagged, parse
 from .textio import read_text
-from .types import ValidationError
+from .types import ValidationIssue
 
 ScriptTokenKind = Literal["effect", "trigger", "modifier"]
 
@@ -136,6 +137,7 @@ class ScriptTokenInfo:
     source: str = ""
 
     def to_dict(self) -> dict[str, object]:
+        """Return the entry as plain JSON-ready values."""
         return {
             "name": self.name,
             "kind": self.kind,
@@ -197,6 +199,7 @@ class GameScriptVocabulary:
             self._folded[kind] = folded
 
     def tokens(self, kind: ScriptTokenKind) -> Mapping[str, ScriptTokenInfo]:
+        """Return the effects, triggers or modifiers by name, as ``kind`` says."""
         if kind == "effect":
             return self.effects
         if kind == "trigger":
@@ -289,11 +292,11 @@ class GameScriptVocabulary:
 
         return GameScriptVocabulary(
             hoi4_install=self.hoi4_install,
-            effects=merged("effect", {name: ((), "mod scripted_effects") for name in effects}),
+            effects=merged("effect", dict.fromkeys(effects, ((), "mod scripted_effects"))),
             triggers=merged(
                 "trigger",
                 {
-                    **{name: ((), "mod scripted_triggers") for name in triggers},
+                    **dict.fromkeys(triggers, ((), "mod scripted_triggers")),
                     **family_triggers,
                 },
             ),
@@ -306,6 +309,7 @@ class GameScriptVocabulary:
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Return the install path and every effect, trigger and modifier as JSON-ready values."""
         return {
             "hoi4_install": str(self.hoi4_install),
             "effects": {key: value.to_dict() for key, value in self.effects.items()},
@@ -441,7 +445,7 @@ def _cache_key(root: Path) -> str:
     return digest.hexdigest()[:32]
 
 
-def _cached_install_data(root: Path) -> dict | None:
+def _cached_install_data(root: Path) -> dict[str, Any] | None:
     try:
         path = _cache_dir() / f"{_cache_key(root)}.json"
         with path.open(encoding="utf-8") as handle:
@@ -454,7 +458,7 @@ def _cached_install_data(root: Path) -> dict | None:
     return data
 
 
-def _store_install_data(root: Path, data: dict) -> None:
+def _store_install_data(root: Path, data: dict[str, Any]) -> None:
     directory = _cache_dir()
     try:
         directory.mkdir(parents=True, exist_ok=True)
@@ -472,7 +476,7 @@ def _store_install_data(root: Path, data: dict) -> None:
         return
 
 
-def _install_data(root: Path) -> dict:
+def _install_data(root: Path) -> dict[str, Any]:
     """Everything the vocabulary needs from an install, as plain JSON data."""
 
     documentation = root / "documentation"
@@ -506,14 +510,14 @@ def _install_data(root: Path) -> dict:
     }
 
 
-def _vocabulary_from_data(root: Path, data: dict) -> GameScriptVocabulary:
-    usage: dict[str, list] = data.get("usage", {})
+def _vocabulary_from_data(root: Path, data: dict[str, Any]) -> GameScriptVocabulary:
+    usage: dict[str, list[Any]] = data.get("usage", {})
     templates = tuple(
         ModifierTemplate(
             pattern=str(pattern),
             placeholder=str(placeholder),
-            documented_members=tuple(cast(list, members)),
-            categories=tuple(cast(list, categories)),
+            documented_members=tuple(cast(list[str], members)),
+            categories=tuple(cast(list[str], categories)),
         )
         for pattern, placeholder, members, categories in data.get("templates", [])
     )
@@ -832,9 +836,12 @@ def _read_definitions(
 def _family_members(block: Block, how: str, key: str | None) -> Iterator[str]:
     if how == "top":
         for item in block.assignments():
-            if item.block is not None and not item.name.startswith("@"):
-                if item.name != "phases":
-                    yield item.name
+            if (
+                item.block is not None
+                and not item.name.startswith("@")
+                and item.name != "phases"
+            ):
+                yield item.name
         return
     if how == "children":
         for container in block.assignments(key):
@@ -939,7 +946,7 @@ def validate_script_sources(
     mod_root: str | Path | None = None,
     custom_tokens: Mapping[ScriptTokenKind, set[str]] | None = None,
     allowlist: Iterable[str] = (),
-) -> list[ValidationError]:
+) -> list[ValidationIssue]:
     """Report names the game does not know and names used in a scope they do not support.
 
     Codes (all with a file and a line when the source has them):
@@ -967,7 +974,7 @@ def validate_script_sources(
         kind: {name.lower() for name in names} for kind, names in custom.items()
     }
     characters = vocabulary.characters
-    findings: list[ValidationError] = []
+    findings: list[ValidationIssue] = []
     seen: set[tuple[str, str, str, int | None]] = set()
     for source in sources:
         if source.block is None and not source.text.strip():
@@ -1009,14 +1016,14 @@ def check_statement(
     vocabulary: GameScriptVocabulary,
     custom: Mapping[ScriptTokenKind, set[str]],
     allowed: tuple[str, ...],
-) -> ValidationError | None:
+) -> ValidationIssue | None:
     """Check one statement found by the walker; ``None`` when it is fine.
 
     ``custom`` holds extra names per kind in lower case, ``allowed`` the
     allowlist patterns (``effect:my_effect``).
     """
 
-    kind = cast(ScriptTokenKind, statement.kind)
+    kind = statement.kind
     name = statement.name
     folded = name.lower()
     if not vocabulary.tokens(kind):
@@ -1103,10 +1110,10 @@ def check_statement(
 
 def _finding(
     source: ScriptSource, line: int, *, code: str, severity: str, message: str
-) -> ValidationError:
+) -> ValidationIssue:
     owner_kind = source.owner_kind
     owner_id = source.owner_id or None
-    return ValidationError(
+    return ValidationIssue(
         message=message,
         severity=severity,
         code=code,
@@ -1166,8 +1173,8 @@ __all__ = [
     "ScriptSource",
     "ScriptTokenInfo",
     "ScriptTokenKind",
+    "check_statement",
     "load_game_script_vocabulary",
     "script_sources",
-    "check_statement",
     "validate_script_sources",
 ]

@@ -80,7 +80,7 @@ def _write(tmp_path: Path, text: str | bytes, name: str = "TST_focus.txt") -> Pa
 def _changed_lines(before: str, after: str) -> list[tuple[str, str]]:
     old, new = before.split("\n"), after.split("\n")
     assert len(old) == len(new), "lines were added or removed"
-    return [(a, b) for a, b in zip(old, new) if a != b]
+    return [(a, b) for a, b in zip(old, new, strict=True) if a != b]
 
 
 # ── bug 1: one field edit leaves everything else alone ───────────
@@ -338,7 +338,7 @@ def test_joint_focus_edit_on_shared_line(tmp_path: Path) -> None:
 def test_add_remove_and_rekind_top_level_focuses(tmp_path: Path) -> None:
     path = _write(tmp_path, MIXED)
     mod = Mod(tmp_path)
-    assert mod.remove_focus("TST_focus", "SH_child")
+    mod.remove_focus("TST_focus", "SH_child")
     mod.add_focus("TST_focus", Focus(id="SH_new", kind="shared_focus", x=1, y=2))
     mod.update_focus("TST_focus", "JF_root", kind="shared_focus")
     mod.save()
@@ -375,7 +375,7 @@ def test_shared_focus_references_are_edited_in_place(tmp_path: Path) -> None:
 def test_deleting_the_container_removes_only_top_level_focus_blocks(tmp_path: Path) -> None:
     path = _write(tmp_path, MIXED)
     mod = Mod(tmp_path)
-    assert mod.delete_focus_tree("TST_focus")
+    mod.delete_focus_tree("TST_focus")
     mod.save()
     written = path.read_text()
     assert "SH_root = " not in written and "id = SH_root" not in written
@@ -400,7 +400,7 @@ def test_container_kind_rules(tmp_path: Path) -> None:
 def test_upsert_keeps_the_block_kind(tmp_path: Path) -> None:
     _write(tmp_path, MIXED)
     mod = Mod(tmp_path)
-    mod.upsert_focus("TST_focus", Focus(id="SH_root", x=7))
+    mod.ensure_focus("TST_focus", Focus(id="SH_root", x=7))
     focus = mod.get_focus("TST_focus", "SH_root")
     assert focus is not None and focus.kind == "shared_focus" and focus.x == 7
 
@@ -663,7 +663,7 @@ def test_several_trees_with_and_without_id_in_one_file(tmp_path: Path) -> None:
 def test_deleting_an_unnamed_tree_removes_only_that_block(tmp_path: Path) -> None:
     path = _write(tmp_path, MANY_TREES, name="many.txt")
     mod = Mod(tmp_path)
-    assert mod.delete_focus_tree("many_3")
+    mod.delete_focus_tree("many_3")
     mod.save()
     assert path.read_text() == MANY_TREES.replace(
         "focus_tree = {\n\tfocus = { id = c1 x = 0 }\n}\n", ""

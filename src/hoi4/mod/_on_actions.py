@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 from pathlib import Path
 
+from ..fields import EnsureOnActionFields, OnActionFields
 from ..paths import (
     require_script_id,
     resolve_mod_output_path,
@@ -14,8 +17,13 @@ from ..script import (
 from ..types import (
     OnAction,
 )
+from ..errors import AlreadyExistsError, NotFoundError, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
+    _check_field_names,
+    _check_fields,
+    _create_arguments,
     _set_fields,
 )
 
@@ -26,16 +34,28 @@ class OnActionsLayer(CoreLayer):
     # ── On Actions ───────────────────────────────────────────────
 
     def list_on_actions(self) -> list[str]:
+        """Return the sorted ids of the on-action hooks the mod uses."""
         return sorted(self._on_actions.keys())
 
-    def get_on_action_occurrences(self, action_id: str) -> tuple[OnAction, ...]:
-        """Return every compositional occurrence of an on-action hook."""
+    def get_on_action_occurrences(
+        self, action_id: str, *, default: _D | _Missing = MISSING
+    ) -> tuple[OnAction, ...] | _D:
+        """Return every compositional occurrence of an on-action hook.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when the
+                hook has no occurrence.
+
+        Raises:
+            NotFoundError: The mod has no occurrence of this hook and no
+                default was given.
+        """
 
         occurrences = self._on_action_occurrences.get(action_id)
         if not occurrences:
-            raise KeyError(
-                f"On-action '{action_id}' not found. Available: {self.list_on_actions()}"
-            )
+            if default is not MISSING:
+                return default
+            raise not_found("on-action", action_id, self.list_on_actions())
         return tuple(occurrences)
 
     def _select_on_action_occurrence(
@@ -48,9 +68,7 @@ class OnActionsLayer(CoreLayer):
     ) -> tuple[int, OnAction]:
         actions = self._on_action_occurrences.get(action_id)
         if not actions:
-            raise KeyError(
-                f"On-action '{action_id}' not found. Available: {self.list_on_actions()}"
-            )
+            raise not_found("on-action", action_id, self.list_on_actions())
         candidates = list(enumerate(actions))
         if source_path is not None:
             target = resolve_mod_output_path(self.mod_root, source_path)
@@ -62,8 +80,10 @@ class OnActionsLayer(CoreLayer):
                 == target
             ]
             if not candidates:
-                raise KeyError(
-                    f"On-action '{action_id}' has no occurrence in {target}"
+                raise NotFoundError(
+                    f"On-action '{action_id}' has no occurrence in {target}.",
+                    kind="on-action occurrence",
+                    id=action_id,
                 )
         if occurrence is None:
             if require_unique and len(candidates) != 1:
@@ -78,9 +98,11 @@ class OnActionsLayer(CoreLayer):
                 )
             occurrence = 0
         if occurrence < 0 or occurrence >= len(candidates):
-            raise IndexError(
+            raise NotFoundError(
                 f"On-action '{action_id}' occurrence {occurrence} is out of range "
-                f"for {len(candidates)} matching occurrence(s)"
+                f"for {len(candidates)} matching occurrence(s).",
+                kind="on-action occurrence",
+                id=occurrence,
             )
         return candidates[occurrence]
 
@@ -90,15 +112,30 @@ class OnActionsLayer(CoreLayer):
         *,
         occurrence: int = 0,
         source_path: str | Path | None = None,
-    ) -> OnAction:
-        """Return one hook occurrence, defaulting to the first in load order."""
+        default: _D | _Missing = MISSING,
+    ) -> OnAction | _D:
+        """Return one hook occurrence, defaulting to the first in load order.
 
-        _, action = self._select_on_action_occurrence(
-            action_id,
-            occurrence=occurrence,
-            source_path=source_path,
-            require_unique=False,
-        )
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when the
+                hook or the chosen occurrence does not exist.
+
+        Raises:
+            NotFoundError: The hook, or the chosen occurrence, does not exist
+                and no default was given.
+        """
+
+        try:
+            _, action = self._select_on_action_occurrence(
+                action_id,
+                occurrence=occurrence,
+                source_path=source_path,
+                require_unique=False,
+            )
+        except NotFoundError:
+            if default is not MISSING:
+                return default
+            raise
         return action
 
     def create_on_action(
@@ -111,6 +148,29 @@ class OnActionsLayer(CoreLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> OnAction:
+        """Add an occurrence of the on-action hook ``action_id`` in one file; staged until ``save()``.
+
+        The game runs every occurrence of a hook, so the mod may add one per
+        file. An occurrence in the same file counts as existing.
+
+        Args:
+            effect: Body of the ``effect`` block.
+            events: Event ids fired by the hook.
+            random_events: The entries of ``random_events``, flattened: a
+                weight followed by an event id, such as ``["100", "my.1"]``.
+            path: The file. Without it, the existing occurrence's file when
+                overwriting, else ``common/on_actions/mod_on_actions.txt``.
+            overwrite: Replace the occurrence in that file.
+
+        Returns:
+            The new occurrence.
+
+        Raises:
+            AlreadyExistsError: The file already has an occurrence of the hook
+                and ``overwrite`` is false.
+            ValueError: The id is not valid, ``path`` is outside the mod, or
+                ``overwrite`` cannot tell which occurrence to replace.
+        """
         action_id = require_script_id(action_id, label="on-action ID")
         existing = self._on_action_occurrences.get(action_id, [])
         default_path = self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
@@ -134,7 +194,7 @@ class OnActionsLayer(CoreLayer):
             if (action.path or default_path).resolve(strict=False) == target
         ]
         if target_existing and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"On-action '{action_id}' already has an occurrence in {target}. "
                 "Use overwrite=True to replace that occurrence, update_on_action() "
                 "to patch it, or choose another path for an additive extension."
@@ -175,13 +235,29 @@ class OnActionsLayer(CoreLayer):
         self._dirty_on_action_files.add(target)
         return action
 
-    def ensure_on_action(self, action_id: str, **kwargs) -> OnAction:
-        """Ensure one occurrence, using the requested/default file as its identity."""
+    def ensure_on_action(self, action_id: str, **fields: Unpack[EnsureOnActionFields]) -> OnAction:
+        """Ensure one occurrence, using the requested/default file as its identity.
+
+        Returns:
+            The created or updated occurrence.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: The hook occurs several times in the chosen file.
+        """
+        kwargs: dict[str, Any] = dict(fields)
 
         occurrences = self._on_action_occurrences.get(action_id, [])
+        if occurrences:
+            _check_fields("ensure_on_action", occurrences[0], kwargs, allow_path=True)
+        else:
+            _check_field_names(
+                "ensure_on_action",
+                kwargs,
+                _create_arguments(self.create_on_action, skip={"action_id"}),
+            )
         if len(occurrences) == 1:
-            self.update_on_action(action_id, occurrence=0, **kwargs)
-            return occurrences[0]
+            return self.update_on_action(action_id, occurrence=0, **kwargs)
         if occurrences:
             path_arg = kwargs.get("path")
             target = (
@@ -199,8 +275,7 @@ class OnActionsLayer(CoreLayer):
                 == target
             ]
             if len(matching) == 1:
-                self.update_on_action(action_id, occurrence=matching[0], **kwargs)
-                return occurrences[matching[0]]
+                return self.update_on_action(action_id, occurrence=matching[0], **kwargs)
             if len(matching) > 1:
                 raise ValueError(
                     f"On-action '{action_id}' occurs multiple times in {target}; "
@@ -214,16 +289,31 @@ class OnActionsLayer(CoreLayer):
         *,
         occurrence: int | None = None,
         source_path: str | Path | None = None,
-        **kwargs,
-    ) -> bool:
-        if action_id not in self._on_action_occurrences:
-            return False
+        **fields: Unpack[OnActionFields],
+    ) -> OnAction:
+        """Patch one occurrence of an on-action hook.
+
+        When the hook has several occurrences, pass ``occurrence=`` or
+        ``source_path=`` to choose one.
+
+        Returns:
+            The updated occurrence.
+
+        Raises:
+            NotFoundError: The hook, or the chosen occurrence, does not exist.
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: The hook has several occurrences and none was chosen.
+        """
+        kwargs: dict[str, Any] = dict(fields)
         _, action = self._select_on_action_occurrence(
             action_id,
             occurrence=occurrence,
             source_path=source_path,
             require_unique=True,
         )
+        if "id" in kwargs:
+            raise ValueError("On-action IDs are immutable; create a new on-action instead")
+        _check_fields("update_on_action", action, kwargs, allow_path=True)
         old_path = action.path
         if "effect" in kwargs and isinstance(kwargs["effect"], str):
             kwargs["effect"] = normalize_block_body(kwargs["effect"])
@@ -240,7 +330,7 @@ class OnActionsLayer(CoreLayer):
         self._dirty_on_action_files.add(
             action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
         )
-        return True
+        return action
 
     def delete_on_action(
         self,
@@ -248,16 +338,23 @@ class OnActionsLayer(CoreLayer):
         *,
         occurrence: int | None = None,
         source_path: str | Path | None = None,
-    ) -> bool:
-        actions = self._on_action_occurrences.get(action_id)
-        if not actions:
-            return False
+    ) -> None:
+        """Stage the deletion of one occurrence of an on-action hook.
+
+        When the hook has several occurrences, pass ``occurrence=`` or
+        ``source_path=`` to choose one.
+
+        Raises:
+            NotFoundError: The hook, or the chosen occurrence, does not exist.
+            ValueError: The hook has several occurrences and none was chosen.
+        """
         index, action = self._select_on_action_occurrence(
             action_id,
             occurrence=occurrence,
             source_path=source_path,
             require_unique=True,
         )
+        actions = self._on_action_occurrences[action_id]
         del actions[index]
         if actions:
             self._on_actions[action_id] = actions[0]
@@ -269,4 +366,3 @@ class OnActionsLayer(CoreLayer):
         self._dirty_on_action_files.add(
             action.path or self.mod_root / "common" / "on_actions" / "mod_on_actions.txt"
         )
-        return True

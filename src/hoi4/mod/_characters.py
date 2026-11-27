@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any, Unpack
+
 import copy
+import typing
 import dataclasses
 from pathlib import Path
 
+from ..fields import CharacterFields, CharacterInstanceFields, CharacterRoleFields
 from ..characters import (
     AdvisorRole,
     Character,
@@ -19,7 +23,9 @@ from ..paths import (
     require_script_id,
 )
 from ..textio import read_text
+from ..errors import AlreadyExistsError, NotFoundError, not_found
 from ._countries import CountriesLayer
+from ._shared import MISSING, _D, _Missing, _check_field_names, _check_model, _check_model_lists
 from ._localisation import LocalisationLayer
 
 
@@ -35,6 +41,18 @@ def _require_character_lookup_id(value: str) -> str:
     return text
 
 
+def _missing_role(
+    character: Character, role_type: str, occurrence: int | None, count: int
+) -> NotFoundError:
+    which = "" if occurrence is None else f" occurrence {occurrence}"
+    return NotFoundError(
+        f"Character '{character.id}' has no '{role_type}' role{which} "
+        f"({count} '{role_type}' roles).",
+        kind="character role",
+        id=role_type,
+    )
+
+
 class CharactersLayer(CountriesLayer, LocalisationLayer):
     """Character, role and instance authoring."""
 
@@ -46,6 +64,16 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         include_vanilla: bool = True,
     ) -> list[str]:
+        """Return the sorted ids of the known characters, optionally of one country.
+
+        Args:
+            tag: Only characters of this country.
+            include_vanilla: Also load and list the characters of the game
+                and the base mods.
+
+        Raises:
+            ValueError: ``tag`` is not a valid country tag.
+        """
         normalized = require_country_tag(tag) if tag is not None else None
         if include_vanilla and self._base_content is not None:
             self._load_vanilla_characters(normalized)
@@ -60,7 +88,21 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         character_id: str,
         *,
         include_vanilla: bool = True,
-    ) -> Character:
+        default: _D | _Missing = MISSING,
+    ) -> Character | _D:
+        """Return the character ``character_id``.
+
+        ``include_vanilla`` also loads the game's and base mods' characters
+        of the tag in the id's prefix.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when no
+                character has this id.
+
+        Raises:
+            NotFoundError: No character has this id and no default was given.
+            ValueError: ``character_id`` is not a valid id.
+        """
         # Look up before validating: the game accepts ids the SDK would not
         # generate, such as ``COL_alfonso_lópez_pumarejo`` in vanilla.
         character = self._characters.get(str(character_id))
@@ -77,7 +119,9 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             self._load_vanilla_characters(tag)
             character = self._characters.get(character_id)
         if character is None:
-            raise KeyError(f"Character '{character_id}' not found")
+            if default is not MISSING:
+                return default
+            raise not_found("character", character_id, self._characters)
         return character
 
     def create_character(
@@ -89,17 +133,49 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         overwrite: bool = False,
         path: str | Path | None = None,
     ) -> Character:
+        """Add ``character`` to the mod as a character of ``tag``; staged until ``save()``.
+
+        The mod keeps a copy, so later changes to ``character`` do not reach
+        it. An advisor role without an ``idea_token`` gets the character id,
+        and one without ``allowed`` gets ``original_tag = <tag>``. The name
+        (or the id) goes into the English localisation as the character's
+        name and description.
+
+        Args:
+            recruit: Add the character to the country's recruited characters.
+                Pass false for a character that an event or focus unlocks.
+            overwrite: Replace an existing character with this id.
+            path: The output file. Without it, the existing character's mod
+                file or ``common/characters/<tag>_characters.txt``.
+
+        Returns:
+            The character as stored in the mod.
+
+        Raises:
+            TypeError: ``character`` is not a ``Character``, or one of its lists holds
+                something of another class; nothing changed.
+            NotFoundError: ``recruit`` is true and no one defines ``tag``.
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            ValueError: ``tag`` or the character id is not valid, or ``path``
+                is outside the mod.
+        """
         tag = require_country_tag(tag)
+        _check_model("create_character", character, "character", (Character,))
         character_id = require_script_id(character.id, label="character ID")
         if recruit and not self._is_known_country_tag(tag):
-            raise KeyError(
-                f"Cannot recruit character '{character_id}': country '{tag}' "
-                "is not defined. Create or load the country first, or pass "
-                "recruit=False for an event-unlocked definition."
+            raise not_found(
+                "country",
+                tag,
+                self._country_tag_candidates(),
+                plural="countries",
+                hint=(
+                    f"Cannot recruit character '{character_id}'. Create or load the "
+                    "country first, or pass recruit=False for an event-unlocked definition."
+                ),
             )
         existing = self._characters.get(character_id)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Character '{character_id}' already exists. "
                 "Use overwrite=True only for deliberate replacement."
             )
@@ -136,23 +212,30 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         self._sync_character_loc(replacement)
         return replacement
 
-    def update_character(self, character_id: str, **kwargs: object) -> bool:
-        try:
-            character = self.get_character(character_id)
-        except (KeyError, ValueError):
-            return False
+    def update_character(self, character_id: str, **fields: Unpack[CharacterFields]) -> Character:
+        """Patch a character's top-level ``name`` or ``portraits``.
+
+        Roles and instances have their own methods. A character loaded from
+        the game or a base mod is copied into the mod first.
+
+        Returns:
+            The updated character.
+
+        Raises:
+            NotFoundError: No character has this id.
+            TypeError: A field name is unknown, or ``portraits`` holds something
+                that is not a ``CharacterPortrait``; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        character = self.get_character(character_id)
         if "country_tag" in kwargs:
             raise TypeError(
                 "update_character() cannot update country_tag, even to the existing tag. "
                 "Remove country_tag from this call; persistent character reassignment "
                 "is not supported."
             )
-        unknown = set(kwargs) - {"name", "portraits"}
-        if unknown:
-            raise TypeError(
-                f"Unknown character fields: {sorted(unknown)}. "
-                "Use the explicit instance and role mutation methods for nested content."
-            )
+        _check_field_names("update_character", dict(kwargs), {"name", "portraits"})
+        _check_model_lists("update_character", Character, kwargs)
         self._materialize_character_override(character)
         for key, value in kwargs.items():
             setattr(character, key, copy.deepcopy(value))
@@ -162,18 +245,24 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             self._dirty_character_files.add(character.path)
         self._dirty.add("characters")
         self._sync_character_loc(character)
-        return True
+        return character
 
     def delete_character(
         self,
         character_id: str,
         *,
         remove_recruitment: bool = True,
-    ) -> bool:
-        try:
-            character = self.get_character(character_id, include_vanilla=False)
-        except (KeyError, ValueError):
-            return False
+    ) -> None:
+        """Stage the deletion of a character and the localisation the mod holds for it.
+
+        ``remove_recruitment`` also removes it from its country's
+        ``recruit_character`` list. A character of the game or a base mod
+        is deleted by writing an override of its file.
+
+        Raises:
+            NotFoundError: No character has this id.
+        """
+        character = self.get_character(character_id)
         self._materialize_character_override(character)
         self._characters.pop(character.id, None)
         if character.path is not None:
@@ -188,14 +277,28 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             )
         self._delete_loc_all_languages(character.id)
         self._delete_loc_all_languages(f"{character.id}_desc")
-        return True
 
     def add_character_instance(
         self,
         character_id: str,
         instance: CharacterInstance,
     ) -> CharacterInstance:
+        """Append a copy of ``instance`` to a character; staged until ``save()``.
+
+        A character of the game or a base mod is copied into the mod first.
+
+        Returns:
+            The added instance as stored in the mod.
+
+        Raises:
+            TypeError: ``instance`` is not a ``CharacterInstance``, or one of its
+                lists holds something of another class; nothing changed.
+            NotFoundError: No character has this id.
+            ValueError: The character comes from the game but no game install
+                is configured.
+        """
         character = self.get_character(character_id)
+        _check_model("add_character_instance", instance, "instance", (CharacterInstance,))
         self._materialize_character_override(character)
         new_instance = copy.deepcopy(instance)
         new_instance.source_occurrence = -1
@@ -213,17 +316,26 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         self,
         character_id: str,
         occurrence: int,
-        **kwargs: object,
-    ) -> bool:
+        **fields: Unpack[CharacterInstanceFields],
+    ) -> CharacterInstance:
+        """Patch ``allowed``, ``name`` or ``portraits`` of one instance (zero-based).
+
+        Roles of an instance have their own methods.
+
+        Returns:
+            The updated instance.
+
+        Raises:
+            NotFoundError: The character or that instance does not exist.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
         character = self.get_character(character_id)
-        if occurrence < 0 or occurrence >= len(character.instances):
-            return False
-        unknown = set(kwargs) - {"allowed", "name", "portraits"}
-        if unknown:
-            raise TypeError(
-                f"Unknown character instance fields: {sorted(unknown)}. "
-                "Use role mutation methods for instance roles."
-            )
+        self._require_character_instance(character, occurrence)
+        _check_field_names(
+            "update_character_instance", dict(kwargs), {"allowed", "name", "portraits"}
+        )
+        _check_model_lists("update_character_instance", CharacterInstance, kwargs)
         self._materialize_character_override(character)
         instance = character.instances[occurrence]
         for key, value in kwargs.items():
@@ -231,21 +343,34 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         instance.touched_fields.update(kwargs)
         character.touched_fields.add("instances")
         self._mark_character_dirty(character)
-        return True
+        return instance
 
     def delete_character_instance(
         self,
         character_id: str,
         occurrence: int,
-    ) -> bool:
+    ) -> None:
+        """Remove one ``instance`` block (zero-based ``occurrence``) of a character.
+
+        Raises:
+            NotFoundError: The character or that instance does not exist.
+        """
         character = self.get_character(character_id)
-        if occurrence < 0 or occurrence >= len(character.instances):
-            return False
+        self._require_character_instance(character, occurrence)
         self._materialize_character_override(character)
         character.instances.pop(occurrence)
         character.touched_fields.add("instances")
         self._mark_character_dirty(character)
-        return True
+
+    @staticmethod
+    def _require_character_instance(character: Character, occurrence: int) -> None:
+        if occurrence < 0 or occurrence >= len(character.instances):
+            raise NotFoundError(
+                f"Character '{character.id}' has no instance occurrence {occurrence} "
+                f"({len(character.instances)} instances).",
+                kind="character instance",
+                id=occurrence,
+            )
 
     def add_character_role(
         self,
@@ -254,6 +379,24 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         instance_occurrence: int | None = None,
     ) -> CharacterRole:
+        """Append a copy of ``role`` to a character or one of its instances; staged until ``save()``.
+
+        A character of the game or a base mod is copied into the mod first.
+
+        Args:
+            instance_occurrence: Add the role to this instance (zero-based)
+                instead of to the character itself.
+
+        Returns:
+            The added role as stored in the mod.
+
+        Raises:
+            TypeError: ``role`` is not a role object; nothing changed.
+            NotFoundError: The character, or the chosen instance, does not exist.
+            ValueError: The character comes from the game but no game install
+                is configured.
+        """
+        _check_model("add_character_role", role, "role", typing.get_args(CharacterRole))
         character = self.get_character(character_id)
         self._materialize_character_override(character)
         roles, scope = self._character_role_scope(character, instance_occurrence)
@@ -274,8 +417,23 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         occurrence: int | None = None,
         instance_occurrence: int | None = None,
-        **kwargs: object,
-    ) -> bool:
+        **fields: Unpack[CharacterRoleFields],
+    ) -> CharacterRole:
+        """Patch one role of a character or of one of its instances.
+
+        When the character has several roles of ``role_type``, pass
+        ``occurrence=`` (zero-based). ``instance_occurrence=`` picks an
+        instance instead of the character's own roles.
+
+        Returns:
+            The updated role.
+
+        Raises:
+            NotFoundError: The character, the instance or the role does not exist.
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: Several roles match and no ``occurrence`` was given.
+        """
+        kwargs: dict[str, Any] = dict(fields)
         if role_type not in {
             "country_leader",
             "advisor",
@@ -288,7 +446,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         roles, scope = self._character_role_scope(character, instance_occurrence)
         matches = [role for role in roles if role_key(role) == role_type]
         if not matches:
-            return False
+            raise _missing_role(character, role_type, occurrence, 0)
         if occurrence is None:
             if len(matches) != 1:
                 raise ValueError(
@@ -298,19 +456,15 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             role = matches[0]
         else:
             if occurrence < 0 or occurrence >= len(matches):
-                return False
+                raise _missing_role(character, role_type, occurrence, len(matches))
             role = matches[occurrence]
-        self._materialize_character_override(character)
         internal = {"raw_block", "touched_fields", "source_occurrence", "kind"}
         valid = {
             field.name for field in dataclasses.fields(role)
         } - internal
-        unknown = set(kwargs) - valid
-        if unknown:
-            raise TypeError(
-                f"Unknown {role_type} fields: {sorted(unknown)}. "
-                f"Valid: {sorted(valid)}"
-            )
+        _check_field_names("update_character_role", dict(kwargs), valid)
+        _check_model_lists("update_character_role", type(role), kwargs)
+        self._materialize_character_override(character)
         for key, value in kwargs.items():
             setattr(role, key, copy.deepcopy(value))
         role.touched_fields.update(kwargs)
@@ -318,7 +472,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         if isinstance(scope, CharacterInstance):
             character.touched_fields.add("instances")
         self._mark_character_dirty(character)
-        return True
+        return role
 
     def remove_character_role(
         self,
@@ -327,14 +481,20 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         occurrence: int | None = None,
         instance_occurrence: int | None = None,
-    ) -> bool:
+    ) -> None:
+        """Remove one role of a character or of one of its instances.
+
+        Raises:
+            NotFoundError: The character, the instance or the role does not exist.
+            ValueError: Several roles match and no ``occurrence`` was given.
+        """
         character = self.get_character(character_id)
         roles, scope = self._character_role_scope(character, instance_occurrence)
         indexes = [
             index for index, role in enumerate(roles) if role_key(role) == role_type
         ]
         if not indexes:
-            return False
+            raise _missing_role(character, role_type, occurrence, 0)
         if occurrence is None:
             if len(indexes) != 1:
                 raise ValueError(
@@ -344,7 +504,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             index = indexes[0]
         else:
             if occurrence < 0 or occurrence >= len(indexes):
-                return False
+                raise _missing_role(character, role_type, occurrence, len(indexes))
             index = indexes[occurrence]
         self._materialize_character_override(character)
         roles.pop(index)
@@ -352,7 +512,6 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         if isinstance(scope, CharacterInstance):
             character.touched_fields.add("instances")
         self._mark_character_dirty(character)
-        return True
 
     def _character_role_scope(
         self,
@@ -365,9 +524,11 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         if instance_occurrence is None:
             return character.roles, character
         if instance_occurrence < 0 or instance_occurrence >= len(character.instances):
-            raise IndexError(
+            raise NotFoundError(
                 f"Character '{character.id}' has no instance occurrence "
-                f"{instance_occurrence}"
+                f"{instance_occurrence} ({len(character.instances)} instances).",
+                kind="character instance",
+                id=instance_occurrence,
             )
         instance = character.instances[instance_occurrence]
         return instance.roles, instance
@@ -402,6 +563,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         *,
         recruited: bool,
     ) -> None:
+        if not recruited and not self._is_known_country_tag(tag):
+            return  # no country, so no recruitment list to remove it from
         country = self.get_country(tag)
         self._materialize_country_override(country)
         values = list(country.recruited_characters)
@@ -484,13 +647,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
 
     @staticmethod
     def _all_character_roles(character: Character) -> tuple[CharacterRole, ...]:
-        return tuple(
-            [
-                *character.roles,
-                *(
-                    role
-                    for instance in character.instances
-                    for role in instance.roles
-                ),
-            ]
+        return (
+            *character.roles,
+            *(role for instance in character.instances for role in instance.roles),
         )

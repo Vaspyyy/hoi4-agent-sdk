@@ -6,8 +6,9 @@ import dataclasses
 import os
 import tempfile
 import warnings
-from collections.abc import Collection, Sequence
-from contextlib import contextmanager
+from collections.abc import Collection, Iterator, Sequence
+from contextlib import contextmanager, suppress
+from typing import Self
 from pathlib import Path
 
 from ..bookmarks import (
@@ -29,6 +30,7 @@ from ..decisions import (
     serialize_decisions_file,
 )
 from ..diff import unified_diff
+from ..errors import SaveRefusedError
 from ..dynamic_modifiers import (
     serialize_dynamic_modifiers_file,
 )
@@ -86,6 +88,10 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
     # ── Preview & Save ───────────────────────────────────────────
 
     def preview_summary(self) -> str:
+        """Describe the unsaved edits in a few lines, one per changed object or file.
+
+        Returns ``"No semantic changes detected"`` when there are none.
+        """
         lines = self._semantic_preview_lines()
         lines.extend(f"support script: {p.relative_to(self.mod_root)}" for p in self._script_file_updates)
         if not lines:
@@ -93,10 +99,20 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         return "Changed:\n" + "\n".join(f"- {line}" for line in lines)
 
     def preview(self) -> str:
+        """Return a unified diff of every file ``save()`` would write; writes nothing.
+
+        Binary assets get one line each instead of a diff. An empty string
+        means ``save()`` would change no file.
+
+        Raises:
+            ExternalModificationError: A file it would rewrite changed on disk
+                after the mod read it; call ``discard()`` and redo the edit.
+        """
         diffs: list[str] = []
         rendered = self._render_dirty_files()
         self._assert_no_external_modifications(rendered)
-        for path, current in rendered.items():
+        # In path order, so the same edits always give the same text.
+        for path, current in sorted(rendered.items(), key=lambda item: item[0]):
             original = self._read_current_text(path)
             rel = str(path.relative_to(self.mod_root))
             if current is None:
@@ -113,12 +129,33 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             diffs.append(f"Binary asset {action}: {rel} ({len(content)} bytes)")
         return "\n".join(diffs)
 
-    def save(self, require_changes: bool = False) -> SaveResult:
+    def save(self, *, require_changes: bool = False) -> SaveResult:
+        """Write every staged edit to disk at once.
+
+        Either every file is written or, on an error, none is (files already
+        replaced are put back). The written sections load again from disk on
+        next use. With nothing staged, a ``RuntimeWarning`` is issued.
+
+        Args:
+            require_changes: Raise instead of returning when no file changes.
+
+        Returns:
+            The written files and the sections that had edits.
+
+        Raises:
+            ExternalModificationError: A file it would rewrite changed on disk
+                after the mod read it; call ``discard()`` and redo the edit.
+            SaveRefusedError: ``require_changes`` is true and no file
+                changes, or writing would lose or break content (a file it
+                would rewrite failed to load, a new syntax problem). It is
+                also a ``RuntimeError``.
+            OSError: Writing a file failed.
+        """
         if not self._dirty:
             message = "No changes written: save() was called with no dirty changes"
             warnings.warn(message, RuntimeWarning, stacklevel=2)
             if require_changes:
-                raise RuntimeError(message)
+                raise SaveRefusedError(message)
             return SaveResult(written_files=[], dirty_sections=[], no_changes=True, message=message)
 
         dirty_sections = sorted(self._dirty)
@@ -138,19 +175,18 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         if not changed and not changed_assets:
             message = "No files written after processing dirty sections"
             if require_changes:
-                raise RuntimeError(message)
+                raise SaveRefusedError(message)
             return SaveResult(dirty_sections=dirty_sections, no_changes=True, message=message)
         self._commit_rendered_files(changed, changed_assets)
         written_files = sorted((*changed, *changed_assets))
         self._note_written(written_files)
         self._discard_changes(written_files)
-        result = SaveResult(
+        return SaveResult(
             written_files=written_files,
             dirty_sections=dirty_sections,
             no_changes=False,
             message=f"Saved {len(written_files)} file(s)",
         )
-        return result
 
     def _render_dirty_files(self) -> dict[Path, str | None]:
         rendered: dict[Path, str | None] = dict(self._script_file_updates)
@@ -235,7 +271,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                         read_text(vanilla_colors_path),
                     )
                 elif set(color_updates) & self._vanilla_tags:
-                    raise RuntimeError(
+                    raise SaveRefusedError(
                         "Cannot safely override a vanilla country color because "
                         f"{vanilla_colors_path} is missing. HOI4 replaces colors.txt "
                         "wholesale, so writing a partial table would remove other "
@@ -485,14 +521,14 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             )
             raise ExternalModificationError(
                 "Refusing to overwrite files changed after Mod loaded them: "
-                f"{displayed}. Call reload() and reapply the intended edit."
+                f"{displayed}. Call discard() and reapply the intended edit."
             )
 
     def _same_as_inherited(self, path: Path, content: str) -> bool:
         """Return whether ``content`` only repeats the file ``path`` would shadow."""
 
         try:
-            shadowed = self.content_source(path.relative_to(self.mod_root))
+            shadowed = self.resolve_content_path(path.relative_to(self.mod_root))
         except ValueError:
             return False
         if shadowed is None or not shadowed.is_file() or shadowed == path:
@@ -510,7 +546,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         if path.exists():
             return content
         try:
-            shadowed = self.content_source(path.relative_to(self.mod_root))
+            shadowed = self.resolve_content_path(path.relative_to(self.mod_root))
         except ValueError:
             return content
         if shadowed is None or not shadowed.is_file() or shadowed == path:
@@ -537,7 +573,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 before = len(parse(self._read_current_text(path)).problems)
             else:
                 try:
-                    shadowed = self.content_source(path.relative_to(self.mod_root))
+                    shadowed = self.resolve_content_path(path.relative_to(self.mod_root))
                 except ValueError:
                     shadowed = None
                 before = (
@@ -549,7 +585,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                 continue
             problem = document.problems[0]
             line, column = document.line_col(problem.offset)
-            raise RuntimeError(
+            raise SaveRefusedError(
                 f"Refusing to write {path}: it would get a syntax problem it does not have "
                 f"now ({problem.message}, line {line}, column {column}). Check the script "
                 "text passed to the last edits; nothing was written."
@@ -578,21 +614,21 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             resolved = path.resolve(strict=False)
             neighbour = failed_folders.get(resolved.parent)
             if content is not None and neighbour is not None and self._shadows_inherited(path):
-                raise RuntimeError(
+                raise SaveRefusedError(
                     f"Refusing to create {path}: it would override an inherited file, but "
                     f"{neighbour.path} in the same folder failed to load "
                     f"({neighbour.error_type}: {neighbour.message}) and may already hold the "
-                    "mod's version of this content. Fix that file and call reload() first."
+                    "mod's version of this content. Fix that file and call discard() first."
                 )
             diagnostic = failed.get(resolved)
             if diagnostic is None or not path.is_file():
                 continue
             if content is not None and content == self._read_current_text(path):
                 continue
-            raise RuntimeError(
+            raise SaveRefusedError(
                 f"Refusing to rewrite {path}: it failed to load "
                 f"({diagnostic.error_type}: {diagnostic.message}). Fix the file "
-                "and call reload() before editing it."
+                "and call discard() before editing it."
             )
 
     def _encode_like_source(self, path: Path, content: str, current: bytes | None) -> bytes:
@@ -612,7 +648,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         if current is not None:
             return encode_text(content, like=current, bom=bom)
         try:
-            shadowed = self.content_source(path.relative_to(self.mod_root))
+            shadowed = self.resolve_content_path(path.relative_to(self.mod_root))
         except ValueError:
             shadowed = None
         if shadowed is not None and shadowed.is_file() and shadowed != path:
@@ -670,12 +706,19 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             raise
 
     @contextmanager
-    def transaction(self, *, save: bool = False):
+    def transaction(self, *, save: bool = False) -> Iterator[Self]:
         """Temporarily mutate the mod, then save or restore in-memory state.
 
         Use ``with mod.transaction():`` for dry runs that call ``preview()`` inside
         the block. On normal exit the transaction is discarded unless
         ``save=True`` is passed. On exceptions, in-memory state is restored.
+
+        Yields:
+            The mod itself.
+
+        Raises:
+            Exception: Whatever the block raises, after the state is restored;
+                with ``save=True``, also what ``save()`` raises.
         """
         snapshot = self._snapshot()
         # A rollback puts back everything an edit inside it changed, so an
@@ -696,16 +739,35 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
     def discard(self) -> None:
         """Drop every unsaved edit and pick up files changed on disk.
 
-        Only sections that had edits or whose files changed on disk (and the
-        sections built from them) are unloaded; they load again on next use.
-        Everything else stays in memory. When a base mod's text file changed,
-        everything is unloaded, like ``reload()``.
+        This is the cheap way back to the files: only sections that had
+        edits or whose files changed on disk (and the sections built from
+        them) are unloaded; they load again on next use. Everything else
+        stays in memory. When a base mod's text file changed, everything is
+        unloaded and the content layers are rebuilt.
+
+        It looks only at the files of the mod and its base mods. A file
+        counts as changed when its size or modification time and its text
+        differ, or when a refused ``save()`` saw its text change. Use
+        ``reload()`` instead when a game file changed, or when a file may
+        have changed without its size or time showing it.
         """
 
         self._discard_changes(())
 
     def reload(self) -> None:
-        """Discard queued changes and reload current files from disk."""
+        """Drop every unsaved edit and read the whole mod again from disk.
+
+        Unlike ``discard()``, this does not trust file sizes and times: every
+        section of the mod, the base mods and the game is read again on next
+        use. It is slower than ``discard()``. Use it when files changed in a
+        way ``discard()`` cannot see (a game file, a file written back with
+        its old size and time), or to start from a clean state.
+        """
+
+        self._reload_all()
+
+    def _reload_all(self) -> None:
+        """Discard queued changes and reload every section from disk."""
 
         self._refresh_content_layers()
         self._vanilla_tags = (
@@ -745,7 +807,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         if not mapped or self._base_mods_changed():
             # A descriptor, a path outside the mod or a changed base mod
             # changes what every section sees, including the inherited layers.
-            self.reload()
+            self._reload_all()
             return
         self._reset_pending_edits()
         dropped = {*written, *staged, *changed}
@@ -902,10 +964,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             value = live[key] if isinstance(live, dict) else None
             if value is not None and not _comes_from(value, self.mod_root):
                 continue
-            try:
+            with suppress(KeyError):
                 getattr(fresh, lookup)(key)
-            except KeyError:
-                pass
 
 
 def _comes_from(value: object, root: Path) -> bool:
@@ -959,7 +1019,7 @@ def _first_difference(live: object, fresh: object, root: Path, where: str = "") 
             return None
         if isinstance(left, (list, tuple)):
             assert isinstance(right, (list, tuple))
-            for index, (a, b) in enumerate(zip(left, right)):
+            for index, (a, b) in enumerate(zip(left, right, strict=False)):
                 found = walk(a, b, f"{where}[{index}]")
                 if found is not None:
                     return found

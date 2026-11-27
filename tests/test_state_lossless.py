@@ -217,7 +217,7 @@ def test_resource_edit_changes_only_its_line(tmp_path: Path) -> None:
 """
     path = _write(tmp_path / "history" / "states" / "1.txt", source)
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, resources={"oil": 5, "steel": 9})
+    mod.update_state(1, resources={"oil": 5, "steel": 9})
     mod.save()
     assert path.read_text(encoding="utf-8") == source.replace("steel = 2", "steel = 9")
 
@@ -366,15 +366,15 @@ def test_owner_edit_keeps_a_combined_victory_points_block(tmp_path: Path) -> Non
 
 
 def test_changed_victory_points_are_still_written(tmp_path: Path) -> None:
-    mod, path = _state_mod(tmp_path)
-    mod.set_state_properties(7, victory_points="1 5 2 20")
+    mod, _path = _state_mod(tmp_path)
+    mod.update_state(7, victory_points="1 5 2 20")
     mod.save()
     assert Mod(tmp_path).get_state(7).victory_points == "1 5 2 20"
 
 
 def test_integer_manpower_is_written_as_that_number(tmp_path: Path) -> None:
     mod, path = _state_mod(tmp_path)
-    mod.set_state_properties(7, manpower=2000)
+    mod.update_state(7, manpower=2000)
     mod.save()
     assert path.read_text(encoding="utf-8") == COMBINED_POINTS.replace(
         "manpower = 1234", "manpower = 2000"
@@ -384,7 +384,7 @@ def test_integer_manpower_is_written_as_that_number(tmp_path: Path) -> None:
 
 def test_numeric_state_properties_accept_int_and_float(tmp_path: Path) -> None:
     mod, path = _state_mod(tmp_path)
-    mod.set_state_properties(
+    mod.update_state(
         7, manpower=2500.5, buildings_max_level_factor=1.25, local_supplies=2,
         resources={"steel": 14, "oil": 0.5},
     )
@@ -399,7 +399,7 @@ def test_numeric_state_properties_accept_int_and_float(tmp_path: Path) -> None:
 
 def test_numbers_equal_to_the_file_keep_its_spelling(tmp_path: Path) -> None:
     mod, path = _state_mod(tmp_path)
-    mod.set_state_properties(
+    mod.update_state(
         7, manpower=1234, buildings_max_level_factor=1.0, resources={"steel": 12},
     )
     mod.save()
@@ -434,7 +434,7 @@ def _buildings_mod(tmp_path: Path) -> tuple[Mod, Path]:
 
 def test_a_buildings_edit_changes_one_line_and_keeps_the_comments(tmp_path: Path) -> None:
     mod, path = _buildings_mod(tmp_path)
-    mod.set_state_properties(1, buildings="infrastructure = 3\nindustrial_complex = 2")
+    mod.update_state(1, buildings="infrastructure = 3\nindustrial_complex = 2")
     mod.save()
     assert path.read_text(encoding="utf-8") == BUILDINGS.replace(
         "industrial_complex = 1", "industrial_complex = 2"
@@ -443,7 +443,7 @@ def test_a_buildings_edit_changes_one_line_and_keeps_the_comments(tmp_path: Path
 
 def test_a_changed_buildings_comment_is_written(tmp_path: Path) -> None:
     mod, path = _buildings_mod(tmp_path)
-    mod.set_state_properties(
+    mod.update_state(
         1,
         buildings=(
             "infrastructure = 3 # edited road note\n"
@@ -462,7 +462,7 @@ def test_buildings_with_a_stray_brace_are_refused(tmp_path: Path) -> None:
     from hoi4.syntax import ParseError
 
     mod, path = _buildings_mod(tmp_path)
-    mod.set_state_properties(1, buildings="} add_core_of = FRA {")
+    mod.update_state(1, buildings="} add_core_of = FRA {")
     with pytest.raises(ParseError, match="'buildings'"):
         mod.preview()
     assert path.read_text(encoding="utf-8") == BUILDINGS

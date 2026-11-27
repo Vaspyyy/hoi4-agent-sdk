@@ -3,22 +3,30 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable, Sequence, cast
+from typing import Any, cast, Unpack
+from collections.abc import Iterable, Mapping, Sequence
 
+from ..fields import DecisionCategoryFields, DecisionFields, EnsureDecisionCategoryFields, EnsureDecisionFields, MissionOptions, TargetedDecisionOptions
 from ..decisions import category_files
 from ..paths import (
     require_script_id,
 )
-from ..syntax import quote
+from ..syntax import parse, quote
+from ..textio import read_text
 from ..types import (
     Decision,
     DecisionCategory,
 )
-from ._effects import EffectsLayer
+from ..errors import AlreadyExistsError, not_found
+from .. import effects
+from ._shared import MISSING, _D, _Missing
 from ._localisation import LocalisationLayer
 from ._shared import (
-    _check_fields,
     _decision_category_definition_path,
+    _check_field_names,
+    _typed_dict_keys,
+    _check_fields,
+    _create_arguments,
     _join_script_parts,
     _set_fields,
 )
@@ -55,7 +63,30 @@ def _insert_in_file_order(category: DecisionCategory, decision: Decision) -> Non
     category.decisions.append(decision)
 
 
-class DecisionsLayer(LocalisationLayer, EffectsLayer):
+#: The keys a step of ``create_decision_chain()`` may have.
+_CHAIN_STEP_KEYS = frozenset(
+    {
+        "id",
+        "flag",
+        "icon",
+        "cost",
+        "days_remove",
+        "fire_only_once",
+        "visible",
+        "available",
+        "complete_effect",
+        "remove_effect",
+        "ai_will_do",
+        "event",
+        "event_days",
+        "clear_flags",
+        "loc_name",
+        "loc_desc",
+    }
+)
+
+
+class DecisionsLayer(LocalisationLayer):
     """Decision and decision-category authoring."""
 
     def _point_decision_category_at(self, category: DecisionCategory, target: Path) -> None:
@@ -80,22 +111,51 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
     # ── Decisions ────────────────────────────────────────────────
 
     def list_decision_categories(self) -> list[str]:
+        """Return the sorted ids of the mod's decision categories."""
         return sorted(self._decision_categories.keys())
 
     def list_decisions(self) -> list[str]:
+        """Return the sorted ids of the mod's decisions."""
         return sorted(self._decisions.keys())
 
-    def get_decision(self, decision_id: str) -> Decision:
+    def get_decision(
+        self, decision_id: str, *, default: _D | _Missing = MISSING
+    ) -> Decision | _D:
+        """Return the decision ``decision_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No decision has this id.
+        """
         if decision_id not in self._decisions:
-            raise KeyError(
-                f"Decision '{decision_id}' not found. Available: {self.list_decisions()}"
-            )
+            if default is not MISSING:
+                return default
+            raise not_found("decision", decision_id, self.list_decisions())
         return self._decisions[decision_id]
 
-    def get_decision_category(self, category_id: str) -> DecisionCategory:
+    def get_decision_category(
+        self, category_id: str, *, default: _D | _Missing = MISSING
+    ) -> DecisionCategory | _D:
+        """Return the decision category ``category_id`` that the mod holds.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No such category is loaded.
+        """
         if category_id not in self._decision_categories:
-            raise KeyError(
-                f"Decision category '{category_id}' not found. Available: {self.list_decision_categories()}"
+            if default is not MISSING:
+                return default
+            raise not_found(
+                "decision category",
+                category_id,
+                self.list_decision_categories(),
+                plural="decision categories",
             )
         return self._decision_categories[category_id]
 
@@ -110,10 +170,37 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         category_path: str | Path | None = None,
         overwrite: bool = False,
     ) -> DecisionCategory:
+        """Create a decision category; staged until ``save()``.
+
+        The category's decisions go into ``path``; its definition (icon,
+        ``allowed``, ``visible``) goes into ``common/decisions/categories``.
+
+        Args:
+            icon: The category's icon sprite name.
+            allowed: Body of the ``allowed`` trigger block.
+            visible: Body of the ``visible`` trigger block.
+            path: The file for the category's decisions. Without it, the
+                existing category's file or ``common/decisions/mod_decisions.txt``.
+            category_path: The definition file. Without it, a name derived
+                from ``path`` that hides no game or base-mod file.
+            overwrite: Replace an existing category of this id; its
+                decisions are dropped.
+
+        Returns:
+            The new category.
+
+        Raises:
+            AlreadyExistsError: The category exists and ``overwrite`` is false.
+            RuntimeError: ``overwrite`` is true but the category's decisions
+                are spread over several files.
+            ValueError: The id is not a valid script id, ``category_path`` is
+                not in ``common/decisions/categories``, or a path is outside
+                the mod.
+        """
         category_id = require_script_id(category_id, label="decision category ID")
         existing = self._decision_categories.get(category_id)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Decision category '{category_id}' already exists. "
                 "Use overwrite=True to replace it or update existing decisions."
             )
@@ -186,22 +273,53 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         self._dirty_decision_category_files.add(definition_target)
         return category
 
-    def ensure_decision_category(self, category_id: str, **kwargs) -> DecisionCategory:
-        if category_id in self._decision_categories:
-            self.update_decision_category(category_id, **kwargs)
-            return self._decision_categories[category_id]
+    def ensure_decision_category(self, category_id: str, **fields: Unpack[EnsureDecisionCategoryFields]) -> DecisionCategory:
+        """Create a decision category if missing, otherwise patch the existing one.
+
+        Returns:
+            The created or updated category.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        existing = self.get_decision_category(category_id, default=None)
+        if existing is not None:
+            _check_fields(
+                "ensure_decision_category", existing, kwargs, extra={"path", "category_path"}
+            )
+            return self.update_decision_category(category_id, **kwargs)
+        _check_field_names(
+            "ensure_decision_category",
+            kwargs,
+            _create_arguments(self.create_decision_category, skip={"category_id"}),
+        )
         return self.create_decision_category(category_id, **kwargs)
 
-    def update_decision_category(self, category_id: str, **kwargs) -> bool:
-        category = self._decision_categories.get(category_id)
-        if category is None:
-            return False
+    def update_decision_category(self, category_id: str, **fields: Unpack[DecisionCategoryFields]) -> DecisionCategory:
+        """Patch fields of a decision category.
+
+        ``path=`` moves its decisions' block to another file and
+        ``category_path=`` its definition in ``common/decisions/categories``.
+
+        Returns:
+            The updated category.
+
+        Raises:
+            NotFoundError: No decision category has this id.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        category = self.get_decision_category(category_id)
         if "id" in kwargs:
             raise ValueError("Decision category IDs are immutable")
         if "paths" in kwargs:
             raise ValueError(
                 "Decision category paths are read from the files; pass path= to move it"
             )
+        _check_fields(
+            "update_decision_category", category, kwargs, extra={"path", "category_path"}
+        )
         old_definition_path = category.definition_path
         category_path = kwargs.pop("category_path", None)
         target = (
@@ -225,7 +343,6 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             raise ValueError(
                 "Decision category_path must point inside common/decisions/categories"
             )
-        _check_fields(category, kwargs)
         category.definition_path = definition_path
         _set_fields(category, kwargs)
         if target is not None:
@@ -240,7 +357,19 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             self._dirty_decision_category_files.add(category.definition_path)
         self._dirty.add("decisions")
         self._dirty_decision_categories.add(category_id)
-        return True
+        return category
+
+    def _require_new_decision_id(self, decision_id: str, *, overwrite: bool) -> str:
+        """Return the checked ``decision_id``; raise when it exists and ``overwrite`` is false."""
+        decision_id = require_script_id(decision_id, label="decision ID")
+        if decision_id in self._decisions and not overwrite:
+            raise AlreadyExistsError(
+                f"Decision '{decision_id}' already exists. "
+                "Use overwrite=True to replace it or update_decision() to patch it.",
+                kind="decision",
+                id=decision_id,
+            )
+        return decision_id
 
     def create_decision(
         self,
@@ -293,25 +422,43 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         ``target_array``, ``target_root_trigger``, ``state_target``,
         ``targets_dynamic``, ``target_non_existing``, and ``on_map_mode``.
         Block fields take raw Paradox script bodies without outer braces.
+        Staged until ``save()``.
+
+        A category that the mod does not define may be one of the game or a
+        base mod: the decision then goes into a block of ``path`` (default
+        ``common/decisions/mod_decisions.txt``) that adds to it.
+
+        Args:
+            path: The file for the decision. Without it, the category's file.
+            overwrite: Replace an existing decision of this id, also one in
+                another category.
+
+        Returns:
+            The new decision.
+
+        Raises:
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            NotFoundError: With a game install configured, no one defines the
+                category.
+            ValueError: An id or a target is not valid, or ``path`` is
+                outside the mod.
         """
         category_id = require_script_id(category_id, label="decision category ID")
-        decision_id = require_script_id(decision_id, label="decision ID")
+        decision_id = self._require_new_decision_id(decision_id, overwrite=overwrite)
         existing = self._decisions.get(decision_id)
-        if existing is not None and not overwrite:
-            raise ValueError(
-                f"Decision '{decision_id}' already exists. "
-                "Use overwrite=True to replace it or update_decision() to patch it."
-            )
-        if existing is not None and existing.path is not None:
-            # The file that held the replaced decision loses it.
-            self._dirty_decision_files.add(existing.path)
+        # Check every value before the first change: a call that raises
+        # leaves nothing staged.
+        target_list = _decision_targets(targets)
         category = self._decision_categories.get(category_id)
         if category is None:
-            category = self.create_decision_category(category_id, path=path)
+            category = self._extend_inherited_decision_category(category_id, path)
         elif path is not None:
             self._point_decision_category_at(
                 category, self._output_path(path)
             )
+        if existing is not None and existing.path is not None:
+            # The file that held the replaced decision loses it.
+            self._dirty_decision_files.add(existing.path)
         if existing is not None:
             old_category = self._decision_categories.get(existing.category)
             if old_category is not None:
@@ -341,7 +488,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             is_good=is_good,
             selectable_mission=selectable_mission,
             target_trigger=target_trigger,
-            targets=_decision_targets(targets),
+            targets=target_list,
             target_array=target_array,
             target_root_trigger=target_root_trigger,
             state_target=state_target,
@@ -373,21 +520,126 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             self._dirty_decision_category_files.add(category.definition_path)
         return decision
 
-    def ensure_decision(self, category_id: str, decision_id: str, **kwargs) -> Decision:
-        if decision_id in self._decisions:
-            self.update_decision(decision_id, **kwargs)
-            return self._decisions[decision_id]
+    def _inherited_decision_category_ids(self) -> set[str]:
+        """Categories that the game and the base mods define, minus files the mod hides."""
+
+        cached = self._scan_cache.get("inherited_decision_categories")
+        if cached is not None:
+            return set(cached)
+        ids: set[str] = set()
+        if self._base_content is not None:
+            files = self._base_content.glob("common/decisions/categories", "*.txt")
+            for path in files.values():
+                if self._is_shadowed_by_mod(self._base_content, path):
+                    continue
+                try:
+                    document = parse(read_text(path))
+                except (OSError, ValueError):
+                    continue
+                ids.update(
+                    item.key.value
+                    for item in document.root.assignments()
+                    if item.block is not None
+                )
+        self._scan_cache["inherited_decision_categories"] = set(ids)
+        return ids
+
+    def _category_for_new_decisions(
+        self, category_id: str, *, icon: str = "", path: str | Path | None = None
+    ) -> None:
+        """Make sure ``category_id`` is there for decisions that are about to be created.
+
+        A category the mod defines is updated with ``icon`` and ``path``. A
+        category no one defines is created. A category that only the game or
+        a base mod defines is left alone unless an ``icon`` is asked for:
+        ``create_decision()`` adds to it, and a definition written here would
+        replace theirs (the icon and the conditions of the category).
+        """
+        fields: EnsureDecisionCategoryFields = {}
+        if icon:
+            fields["icon"] = icon
+        if path is not None:
+            fields["path"] = path
+        if category_id in self._decision_categories:
+            if fields:
+                self.ensure_decision_category(category_id, **fields)
+            return
+        if not icon and category_id in self._inherited_decision_category_ids():
+            return
+        self.ensure_decision_category(category_id, **fields)
+
+    def _extend_inherited_decision_category(
+        self, category_id: str, path: str | Path | None
+    ) -> DecisionCategory:
+        """A block of the mod's decisions file that adds to a category defined elsewhere.
+
+        Nothing is written to ``common/decisions/categories``: that would
+        replace the game's or a base mod's definition. Without a configured
+        game install the category may be the game's, so it is accepted and
+        ``validate()`` checks it.
+        """
+
+        inherited = self._inherited_decision_category_ids()
+        if self.hoi4_install is not None and inherited and category_id not in inherited:
+            raise not_found(
+                "decision category",
+                category_id,
+                set(self._decision_categories) | self._inherited_decision_category_ids(),
+                plural="decision categories",
+                hint="Create it with create_decision_category() first.",
+            )
+        target = self._output_path(path or Path("common") / "decisions" / "mod_decisions.txt")
+        category = DecisionCategory(id=category_id, path=target)
+        self._decision_categories[category_id] = category
+        self._dirty.add("decisions")
+        self._dirty_decision_categories.add(category_id)
+        self._dirty_decision_files.add(target)
+        return category
+
+    def ensure_decision(self, category_id: str, decision_id: str, **fields: Unpack[EnsureDecisionFields]) -> Decision:
+        """Create a decision if missing, otherwise patch the existing one.
+
+        Returns:
+            The created or updated decision.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+            ValueError: The decision exists in another category.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        existing = self.get_decision(decision_id, default=None)
+        if existing is not None:
+            if existing.category != category_id:
+                raise ValueError(
+                    f"Decision '{decision_id}' is in category '{existing.category}', "
+                    f"not '{category_id}'; recreate it to move it."
+                )
+            _check_fields("ensure_decision", existing, kwargs)
+            return self.update_decision(decision_id, **kwargs)
+        _check_field_names(
+            "ensure_decision",
+            kwargs,
+            _create_arguments(self.create_decision, skip={"category_id", "decision_id"}),
+        )
         return self.create_decision(category_id, decision_id, **kwargs)
 
-    def update_decision(self, decision_id: str, **kwargs) -> bool:
-        decision = self._decisions.get(decision_id)
-        if decision is None:
-            return False
+    def update_decision(self, decision_id: str, **fields: Unpack[DecisionFields]) -> Decision:
+        """Patch fields of a decision in place; its file and category stay.
+
+        Returns:
+            The updated decision.
+
+        Raises:
+            NotFoundError: No decision has this id.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        decision = self.get_decision(decision_id)
         if "id" in kwargs or "category" in kwargs:
             raise ValueError(
                 "Decision identity/category are immutable; recreate the decision to move it"
             )
-        kwargs.pop("path", None)
+        _check_fields("update_decision", decision, kwargs)
         if "targets" in kwargs:
             kwargs["targets"] = _decision_targets(kwargs["targets"])
         _set_fields(decision, kwargs)
@@ -399,15 +651,17 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             # in the file that holds it.
             self._dirty_decision_files.add(decision.path)
         category = self._decision_categories.get(decision.category)
-        if category is not None:
-            if category.path is not None:
-                self._dirty_decision_files.add(category.path)
-        return True
+        if category is not None and category.path is not None:
+            self._dirty_decision_files.add(category.path)
+        return decision
 
-    def delete_decision(self, decision_id: str) -> bool:
-        decision = self._decisions.get(decision_id)
-        if decision is None:
-            return False
+    def delete_decision(self, decision_id: str) -> None:
+        """Stage the deletion of a decision; its category drops the reference.
+
+        Raises:
+            NotFoundError: No decision has this id.
+        """
+        decision = self.get_decision(decision_id)
         del self._decisions[decision_id]
         if decision.path is not None:
             self._dirty_decision_files.add(decision.path)
@@ -420,12 +674,11 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             if category.path is not None:
                 self._dirty_decision_files.add(category.path)
         self._dirty.add("decisions")
-        return True
 
     def create_decision_chain(
         self,
         category_id: str,
-        steps: list[dict | str],
+        steps: Sequence[Mapping[str, Any] | str],
         *,
         prefix: str | None = None,
         icon: str = "",
@@ -434,29 +687,68 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         final_event: str | None = None,
         overwrite: bool = False,
     ) -> list[Decision]:
-        """Create a staged decision chain with generated completion flags.
+        """Create decisions that unlock one after another; staged until ``save()``.
 
-        Each step is a dict with at least ``id`` unless ``prefix`` is supplied.
-        Common keys are ``icon``, ``cost``, ``days_remove``, ``visible``,
-        ``available``, ``complete_effect``, ``event``, ``loc_name``, and
-        ``loc_desc``. A string step is treated as ``{"id": step}``.
+        Each step sets a country flag (``<id>_done`` unless the step names
+        its ``flag``) that the next step's ``visible`` and ``available``
+        require. A category the mod defines is updated with ``category_icon``
+        and ``path``, and a category no one defines is created. A category
+        of the game or a base mod only gets the decisions added (as with
+        ``create_decision()``); pass ``category_icon`` to give it a
+        definition of the mod's own, which replaces theirs. Each step is a
+        dict with at least ``id`` unless
+        ``prefix`` is supplied (the id is then ``<prefix>_<n>``, counting
+        from 1). Common keys are ``icon``, ``cost``, ``days_remove``,
+        ``fire_only_once``, ``visible``, ``available``, ``complete_effect``,
+        ``remove_effect``, ``ai_will_do``, ``flag``, ``event`` (with
+        ``event_days``), ``clear_flags``, ``loc_name`` and ``loc_desc``. A
+        string step is treated as ``{"id": step}``.
+
+        Args:
+            icon: The icon of steps that name none.
+            final_event: A country event the last step fires.
+            overwrite: Replace existing decisions of these ids; without it an
+                existing decision is updated in place.
+
+        Returns:
+            The decisions, in step order.
+
+        Raises:
+            TypeError: A step has a key that is not one of the keys above;
+                nothing changed.
+            ValueError: ``steps`` is empty, a step has neither an id nor a
+                prefix, an id is not valid, or a step exists in another
+                category.
+            AlreadyExistsError: One id is in ``steps`` twice.
         """
         if not steps:
             raise ValueError("create_decision_chain() requires at least one step")
 
-        category_kwargs: dict[str, object] = {}
-        if category_icon:
-            category_kwargs["icon"] = category_icon
-        if path is not None:
-            category_kwargs["path"] = path
-        self.ensure_decision_category(category_id, **category_kwargs)
-        decisions: list[Decision] = []
+        # Work out and check every step before the first change, so a call
+        # that raises leaves nothing staged.
+        planned: list[tuple[str, dict[str, Any], Mapping[str, Any]]] = []
+        planned_ids: set[str] = set()
         previous_flag = ""
         for index, raw_step in enumerate(steps, start=1):
             step = {"id": raw_step} if isinstance(raw_step, str) else dict(raw_step)
+            _check_field_names(
+                "create_decision_chain", step, _CHAIN_STEP_KEYS, where=f" in step {index}"
+            )
             decision_id = str(step.get("id") or (f"{prefix}_{index}" if prefix else ""))
             if not decision_id:
                 raise ValueError("Decision chain steps need an id or a prefix")
+            decision_id = require_script_id(decision_id, label="decision ID")
+            if decision_id in planned_ids:
+                raise AlreadyExistsError(
+                    f"create_decision_chain(): decision '{decision_id}' is in this call twice."
+                )
+            planned_ids.add(decision_id)
+            existing = self.get_decision(decision_id, default=None)
+            if existing is not None and not overwrite and existing.category != category_id:
+                raise ValueError(
+                    f"Decision '{decision_id}' is in category '{existing.category}', "
+                    f"not '{category_id}'; recreate it to move it."
+                )
             flag = quote(str(step.get("flag") or f"{decision_id}_done"))
             visible = _join_script_parts(
                 [
@@ -474,10 +766,10 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
             event_id = step.get("event")
             effect_parts = [
                 str(step.get("complete_effect") or ""),
-                self.effect_schedule_country_event(str(event_id), int(step.get("event_days") or 0))
+                effects.schedule_country_event(str(event_id), int(step.get("event_days") or 0))
                 if event_id
                 else "",
-                self.effect_schedule_country_event(final_event)
+                effects.schedule_country_event(final_event)
                 if final_event and index == len(steps)
                 else "",
                 f"set_country_flag = {flag}",
@@ -496,19 +788,26 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
                 "ai_will_do": str(step.get("ai_will_do") or ""),
                 "overwrite": overwrite,
             }
-            if path is not None:
+            if path is not None and (overwrite or existing is None):
+                # An existing decision is updated in place; ``path`` moves it
+                # with its category (``ensure_decision_category`` below).
                 create_kwargs["path"] = path
+            planned.append((decision_id, create_kwargs, step))
+            previous_flag = flag
+
+        self._category_for_new_decisions(category_id, icon=category_icon, path=path)
+        decisions: list[Decision] = []
+        for decision_id, create_kwargs, planned_step in planned:
             if overwrite:
                 decision = self.create_decision(category_id, decision_id, **create_kwargs)
             else:
                 create_kwargs.pop("overwrite")
                 decision = self.ensure_decision(category_id, decision_id, **create_kwargs)
-            if step.get("loc_name"):
-                self.set_loc(decision_id, str(step["loc_name"]))
-            if step.get("loc_desc"):
-                self.set_loc(f"{decision_id}_desc", str(step["loc_desc"]))
+            if planned_step.get("loc_name"):
+                self.set_loc(decision_id, str(planned_step["loc_name"]))
+            if planned_step.get("loc_desc"):
+                self.set_loc(f"{decision_id}_desc", str(planned_step["loc_desc"]))
             decisions.append(decision)
-            previous_flag = flag
         return decisions
 
     def create_mission(
@@ -527,7 +826,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         selectable_mission: bool | None = None,
         loc_name: str = "",
         loc_desc: str = "",
-        **kwargs: Any,
+        **fields: Unpack[MissionOptions],
     ) -> Decision:
         """Create a mission: a timed decision that starts when ``activation``
         holds, completes with ``complete_effect`` once ``available`` holds, and
@@ -535,13 +834,33 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
 
         Missions are never paid for, so ``cost``/``custom_cost_trigger`` are
         rejected. Other ``create_decision`` keywords pass through.
+        ``loc_name`` and ``loc_desc`` set the English name and description.
+        Staged until ``save()``.
+
+        Returns:
+            The new mission.
+
+        Raises:
+            TypeError: A keyword is not one of ``create_decision()``'s; nothing changed.
+            TypeError: ``days_mission_timeout`` is not a whole number.
+            ValueError: ``days_mission_timeout`` is not positive, or a cost
+                was given.
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            NotFoundError: With a game install configured, the category is
+                not defined.
         """
+        kwargs: dict[str, Any] = dict(fields)
         if isinstance(days_mission_timeout, bool) or not isinstance(days_mission_timeout, int):
             raise TypeError("days_mission_timeout must be an int number of days")
         if days_mission_timeout <= 0:
             raise ValueError("days_mission_timeout must be positive")
         if kwargs.get("cost") or kwargs.get("custom_cost_trigger"):
             raise ValueError("Missions cannot have cost or custom_cost_trigger")
+        _check_field_names(
+            "create_mission",
+            kwargs,
+            _typed_dict_keys(MissionOptions) | {"cost", "custom_cost_trigger"},
+        )
         decision = self.create_decision(
             category_id,
             decision_id,
@@ -577,7 +896,7 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         on_map_mode: str = "",
         loc_name: str = "",
         loc_desc: str = "",
-        **kwargs: Any,
+        **fields: Unpack[TargetedDecisionOptions],
     ) -> Decision:
         """Create a targeted decision with one instance per country or state.
 
@@ -585,7 +904,23 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         ``targets``/``target_array`` restrict the candidate list and
         ``state_target=True`` targets states. At least one targeting field is
         required. Other ``create_decision`` keywords pass through.
+        ``loc_name`` and ``loc_desc`` set the English name and description.
+        Staged until ``save()``.
+
+        Returns:
+            The new decision.
+
+        Raises:
+            TypeError: A keyword is not one of ``create_decision()``'s; nothing changed.
+            ValueError: No targeting field is set, or a target is not valid.
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            NotFoundError: With a game install configured, the category is
+                not defined.
         """
+        kwargs: dict[str, Any] = dict(fields)
+        _check_field_names(
+            "create_targeted_decision", kwargs, _typed_dict_keys(TargetedDecisionOptions)
+        )
         if not (target_trigger.strip() or targets or target_array or state_target):
             raise ValueError(
                 "A targeted decision needs target_trigger, targets, target_array, "
@@ -628,11 +963,22 @@ class DecisionsLayer(LocalisationLayer, EffectsLayer):
         path: str | Path | None = None,
         overwrite: bool = False,
     ) -> Decision:
-        """Create a repair/migration decision for already-started saves."""
-        if path is not None:
-            self.ensure_decision_category(category_id, path=path)
-        elif category_id not in self._decision_categories:
-            self.create_decision_category(category_id)
+        """Create a repair/migration decision for already-started saves.
+
+        The decision runs ``effect`` once (unless ``fire_only_once`` is
+        false). ``hidden=True`` without ``visible`` hides it from the player
+        (``visible = { always = no }``). A missing category is created (or,
+        with ``path``, created or moved there). ``loc_name`` and ``loc_desc``
+        set the English name and description. Staged until ``save()``.
+
+        Raises:
+            AlreadyExistsError: The decision exists and ``overwrite`` is false.
+            ValueError: An id is not valid, or ``path`` is outside the mod.
+        """
+        # The decision is checked before the category changes, so a call
+        # that raises leaves nothing staged.
+        self._require_new_decision_id(decision_id, overwrite=overwrite)
+        self._category_for_new_decisions(category_id, path=path)
         visible_body = visible or ("always = no" if hidden else "")
         decision = self.create_decision(
             category_id,

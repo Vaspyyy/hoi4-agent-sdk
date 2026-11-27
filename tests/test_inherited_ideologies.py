@@ -51,7 +51,7 @@ def test_inherited_ideology_preview_save_reload(tmp_path, monkeypatch, operation
     mod = Mod(top, base_mod_paths=bases)
     edited_id = "first" if operation == "update" else "created"
     if operation == "update":
-        assert mod.update_ideology("first", color=(9, 8, 7), path=IDEOLOGIES_PATH)
+        mod.update_ideology("first", color=(9, 8, 7), path=IDEOLOGIES_PATH)
     else:
         mod.create_ideology("created", color=(9, 8, 7))
     expected = {edited_id}
@@ -88,7 +88,7 @@ def test_inherited_ideology_preview_save_reload(tmp_path, monkeypatch, operation
     assert reloaded.preview() == ""
     # Once saved, the snapshot is writable and ordinary deletion must still work.
     if control == "missing":
-        assert reloaded.delete_ideology("sibling")
+        reloaded.delete_ideology("sibling")
         result = reloaded.save(require_changes=True)
         print(result)
         assert "sibling" not in reloaded.list_ideologies()
@@ -101,7 +101,7 @@ def test_inherited_ideology_snapshot_rolls_back(tmp_path, monkeypatch):
     source = put_ideologies(base, INHERITED)
     mod = Mod(tmp_path / "mod", base_mod_paths=[base])
     with mod.transaction():
-        assert mod.update_ideology("first", color=(9, 8, 7))
+        mod.update_ideology("first", color=(9, 8, 7))
         assert "sibling" in mod.preview()
     assert mod.get_ideology("first").color == (1, 2, 3)
     assert mod.preview() == ""

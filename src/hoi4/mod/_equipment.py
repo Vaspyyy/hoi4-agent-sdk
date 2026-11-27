@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from typing import Literal, Sequence, cast
+from typing import Literal, cast
+from collections.abc import Sequence
 
 from .._disk_cache import PAIRS_ON_DISK
 from ..oob import (
@@ -18,7 +19,7 @@ from ..patching import (
 from ..syntax import parse
 from ..types import (
     Country,
-    ValidationError,
+    ValidationIssue,
 )
 from ._catalogs import CatalogsLayer
 
@@ -72,7 +73,7 @@ class EquipmentLayer(CatalogsLayer):
     def _validate_equipment_variant_unlocks(
         self,
         country: Country,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         unlock_map = self._equipment_unlock_technologies()
         for equipment, projects in self._special_project_unlocks().items():
             unlock_map[equipment] = (*unlock_map.get(equipment, ()), *projects)
@@ -80,7 +81,7 @@ class EquipmentLayer(CatalogsLayer):
         grants.extend(
             self._modeled_technology_grants_missing_from_history(country, grants)
         )
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         reported_offsets: set[int] = set()
         for occurrence in occurrences:
             variant = occurrence.variant
@@ -113,7 +114,7 @@ class EquipmentLayer(CatalogsLayer):
             reported_offsets.add(occurrence.offset)
             line, column = self._line_column(country.raw_history, occurrence.offset)
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"Country '{country.tag}' creates modular variant "
                         f"'{variant.name}' ({variant.equipment_type}) before its "

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .types import ValidationError
+from .types import ValidationIssue
 from .validation import COUNTRY_PACKAGE_REQUIREMENT_CODES
 
 
@@ -13,7 +13,7 @@ class CountryPackageReport:
     """Static package completeness; not a proof of dynamic trigger reachability."""
 
     tag: str
-    findings: tuple[ValidationError, ...] = ()
+    findings: tuple[ValidationIssue, ...] = ()
     lifecycle: str = "starting"
     advisor_count: int = 0
     commander_count: int = 0
@@ -25,19 +25,21 @@ class CountryPackageReport:
     proves_dynamic_achievability: bool = False
 
     @property
-    def errors(self) -> tuple[ValidationError, ...]:
+    def errors(self) -> tuple[ValidationIssue, ...]:
+        """The findings of severity ``"error"``."""
         return tuple(
             finding for finding in self.findings if finding.severity == "error"
         )
 
     @property
-    def warnings(self) -> tuple[ValidationError, ...]:
+    def warnings(self) -> tuple[ValidationIssue, ...]:
+        """The findings of severity ``"warning"``."""
         return tuple(
             finding for finding in self.findings if finding.severity == "warning"
         )
 
     @property
-    def unmet_requirements(self) -> tuple[ValidationError, ...]:
+    def unmet_requirements(self) -> tuple[ValidationIssue, ...]:
         """Findings about what the SDK asks of a complete country.
 
         The game accepts a country without them (they are warnings), but the
@@ -58,9 +60,11 @@ class CountryPackageReport:
 
     @property
     def structurally_complete(self) -> bool:
+        """The same as ``complete``."""
         return self.complete
 
     def to_dict(self) -> dict[str, object]:
+        """Return the report as plain JSON-ready values, findings included."""
         return {
             "tag": self.tag,
             "complete": self.complete,

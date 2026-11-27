@@ -9,6 +9,8 @@ from hoi4 import EventOption, Focus, Mod, ParseError, parse_pdx, serialize_pdx
 from hoi4.focus import load_focus_trees, serialize_focus_file
 from hoi4.localisation import parse_localization_file, serialize_localization_file
 from hoi4.script import pdx_string, validate_script_syntax
+from hoi4.errors import NotFoundError
+from hoi4 import effects
 
 
 def test_output_paths_and_script_identifiers_reject_injection(tmp_path: Path) -> None:
@@ -18,9 +20,9 @@ def test_output_paths_and_script_identifiers_reject_injection(tmp_path: Path) ->
     with pytest.raises(ValueError, match="Invalid event ID"):
         mod.create_event("bad.1 } add_political_power = 999")
     with pytest.raises(ValueError, match="Invalid country tag"):
-        mod.effect_transfer_state(1, "GER } add_political_power = 999")
+        effects.transfer_state(1, "GER } add_political_power = 999")
     with pytest.raises(ValueError, match="Invalid war goal type"):
-        mod.effect_declare_war("GER", "annex_everything } bad = yes")
+        effects.declare_war("GER", "annex_everything } bad = yes")
     assert not (tmp_path.parent / "outside.txt").exists()
 
 
@@ -186,11 +188,11 @@ def test_save_deletes_all_supported_objects_and_reports_files(tmp_path: Path) ->
     assert len(first.written_files) >= 8
 
     reloaded = Mod(tmp_path)
-    assert reloaded.delete_country("TST")
-    assert reloaded.delete_event("tst.1")
-    assert reloaded.delete_idea("TST_spirit")
-    assert reloaded.delete_focus_tree("tst_focus")
-    assert reloaded.delete_loc("TST_start")
+    reloaded.delete_country("TST")
+    reloaded.delete_event("tst.1")
+    reloaded.delete_idea("TST_spirit")
+    reloaded.delete_focus_tree("tst_focus")
+    reloaded.delete_loc("TST_start")
     second = reloaded.save(require_changes=True)
     assert second.written_files
 
@@ -199,7 +201,8 @@ def test_save_deletes_all_supported_objects_and_reports_files(tmp_path: Path) ->
     assert "tst.1" not in final.list_events()
     assert "TST_spirit" not in final.list_ideas()
     assert "tst_focus" not in final.list_focus_trees()
-    assert final.get_loc("TST_start") is None
+    with pytest.raises(NotFoundError):
+        final.get_loc("TST_start")
 
 
 def test_state_patch_is_transactional_and_preserves_dated_history(tmp_path: Path) -> None:
@@ -220,7 +223,7 @@ def test_state_patch_is_transactional_and_preserves_dated_history(tmp_path: Path
 """
     path.write_text(original, encoding="utf-8")
     mod = Mod(tmp_path)
-    mod.patch_state_history(1, owner="TST", add_cores=["TST"], remove_cores=["GER"])
+    mod.update_state(1, owner="TST", add_cores=["TST"], remove_cores=["GER"])
     assert path.read_text(encoding="utf-8") == original
     preview = mod.preview()
     assert "owner = TST" in preview
@@ -360,13 +363,13 @@ def test_loader_diagnostics_are_visible_and_strict_mode_raises(tmp_path: Path) -
 
 
 def test_effect_helpers_validate_tags_and_quote_faction_names() -> None:
-    assert Mod.effect_create_faction('A "New" League') == 'create_faction = "A \\"New\\" League"'
-    assert Mod.effect_add_target_to_faction("GER", "FRA") == "GER = { add_to_faction = FRA }"
+    assert effects.create_faction('A "New" League') == 'create_faction = "A \\"New\\" League"'
+    assert effects.add_target_to_faction("GER", "FRA") == "GER = { add_to_faction = FRA }"
     for helper in (
-        lambda: Mod.effect_release("BAD TAG"),
-        lambda: Mod.effect_schedule_country_event("bad event"),
-        lambda: Mod.effect_set_rule("bad rule", True),
-        lambda: Mod.effect_set_technology("bad technology"),
+        lambda: effects.release("BAD TAG"),
+        lambda: effects.schedule_country_event("bad event"),
+        lambda: effects.set_rule("bad rule", True),
+        lambda: effects.set_technology("bad technology"),
     ):
         with pytest.raises(ValueError):
             helper()

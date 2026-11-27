@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from .._disk_cache import NAMES_ON_DISK
 from ..characters import (
@@ -27,7 +27,9 @@ from ..textio import read_text
 from ..types import (
     Country,
 )
+from ..errors import ReadOnlyError, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 
 
 class LocalisationLayer(CoreLayer):
@@ -71,6 +73,10 @@ class LocalisationLayer(CoreLayer):
 
     @property
     def default_loc_file(self) -> Path:
+        """The file new English entries go to when no ``path`` is given.
+
+        It is ``localisation/english/mod_l_english.yml`` in the mod.
+        """
         return self.mod_root / "localisation" / "english" / "mod_l_english.yml"
 
     def _default_loc_file_for(self, language: str, *, replace: bool = False) -> Path:
@@ -85,18 +91,34 @@ class LocalisationLayer(CoreLayer):
     # ── Localization ─────────────────────────────────────────────
 
     def get_loc(
-        self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
-    ) -> Optional[str]:
+        self,
+        key: str,
+        *,
+        language: str = DEFAULT_LOCALISATION_LANGUAGE,
+        default: _D | _Missing = MISSING,
+    ) -> str | _D:
         """Return one language's text for ``key``; no cross-language fallback.
 
         The mod's entry (with unsaved edits) wins; a key the mod does not
         define comes from the game's own files of that language.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when the
+                key has no text in that language.
+
+        Raises:
+            NotFoundError: ``key`` has no text in that language and no
+                default was given.
         """
         language, entries, _, _ = self._loc_tables(language)
         key = self._normalize_loc_key(key)
         value = entries.get(key)
         if value is None:
             value = self._game_loc(language).get(key)
+        if value is None:
+            if default is not MISSING:
+                return default
+            raise not_found(f"{language} localisation key", key, entries)
         return value
 
     def _game_loc(self, language: str) -> dict[str, str]:
@@ -209,19 +231,24 @@ class LocalisationLayer(CoreLayer):
         self,
         key: str,
         value: str,
-        file_path: str | Path | None = None,
         *,
+        path: str | Path | None = None,
         language: str = DEFAULT_LOCALISATION_LANGUAGE,
-        replace: bool = False,
+        overwrite_vanilla: bool = False,
     ) -> None:
         """Set one language's entry (English by default).
 
-        Custom destinations must be ``.yml`` files under
-        ``localisation/<language>``. ``replace=True`` routes the entry to
-        ``localisation/<language>/replace/`` (``mod_replace_l_<language>.yml``
-        unless ``file_path`` names another file there), which is how a mod
-        overrides keys defined by the base game.
+        Custom destinations (``path``) must be ``.yml`` files under
+        ``localisation/<language>``. ``overwrite_vanilla=True`` routes the
+        entry to ``localisation/<language>/replace/``
+        (``mod_replace_l_<language>.yml`` unless ``path`` names another file
+        there), which is how a mod overrides keys defined by the base game.
+
+        Raises:
+            ValueError: ``path`` is outside ``localisation/<language>``.
         """
+        file_path = path
+        replace = overwrite_vanilla
         language, entries, sources, dirty_keys = self._loc_tables(language)
         language_dir = self.mod_root / "localisation" / language
         target = None
@@ -234,7 +261,8 @@ class LocalisationLayer(CoreLayer):
                 )
             if replace and not target.is_relative_to(language_dir / "replace"):
                 raise ValueError(
-                    f"set_loc(replace=True) needs a file under localisation/{language}/replace"
+                    f"set_loc(overwrite_vanilla=True) needs a file under "
+                    f"localisation/{language}/replace"
                 )
             self._note_target(target)
         elif replace:
@@ -259,7 +287,29 @@ class LocalisationLayer(CoreLayer):
 
     def delete_loc(
         self, key: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
-    ) -> bool:
+    ) -> None:
+        """Stage the deletion of one language's entry of ``key``.
+
+        Raises:
+            NotFoundError: ``key`` has no entry in that language.
+            ReadOnlyError: Only the game's own files define ``key``; override
+                it with ``set_loc()`` instead.
+        """
+        if not self._delete_loc_entry(key, language):
+            _, entries, _, _ = self._loc_tables(language)
+            if self._normalize_loc_key(key) in self._game_loc(language):
+                raise ReadOnlyError(
+                    f"Localisation key '{key}' comes from the game's own files; "
+                    "override it with set_loc() instead of deleting it."
+                )
+            raise not_found(
+                f"{normalize_localisation_language(language)} localisation key",
+                self._normalize_loc_key(key),
+                entries,
+            )
+
+    def _delete_loc_entry(self, key: str, language: str) -> bool:
+        """Delete one entry; False when there was none."""
         language, entries, sources, dirty_keys = self._loc_tables(language)
         key = self._normalize_loc_key(key)
         if key in entries:
@@ -277,6 +327,14 @@ class LocalisationLayer(CoreLayer):
     def search_loc(
         self, query: str, *, language: str = DEFAULT_LOCALISATION_LANGUAGE
     ) -> dict[str, str]:
+        """Return the entries whose key or text contains ``query``, ignoring case.
+
+        Searches what ``all_loc()`` returns: the game's entries with the
+        mod's on top.
+
+        Raises:
+            ValueError: ``language`` is not a HOI4 language.
+        """
         q = query.lower()
         return {
             k: v
@@ -285,7 +343,11 @@ class LocalisationLayer(CoreLayer):
         }
 
     def all_loc(self, *, language: str = DEFAULT_LOCALISATION_LANGUAGE) -> dict[str, str]:
-        """Every entry of one language: the game's, with the mod's on top."""
+        """Every entry of one language: the game's, with the mod's on top.
+
+        Raises:
+            ValueError: ``language`` is not a HOI4 language.
+        """
         language, entries, _, _ = self._loc_tables(language)
         merged = dict(self._game_loc(language))
         merged.update(entries)
@@ -305,8 +367,15 @@ class LocalisationLayer(CoreLayer):
         every supported non-English language. Existing translations are kept
         unless ``overwrite=True``. New entries go to the file mirroring their
         English source, e.g. ``localisation/english/replace/x_l_english.yml``
-        becomes ``localisation/german/replace/x_l_german.yml``. Returns the
-        keys written per language.
+        becomes ``localisation/german/replace/x_l_german.yml``. Staged until
+        ``save()``.
+
+        Returns:
+            The keys written, per language.
+
+        Raises:
+            NotFoundError: A key in ``keys`` has no English text in the mod.
+            ValueError: A language is not a HOI4 language, or is English.
         """
         if languages is None:
             targets = [
@@ -333,7 +402,12 @@ class LocalisationLayer(CoreLayer):
             )
             missing = [key for key in source_keys if key not in self._loc_entries]
             if missing:
-                raise KeyError(f"No English localization for: {', '.join(missing)}")
+                raise not_found(
+                    "English localisation key",
+                    missing[0],
+                    self._loc_entries,
+                    hint=f"Missing keys: {', '.join(missing)}.",
+                )
         written: dict[str, list[str]] = {}
         for language in targets:
             _, entries, sources, _ = self._loc_tables(language)
@@ -349,7 +423,7 @@ class LocalisationLayer(CoreLayer):
                         self._loc_sources.get(key, self.default_loc_file), language
                     )
                 )
-                self.set_loc(key, value, file_path, language=language)
+                self.set_loc(key, value, path=file_path, language=language)
                 written[language].append(key)
         return written
 
@@ -390,9 +464,9 @@ class LocalisationLayer(CoreLayer):
 
     def _delete_loc_all_languages(self, key: str) -> None:
         """Delete ``key`` in English and every language the mod ships."""
-        self.delete_loc(key)
+        self._delete_loc_entry(key, DEFAULT_LOCALISATION_LANGUAGE)
         for language in self._shipped_loc_languages():
-            self.delete_loc(key, language=language)
+            self._delete_loc_entry(key, language)
 
     def _sync_country_loc(self, country: Country) -> None:
         name = country.name or country.tag

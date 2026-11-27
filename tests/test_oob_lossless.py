@@ -70,7 +70,7 @@ def test_editing_an_unclosed_inherited_oob_writes_a_well_formed_override(tmp_pat
     divisions = copy.deepcopy(mod.get_oob("ABC_1936").divisions)
     divisions[1].location = 202
     divisions[1].touched_fields.add("location")
-    assert mod.update_oob("ABC_1936", divisions=divisions)
+    mod.update_oob("ABC_1936", divisions=divisions)
     # A new override previews as a whole new file, already repaired.
     preview = mod.preview()
     assert "+\t\tlocation = 202" in preview and preview.endswith("+}\n")
@@ -90,7 +90,7 @@ def test_adding_a_division_to_an_unclosed_oob_lands_inside_units(tmp_path: Path)
     divisions = copy.deepcopy(mod.get_oob("ABC_1936").divisions)
     extra = copy.deepcopy(divisions[0])
     extra.name, extra.location, extra.source_index, extra.raw_block = "Third", 103, -1, ""
-    assert mod.update_oob("ABC_1936", divisions=[*divisions, extra])
+    mod.update_oob("ABC_1936", divisions=[*divisions, extra])
     mod.save()
     reloaded = Mod(tmp_path / "mod", hoi4_install=tmp_path / "game")
     assert [d.name for d in reloaded.get_oob("ABC_1936").divisions] == ["First", "Second", "Third"]
@@ -121,7 +121,7 @@ def test_renaming_an_air_wings_equipment_replaces_only_its_key(tmp_path: Path) -
     mod = Mod(tmp_path)
     wings = copy.deepcopy(mod.get_oob("ABC_air").air_wings)
     wings[0].equipment_type = "fighter_equipment_1"
-    assert mod.update_oob("ABC_air", air_wings=wings)
+    mod.update_oob("ABC_air", air_wings=wings)
     mod.save()
     assert path.read_text(encoding="utf-8") == source.replace(
         '"fighter_equipment_0"', "fighter_equipment_1"
@@ -147,7 +147,7 @@ def test_passing_ships_back_unchanged_keeps_the_file(tmp_path: Path) -> None:
     path = _write(tmp_path / "history/units/ABC_naval.txt", SHIPS)
     mod = Mod(tmp_path)
     oob = mod.get_oob("ABC_naval")
-    assert mod.update_oob("ABC_naval", fleets=oob.fleets)
+    mod.update_oob("ABC_naval", fleets=oob.fleets)
     mod.save()
     # A ship named by ``ordered_name`` must not gain ``name = ""``.
     assert path.read_text(encoding="utf-8") == SHIPS
@@ -158,7 +158,7 @@ def test_new_field_in_a_one_line_ship_stays_on_that_line(tmp_path: Path) -> None
     mod = Mod(tmp_path)
     fleets = copy.deepcopy(mod.get_oob("ABC_naval").fleets)
     fleets[0].task_forces[0].ships[1].pride_of_the_fleet = True
-    assert mod.update_oob("ABC_naval", fleets=fleets)
+    mod.update_oob("ABC_naval", fleets=fleets)
     mod.save()
     assert path.read_text(encoding="utf-8") == SHIPS.replace(
         "owner = ABC } } }\n\t\t}", "owner = ABC } } pride_of_the_fleet = yes }\n\t\t}"
@@ -202,7 +202,7 @@ def test_edits_on_copied_divisions_are_written(tmp_path: Path) -> None:
     divisions = copy.deepcopy(mod.get_oob("TST_1936").divisions)
     divisions[0].start_experience_factor = 0.9
     divisions[1].location = 555
-    assert mod.update_oob("TST_1936", divisions=divisions)
+    mod.update_oob("TST_1936", divisions=divisions)
     mod.save()
     assert path.read_text(encoding="utf-8") == LAND.replace(
         "start_experience_factor = 0.30", "start_experience_factor = 0.9"
@@ -218,7 +218,7 @@ def test_plain_attribute_edits_on_loaded_objects_are_written(tmp_path: Path) -> 
     oob.divisions[1].name_order = 7
     oob.templates[0].priority = 2
     oob.templates[1].name = "Horse"
-    assert mod.update_oob("TST_1936", templates=oob.templates, divisions=oob.divisions)
+    mod.update_oob("TST_1936", templates=oob.templates, divisions=oob.divisions)
     mod.save()
     assert path.read_text(encoding="utf-8") == (
         LAND.replace("priority = 1", "priority = 2")
@@ -231,7 +231,7 @@ def test_a_new_field_on_a_copied_division_is_added_once(tmp_path: Path) -> None:
     mod, path = _land_mod(tmp_path)
     divisions = copy.deepcopy(mod.get_oob("TST_1936").divisions)
     divisions[1].start_equipment_factor = 0.5
-    assert mod.update_oob("TST_1936", divisions=divisions)
+    mod.update_oob("TST_1936", divisions=divisions)
     mod.save()
     assert path.read_text(encoding="utf-8") == LAND.replace(
         'division_template = "Cavalry" }',
@@ -246,7 +246,7 @@ def test_reordered_divisions_keep_their_blocks_and_edits(tmp_path: Path) -> None
     divisions[0].location = 555  # the second division of the file
     templates = copy.deepcopy(mod.get_oob("TST_1936").templates)
     templates.reverse()
-    assert mod.update_oob("TST_1936", templates=templates, divisions=divisions)
+    mod.update_oob("TST_1936", templates=templates, divisions=divisions)
     mod.save()
     assert path.read_text(encoding="utf-8") == LAND.replace("location = 101", "location = 555")
 
@@ -254,7 +254,7 @@ def test_reordered_divisions_keep_their_blocks_and_edits(tmp_path: Path) -> None
 def test_unedited_oob_passed_back_stays_byte_identical(tmp_path: Path) -> None:
     mod, path = _land_mod(tmp_path)
     oob = copy.deepcopy(mod.get_oob("TST_1936"))
-    assert mod.update_oob("TST_1936", templates=oob.templates, divisions=oob.divisions)
+    mod.update_oob("TST_1936", templates=oob.templates, divisions=oob.divisions)
     mod.save()
     assert path.read_bytes() == LAND.encode("utf-8")
 
@@ -265,7 +265,7 @@ def test_removing_one_division_and_adding_another_keeps_the_rest(tmp_path: Path)
     kept = loaded[1]
     kept.location = 555
     new = DivisionUnit("Infantry", 300, name="Third")
-    assert mod.update_oob("TST_1936", divisions=[kept, new])
+    mod.update_oob("TST_1936", divisions=[kept, new])
     mod.save()
     written = path.read_text(encoding="utf-8")
     # The first division is gone, the kept one changed only its location, and
@@ -318,7 +318,7 @@ def test_edits_on_copied_fleets_task_forces_and_ships_are_written(tmp_path: Path
     task_force.ships[0].equipment[0].version_name = "New Class"
     task_force.ships[1].name = "Gamma"
     task_force.ships[1].equipment[0].amount = 2
-    assert mod.update_oob("TST_naval", fleets=fleets)
+    mod.update_oob("TST_naval", fleets=fleets)
     mod.save()
     assert path.read_text(encoding="utf-8") == (
         NAVAL_AIR.replace("naval_base = 200", "naval_base = 201")
@@ -336,7 +336,7 @@ def test_reordered_ships_keep_their_blocks_and_edits(tmp_path: Path) -> None:
     ships = fleets[0].task_forces[0].ships
     ships.reverse()
     ships[0].definition = "light_cruiser"  # Beta
-    assert mod.update_oob("TST_naval", fleets=fleets)
+    mod.update_oob("TST_naval", fleets=fleets)
     mod.save()
     assert path.read_text(encoding="utf-8") == NAVAL_AIR.replace(
         "definition = destroyer", "definition = light_cruiser"
@@ -348,7 +348,7 @@ def test_edits_on_copied_air_wings_are_written(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     oob = mod.get_oob("TST_air")
     oob.air_wings[1].amount = 36
-    assert mod.update_oob("TST_air", air_wings=oob.air_wings)
+    mod.update_oob("TST_air", air_wings=oob.air_wings)
     mod.save()
     assert path.read_text(encoding="utf-8") == AIR.replace("amount = 12", "amount = 36")
 
@@ -360,7 +360,7 @@ def test_removing_one_ship_and_adding_another_keeps_the_rest(tmp_path: Path) -> 
     ships = fleets[0].task_forces[0].ships
     new = Ship("Delta", "submarine", [ShipEquipment("ship_hull_submarine_1", owner="TST")])
     fleets[0].task_forces[0].ships = [ships[1], new]
-    assert mod.update_oob("TST_naval", fleets=fleets)
+    mod.update_oob("TST_naval", fleets=fleets)
     mod.save()
     written = path.read_text(encoding="utf-8")
     alpha = NAVAL_AIR.splitlines(keepends=True)[7]
@@ -399,7 +399,7 @@ def test_an_ace_block_is_not_an_air_wing(tmp_path: Path) -> None:
     assert wing.equipment_type == "large_plane_airframe_3"
 
     wing.amount = 24
-    assert mod.update_oob("ITA_air", air_wings=[wing])
+    mod.update_oob("ITA_air", air_wings=[wing])
     mod.save(require_changes=True)
     assert path.read_text(encoding="utf-8") == ACE.replace("amount = 12", "amount = 24")
 
@@ -413,7 +413,7 @@ def test_a_copy_of_a_loaded_division_is_added_and_never_replaces_the_original(
     extra = copy.deepcopy(divisions[0])
     extra.name = "Third"
     divisions.append(extra)
-    assert mod.update_oob("ABC_1936", divisions=divisions)
+    mod.update_oob("ABC_1936", divisions=divisions)
     mod.save(require_changes=True)
 
     # The copy keeps the unknown key and the comment of the block it came from.
@@ -436,11 +436,11 @@ def test_copies_of_templates_ships_and_air_wings_are_added_too(tmp_path: Path) -
     templates = copy.deepcopy(mod.get_oob("ABC_1936").templates)
     twin = copy.deepcopy(templates[0])
     twin.name = "Guards"
-    assert mod.update_oob("ABC_1936", templates=[*templates, twin])
+    mod.update_oob("ABC_1936", templates=[*templates, twin])
     wings = copy.deepcopy(mod.get_oob("ABC_air").air_wings)
     more = copy.deepcopy(wings[0])
     more.amount = 20
-    assert mod.update_oob("ABC_air", air_wings=[*wings, more])
+    mod.update_oob("ABC_air", air_wings=[*wings, more])
     mod.save(require_changes=True)
 
     reloaded = Mod(tmp_path)
@@ -458,7 +458,7 @@ def test_a_copy_placed_before_its_original_leaves_the_original_block_alone(tmp_p
     divisions = copy.deepcopy(mod.get_oob("ABC_1936").divisions)
     twin = copy.deepcopy(divisions[0])
     twin.name = "Copy"
-    assert mod.update_oob("ABC_1936", divisions=[twin, *divisions, copy.deepcopy(twin)])
+    mod.update_oob("ABC_1936", divisions=[twin, *divisions, copy.deepcopy(twin)])
     mod.save(require_changes=True)
 
     block = (
@@ -480,7 +480,7 @@ def test_a_changed_original_still_keeps_its_block_when_a_copy_comes_first(tmp_pa
     twin.name = "Copy"
     twin.location = 555
     divisions[0].location = 200
-    assert mod.update_oob("ABC_1936", divisions=[twin, *divisions])
+    mod.update_oob("ABC_1936", divisions=[twin, *divisions])
     mod.save(require_changes=True)
 
     assert path.read_text(encoding="utf-8") == LAND.replace(
@@ -505,7 +505,7 @@ def test_a_renamed_original_keeps_its_block_when_a_renamed_copy_comes_first(
     twin = copy.deepcopy(divisions[0])
     twin.name = "Copy"
     divisions[0].name = "Changed"
-    assert mod.update_oob("ABC_1936", divisions=[twin, *divisions])
+    mod.update_oob("ABC_1936", divisions=[twin, *divisions])
     mod.save(require_changes=True)
 
     assert path.read_text(encoding="utf-8") == LAND.replace(

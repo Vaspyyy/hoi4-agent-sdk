@@ -17,6 +17,7 @@ from hoi4.localisation import (
     serialize_localization_file,
     write_localization_file,
 )
+from hoi4.errors import NotFoundError
 
 BOM = b"\xef\xbb\xbf"
 
@@ -24,7 +25,7 @@ BOM = b"\xef\xbb\xbf"
 def write_loc(root: Path, language: str, name: str, body: str, *, header: str | None = None) -> Path:
     path = root / "localisation" / language / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(BOM + f"l_{header or language}:\n{body}".encode("utf-8"))
+    path.write_bytes(BOM + f"l_{header or language}:\n{body}".encode())
     return path
 
 
@@ -103,7 +104,7 @@ def test_set_loc_other_language_writes_its_own_file(tmp_path: Path) -> None:
     assert "localization (german): 1 key(s)" in mod.preview_summary()
     mod.save()
     german = tmp_path / "localisation" / "german" / "mod_l_german.yml"
-    assert german.read_bytes() == BOM + 'l_german:\n KEY:0 "Deutsch"\n'.encode()
+    assert german.read_bytes() == BOM + b'l_german:\n KEY:0 "Deutsch"\n'
     polish = tmp_path / "localisation" / "polish" / "mod_l_polish.yml"
     assert polish.read_bytes().startswith(BOM + b"l_polish:\n")
 
@@ -111,7 +112,8 @@ def test_set_loc_other_language_writes_its_own_file(tmp_path: Path) -> None:
     assert reloaded.get_loc("KEY") == "English"
     assert reloaded.get_loc("KEY", language="german") == "Deutsch"
     assert reloaded.get_loc("KEY", language="polish") == "Polski"
-    assert reloaded.get_loc("KEY", language="french") is None
+    with pytest.raises(NotFoundError):
+        reloaded.get_loc("KEY", language="french")
 
 
 def test_loading_keeps_languages_separate(tmp_path: Path) -> None:
@@ -127,18 +129,19 @@ def test_loading_keeps_languages_separate(tmp_path: Path) -> None:
     }
     assert mod.search_loc("hal", language="german") == {"SHARED": "Hallo"}
     assert mod.search_loc("hal") == {}
-    assert mod.get_loc("DE_ONLY") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("DE_ONLY")
 
 
 def test_set_loc_destination_must_match_language(tmp_path: Path) -> None:
     mod = Mod(tmp_path)
     with pytest.raises(ValueError, match="localisation/german"):
-        mod.set_loc("K", "V", "localisation/english/x_l_english.yml", language="german")
+        mod.set_loc("K", "V", path="localisation/english/x_l_english.yml", language="german")
     with pytest.raises(ValueError, match="localisation/english"):
-        mod.set_loc("K", "V", "localisation/german/x_l_german.yml")
+        mod.set_loc("K", "V", path="localisation/german/x_l_german.yml")
     with pytest.raises(ValueError, match="Unsupported"):
         mod.set_loc("K", "V", language="klingon")
-    mod.set_loc("K", "V", "localisation/german/custom/x_l_german.yml", language="german")
+    mod.set_loc("K", "V", path="localisation/german/custom/x_l_german.yml", language="german")
     mod.save()
     assert (tmp_path / "localisation/german/custom/x_l_german.yml").read_bytes().startswith(
         BOM + b"l_german:"
@@ -178,12 +181,14 @@ def test_delete_loc_is_language_scoped(tmp_path: Path) -> None:
     write_loc(tmp_path, "english", "a_l_english.yml", ' K:0 "en"\n')
     write_loc(tmp_path, "german", "a_l_german.yml", ' K:0 "de"\n OTHER:0 "x"\n')
     mod = Mod(tmp_path)
-    assert mod.delete_loc("K", language="german")
-    assert not mod.delete_loc("K", language="german")
+    mod.delete_loc("K", language="german")
+    with pytest.raises(NotFoundError):
+        mod.delete_loc("K", language="german")
     assert mod.get_loc("K") == "en"
     mod.save()
     reloaded = Mod(tmp_path)
-    assert reloaded.get_loc("K", language="german") is None
+    with pytest.raises(NotFoundError):
+        reloaded.get_loc("K", language="german")
     assert reloaded.get_loc("OTHER", language="german") == "x"
     assert reloaded.get_loc("K") == "en"
 
@@ -191,17 +196,17 @@ def test_delete_loc_is_language_scoped(tmp_path: Path) -> None:
 def test_replace_folder_routing(tmp_path: Path) -> None:
     write_loc(tmp_path, "german", "a_l_german.yml", ' K:0 "alt"\n')
     mod = Mod(tmp_path)
-    mod.set_loc("VANILLA_KEY", "Override", replace=True)
-    mod.set_loc("K", "ersetzt", language="german", replace=True)
+    mod.set_loc("VANILLA_KEY", "Override", overwrite_vanilla=True)
+    mod.set_loc("K", "ersetzt", language="german", overwrite_vanilla=True)
     mod.set_loc(
         "OTHER",
         "x",
-        "localisation/french/replace/custom_l_french.yml",
+        path="localisation/french/replace/custom_l_french.yml",
         language="french",
-        replace=True,
+        overwrite_vanilla=True,
     )
     with pytest.raises(ValueError, match="replace"):
-        mod.set_loc("BAD", "x", "localisation/french/a_l_french.yml", language="french", replace=True)
+        mod.set_loc("BAD", "x", path="localisation/french/a_l_french.yml", language="french", overwrite_vanilla=True)
     mod.save()
     english_replace = tmp_path / "localisation/english/replace/mod_replace_l_english.yml"
     german_replace = tmp_path / "localisation/german/replace/mod_replace_l_german.yml"
@@ -226,7 +231,8 @@ def test_layered_languages_are_inherited_without_mixing(tmp_path: Path) -> None:
     assert mod.get_loc("GAME", language="german") == "Spiel"
     assert mod.get_loc("BASE", language="german") == "Basis"
     assert mod.get_loc("TOP", language="german") == "Oben"
-    assert mod.get_loc("BASE") is None
+    with pytest.raises(NotFoundError):
+        mod.get_loc("BASE")
     mod.set_loc("TOP", "Neu", language="german")
     mod.save()
     assert parse_localization_file(top / "localisation/german/top_l_german.yml") == {"TOP": "Neu"}
@@ -330,9 +336,11 @@ def test_delete_character_removes_shipped_translations(tmp_path: Path) -> None:
     mod.save()
     mod = Mod(tmp_path)
     assert mod.get_loc("ABC_hero", language="german") == "Hero"
-    assert mod.delete_character("ABC_hero")
-    assert mod.get_loc("ABC_hero", language="german") is None
-    assert mod.get_loc("ABC_hero_desc", language="german") is None
+    mod.delete_character("ABC_hero")
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ABC_hero", language="german")
+    with pytest.raises(NotFoundError):
+        mod.get_loc("ABC_hero_desc", language="german")
 
 
 def test_liveness_still_reports_english_only(tmp_path: Path) -> None:

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Optional
 
 from .patching import (
     AssignmentSpan,
@@ -30,9 +29,8 @@ from .patching import (
     set_block,
     set_scalar,
 )
-from .paths import require_country_tag, resolve_mod_output_path
 from .syntax import Assignment, Block, Document, parse, quote, require_well_formed, unquote
-from .textio import read_text, write_text
+from .textio import read_text
 from .types import Focus, FocusTree
 
 #: Keys of focus blocks that may stand at the top level of a focus file.
@@ -57,7 +55,7 @@ _BLOCK_FIELDS = (
 
 def load_focus_tree(
     path: Path, text: str | None = None, *, tree_id: str | None = None
-) -> Optional[FocusTree]:
+) -> FocusTree | None:
     """Return the first tree of a file, or the one with ``tree_id``."""
 
     trees = load_focus_trees(path, text=text)
@@ -448,20 +446,6 @@ def _reindent(text: str, indent: str) -> str:
     return "\n".join(out)
 
 
-def write_focus_tree(tree: FocusTree, mod_root: Path) -> Path:
-    tag = tree.country_tag or tree.id.replace("_focus", "").upper()
-    filename = f"{tag}_focus.txt"
-    if tree.path is None:
-        tag = require_country_tag(tag)
-    out_path = resolve_mod_output_path(
-        mod_root, tree.path or Path("common") / "national_focus" / filename
-    )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    original = out_path.read_bytes() if out_path.exists() else None
-    write_text(out_path, serialize_focus_tree(tree), like=original)
-    return out_path
-
-
 # ── patching an existing file ────────────────────────────────────
 
 
@@ -560,8 +544,7 @@ def _patch_focus_span(
         body = text[span.body_start : span.body_end]
         text = replace_assignment_body(text, span, _patch_focus_body(focus, body, constants))
     else:
-        text = replace_assignment(text, span, _render_focus(focus, key))
-        return text
+        return replace_assignment(text, span, _render_focus(focus, key))
     if span.key != key:
         # ``shared_focus = {`` became ``joint_focus = {``: only the key changes.
         text = text[: span.start] + key + text[span.start + len(span.key) :]

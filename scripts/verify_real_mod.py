@@ -7,7 +7,7 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 from hoi4.config import find_config
 from hoi4.release_gate import DEFAULT_MIN_PROBES, DiffBudget, format_report, run_release_gate

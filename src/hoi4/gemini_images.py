@@ -20,6 +20,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, cast
 
+from .errors import Hoi4Error
 from .assets import _write_bytes_atomically
 
 
@@ -72,7 +73,7 @@ _PORTRAIT_TECHNICAL_CONSTRAINTS = (
 )
 
 
-class GeminiImageError(RuntimeError):
+class GeminiImageError(Hoi4Error, RuntimeError):
     """Base exception for optional Gemini image generation failures."""
 
 
@@ -365,7 +366,7 @@ def _require_png_destination(destination: str | Path) -> Path:
 def _require_pillow() -> tuple[Any, type[Exception]]:
     try:
         Image = import_module("PIL.Image")
-        unidentified_error = getattr(import_module("PIL"), "UnidentifiedImageError")
+        unidentified_error = import_module("PIL").UnidentifiedImageError
     except (ImportError, AttributeError) as exc:
         raise GeminiBackendUnavailableError(
             "Gemini image generation requires the 'gemini' extra. "

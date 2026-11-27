@@ -1,8 +1,8 @@
 import pytest
 
-from hoi4 import Mod
 from hoi4.parser import PdxNode, parse_pdx, serialize_pdx
 from hoi4.script import pdx_string, pdx_value
+from hoi4 import effects
 
 
 @pytest.mark.parametrize("operator", list("=<>!"))
@@ -18,7 +18,7 @@ def test_operator_scalars_round_trip_through_all_emitters(operator, pattern):
     assert source == f'name = "{value}"\n'
     assert parse_pdx(source).find("name").value == value
 
-    source = Mod.effect_add_equipment(
+    source = effects.add_equipment(
         "infantry_equipment_0", 100, variant_name=value
     )
     equipment = parse_pdx(source).get_block("add_equipment_to_stockpile")

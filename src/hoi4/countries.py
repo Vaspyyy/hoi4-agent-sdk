@@ -16,7 +16,6 @@ import re
 from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Optional
 
 from .characters import _string_like
 from .layers import ContentView, as_view
@@ -140,7 +139,7 @@ def set_color(text: str, key: str, color: RGB, *, default_tag: str = "") -> str:
         replacement = f"{prefix}{{ {r} {g} {b} }}"
         return text[: value.start] + replacement + text[value.end :]
     result = text
-    for scalar, channel in reversed(list(zip(block.values(), (r, g, b)))):
+    for scalar, channel in reversed(list(zip(block.values(), (r, g, b), strict=True))):
         result = result[: scalar.start] + str(channel) + result[scalar.end :]
     if type(value) is Tagged and value.tag.value.lower() != "rgb":
         result = result[: value.tag.start] + "rgb" + result[value.tag.end :]
@@ -183,9 +182,9 @@ def read_country(
     mod_root: Path,
     tag: str,
     hoi4_install: Path | ContentView | None = None,
-    _loc_cache: Optional[dict[str, dict[str, str]]] = None,
-    _tag_mappings: Optional[dict[ContentView, dict[str, str]]] = None,
-    _color_sources: Optional[dict[Path, str | None]] = None,
+    _loc_cache: dict[str, dict[str, str]] | None = None,
+    _tag_mappings: dict[ContentView, dict[str, str]] | None = None,
+    _color_sources: dict[Path, str | None] | None = None,
 ) -> Country:
     """Read a country from the mod, falling back to ``hoi4_install``.
 
@@ -220,7 +219,7 @@ def _read_definition(
     country: Country,
     mod_root: ContentView,
     hoi4_install: ContentView | None,
-    tag_mappings: Optional[dict[ContentView, dict[str, str]]] = None,
+    tag_mappings: dict[ContentView, dict[str, str]] | None = None,
 ) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
@@ -245,8 +244,8 @@ def _read_color(
     country: Country,
     mod_root: ContentView,
     hoi4_install: ContentView | None,
-    tag_mappings: Optional[dict[ContentView, dict[str, str]]] = None,
-    color_sources: Optional[dict[Path, str | None]] = None,
+    tag_mappings: dict[ContentView, dict[str, str]] | None = None,
+    color_sources: dict[Path, str | None] | None = None,
 ) -> None:
     """Resolve country colour using the same vanilla-then-mod precedence as HOI4."""
 
@@ -418,7 +417,7 @@ def country_loc_entries(text: str) -> dict[str, dict[str, str]]:
     cache: dict[str, dict[str, str]] = {}
     for line in text.splitlines():
         s = line.strip()
-        if not s or s.startswith("#") or s.startswith("l_"):
+        if not s or s.startswith(("#", "l_")):
             continue
         m = _COUNTRY_LOC_KEY_RE.match(s)
         if m:
@@ -460,7 +459,7 @@ def _read_character(
 
         definitions = _character_definitions(txt)
         recruited = _read_recruited_character_ids(country.raw_history)
-        by_id = {character_id: body for character_id, body in definitions}
+        by_id = dict(definitions)
         leader_ids = [
             character_id
             for character_id, body in definitions
@@ -710,14 +709,14 @@ def seed_country_colors_file(original: str, vanilla: str) -> str:
     return text
 
 
-def _find_history_file(base: ContentView, tag: str) -> Optional[Path]:
+def _find_history_file(base: ContentView, tag: str) -> Path | None:
     for pattern in (f"{tag} - *.txt", f"{tag}*.txt"):
         for f in base.glob("history/countries", pattern).values():
             return f
     return None
 
 
-def _extract_leader_name(txt: str) -> Optional[str]:
+def _extract_leader_name(txt: str) -> str | None:
     """Return the name of the first legacy ``create_country_leader`` block."""
 
     leaders = sorted(

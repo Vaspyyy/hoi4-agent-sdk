@@ -133,7 +133,7 @@ def test_editing_a_decision_in_a_reopened_category_changes_only_its_value(
 ) -> None:
     mod, path = _reopened_mod(tmp_path)
 
-    assert mod.update_decision(decision_id, cost=int(new.split()[-1]))
+    mod.update_decision(decision_id, cost=int(new.split()[-1]))
     _save(mod)
 
     assert path.read_text(encoding="utf-8") == REOPENED.replace(old, new)
@@ -155,7 +155,7 @@ def test_reopened_category_new_decision_goes_to_last_block_and_delete_keeps_othe
     mod, path = _reopened_mod(tmp_path)
 
     mod.create_decision("political_actions", "third_decision", cost=30)
-    assert mod.delete_decision("first_decision")
+    mod.delete_decision("first_decision")
     _save(mod)
 
     saved = path.read_text(encoding="utf-8")
@@ -196,7 +196,7 @@ def test_decision_defined_twice_in_a_reopened_category_is_still_a_duplicate(
     assert [(item.section, item.identifier) for item in mod.load_diagnostics] == [
         ("decision", "twice")
     ]
-    assert mod.update_decision("edit_me", cost=4)
+    mod.update_decision("edit_me", cost=4)
     with pytest.raises(RuntimeError, match="duplicate definitions skipped"):
         mod.save()
     assert path.read_text(encoding="utf-8") == source
@@ -229,7 +229,7 @@ def test_saving_a_file_keeps_its_part_of_a_category_continued_elsewhere(
     before_first = first.read_text(encoding="utf-8")
     before_second = second.read_text(encoding="utf-8")
 
-    assert mod.update_decision("A_edit", cost=2)
+    mod.update_decision("A_edit", cost=2)
     _save(mod)
 
     assert first.read_text(encoding="utf-8") == before_first.replace(
@@ -243,8 +243,8 @@ def test_decision_in_any_file_of_a_shared_category_can_be_edited(tmp_path: Path)
     before_first = first.read_text(encoding="utf-8")
     before_second = second.read_text(encoding="utf-8")
 
-    assert mod.update_decision("A_shared", cost=6)
-    assert mod.update_decision("B_shared", cost=8)
+    mod.update_decision("A_shared", cost=6)
+    mod.update_decision("B_shared", cost=8)
     _save(mod)
 
     assert first.read_text(encoding="utf-8") == before_first.replace("cost = 5", "cost = 6")
@@ -257,7 +257,7 @@ def test_deleting_the_last_shared_decision_of_a_file_keeps_the_category_block(
     mod, first, second = _cross_file_mod(tmp_path)
     before_second = second.read_text(encoding="utf-8")
 
-    assert mod.delete_decision("A_shared")
+    mod.delete_decision("A_shared")
     _save(mod)
 
     saved = first.read_text(encoding="utf-8")
@@ -399,7 +399,7 @@ def test_category_spread_over_files_holds_the_decisions_of_every_file(
 def test_category_edit_removes_inline_presentation_from_every_file(tmp_path: Path) -> None:
     mod, first, second = _spread_mod(tmp_path)
 
-    assert mod.update_decision_category("shared_cat", icon="GFX_new")
+    mod.update_decision_category("shared_cat", icon="GFX_new")
     _save(mod)
 
     assert first.read_text(encoding="utf-8") == SPREAD_A.replace("\ticon = GFX_old\n", "")
@@ -422,7 +422,7 @@ def test_decision_edit_in_a_spread_category_changes_one_value(
     mod, first, second = _spread_mod(tmp_path)
     sources = [SPREAD_A, SPREAD_B]
 
-    assert mod.update_decision(decision_id, cost=99)
+    mod.update_decision(decision_id, cost=99)
     result = mod.save(require_changes=True)
 
     edited = [first, second][path_index]
@@ -479,7 +479,7 @@ def test_deleting_a_decision_of_the_earlier_file_of_a_spread_category(
 ) -> None:
     mod, first, second = _spread_mod(tmp_path)
 
-    assert mod.delete_decision("dec_a")
+    mod.delete_decision("dec_a")
     assert [d.id for d in mod.get_decision_category("shared_cat").decisions] == ["dec_b"]
     _save(mod)
 
@@ -522,13 +522,13 @@ def test_category_reopened_in_one_file_and_continued_in_another(tmp_path: Path) 
     assert category.paths == [first, second]
     assert category.icon == "GFX_one"
 
-    assert mod.update_decision("d2", cost=22)
+    mod.update_decision("d2", cost=22)
     _save(mod)
     assert first.read_text(encoding="utf-8") == REOPENED_A.replace("cost = 2 ", "cost = 22 ")
     assert second.read_text(encoding="utf-8") == REOPENED_B
 
     mod = Mod(tmp_path)
-    assert mod.update_decision_category("cat", icon="GFX_new")
+    mod.update_decision_category("cat", icon="GFX_new")
     _save(mod)
     assert first.read_text(encoding="utf-8") == (
         REOPENED_A.replace("cost = 2 ", "cost = 22 ")
@@ -567,7 +567,7 @@ def test_mod_files_extending_a_game_category(tmp_path: Path) -> None:
     assert category.paths == [first, second]
 
     mod.create_decision("shared_cat", "dec_c", cost=30)
-    assert mod.delete_decision("dec_a")
+    mod.delete_decision("dec_a")
     _save(mod)
 
     assert first.read_text(encoding="utf-8") == "shared_cat = {\n}\n"
@@ -589,7 +589,7 @@ def test_mod_files_extending_a_game_category(tmp_path: Path) -> None:
 def test_decision_string_edits_are_quoted_when_needed(tmp_path: Path) -> None:
     mod, first, _ = _spread_mod(tmp_path)
 
-    assert mod.update_decision(
+    mod.update_decision(
         "dec_a", icon="a b", custom_cost_text="cost text", on_map_mode="map_only"
     )
     _save(mod)

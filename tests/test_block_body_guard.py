@@ -34,7 +34,8 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
+from collections.abc import Callable, Iterator
 
 import pytest
 
@@ -76,6 +77,7 @@ from hoi4 import (
 from hoi4.definitions import DEFINITION_KINDS
 from hoi4.syntax import Assignment, Block, Scalar, Tagged, parse
 from hoi4.textio import read_text
+from hoi4 import effects
 
 MARKER = "zz_marker = 1"
 PAYLOADS = {
@@ -148,7 +150,10 @@ def _fields(
 
 def _parameters(function: Callable[..., object], skip: frozenset[str]) -> list[tuple[str, Shape]]:
     cases: list[tuple[str, Shape]] = []
-    for parameter in list(inspect.signature(function).parameters.values())[1:]:
+    parameters = list(inspect.signature(function).parameters.values())
+    if parameters and parameters[0].name in {"self", "cls"}:
+        parameters = parameters[1:]
+    for parameter in parameters:
         if parameter.name in skip or parameter.kind is parameter.VAR_KEYWORD:
             continue
         cases.extend((parameter.name, shape) for shape in _shapes(parameter.annotation))
@@ -159,6 +164,15 @@ def _parameters(function: Callable[..., object], skip: frozenset[str]) -> list[t
 
 
 def _plain_mod(root: Path) -> Mod:
+    return Mod(root)
+
+
+def _mod_with_country(root: Path) -> Mod:
+    # An equipment variant goes into a country's history, so the country
+    # must exist.
+    mod = Mod(root)
+    mod.create_country("ZZZ", "Zzz")
+    mod.save()
     return Mod(root)
 
 
@@ -321,7 +335,9 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "idea",
-        _fields(Idea),
+        # ``desc`` is read from old files but cannot be set: the game takes
+        # an idea's description from localisation only.
+        [(name, make) for name, make in _fields(Idea) if name != "desc"],
         create=lambda mod: mod.create_idea("zz_idea"),
         update=lambda mod, field, value: mod.update_idea("zz_idea", **{field: value}),
         create_with=lambda mod, field, value: mod.create_idea("zz_idea", **{field: value}),
@@ -476,12 +492,12 @@ RECIPES: list[Recipe] = [
     Recipe(
         "state",
         _fields(State),
-        update=lambda mod, field, value: mod.set_state_properties(1, **{field: value}),
+        update=lambda mod, field, value: mod.update_state(1, **{field: value}),
         make_mod=_map_mod,
     ),
     Recipe(
         "new state",
-        _parameters(Mod.create_state, frozenset({"localisation_file", "provinces"})),
+        _parameters(Mod.create_state, frozenset({"loc_path", "provinces"})),
         create_with=lambda mod, field, value: mod.create_state(
             [3], **{"name": "New", field: value}
         ),
@@ -489,7 +505,7 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "new strategic region",
-        _parameters(Mod.create_strategic_region, frozenset({"localisation_file", "provinces"})),
+        _parameters(Mod.create_strategic_region, frozenset({"loc_path", "provinces"})),
         create_with=lambda mod, field, value: mod.create_strategic_region(
             **{"name": "Region", "provinces": [3], field: value}
         ),
@@ -503,10 +519,10 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "order of battle",
-        _parameters(Mod.create_oob, frozenset({"path", "kind", "country_tag"})),
+        _parameters(Mod.create_oob, frozenset({"path", "kind", "tag"})),
         create_with=lambda mod, field, value: mod.create_oob(
             **{
-                "name": "ZZZ_1936", "country_tag": "ZZZ", "assign": False,
+                "name": "ZZZ_1936", "tag": "ZZZ", "assign": False,
                 "templates": [_TEMPLATE], "divisions": [DivisionUnit("Line", 1)],
                 field: value,
             }
@@ -591,6 +607,7 @@ RECIPES: list[Recipe] = [
             "ZZZ",
             EquipmentVariant(**{"name": "Variant", "equipment_type": "light_tank_chassis_1", field: value}),
         ),
+        make_mod=_mod_with_country,
     ),
     Recipe(
         "definition",
@@ -628,10 +645,10 @@ RECIPES: list[Recipe] = [
     ),
     Recipe(
         "wargoal effect",
-        _parameters(Mod.create_wargoal, frozenset()),
+        _parameters(effects.create_wargoal, frozenset()),
         create_with=lambda mod, field, value: mod.create_event(
             "zz.1", title="zz.1.t",
-            immediate=mod.create_wargoal(**{"target": "GER", "war_goal_type": "annex_everything", field: value}),
+            immediate=effects.create_wargoal(**{"target": "GER", "war_goal_type": "annex_everything", field: value}),
         ),
     ),
 ]
@@ -693,7 +710,7 @@ def _apply(root: Path, recipe: Recipe, mode: str, field: str, value: Any) -> tup
         # ParseError is a ValueError; the last check before saving raises
         # RuntimeError. Either way nothing was written.
         return "refused", f"{type(error).__name__}: {str(error)[:90]}"
-    except Exception as error:  # noqa: BLE001 - reported by the test
+    except Exception as error:
         if _not_applicable(error):
             return "skipped", str(error)[:90]
         return "crashed", f"{type(error).__name__}: {str(error)[:160]}"

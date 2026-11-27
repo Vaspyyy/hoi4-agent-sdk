@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Sequence
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Any, Unpack
 
+from ..fields import StateFields
 from ..localisation import (
     parse_localization_files,
 )
@@ -21,18 +24,13 @@ from ..textio import read_text
 from ..types import (
     State,
 )
-from ._core import CoreLayer
+from ..errors import NotFoundError, already_exists, not_found
+from ._countries import CountriesLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
+    _check_fields,
     _set_fields,
 )
-
-
-def _append_unique(existing: list, values: list) -> list:
-    out = list(existing)
-    for value in values:
-        if value not in out:
-            out.append(value)
-    return out
 
 
 def _fold_search_text(value: object) -> str:
@@ -40,16 +38,30 @@ def _fold_search_text(value: object) -> str:
     return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
-class StatesLayer(CoreLayer):
+class StatesLayer(CountriesLayer):
     """State lookup, search and history edits."""
 
     # ── States ──────────────────────────────────────────────────
 
     def list_states(self) -> list[int]:
+        """Return the sorted ids of the effective states: the mod's, the base mods' and the game's."""
         all_ids = set(self._state_ids) | set(self._states.keys())
         return sorted(all_ids)
 
-    def state_index(self, include_vanilla: bool = True) -> list[dict]:
+    def state_index(self, *, include_vanilla: bool = True) -> list[dict[str, Any]]:
+        """Return one summary per state file, sorted by id, without loading whole states.
+
+        Each entry has ``id``, ``name`` (the localisation key), ``display_name``
+        (the localised name, else the name from the file name), ``file_name``,
+        ``owner`` (``None`` when unset), ``path``, ``source`` (``"mod"`` or
+        ``"vanilla"``) and ``localized`` (whether the name has localisation).
+        With base mods there are also ``source_path`` and ``source_layer``
+        (``"mod"``, ``"base_mod"`` or ``"vanilla"``). A mod file wins over an
+        inherited one with the same id. The entries are copies.
+
+        Args:
+            include_vanilla: Also list the states of the game and the base mods.
+        """
         cached = self._state_index_cache.get(include_vanilla)
         if cached is not None:
             return [
@@ -57,8 +69,8 @@ class StatesLayer(CoreLayer):
                 if entry["id"] not in self._deleted_state_ids
             ]
         state_localization = self._state_localization_entries()
-        entries: list[dict] = []
-        for source, base in zip(("mod", "vanilla"), self._data_views()):
+        entries: list[dict[str, Any]] = []
+        for source, base in zip(("mod", "vanilla"), self._data_views(), strict=False):
             if source == "vanilla" and not include_vanilla:
                 continue
             for entry in build_state_index(
@@ -71,7 +83,7 @@ class StatesLayer(CoreLayer):
                 if self._content_layers is not None:
                     relative = base.relative(Path(item["path"]))
                     assert relative is not None
-                    original = self.content_source(relative)
+                    original = self.resolve_content_path(relative)
                     item["source_path"] = str(original) if original else item["path"]
                     item["source_layer"] = (
                         "mod" if original and original.is_relative_to(self.mod_root)
@@ -84,7 +96,7 @@ class StatesLayer(CoreLayer):
                 if localized_name is not None:
                     item["display_name"] = localized_name
                 entries.append(item)
-        by_id: dict[int, dict] = {}
+        by_id: dict[int, dict[str, Any]] = {}
         for entry in entries:
             existing = by_id.get(entry["id"])
             if existing is None or (
@@ -95,17 +107,30 @@ class StatesLayer(CoreLayer):
         self._state_index_cache[include_vanilla] = [dict(entry) for entry in result]
         return [entry for entry in result if entry["id"] not in self._deleted_state_ids]
 
-    def get_state_name_map(self, include_vanilla: bool = True) -> dict[int, str]:
+    def get_state_name_map(self, *, include_vanilla: bool = True) -> dict[int, str]:
+        """Return a readable name for every state id, from ``state_index()``.
+
+        The name is the ``display_name``, else the localisation key, else the id.
+        """
         return {
             entry["id"]: entry.get("display_name") or entry.get("name") or str(entry["id"])
             for entry in self.state_index(include_vanilla=include_vanilla)
         }
 
-    def find_state(self, query: str, include_vanilla: bool = True, limit: int = 10) -> list[dict]:
+    def find_state(
+        self, query: str, *, include_vanilla: bool = True, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Find states whose id, name, localised name or file name match ``query``.
+
+        Matching ignores case and accents and allows near misses. The result
+        holds up to ``limit`` ``state_index()`` entries, best match first,
+        each with a ``matched`` key naming the field that matched. An empty
+        query finds nothing.
+        """
         needle = _fold_search_text(query)
         if not needle:
             return []
-        scored: list[tuple[float, dict, str]] = []
+        scored: list[tuple[float, dict[str, Any], str]] = []
         for entry in self.state_index(include_vanilla=include_vanilla):
             haystacks = [
                 ("id", str(entry.get("id", "")), 1.0),
@@ -141,7 +166,7 @@ class StatesLayer(CoreLayer):
             if best >= 0.45:
                 scored.append((best, entry, matched))
         scored.sort(key=lambda item: (-item[0], item[1]["id"]))
-        results: list[dict] = []
+        results: list[dict[str, Any]] = []
         for _, entry, matched in scored[:limit]:
             result = dict(entry)
             result["matched"] = matched
@@ -170,16 +195,27 @@ class StatesLayer(CoreLayer):
         )
         return entries
 
-    def get_state(self, state_id: int) -> State:
+    def get_state(self, state_id: int, *, default: _D | _Missing = MISSING) -> State | _D:
         """Load a state without changing the mod directory.
 
         Vanilla fallback states remain backed by their vanilla source until a
         mutating state API explicitly materializes an override under the mod.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when the
+                state does not exist or is queued for deletion.
+
+        Raises:
+            NotFoundError: The state does not exist and no default was given.
         """
         if state_id in self._states:
             return self._states[state_id]
         if state_id in self._deleted_state_ids:
-            raise KeyError(f"State {state_id} is queued for deletion")
+            if default is not MISSING:
+                return default
+            raise NotFoundError(
+                f"State {state_id} is queued for deletion.", kind="state", id=state_id
+            )
         # Scan inherited content once, never once per missing filename prefix.
         # Writable directory additions retain existing live-discovery behavior;
         # directory timestamps avoid scanning unchanged files for every state.
@@ -215,7 +251,16 @@ class StatesLayer(CoreLayer):
             self._original_files.setdefault(f, text)
             self._note_read(f, text)
             return state
-        raise KeyError(f"State {state_id} not found")
+        if default is not MISSING:
+            return default
+        raise not_found("state", state_id, self._known_state_ids())
+
+    def _known_state_ids(self) -> set[int]:
+        """Every state id the mod or inherited content defines, minus queued deletions."""
+        ids = set(self._states) | set(self._state_source_paths)
+        if self._base_content is not None:
+            ids.update(self._inherited_state_paths())
+        return ids - set(self._deleted_state_ids)
 
     def _inherited_state_paths(self) -> dict[int, Path]:
         """State id to inherited state file, scanned once until the next reload."""
@@ -258,81 +303,142 @@ class StatesLayer(CoreLayer):
         self._original_files.setdefault(target, self._read_noted_text(target))
         return True
 
-    def set_state_owner(self, state_id: int, tag: str, add_core: bool = True) -> State:
-        tag = require_country_tag(tag)
-        state = self.get_state(state_id)
-        self._materialize_state_override(state)
-        state.owner = tag
-        if add_core and tag not in state.cores:
-            state.cores.append(tag)
-        self._dirty.add("states")
-        self._dirty_states.add(state_id)
-        return state
+    def set_state_owner(
+        self, state_ids: int | Sequence[int], tag: str, *, add_core: bool = True
+    ) -> None:
+        """Give one state or several to ``tag`` in their history (``owner = TAG``).
 
-    def set_state_properties(self, state_id: int, **kwargs) -> bool:
-        state = self.get_state(state_id)
-        self._materialize_state_override(state)
-        for list_key in ("cores", "provinces"):
-            if list_key in kwargs and isinstance(kwargs[list_key], list):
-                kwargs[list_key] = _append_unique(getattr(state, list_key), kwargs[list_key])
-        _set_fields(state, kwargs)
-        if "victory_points" in kwargs:
-            state._victory_points_requested = True
-        self._dirty.add("states")
-        self._dirty_states.add(state_id)
-        return True
+        ``add_core`` also adds ``tag`` to the cores. For a runtime change in
+        an event or focus, use ``effects.transfer_state()`` instead. A state
+        that already has this owner (and this core, with ``add_core``) is left
+        alone: nothing is staged for it.
 
-    def add_state_core(self, state_id: int, tag: str) -> State:
-        state = self.get_state(state_id)
-        self._materialize_state_override(state)
-        tag = require_country_tag(tag)
-        if tag not in state.cores:
-            state.cores.append(tag)
-        self._dirty.add("states")
-        self._dirty_states.add(state_id)
-        return state
+        Raises:
+            NotFoundError: A state does not exist (nothing changes then), or a
+                game install is configured and no one defines ``tag``.
+        """
+        ids = [state_ids] if isinstance(state_ids, int) else list(state_ids)
+        tag = self._require_country_reference(tag)
+        states = [self.get_state(state_id) for state_id in ids]
+        changed = False
+        for state in states:
+            has_core = tag.upper() in {core.upper() for core in state.cores}
+            if state.owner == tag and (has_core or not add_core):
+                continue
+            self._materialize_state_override(state)
+            state.owner = tag
+            if add_core and not has_core:
+                state.cores.append(tag)
+            self._dirty_states.add(state.id)
+            changed = True
+        if changed:
+            self._dirty.add("states")
 
-    def remove_state_core(self, state_id: int, tag: str) -> State:
-        state = self.get_state(state_id)
-        self._materialize_state_override(state)
-        tag = require_country_tag(tag)
-        state.cores = [core for core in state.cores if core != tag]
-        self._dirty.add("states")
-        self._dirty_states.add(state_id)
-        return state
-
-    def patch_state_history(
+    def update_state(
         self,
         state_id: int,
         *,
-        owner: str | None = None,
-        add_cores: list[str] | None = None,
-        remove_cores: list[str] | None = None,
+        add_cores: Sequence[str] = (),
+        remove_cores: Sequence[str] = (),
+        **fields: Unpack[StateFields],
     ) -> State:
-        """Queue a minimal owner/core history patch for the next ``save()``.
+        """Set fields of a state; list fields such as ``cores`` are replaced.
 
-        Repeated patches and other state setters compose in call order on the
-        same pending State. Serialization patches its original source text.
+        ``add_cores`` and ``remove_cores`` change single cores and keep the
+        rest. Only the statements that change are rewritten on save. A call
+        that changes nothing stages nothing (an explicit ``victory_points``
+        always counts as a change: it rewrites the points one pair per block).
+        ``history`` is the script inside the state's ``history = { }`` block;
+        setting it replaces that block.
+
+        Returns:
+            The updated state.
+
+        Raises:
+            NotFoundError: The state does not exist, a core in
+                ``remove_cores`` is not one of its cores, or (with a game
+                install) a tag no one defines is set as owner or core.
+            TypeError: A field name is unknown; nothing changed.
         """
+        values: dict[str, Any] = dict(fields)
         state = self.get_state(state_id)
+        _check_fields("update_state", state, values)
+        added = [self._require_country_reference(tag) for tag in add_cores]
+        removed = {require_country_tag(tag) for tag in remove_cores}
+        for tag in sorted(removed):
+            if tag not in {core.upper() for core in state.cores}:
+                raise not_found("core", tag, state.cores, where=f"state {state_id}")
+        if values.get("owner"):
+            values["owner"] = self._require_country_reference(values["owner"])
+        if "cores" in values:
+            values["cores"] = [self._require_country_reference(tag) for tag in values["cores"]]
+        current_cores = {core.upper() for core in values.get("cores", state.cores)}
+        if (
+            "victory_points" not in values
+            # A loaded state keeps the file's spelling ("1"), a caller may pass 1.
+            and all(
+                getattr(state, key) == value or str(getattr(state, key)) == str(value)
+                for key, value in values.items()
+            )
+            and not (removed & current_cores)
+            and all(tag.upper() in current_cores for tag in added)
+        ):
+            return state
         self._materialize_state_override(state)
-        removed = {tag.upper() for tag in (remove_cores or [])}
-        state.cores = [core for core in state.cores if core.upper() not in removed]
-        for core in add_cores or []:
-            normalized = require_country_tag(core)
-            if normalized not in state.cores:
-                state.cores.append(normalized)
-        if owner is not None:
-            state.owner = require_country_tag(owner)
+        _set_fields(state, values, method="update_state")
+        if removed:
+            state.cores = [core for core in state.cores if core.upper() not in removed]
+        for tag in added:
+            if tag not in state.cores:
+                state.cores.append(tag)
+        if "victory_points" in values:
+            state._victory_points_requested = True
         self._dirty.add("states")
         self._dirty_states.add(state_id)
         return state
 
-    def batch_set_owner(self, state_ids: list[int], tag: str, add_core: bool = True) -> list[State]:
-        results = []
-        for sid in state_ids:
-            results.append(self.set_state_owner(sid, tag, add_core))
-        return results
+    def add_state_core(self, state_id: int, tag: str) -> State:
+        """Add ``tag`` to a state's history cores.
+
+        Returns:
+            The changed state.
+
+        Raises:
+            NotFoundError: The state does not exist, or a game install is
+                configured and no one defines ``tag``.
+            AlreadyExistsError: ``tag`` is a core of the state already.
+                Nothing is copied into the mod then.
+        """
+        tag = self._require_country_reference(tag)
+        state = self.get_state(state_id)
+        if tag.upper() in {core.upper() for core in state.cores}:
+            raise already_exists("core", tag, hint=f"State {state_id} has it.")
+        self._materialize_state_override(state)
+        state.cores.append(tag)
+        self._dirty.add("states")
+        self._dirty_states.add(state_id)
+        return state
+
+    def remove_state_core(self, state_id: int, tag: str) -> None:
+        """Remove ``tag`` from a state's history cores.
+
+        Raises:
+            NotFoundError: The state does not exist, or ``tag`` is not one of
+                its cores. Nothing is copied into the mod then.
+        """
+        tag = require_country_tag(tag)
+        state = self.get_state(state_id)
+        if tag not in {core.upper() for core in state.cores}:
+            raise not_found(
+                "core",
+                tag,
+                state.cores,
+                where=f"state {state_id}",
+            )
+        self._materialize_state_override(state)
+        state.cores = [core for core in state.cores if core.upper() != tag]
+        self._dirty.add("states")
+        self._dirty_states.add(state_id)
 
     def _effective_states(self) -> list[State]:
         result: list[State] = []

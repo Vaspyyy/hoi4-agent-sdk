@@ -26,7 +26,7 @@ names:
 - `caches`: data attributes that lookups fill later (`get_state` adds to
   `_states`), with the lookup. The reload check uses it.
 
-`__init__`, `_snapshot`, `_restore`, `discard`, `reload` and the reload check
+`__init__`, `_snapshot`, `_restore`, `discard`, `_reload_all` and the reload check
 all read the registry. A new piece of section state goes into the registry,
 and its type into the declarations at the top of `CoreLayer`.
 
@@ -35,7 +35,8 @@ and its type into the declarations at the top of `CoreLayer`.
 `CoreLayer.__getattr__` runs only when normal lookup fails. For a name in a
 section's `data`, it runs that section's loader and returns the value. The
 loader of one section can read another section the same way (the OOB loader
-reads `_countries`). The rest of the code reads `self._events` as before.
+reads `_countries`). The rest of the code reads `self._events` like a plain
+attribute.
 
 - `__getattr__` is hidden from mypy (`if not TYPE_CHECKING`), so mypy still
   rejects unknown attributes and keeps checking the layering.
@@ -49,7 +50,8 @@ reads `_countries`). The rest of the code reads `self._events` as before.
   `_loaded_diagnostics()` lists only what is loaded; `save()` uses it after
   loading the sections that own the folders it writes to.
 - `strict_loading=True` loads every section in `__init__`, and again after a
-  save or discard, so a broken file fails at the same moments as before.
+  save or discard, so a broken file fails at construction and after every
+  save or discard, never later at a lookup.
 
 ## What reloads when
 
@@ -61,7 +63,7 @@ reads `_countries`). The rest of the code reads `self._events` as before.
 2. every section that owns or reads a written, staged, or externally changed
    file (found by fingerprint, see below), and every section whose loader put
    that file into `_original_files`. The descriptor, or a path outside the
-   mod, reloads everything (`reload()`);
+   mod, reloads everything (`_reload_all()`);
 3. sections changed in memory without a dirty mark (`_reload_on_discard`:
    what a lookup cached that the section's loader did not load, see "The
    reload check");
@@ -88,7 +90,7 @@ sprite, scripted-trigger and runtime-activation texts are kept. An entry of
 `_own_reference_cache` also records the character ids it was read with
 (`_character_scope_names()`, the same frozenset while the ids are the same),
 so a character created, deleted or reloaded since reads the file again.
-`reload()`
+`_reload_all()`
 clears all of them. With base mods, the inherited content is read where it is (see
 [`mod_layers.md`](mod_layers.md)), so nothing needs rebuilding after a save. A
 base mod's text files have fingerprints too (`_base_fingerprints`): when one
@@ -108,7 +110,8 @@ simply read, as a fresh `Mod` would read it, and `save()` may write it.
 That first read stands until the baseline is taken again: by `save()` for
 the files it wrote, by `save()` and `discard()` for the files they find
 changed on disk (they unload the sections that read them, so those files
-are read again), and by `reload()` for all. A later read never moves it.
+are read again), and by a full reload (`_reload_all()`) for all. A later
+read never moves it.
 What is in memory, or staged for a save, was built from the first text, so
 a change behind the SDK's back keeps looking like one and `save()` refuses
 to overwrite it.
@@ -181,7 +184,8 @@ Two questions are asked of them, with different care:
 - The limit of this: such a change of a file that is NOT being written is
   noticed by nobody. `discard()`, and a `save()` of other files, leave the
   section loaded, so lookups keep answering from the older text until the
-  file is written (refused) or `reload()` is called. `stat` cannot do
+  file is written (refused) or the whole mod is read again (`reload()`, or
+  a new `Mod`). `stat` cannot do
   better, and reading every file on every save is what this design avoids.
 
 ## Threads
@@ -208,7 +212,7 @@ thread for that (as `docs/api.md` says), or your own lock.
 
 ## The reload check
 
-With `HOI4_VERIFY_RELOAD=1`, every `save()`, `discard()` and `reload()` ends
+With `HOI4_VERIFY_RELOAD=1`, every `save()`, `discard()` and `_reload_all()` ends
 with `_verify_reload()`: it builds a fresh `Mod` on the same folders (sharing
 the inherited layers), loads every section of both, lets the fresh one look up
 what lookups added to the live caches, and compares every section attribute,

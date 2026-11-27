@@ -24,9 +24,9 @@ def test_save_refuses_to_replace_a_mod_file_that_failed_to_load(tmp_path: Path) 
 
     mod.create_idea("new_spirit", modifier={"stability_factor": 0.2}, path="common/ideas/broken.txt")
 
-    with pytest.raises(RuntimeError, match="Refusing to rewrite .*failed to load"):
+    with pytest.raises(RuntimeError, match=r"Refusing to rewrite .*failed to load"):
         mod.preview()
-    with pytest.raises(RuntimeError, match="Refusing to rewrite .*failed to load"):
+    with pytest.raises(RuntimeError, match=r"Refusing to rewrite .*failed to load"):
         mod.save()
     assert path.read_text(encoding="utf-8") == BROKEN_IDEAS
 
@@ -64,7 +64,7 @@ def test_a_broken_state_file_never_gets_a_second_copy_from_the_game(tmp_path: Pa
     mod = Mod(root, hoi4_install=game)
     assert [diagnostic.path for diagnostic in mod.load_diagnostics] == [broken]
     mod.set_state_owner(7, "GER")
-    with pytest.raises(RuntimeError, match="Refusing to create .*7-Holland.txt.*7-Mine.txt"):
+    with pytest.raises(RuntimeError, match=r"Refusing to create .*7-Holland\.txt.*7-Mine\.txt"):
         mod.save()
 
     assert sorted(path.name for path in broken.parent.iterdir()) == ["7-Mine.txt"]
@@ -108,9 +108,9 @@ def test_malformed_script_is_refused_and_nothing_is_written(tmp_path: Path) -> N
     mod = Mod(tmp_path)
     mod.update_event("t.1", immediate="add_stability = {")
 
-    with pytest.raises(ParseError, match="Unclosed block .*'immediate'"):
+    with pytest.raises(ParseError, match=r"Unclosed block .*'immediate'"):
         mod.preview()
-    with pytest.raises(ParseError, match="Unclosed block .*'immediate'"):
+    with pytest.raises(ParseError, match=r"Unclosed block .*'immediate'"):
         mod.save()
     assert path.read_text(encoding="utf-8") == source
 
@@ -132,8 +132,8 @@ def test_save_never_writes_a_file_with_a_new_syntax_problem(
 
     monkeypatch.setattr(persistence, "serialize_events_file", broken_patcher)
 
-    with pytest.raises(RuntimeError, match="Refusing to write .*syntax problem"):
+    with pytest.raises(RuntimeError, match=r"Refusing to write .*syntax problem"):
         mod.preview()
-    with pytest.raises(RuntimeError, match="Refusing to write .*syntax problem"):
+    with pytest.raises(RuntimeError, match=r"Refusing to write .*syntax problem"):
         mod.save()
     assert path.read_text(encoding="utf-8") == source

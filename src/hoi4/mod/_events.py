@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any, Unpack
+
+from ..fields import EnsureEventFields, EventFields, EventOptionFields
 from ..events import event_namespace
 from ..paths import (
     EVENT_NAMESPACE_RE,
@@ -16,8 +20,15 @@ from ..types import (
     EventOption,
     EventText,
 )
+from ..errors import AlreadyExistsError, NotFoundError, already_exists, not_found
 from ._core import CoreLayer
+from ._shared import MISSING, _D, _Missing
 from ._shared import (
+    _check_field_names,
+    _check_fields,
+    _check_model,
+    _create_arguments,
+    _require_items,
     _set_fields,
 )
 
@@ -41,15 +52,39 @@ def _normalize_event_option(option: EventOption) -> EventOption:
 _EVENT_TEXT_LISTS = ("conditional_titles", "conditional_descriptions")
 
 
-def _normalize_conditional_texts(kwargs: dict, lists: tuple[str, ...]) -> None:
-    """Turn the entries of a conditional text list into ``EventText`` objects."""
+def _normalize_conditional_texts(
+    method: str, kwargs: dict[str, Any], lists: tuple[str, ...]
+) -> None:
+    """Turn the entries of a conditional text list into ``EventText`` objects.
+
+    An entry is an ``EventText``, a ``(text, trigger)`` pair or a dict with
+    ``text``; ``None`` for the list clears it. Call it before the field
+    check, which wants ``EventText`` objects.
+    """
 
     for conditional in lists:
         if conditional in kwargs:
-            kwargs[conditional] = [_event_text(entry) for entry in kwargs[conditional] or ()]
+            kwargs[conditional] = _event_texts(method, conditional, kwargs[conditional])
 
 
-def _event_text(entry: EventText | tuple[str, str] | dict) -> EventText:
+def _event_texts(method: str, name: str, entries: object) -> list[EventText]:
+    if entries is None:
+        return []
+    if isinstance(entries, (str, bytes, dict)) or not isinstance(entries, Iterable):
+        raise TypeError(f"{method}(): {name} must be a list, got {type(entries).__name__}")
+    texts: list[EventText] = []
+    for entry in entries:
+        pair = isinstance(entry, (tuple, list)) and len(entry) == 2
+        if not (isinstance(entry, EventText) or pair or (isinstance(entry, dict) and "text" in entry)):
+            raise TypeError(
+                f"{method}(): {name} must hold EventText objects, (text, trigger) pairs "
+                f"or dicts with 'text', got {type(entry).__name__}"
+            )
+        texts.append(_event_text(entry))
+    return texts
+
+
+def _event_text(entry: EventText | tuple[str, str] | dict[str, str]) -> EventText:
     if isinstance(entry, EventText):
         return EventText(entry.text, normalize_block_body(entry.trigger))
     if isinstance(entry, dict):
@@ -64,16 +99,29 @@ class EventsLayer(CoreLayer):
     # ── Events ──────────────────────────────────────────────────
 
     def list_events(self) -> list[str]:
+        """Return the sorted ids of the mod's events."""
         return sorted(self._events.keys())
 
-    def get_event(self, event_id: str) -> Event:
+    def get_event(self, event_id: str, *, default: _D | _Missing = MISSING) -> Event | _D:
+        """Return the event ``event_id``.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when it
+                does not exist. Without it, a missing id raises.
+
+        Raises:
+            NotFoundError: No event has this id.
+        """
         if event_id not in self._events:
-            raise KeyError(f"Event '{event_id}' not found. Available: {self.list_events()}")
+            if default is not MISSING:
+                return default
+            raise not_found("event", event_id, self.list_events())
         return self._events[event_id]
 
     def create_event(
         self,
         event_id: str,
+        *,
         title: str = "",
         description: str = "",
         event_type: str = "country_event",
@@ -88,16 +136,42 @@ class EventsLayer(CoreLayer):
         conditional_titles: list[EventText] | None = None,
         conditional_descriptions: list[EventText] | None = None,
     ) -> Event:
-        """Create an event.
+        """Create an event; staged until ``save()``.
 
         ``conditional_titles``/``conditional_descriptions`` add
         ``title = { text = ... trigger = { ... } }`` entries, shown before the
-        plain ``title``/``description`` fallback.
+        plain ``title``/``description`` fallback. The event goes into the
+        file of its namespace (the id before the last dot).
+
+        Args:
+            title: The title's localisation key. Defaults to ``<event_id>.t``.
+            description: The description's localisation key. Defaults to
+                ``<event_id>.d``.
+            event_type: ``"country_event"``, ``"news_event"`` or
+                ``"state_event"`` and the like.
+            trigger: Body of the ``trigger`` block; ``immediate`` and
+                ``mean_time_to_happen`` likewise.
+            options: Without any, one empty option ``<event_id>.a``.
+            overwrite: Replace an existing event of this id.
+
+        Returns:
+            The new event.
+
+        Raises:
+            TypeError: ``options`` holds something that is not an ``EventOption``; nothing changed.
+            AlreadyExistsError: The id exists and ``overwrite`` is false.
+            ValueError: The id is not a valid script id.
         """
         event_id = require_script_id(event_id, label="event ID")
+        if options is not None:
+            options = _require_items("create_event", "options", options, (EventOption,))
+        titles = _event_texts("create_event", "conditional_titles", conditional_titles)
+        descriptions = _event_texts(
+            "create_event", "conditional_descriptions", conditional_descriptions
+        )
         existing = self._events.get(event_id)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"Event '{event_id}' already exists. Use overwrite=True to replace it, "
                 "or update_event()/update_event_option() to patch it."
             )
@@ -119,10 +193,8 @@ class EventsLayer(CoreLayer):
             ],
             path=existing.path if existing is not None else None,
             touched=True,
-            conditional_titles=[_event_text(entry) for entry in conditional_titles or ()],
-            conditional_descriptions=[
-                _event_text(entry) for entry in conditional_descriptions or ()
-            ],
+            conditional_titles=titles,
+            conditional_descriptions=descriptions,
         )
         self._events[event_id] = event
         self._event_namespaces[event_id] = (
@@ -134,26 +206,47 @@ class EventsLayer(CoreLayer):
         self._dirty_events.add(event_id)
         return event
 
-    def ensure_event(self, event_id: str, **kwargs) -> Event:
-        """Create an event if missing, otherwise patch the existing event."""
-        if event_id in self._events:
-            self.update_event(event_id, **kwargs)
-            return self._events[event_id]
+    def ensure_event(self, event_id: str, **fields: Unpack[EnsureEventFields]) -> Event:
+        """Create an event if missing, otherwise patch the existing event.
+
+        Returns:
+            The created or updated event.
+
+        Raises:
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        existing = self.get_event(event_id, default=None)
+        if existing is not None:
+            _normalize_conditional_texts("ensure_event", kwargs, _EVENT_TEXT_LISTS)
+            _check_fields("ensure_event", existing, kwargs, allow_path=True)
+            return self.update_event(event_id, **kwargs)
+        _check_field_names(
+            "ensure_event", kwargs, _create_arguments(self.create_event, skip={"event_id"})
+        )
         return self.create_event(event_id, **kwargs)
 
-    def update_event(self, event_id: str, **kwargs) -> bool:
+    def update_event(self, event_id: str, **fields: Unpack[EventFields]) -> Event:
         """Patch fields of an event; only the changed fields are rewritten on save.
 
         ``title`` and ``description`` are the plain keys the game falls back
         to. Setting one leaves the conditional alternatives alone; change
         those with ``conditional_titles`` / ``conditional_descriptions``
-        (an empty list removes them).
+        (an empty list removes them). ``path=`` moves the event to another file.
+
+        Returns:
+            The updated event.
+
+        Raises:
+            NotFoundError: No event has this id.
+            TypeError: A field name is unknown; nothing changed.
         """
-        event = self._events.get(event_id)
-        if event is None:
-            return False
+        kwargs: dict[str, Any] = dict(fields)
+        event = self.get_event(event_id)
         if "id" in kwargs:
             raise ValueError("Event IDs are immutable; create a new event instead")
+        _normalize_conditional_texts("update_event", kwargs, _EVENT_TEXT_LISTS)
+        _check_fields("update_event", event, kwargs, allow_path=True)
         old_path = (
             event.path
             or self.mod_root
@@ -167,7 +260,6 @@ class EventsLayer(CoreLayer):
                 kwargs[key] = normalize_block_body(kwargs[key])
         if "options" in kwargs and isinstance(kwargs["options"], list):
             kwargs["options"] = [_normalize_event_option(option) for option in kwargs["options"]]
-        _normalize_conditional_texts(kwargs, _EVENT_TEXT_LISTS)
         _set_fields(event, kwargs, allow_path=True)
         event.touched_fields.update(kwargs)
         event.touched = True
@@ -180,12 +272,15 @@ class EventsLayer(CoreLayer):
         )
         self._dirty.add("events")
         self._dirty_events.add(event_id)
-        return True
+        return event
 
-    def delete_event(self, event_id: str) -> bool:
-        event = self._events.get(event_id)
-        if event is None:
-            return False
+    def delete_event(self, event_id: str) -> None:
+        """Stage the deletion of an event and its namespace mapping.
+
+        Raises:
+            NotFoundError: No event has this id.
+        """
+        event = self.get_event(event_id)
         old_path = (
             event.path
             or self.mod_root
@@ -197,55 +292,94 @@ class EventsLayer(CoreLayer):
         self._event_namespaces.pop(event_id, None)
         self._dirty.add("events")
         self._dirty_events.discard(event_id)
-        return True
 
     def set_event_namespace(self, event_id: str, namespace: str) -> None:
-        if event_id in self._events:
-            namespace = require_event_namespace(namespace)
-            event = self._events[event_id]
-            old_path = (
-                event.path
-                or self.mod_root
-                / "events"
-                / f"{self._event_namespaces.get(event_id) or 'mod'}_events.txt"
-            )
-            event.path = self.mod_root / "events" / f"{namespace}_events.txt"
-            event.touched = True
-            self._dirty_event_files.update({old_path, event.path})
-            self._event_namespaces[event_id] = namespace
-            self._dirty.add("events")
-            self._dirty_events.add(event_id)
+        """Move an event to ``events/<namespace>_events.txt`` under that namespace.
 
-    def add_event_option(self, event_id: str, option: EventOption) -> bool:
-        event = self._events.get(event_id)
-        if event is None:
-            return False
-        event.options.append(_normalize_event_option(option))
-        event.options[-1].touched = True
+        Raises:
+            NotFoundError: No event has this id.
+            ValueError: ``namespace`` is not a valid namespace.
+        """
+        event = self.get_event(event_id)
+        namespace = require_event_namespace(namespace)
+        old_path = (
+            event.path
+            or self.mod_root
+            / "events"
+            / f"{self._event_namespaces.get(event_id) or 'mod'}_events.txt"
+        )
+        event.path = self.mod_root / "events" / f"{namespace}_events.txt"
+        event.touched = True
+        self._dirty_event_files.update({old_path, event.path})
+        self._event_namespaces[event_id] = namespace
+        self._dirty.add("events")
+        self._dirty_events.add(event_id)
+
+    def add_event_option(self, event_id: str, option: EventOption) -> EventOption:
+        """Append an option to an event.
+
+        Returns:
+            The added option.
+
+        Raises:
+            TypeError: ``option`` is not an ``EventOption``; nothing changed.
+            NotFoundError: No event has this id.
+            AlreadyExistsError: The event already has an option with this name.
+        """
+        event = self.get_event(event_id)
+        _check_model("add_event_option", option, "option", (EventOption,))
+        if option.name and any(existing.name == option.name for existing in event.options):
+            raise already_exists(
+                "event option",
+                option.name,
+                hint=f"It is in event '{event_id}'; use update_event_option() to change it.",
+            )
+        added = _normalize_event_option(option)
+        added.touched = True
+        event.options.append(added)
         event.touched = True
         self._dirty.add("events")
         self._dirty_events.add(event_id)
-        return True
+        return added
 
-    def update_event_option(self, event_id: str, option: int | str, **kwargs) -> bool:
-        event = self._events.get(event_id)
-        if event is None:
-            return False
+    def update_event_option(self, event_id: str, option: int | str, **fields: Unpack[EventOptionFields]) -> EventOption:
+        """Patch one option of an event, chosen by zero-based index or by name.
+
+        Returns:
+            The updated option.
+
+        Raises:
+            NotFoundError: The event or the option does not exist.
+            TypeError: A field name is unknown; nothing changed.
+        """
+        kwargs: dict[str, Any] = dict(fields)
+        event = self.get_event(event_id)
         event_option: EventOption | None
         if isinstance(option, int):
             if option < 0 or option >= len(event.options):
-                return False
+                raise NotFoundError(
+                    f"Event '{event_id}' has no option {option} "
+                    f"({len(event.options)} options).",
+                    kind="event option",
+                    id=option,
+                )
             event_option = event.options[option]
         else:
             event_option = next(
                 (candidate for candidate in event.options if candidate.name == option), None
             )
             if event_option is None:
-                return False
+                raise not_found(
+                    "event option",
+                    option,
+                    (candidate.name for candidate in event.options if candidate.name),
+                    where=f"event '{event_id}'",
+                )
+        _normalize_conditional_texts("update_event_option", kwargs, ("conditional_names",))
+        _check_fields("update_event_option", event_option, kwargs)
         for key in ("trigger", "ai_chance"):
             if key in kwargs and isinstance(kwargs[key], str):
                 kwargs[key] = normalize_block_body(kwargs[key])
-        _normalize_conditional_texts(kwargs, ("conditional_names",))
         assert event_option is not None
         _set_fields(event_option, kwargs)
         _normalize_event_option(event_option)
@@ -253,4 +387,4 @@ class EventsLayer(CoreLayer):
         event.touched = True
         self._dirty.add("events")
         self._dirty_events.add(event_id)
-        return True
+        return event_option

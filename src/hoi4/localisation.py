@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 from ._disk_cache import DiskAnalysis, string_map
 from ._file_cache import cached_file_result
@@ -266,15 +266,6 @@ def write_localization_file(
         serialize_localization_file(entries, original=original, language=resolved),
         bom=True,
     )
-
-
-def delete_localization_keys(path: Path, keys_to_delete: set[str]) -> None:
-    if not path.exists():
-        return
-    existing = _read_existing(path)
-    for key in keys_to_delete:
-        existing.pop(key, None)
-    write_localization_file(path, existing)
 
 
 def _read_existing(path: Path) -> dict[str, str]:

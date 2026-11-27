@@ -1,0 +1,8 @@
+shared_focus = {
+	id = BALTIC_rejoin_the_railways
+	icon = GFX_goal_generic_political_pressure
+	x = 0
+	y = 0
+	cost = 5
+	completion_reward = { add_political_power = 50 }
+}

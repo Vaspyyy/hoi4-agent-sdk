@@ -6,7 +6,8 @@ import copy
 import dataclasses
 import os
 from heapq import nlargest
-from typing import Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from ..focus import load_focus_trees
 from ..idea_icons import (
@@ -31,8 +32,9 @@ from ..textio import read_text
 from ..types import (
     State,
 )
+from ..errors import not_found
 from ._catalogs import CatalogsLayer
-from ._countries import CountriesLayer
+from ._shared import MISSING, _D, _Missing
 from ._states import StatesLayer
 
 COMMON_FOCUS_ICONS: tuple[str, ...] = (
@@ -53,15 +55,46 @@ COMMON_FOCUS_ICONS: tuple[str, ...] = (
 )
 
 
-class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
+class ContextLayer(StatesLayer, CatalogsLayer):
     """Country context reports, icon suggestions and territory checks."""
 
-    def get_country_context(self, tag: str, *, copy_states: bool = False) -> dict:
+    def get_country_context(
+        self,
+        tag: str,
+        *,
+        copy_states: bool = False,
+        default: _D | _Missing = MISSING,
+    ) -> dict[str, Any] | _D:
+        """Report what the mod and the game hold for one country.
+
+        Basics, owned and core states, matching ideas, advisors, designers,
+        localisation and focus trees. ``copy_states=True`` also queues
+        overrides of the country's states.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when no one
+                defines ``tag``.
+
+        Returns:
+            A plain dict with ``tag``, ``name``, ``adjective``, ``capital``,
+            ``ruling_party``, ``popularities``, ``leader``, ``states``,
+            ``ideas`` (advisors and designers among them), ``localization``
+            and ``focus_trees``; states, ideas and the leader as plain
+            dicts. A new copy each time.
+
+        Raises:
+            NotFoundError: No one defines ``tag`` and no default was given.
+            ValueError: ``tag`` is not a valid tag.
+        """
         tag = require_country_tag(tag)
+        if not self._is_known_country_tag(tag):
+            if default is not MISSING:
+                return default
+            raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
         if not copy_states and not self._dirty and tag in self._country_context_cache:
             return copy.deepcopy(self._country_context_cache[tag])
         country = self.get_country(tag)
-        context: dict = {
+        context: dict[str, Any] = {
             "tag": tag,
             "name": country.name,
             "adjective": country.adjective,
@@ -148,17 +181,39 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
             self._country_context_cache[tag] = copy.deepcopy(context)
         return context
 
-    def ensure_country_states_in_mod(self, tag: str) -> list[State]:
+    def copy_country_states_to_mod(self, tag: str) -> list[State]:
+        """Queue overrides of the game's state files of every state ``tag`` owns or cores.
+
+        Nothing is written until ``save()``.
+
+        Returns:
+            The states, now backed by files in the mod.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+        """
         context = self.get_country_context(tag, copy_states=True)
         return [self.get_state(state["id"]) for state in context["states"]]
 
-    def suggest_focus_icons(self, query: str, count: int = 5) -> list[str]:
+    def suggest_focus_icons(self, query: str, *, count: int = 5) -> list[str]:
+        """Return up to ``count`` known sprite names that match ``query`` best, for a focus icon.
+
+        Every ``GFX_`` sprite of the ``interface/*.gfx`` files of the mod
+        (staged ones too), the base mods and the game is a candidate; with
+        none, a built-in list of common focus icons. Words of ``query`` may
+        be separated by spaces or underscores.
+        """
         icons = sorted(self._known_focus_icons())
         if not icons:
             icons = sorted(COMMON_FOCUS_ICONS)
         return self._rank_icons(query, icons, count)
 
-    def suggest_idea_icons(self, query: str, count: int = 5) -> list[str]:
+    def suggest_idea_icons(self, query: str, *, count: int = 5) -> list[str]:
+        """Return up to ``count`` known idea icon names that match ``query`` best.
+
+        The names are the ``GFX_idea_`` sprites of the mod, the base mods and
+        the game, without that prefix, as ``create_idea(icon=)`` takes them.
+        """
         icons = sorted(
             icon.removeprefix(IDEA_SPRITE_PREFIX)
             for icon in self._known_focus_icons()
@@ -178,27 +233,12 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
             substring = 2.0 if needle and needle in low else 0.0
             token_overlap = len(needle_parts & low_parts) / max(1, len(needle_parts))
             prefix = (
-                len(os.path.commonprefix((needle, low))) / max(1, len(needle)) if needle else 0.0
+                # A plain string prefix, character by character, is what is meant here.
+                len(os.path.commonprefix((needle, low))) / max(1, len(needle)) if needle else 0.0  # noqa: RUF071
             )
             return (substring + token_overlap + prefix, icon)
 
         return [icon for _, icon in nlargest(count, (score(icon) for icon in icons))]
-
-    def suggest_focus_icon(self, query: str) -> str:
-        suggestions = self.suggest_focus_icons(query, count=1)
-        if not suggestions:
-            raise ValueError(
-                "No focus icons available from mod, vanilla install, or built-in fallback list"
-            )
-        return suggestions[0]
-
-    def suggest_idea_icon(self, query: str) -> str:
-        suggestions = self.suggest_idea_icons(query, count=1)
-        if not suggestions:
-            raise ValueError(
-                "No idea icons available from mod or configured vanilla install"
-            )
-        return suggestions[0]
 
     # ── Complete country packages and geography ─────────────────
 
@@ -209,15 +249,30 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
         minimum_land_provinces: int = 2,
         allowed_state_ids: Sequence[int] = (),
     ) -> tuple[TerritoryComponent, ...]:
-        """Find significant owned territory disconnected from the capital.
+        """Find land of ``tag`` that has no land connection to its capital.
 
-        This method imports NumPy and Pillow lazily and therefore requires the
-        optional ``map`` extra only when it is called.
+        Mod map files override the game's. Provinces count as connected by a
+        shared border or an adjacency row.
+
+        Args:
+            minimum_land_provinces: Report only pieces with at least this
+                many land provinces.
+            allowed_state_ids: States that may be cut off on purpose; they
+                are not reported.
+
+        Returns:
+            One component per cut-off piece of land.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+            ValueError: ``minimum_land_provinces`` is below 1, or ``tag`` is
+                not a valid tag.
+            RuntimeError: NumPy or Pillow (the optional ``map`` extra) is
+                missing.
+            FileNotFoundError: A map file the check needs is missing.
         """
 
-        tag = require_country_tag(tag)
-        if not self._is_known_country_tag(tag):
-            raise KeyError(f"Country '{tag}' is not defined")
+        tag = self._require_known_country(tag)
         country = self.get_country(tag)
         states, ownership = self._territory_map()
         return find_country_territory_components(
@@ -238,11 +293,29 @@ class ContextLayer(StatesLayer, CountriesLayer, CatalogsLayer):
         minimum_land_provinces: int = 1,
         allowed_state_ids: Sequence[int] = (),
     ) -> tuple[TerritoryComponent, ...]:
-        """Find foreign land components entirely enclosed by ``tag``."""
+        """Find foreign land that ``tag`` surrounds on every side.
 
-        tag = require_country_tag(tag)
-        if not self._is_known_country_tag(tag):
-            raise KeyError(f"Country '{tag}' is not defined")
+        A piece that touches the sea or land without an owner does not
+        count as enclosed.
+
+        Args:
+            minimum_land_provinces: Report only pieces with at least this
+                many land provinces.
+            allowed_state_ids: Enclaves that are wanted; they are not reported.
+
+        Returns:
+            One component per enclosed piece of foreign land.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+            ValueError: ``minimum_land_provinces`` is below 1, or ``tag`` is
+                not a valid tag.
+            RuntimeError: NumPy or Pillow (the optional ``map`` extra) is
+                missing.
+            FileNotFoundError: A map file the check needs is missing.
+        """
+
+        tag = self._require_known_country(tag)
         states, ownership = self._territory_map()
         return find_enclosed_foreign_components(
             self.mod_root,

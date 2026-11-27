@@ -47,7 +47,7 @@ def test_pending_and_inherited_custom_tokens_are_known(tmp_path):
     folder.mkdir(parents=True)
     (folder / "base.txt").write_text("base_check = { always = yes }")
     mod = Mod(tmp_path / "mod", hoi4_install=game, base_mod_paths=[base])
-    mod.create_scripted_trigger("pending_check", "base_check = yes")
+    mod.create_definition("scripted_trigger", "pending_check", "base_check = yes")
     source = tmp_path / "source.txt"
     source.write_text(
         "pending_effect = { if = { limit = { pending_check = yes } add_stability = 0.1 } }"
@@ -64,7 +64,7 @@ def test_trigger_rejects_body_escaping_wrapper_without_mutation(tmp_path):
 
     mod = Mod(tmp_path)
     with pytest.raises(ValueError, match="enclosing block"):
-        mod.create_scripted_trigger("first", "always = yes } injected = { always = no")
+        mod.create_definition("scripted_trigger", "first", "always = yes } injected = { always = no")
     assert mod.preview() == ""
 
 
@@ -110,7 +110,7 @@ focus_tree = {
 
     # Retrying must reject again, rather than treating a failed import as loaded.
     for _ in range(2):
-        with pytest.raises(ValueError, match="Duplicate focus ID 'shared_focus'.*'duplicate_tree'"):
+        with pytest.raises(ValueError, match=r"Duplicate focus ID 'shared_focus'.*'duplicate_tree'"):
             mod.load_inherited_content(relative)
         assert mod.list_focus_trees() == []
         assert mod.preview() == ""
@@ -203,7 +203,7 @@ def test_pending_idea_deletion_matches_reload(tmp_path, warm, directory):
     mod = Mod(root)
     if warm:
         assert not _unknown_ideas(mod.validate_effect("add_ideas = obsolete"))
-    assert mod.delete_idea("obsolete")
+    mod.delete_idea("obsolete")
     assert "obsolete" in source.read_text()  # The deletion is still pending.
 
     def diagnostics():
@@ -218,7 +218,7 @@ def test_pending_idea_deletion_matches_reload(tmp_path, warm, directory):
     before = diagnostics()
     result = mod.save(require_changes=True)
     assert str(source) in [str(path) for path in result.written_files]
-    mod.reload()
+    mod.discard()
     assert diagnostics() == before
 
 
@@ -229,7 +229,7 @@ def test_pending_idea_deletion_rolls_back(tmp_path, warm):
     if warm:
         assert not _unknown_ideas(mod.validate_effect("add_ideas = obsolete"))
     with mod.transaction():
-        assert mod.delete_idea("obsolete")
+        mod.delete_idea("obsolete")
         assert len(_unknown_ideas(mod.validate_effect("add_ideas = obsolete"))) == 1
         assert not _unknown_ideas(mod.validate_effect("add_ideas = sibling"))
     assert mod.preview() == ""
@@ -246,11 +246,11 @@ def test_pending_idea_deletion_respects_inherited_file_precedence(tmp_path, same
     original = inherited.read_bytes()
     mod = Mod(root, base_mod_paths=[base])
     assert not _unknown_ideas(mod.validate_effect("add_ideas = shared"))
-    assert mod.delete_idea("shared")
+    mod.delete_idea("shared")
     # A different effective file can retain the ID. A same-path base file
     # remains shadowed by the writable file, even after its idea is deleted.
     assert bool(_unknown_ideas(mod.validate_effect("add_ideas = shared"))) == same_file
     mod.save(require_changes=True)
-    mod.reload()
+    mod.discard()
     assert bool(_unknown_ideas(mod.validate_effect("add_ideas = shared"))) == same_file
     assert inherited.read_bytes() == original

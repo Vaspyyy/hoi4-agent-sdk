@@ -92,7 +92,7 @@ def test_editing_events_writes_the_first_block_and_drops_repeats(tmp_path):
     assert text == SOURCE.replace("events = { first.1 }", "events = { first.3 }").replace(
         "\t\tevents = { first.2 }\n", ""
     )
-    mod.reload()
+    mod.discard()
     first, second = mod.get_on_action_occurrences("on_startup")
     assert first.events == ["first.3"]
     assert second.effect == 'log = "second occurrence"'
@@ -104,7 +104,7 @@ def test_weighted_random_events_edit_keeps_weights(tmp_path):
     mod.save(require_changes=True)
     text = path.read_text(encoding="utf-8")
     assert "20 = daily.2" in text and "80 = 0" in text
-    mod.reload()
+    mod.discard()
     assert mod.get_on_action("on_daily").random_events == ["20", "daily.2", "80", "0"]
 
 
@@ -141,7 +141,7 @@ def test_adding_an_event_keeps_the_repeated_blocks_and_their_comments(tmp_path):
     assert path.read_text(encoding="utf-8") == REPEATED.replace(
         "b.1 # keep me\n", "b.1 # keep me\n\t\t\tc.1\n"
     )
-    mod.reload()
+    mod.discard()
     assert mod.get_on_action("on_startup").events == ["a.1", "b.1", "c.1"]
 
 
@@ -184,7 +184,7 @@ def test_an_event_inserted_in_the_middle_keeps_the_repeated_blocks(tmp_path):
     assert path.read_text(encoding="utf-8") == REPEATED.replace(
         "events = { a.1 }", "events = { x.1 a.1 y.1 }"
     )
-    mod.reload()
+    mod.discard()
     assert mod.get_on_action("on_startup").events == ["x.1", "a.1", "y.1", "b.1"]
 
 

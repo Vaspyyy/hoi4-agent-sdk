@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hoi4 import Mod
-from hoi4.types import ValidationError
+from hoi4.types import ValidationIssue
 
 
 def write(root: Path, relative: str, text: str) -> Path:
@@ -21,7 +21,7 @@ def write(root: Path, relative: str, text: str) -> Path:
     return path
 
 
-def codes(findings: list[ValidationError], code: str) -> list[ValidationError]:
+def codes(findings: list[ValidationIssue], code: str) -> list[ValidationIssue]:
     return [finding for finding in findings if finding.code == code]
 
 
@@ -177,7 +177,7 @@ def test_an_unsaved_focus_deletion_is_not_undone_by_the_file_scan(tmp_path):
 # ── Unsaved API edits reach a second validate() ─────────────────────
 
 
-def references(findings: list[ValidationError], code: str) -> list[str]:
+def references(findings: list[ValidationIssue], code: str) -> list[str]:
     return sorted(f.message for f in codes(findings, code))
 
 
@@ -200,7 +200,7 @@ def test_a_deleted_event_is_unknown_in_the_next_run(tmp_path):
     mod = Mod(root)
     first = codes(mod.validate(stage="release"), "unknown_event_reference")
     assert ["e_ev.999" in f.message for f in first] == [True]
-    assert mod.delete_event("e_ev.1")
+    mod.delete_event("e_ev.1")
     second = codes(mod.validate(stage="release"), "unknown_event_reference")
     assert sorted("e_ev.1'" in f.message for f in second) == [False, True]
 
@@ -220,7 +220,7 @@ def test_a_deleted_focus_tree_is_unknown_in_the_next_run(tmp_path):
     )
     mod = Mod(root)
     assert not codes(mod.validate(stage="release"), "unknown_focus_tree_reference")
-    assert mod.delete_focus_tree("e_tree")
+    mod.delete_focus_tree("e_tree")
     findings = codes(mod.validate(stage="release"), "unknown_focus_tree_reference")
     assert [f.focus_id for f in findings] == ["E_load"]
 
@@ -271,7 +271,7 @@ def test_a_deleted_character_stays_deleted_and_save_keeps_the_catalogs_fresh(tmp
     mod = Mod(root)
     assert "CCH_a" in mod._known_character_ids()
     assert "cch_a_tok" in mod._known_advisor_idea_ids()
-    assert mod.delete_character("CCH_a")
+    mod.delete_character("CCH_a")
     assert "CCH_a" not in mod._known_character_ids()
     assert "cch_a_tok" not in mod._known_advisor_idea_ids()
     mod.save()
@@ -288,7 +288,7 @@ def test_a_deleted_idea_does_not_come_back_after_save(tmp_path):
     )
     mod = Mod(root)
     assert {"I_keep", "I_drop"} <= mod._known_idea_ids()
-    assert mod.delete_idea("I_drop")
+    mod.delete_idea("I_drop")
     assert "I_drop" not in mod._known_idea_ids()
     mod.save()
     assert "I_drop" not in mod._known_idea_ids()
@@ -370,10 +370,10 @@ def test_cached_own_references_follow_the_character_names(tmp_path):
     start = own_corpus(mod)
     assert start == own_corpus(Mod(root))
 
-    assert mod.delete_character("CCH_hero")
+    mod.delete_character("CCH_hero")
     deleted = own_corpus(mod)
     fresh = Mod(root)
-    assert fresh.delete_character("CCH_hero")
+    fresh.delete_character("CCH_hero")
     assert deleted == own_corpus(fresh)
     assert deleted != start
 
@@ -395,15 +395,15 @@ def test_cached_own_references_follow_the_character_names(tmp_path):
     mod.discard()
     assert own_corpus(mod) == start
     first = mod.validate(stage="release")
-    assert mod.delete_character("CCH_hero")
+    mod.delete_character("CCH_hero")
     assert mod.validate(stage="release") == fresh_validate(root, delete="CCH_hero")
     mod.discard()
     assert mod.validate(stage="release") == first
 
 
-def fresh_validate(root: Path, *, delete: str) -> list[ValidationError]:
+def fresh_validate(root: Path, *, delete: str) -> list[ValidationIssue]:
     mod = Mod(root)
-    assert mod.delete_character(delete)
+    mod.delete_character(delete)
     return mod.validate(stage="release")
 
 
@@ -414,11 +414,18 @@ def test_suppress_as_one_string_names_the_mistake(tmp_path):
     import pytest
 
     mod = Mod(mod_root(tmp_path))
-    for kwargs in ({"suppress": "visual_overlap"}, {"suppress_warnings": "visual_overlap"}):
-        with pytest.raises(ValueError, match="takes a list of codes, not one string"):
-            mod.validate(stage="build", **kwargs)
     with pytest.raises(ValueError, match="takes a list of codes, not one string"):
-        mod.validate_effect("add_political_power = 1", suppress_warnings="visual_overlap")
+        mod.validate(stage="build", suppress="visual_overlap")
+    with pytest.raises(ValueError, match="takes a list of codes, not one string"):
+        mod.validate_effect("add_political_power = 1", suppress="visual_overlap")
+    # The older name of the same list is gone.
+    with pytest.raises(TypeError):
+        mod.validate(stage="build", suppress_warnings=["visual_overlap"])
+    with pytest.raises(TypeError):
+        mod.validate_effect("add_political_power = 1", suppress_warnings=["visual_overlap"])
+    # Every option is keyword-only, so no positional argument changes meaning.
+    with pytest.raises(TypeError):
+        mod.validate(None, False)
 
 
 def test_every_error_code_is_listed_once():
@@ -466,7 +473,7 @@ def test_country_history_references_read_the_unsaved_history(tmp_path):
     assert "recruit_character = CCH_new" in mod.preview()
     assert not codes(mod.validate(stage="build"), "character_ref")
     # Deleting the character but keeping its unsaved recruitment is a real mistake.
-    assert mod.delete_character("CCH_new", remove_recruitment=False)
+    mod.delete_character("CCH_new", remove_recruitment=False)
     findings = codes(mod.validate(stage="build"), "character_ref")
     assert [f.message for f in findings] == ["Character CCH_new is not defined"]
 

@@ -37,7 +37,7 @@ class TestFlags:
 
         assert len(result) == 1
         assert result[0].tag == "ABC"
-        for size_name, path in zip(("large", "medium", "small"), result[0].paths):
+        for size_name, path in zip(("large", "medium", "small"), result[0].paths, strict=True):
             assert path.is_file()
             with Image.open(path) as image:
                 assert image.size == FLAG_SIZES[size_name]
@@ -46,7 +46,7 @@ class TestFlags:
     def test_vanilla_override_and_custom_variants(self, tmp_path: Path) -> None:
         source = _make_image(tmp_path / "flag.png")
         root = tmp_path / "mod"
-        variants = import_flag_to_mod(root, "GER", source, vanilla_override=True)
+        variants = import_flag_to_mod(root, "GER", source, overwrite_vanilla=True)
         assert [variant.ideology for variant in variants] == [
             None,
             "neutrality",

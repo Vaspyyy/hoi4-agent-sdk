@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .types import ValidationError
+from .types import ValidationIssue
 
 _RECORD_RE = re.compile(
     r"^\[(?P<time>\d{2}:\d{2}:\d{2})\]"
@@ -57,19 +57,22 @@ class GameLogReport:
 
     @property
     def is_fresh(self) -> bool:
+        """Whether the log was written after ``fresh_after`` (always true without it)."""
         return self.fresh_after is None or self.log_mtime >= self.fresh_after
 
     @property
     def groups(self) -> dict[str, int]:
+        """How many entries each error class has, sorted by class."""
         return dict(sorted(Counter(entry.error_class for entry in self.entries).items()))
 
     @property
-    def validation_errors(self) -> tuple[ValidationError, ...]:
-        issues: list[ValidationError] = []
+    def validation_errors(self) -> tuple[ValidationIssue, ...]:
+        """The entries as ``ValidationIssue`` errors, plus ``stale_game_log`` when the log is old."""
+        issues: list[ValidationIssue] = []
         if not self.is_fresh:
             assert self.fresh_after is not None
             issues.append(
-                ValidationError(
+                ValidationIssue(
                     message=(
                         f"HOI4 error log predates the audited mod: {self.log_mtime.isoformat()} "
                         f"< {self.fresh_after.isoformat()}"
@@ -80,20 +83,23 @@ class GameLogReport:
                 )
             )
         for entry in self.entries:
+            # A report built by hand may hold an entry no file was found for.
             relative_path = entry.relative_path
-            assert relative_path is not None
             issues.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"HOI4 [{entry.error_class}] {entry.message}",
                     severity="error",
                     code="game_log_error",
-                    file_path=str(self.mod_root / relative_path),
+                    file_path=(
+                        str(self.mod_root / relative_path) if relative_path is not None else None
+                    ),
                     line=entry.line,
                 )
             )
         return tuple(issues)
 
     def to_dict(self) -> dict[str, object]:
+        """Return the report as plain JSON-ready values."""
         return {
             "log_path": str(self.log_path),
             "mod_root": str(self.mod_root),
@@ -244,6 +250,10 @@ def parse_hoi4_error_log(
     Once writing stops, use the default mode at that offset to flush the tail,
     even without a final newline. Offsets beyond EOF (e.g. after truncation)
     raise ``ValueError`` in either mode.
+
+    Raises:
+        FileNotFoundError: ``mod_root`` or ``log_path`` does not exist.
+        ValueError: ``start_offset`` is outside the file.
     """
 
     path = Path(log_path).resolve()

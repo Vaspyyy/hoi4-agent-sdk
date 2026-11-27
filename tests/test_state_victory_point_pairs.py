@@ -31,7 +31,7 @@ def test_repeated_points_survive_history_rebuild_save_reload(tmp_path):
     mod = Mod(tmp_path)
     state = mod.get_state(1)
     assert state.victory_points == "100 5 200 2"
-    mod.set_state_properties(1, history="", owner="BBB")
+    mod.update_state(1, history="", owner="BBB")
     result = mod.save(require_changes=True)
     assert result.written_files == [path]
     assert point_pairs(path.read_text()) == [["100", "5"], ["200", "2"]]
@@ -49,7 +49,7 @@ def test_same_value_facade_update_repairs_flattened_block_without_history_reset(
         + "\tbuildings = { infrastructure = 3 }\n} }"
     )
     mod = Mod(tmp_path)
-    mod.set_state_properties(1, victory_points=mod.get_state(1).victory_points)
+    mod.update_state(1, victory_points=mod.get_state(1).victory_points)
     mod.save(require_changes=True)
     text = path.read_text()
     assert point_pairs(text) == [["100", "5"], ["200", "2"]]

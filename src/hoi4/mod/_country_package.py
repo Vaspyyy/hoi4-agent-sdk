@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal
+from collections.abc import Sequence
 
 from ..characters import (
     AdvisorRole,
@@ -20,12 +21,9 @@ from ..parser import (
     PdxNode,
     parse_pdx,
 )
-from ..paths import (
-    require_country_tag,
-)
 from ..types import (
     Country,
-    ValidationError,
+    ValidationIssue,
 )
 from ..validation import validate_country
 from ._characters import CharactersLayer
@@ -111,10 +109,10 @@ def _runtime_activation_of(
 class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, CharactersLayer):
     """Country package completeness validation."""
 
-    def _validate_countries(self, known_parties: set[str]) -> list[ValidationError]:
+    def _validate_countries(self, known_parties: set[str]) -> list[ValidationIssue]:
         """Check every country's history values and its variant unlocks."""
 
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         dynamic_tags = self._dynamic_country_tags()
         for country in list(self._countries.values()):
             errors.extend(
@@ -307,17 +305,32 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
         A complete report proves structural authoring completeness only. It
         does not prove that runtime popularity thresholds or other dynamic
         trigger arithmetic are achievable in play.
+
+        Args:
+            minimum_land_provinces: For the geography check: report cut-off
+                land only from this many land provinces up.
+            allowed_state_ids: States that may be cut off or enclosed on purpose.
+            check_geography: Run the map checks (they need NumPy and Pillow).
+            lifecycle: ``"starting"`` for a country present at scenario
+                start, ``"runtime"`` for one released later, ``"auto"`` to
+                decide from the files.
+
+        Returns:
+            The findings; ``report.complete`` says whether nothing is missing.
+
+        Raises:
+            NotFoundError: No one defines ``tag``.
+            ValueError: ``tag`` is not a valid tag, or ``lifecycle`` is not
+                one of the three values.
         """
 
-        tag = require_country_tag(tag)
-        if not self._is_known_country_tag(tag):
-            raise KeyError(f"Country '{tag}' is not defined")
+        tag = self._require_known_country(tag)
         if lifecycle not in {"auto", "starting", "runtime"}:
             raise ValueError(
                 "lifecycle must be 'auto', 'starting', or 'runtime'"
             )
         country = self.get_country(tag)
-        findings: list[ValidationError] = []
+        findings: list[ValidationIssue] = []
         recruited = set(country.recruited_characters)
         roster = {
             character.id: character
@@ -334,7 +347,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
             severity: str = "error",
         ) -> None:
             findings.append(
-                ValidationError(
+                ValidationIssue(
                     message=message,
                     severity=severity,
                     code=code,

@@ -32,6 +32,13 @@ DEFAULT_BOOKMARK_EFFECT = "randomize_weather = 22345"
 
 @dataclass
 class BookmarkCountry:
+    """One selectable country of a bookmark, with the text and lists shown for it.
+
+    ``history`` and ``ideology`` are localisation keys; ``available`` is a
+    trigger body; ``ideas`` and ``focuses`` are the ids shown on the
+    selection screen. The last three fields are bookkeeping.
+    """
+
     tag: str
     history: str = ""
     ideology: str = ""
@@ -46,6 +53,13 @@ class BookmarkCountry:
 
 @dataclass
 class Bookmark:
+    """A start date of the game's start screen and the countries it offers.
+
+    ``name`` and ``description`` are localisation keys; ``date`` uses
+    HOI4's ``year.month.day.hour`` format; ``filters`` and ``effect`` are
+    block bodies. The last three fields are bookkeeping.
+    """
+
     name: str
     description: str = ""
     date: str = "1936.1.1.12"
@@ -103,16 +117,6 @@ def load_bookmarks_file(path: Path, *, text: str | None = None) -> list[Bookmark
         for span in _bookmark_spans(container_body):
             body = _block_body(container_body, span)
             result.append(_parse_bookmark(body, path, len(result)))
-    return result
-
-
-def load_bookmarks(root: Path) -> list[Bookmark]:
-    directory = root / "common" / "bookmarks"
-    if not directory.is_dir():
-        return []
-    result: list[Bookmark] = []
-    for path in sorted(directory.glob("*.txt")):
-        result.extend(load_bookmarks_file(path))
     return result
 
 
@@ -296,9 +300,10 @@ def _patch_bookmark_body(
             body = set_scalar(body, "default", value)
         elif field_name == "filters":
             body = set_block(body, "filters", bookmark.filters or None)
-        elif field_name == "effect":
+        elif field_name in ("effect", "countries"):
             # Effect blocks conventionally follow the country entries. Handle
             # this after country patching so a new bookmark matches that shape.
+            # The country entries are patched below, whatever was touched.
             continue
         else:
             raise ValueError(f"Unknown bookmark field: {field_name}")

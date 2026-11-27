@@ -8,10 +8,9 @@ agent-facing footguns without pretending to fully model the HOI4 effect engine.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 
 from ._scalar import needs_quotes as _needs_quotes
-from .syntax import parse, require_key, require_well_formed
+from .syntax import parse
 
 
 def normalize_block_body(body: str) -> str:
@@ -25,6 +24,14 @@ def normalize_block_body(body: str) -> str:
 
 
 def pdx_value(value: object) -> str:
+    """Write ``value`` as a Paradox script value, quoting text only when it needs it.
+
+    ``True``/``False`` become ``yes``/``no``; numbers are written as they
+    are; any other object as its text.
+
+    Raises:
+        ValueError: The text has a line break or a NUL character.
+    """
     if isinstance(value, bool):
         return "yes" if value else "no"
     if isinstance(value, str):
@@ -42,54 +49,15 @@ def pdx_value(value: object) -> str:
 
 
 def pdx_string(value: object) -> str:
-    """Serialize a value as an always-quoted Paradox string."""
+    """Serialize a value as an always-quoted Paradox string.
+
+    Raises:
+        ValueError: The text has a line break or a NUL character.
+    """
     text = str(value)
     if "\n" in text or "\r" in text or "\x00" in text:
         raise ValueError("Paradox single-line strings cannot contain newlines or NUL characters")
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def effect_block(name: str, fields: Mapping[str, object] | None = None, **kwargs: object) -> str:
-    """Build ``name = { key = value ... }`` without f-string brace escaping.
-
-    The name and every key have to be one word; a value is written as one
-    scalar. Anything else would not stay inside the block.
-    """
-    data: dict[str, object] = {}
-    if fields:
-        data.update(fields)
-    data.update(kwargs)
-    name = require_key(name, "the name of an effect block")
-    body = " ".join(
-        f"{require_key(key, f'a field of {name}')} = {pdx_value(value)}"
-        for key, value in data.items()
-    )
-    return f"{name} = {{ {body} }}"
-
-
-def scope_block(scope: str | int, *effects: str) -> str:
-    """Build ``scope = { effect... }`` without f-string brace escaping.
-
-    The scope has to be one word and every effect well formed on its own, so
-    that nothing lands outside the block.
-    """
-    scope = require_key(str(scope).strip(), "a scope")
-    parts = [effect.strip() for effect in effects if effect and effect.strip()]
-    pieces: list[str] = []
-    after_comment = False
-    for part in parts:
-        document = require_well_formed(part, f"an effect in the scope '{scope}'")
-        # A comment runs to the end of its line: what follows goes below it.
-        if pieces:
-            pieces.append("\n" if after_comment else " ")
-        pieces.append(part)
-        # Each part is well formed on its own, so the body built so far ends
-        # in a comment exactly when its last part does: no need to read the
-        # whole body again for every part.
-        comments = document.comments
-        after_comment = bool(comments) and comments[-1][1] == len(part)
-    closing = "\n}" if after_comment else " }"
-    return f"{scope} = {{ {''.join(pieces)}{closing}"
 
 
 def braced(body: str) -> str:

@@ -46,7 +46,7 @@ def test_runtime_exact_body_cache_keeps_evidence_and_reacts_to_edits(tmp_path, m
     assert mod._country_runtime_activation_evidence("AAA")[0] == {1}
     # The cache is keyed by the exact text, so it stays valid across discard().
     assert parses.count(original) == 1
-    mod.reload()
+    mod.reload()  # a full reload clears the exact-text caches too
     mod.create_event("test.1", immediate=original)
     assert mod._country_runtime_activation_evidence("AAA")[0] == {1}
     assert parses.count(original) == 2
@@ -101,7 +101,7 @@ def test_sprite_exact_text_cache_refreshes_pending_and_disk_definitions(tmp_path
     disk.write_text('spriteTypes = { spriteType = { name = GFX_DISK texturefile = "gfx/b.dds" } }')
     assert mod._known_sprite_textures()["GFX_DISK"] == "gfx/b.dds"
     assert len(parses) == 4
-    mod.reload()
+    mod.reload()  # a full reload clears the exact-text caches too
     assert mod._known_sprite_textures() == {"GFX_DISK": "gfx/b.dds"}
     assert len(parses) == 5
 

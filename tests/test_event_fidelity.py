@@ -173,7 +173,7 @@ def test_adding_and_removing_conditional_titles(tmp_path):
         "\ttitle = { text = probe.1.t_c trigger = { tag = GER } }\n"
         "\ttitle = { text = probe.1.t_b }",
     )
-    mod.reload()
+    mod.discard()
     assert [entry.text for entry in mod.get_event("probe.1").conditional_titles] == [
         "probe.1.t_a",
         "probe.1.t_c",
@@ -254,7 +254,7 @@ def test_create_event_with_conditional_texts_round_trips(tmp_path):
         ],
     )
     mod.save(require_changes=True)
-    mod.reload()
+    mod.discard()
     event = mod.get_event("made.1")
     assert event.title == "made.1.t"
     assert event.conditional_titles == [EventText("made.1.t_war", "has_war = yes")]
@@ -320,7 +320,7 @@ def test_editing_an_option_effect_never_copies_its_comments(tmp_path):
         mod.save(require_changes=True)
         expected = expected.replace("\t}\n}\n", f"\t\tadd_political_power = {power}\n\t}}\n}}\n")
         assert path.read_text(encoding="utf-8") == expected
-        mod.reload()
+        mod.discard()
         assert mod.preview() == ""
 
 
@@ -352,7 +352,7 @@ def test_a_picture_that_needs_quotes_gets_them(tmp_path):
     assert path.read_text(encoding="utf-8") == PROBE.replace(
         "picture = GFX_report_event_generic", 'picture = "GFX a#b"'
     )
-    mod.reload()
+    mod.discard()
     assert mod.get_event("probe.1").picture == "GFX a#b"
 
 
@@ -400,7 +400,7 @@ def test_a_comment_in_a_one_line_option_never_reaches_the_closing_brace(
     mod.update_event("t.1", options=options)
     mod.save(require_changes=True)
     assert path.read_text(encoding="utf-8") == ONE_LINE_OPTIONS.replace(old, new)
-    mod.reload()
+    mod.discard()
     assert mod.get_event("t.1").options[index].effect == effect
 
 

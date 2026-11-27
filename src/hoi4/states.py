@@ -8,12 +8,12 @@ an owner, cores, manpower, victory points, and province assignments.
 from __future__ import annotations
 
 import re
-import shutil
 import textwrap
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any
 
 from .map_editing import list_ints, patch_int_list_body
 from .parser import PdxNode, parse_pdx, serialize_pdx
@@ -84,7 +84,7 @@ def _state_files(states: Path | Iterable[Path]) -> list[Path]:
     return sorted(states.glob("*.txt")) if states.is_dir() else []
 
 
-def find_state_file(states_dir: Path | Iterable[Path], state_id: int) -> Optional[Path]:
+def find_state_file(states_dir: Path | Iterable[Path], state_id: int) -> Path | None:
     """Return the file in ``states_dir`` whose state block has ``id = state_id``.
 
     ``states_dir`` is a folder, or its state files sorted by name. Files whose
@@ -99,28 +99,6 @@ def find_state_file(states_dir: Path | Iterable[Path], state_id: int) -> Optiona
         if state_id_of(read_text(path)) == state_id:
             return path
     return None
-
-
-def ensure_state_in_mod(
-    mod_root: Path, hoi4_install: Optional[Path], state_id: int
-) -> Optional[Path]:
-    mod_states = mod_root / "history" / "states"
-    mod_states.mkdir(parents=True, exist_ok=True)
-
-    f = find_state_file(mod_states, state_id)
-    if f:
-        return f
-
-    if not hoi4_install:
-        return None
-    vanilla_states = hoi4_install / "history" / "states"
-    vf = find_state_file(vanilla_states, state_id)
-    if not vf:
-        return None
-
-    dst = mod_states / vf.name
-    shutil.copy2(vf, dst)
-    return dst
 
 
 def read_state(state_file: Path, text: str | None = None) -> State:
@@ -505,7 +483,7 @@ def _victory_point_pairs(value: str) -> list[tuple[str, str]]:
         # victory_points block.
         if not _VICTORY_POINT_NUMBER.fullmatch(item):
             raise ValueError(f"Victory points have to be numbers, found {item!r}")
-    return list(zip(values[::2], values[1::2]))
+    return list(zip(values[::2], values[1::2], strict=True))
 
 
 def _victory_point_spans(text: str) -> list[AssignmentSpan]:
@@ -889,24 +867,6 @@ def patch_state_owner(state_text: str, tag: str, add_core: bool = True) -> str:
     return serialize_state(state)
 
 
-def patch_state_history_owner_cores(
-    state_file: Path,
-    *,
-    owner: str | None = None,
-    add_cores: list[str] | None = None,
-    remove_cores: list[str] | None = None,
-) -> None:
-    """Patch owner/core lines in-place without reserializing unrelated state data."""
-    text = read_text(state_file)
-    patched = patch_state_history_owner_cores_text(
-        text,
-        owner=owner,
-        add_cores=add_cores,
-        remove_cores=remove_cores,
-    )
-    _write_like_existing(state_file, patched)
-
-
 def patch_state_history_owner_cores_text(
     text: str,
     *,
@@ -952,7 +912,7 @@ def build_state_index(
     states_dir: Path | Iterable[Path],
     *,
     header: Callable[[Path], tuple[int, str, str | None] | None] | None = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Return one entry per state file, identified by the file's own ``id``.
 
     ``states_dir`` is a folder, or its state files sorted by name. ``header``
@@ -960,7 +920,7 @@ def build_state_index(
     does); pass one that remembers its answers.
     """
 
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for f in _state_files(states_dir):
         found = header(f) if header is not None else state_index_header(read_text(f))
         if found is None:

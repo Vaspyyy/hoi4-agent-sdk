@@ -17,13 +17,14 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Callable, Literal, TypeVar, cast
+from typing import Literal, TypeVar
+from collections.abc import Callable
 
 from .mod import Mod
 from .idea_icons import DEFAULT_IDEA_ICON
 from .game_log import GameLogReport, parse_hoi4_error_log
 from .localisation import DEFAULT_LOCALISATION_LANGUAGE
-from .types import Focus, LoadDiagnostic, ValidationError
+from .types import Focus, LoadDiagnostic, ValidationIssue
 from .validation import COUNTRY_PACKAGE_REQUIREMENT_CODES
 
 ProbeStatus = Literal["passed", "failed", "skipped"]
@@ -85,7 +86,7 @@ class GateReport:
     load_seconds: float
     validation_seconds: float
     load_diagnostics: tuple[LoadDiagnostic, ...]
-    validation_issues: tuple[ValidationError, ...]
+    validation_issues: tuple[ValidationIssue, ...]
     probes: tuple[ProbeResult, ...]
     filesystem_changes: tuple[str, ...]
     game_log: GameLogReport | None = None
@@ -135,11 +136,10 @@ class GateReport:
             return False
         if self.fail_on_load_diagnostics and self.load_diagnostics:
             return False
-        if self.fail_on_validation_errors and (
-            self.validation_error_count or self.incomplete_country_count
-        ):
-            return False
-        return True
+        return not (
+            self.fail_on_validation_errors
+            and (self.validation_error_count or self.incomplete_country_count)
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation."""
@@ -267,7 +267,7 @@ def _largest(items: list[tuple[int, str, _T]]) -> tuple[str, _T] | None:
     return identifier, value
 
 
-def _increment_number(value: object) -> object:
+def _increment_number(value: object) -> str | int | float:
     if isinstance(value, bool):
         return not value
     if isinstance(value, int):
@@ -294,8 +294,7 @@ def _probe_focus(mod: Mod) -> str | None:
         return None
     target, payload = selected
     tree_id, focus = payload
-    if not mod.update_focus(tree_id, focus.id, cost=focus.cost + 1):
-        raise RuntimeError(f"Could not update focus {target}")
+    mod.update_focus(tree_id, focus.id, cost=focus.cost + 1)
     return f"{target}.cost"
 
 
@@ -310,8 +309,7 @@ def _probe_event(mod: Mod) -> str | None:
         return None
     event_id, event = selected
     new_picture = f"{event.picture or 'GFX_report_event_generic'}_sdk_gate"
-    if not mod.update_event(event_id, picture=new_picture):
-        raise RuntimeError(f"Could not update event {event_id}")
+    mod.update_event(event_id, picture=new_picture)
     return f"{event_id}.picture"
 
 
@@ -330,8 +328,7 @@ def _probe_decision(mod: Mod) -> str | None:
         return None
     decision_id, decision = selected
     cost = decision.cost if decision.cost is not None else 0
-    if not mod.update_decision(decision_id, cost=cost + 1):
-        raise RuntimeError(f"Could not update decision {decision_id}")
+    mod.update_decision(decision_id, cost=cost + 1)
     return f"{decision_id}.cost"
 
 
@@ -348,12 +345,10 @@ def _probe_idea(mod: Mod) -> str | None:
     if idea.modifier:
         key = sorted(idea.modifier)[0]
         value = _increment_number(idea.modifier[key])
-        if not mod.update_idea(idea_id, modifier={key: value}, merge_modifier=True):
-            raise RuntimeError(f"Could not update idea {idea_id}")
+        mod.update_idea(idea_id, modifier={key: value}, merge_modifier=True)
         return f"{idea_id}.modifier.{key}"
     icon = idea.icon or DEFAULT_IDEA_ICON
-    if not mod.update_idea(idea_id, icon=f"{icon}_sdk_gate"):
-        raise RuntimeError(f"Could not update idea {idea_id}")
+    mod.update_idea(idea_id, icon=f"{icon}_sdk_gate")
     return f"{idea_id}.icon"
 
 
@@ -379,8 +374,7 @@ def _probe_on_action(mod: Mod) -> str | None:
     new_effect = "\n".join(
         part for part in (old_effect, "set_country_flag = sdk_source_stability_probe") if part
     )
-    if not mod.update_on_action(action_id, occurrence=occurrence, effect=new_effect):
-        raise RuntimeError(f"Could not update on-action {target}")
+    mod.update_on_action(action_id, occurrence=occurrence, effect=new_effect)
     return f"{target}.effect"
 
 
@@ -412,11 +406,10 @@ def _probe_country(mod: Mod) -> str | None:
     if selected is None:
         return None
     tag, country = selected
-    if not mod.update_country(
+    mod.update_country(
         tag,
         elections_allowed=not country.elections_allowed,
-    ):
-        raise RuntimeError(f"Could not update country {tag}")
+    )
     return f"{tag}.elections_allowed"
 
 
@@ -431,8 +424,7 @@ def _probe_state(mod: Mod) -> str | None:
         return None
     state_id_text, state = selected
     state_id = int(state_id_text)
-    if not mod.set_state_properties(state_id, manpower=_increment_number(state.manpower)):
-        raise RuntimeError(f"Could not update state {state_id}")
+    mod.update_state(state_id, manpower=_increment_number(state.manpower))
     return f"{state_id}.manpower"
 
 
@@ -453,8 +445,7 @@ def _probe_ideology(mod: Mod) -> str | None:
     )
     ideology = mod.get_ideology(ideology_id, include_vanilla=False)
     red, green, blue = ideology.color
-    if not mod.update_ideology(ideology_id, color=((red + 1) % 256, green, blue)):
-        raise RuntimeError(f"Could not update ideology {ideology_id}")
+    mod.update_ideology(ideology_id, color=((red + 1) % 256, green, blue))
     return f"{ideology_id}.color"
 
 
@@ -477,15 +468,10 @@ def _probe_dynamic_modifier(mod: Mod) -> str | None:
     values = dict(dynamic_modifier.modifier)
     if values:
         key = sorted(values)[0]
-        values[key] = cast(
-            str | int | float | bool,
-            _increment_number(values[key]),
-        )
-        if not mod.update_dynamic_modifier(modifier_id, modifier=values):
-            raise RuntimeError(f"Could not update dynamic modifier {modifier_id}")
+        values[key] = _increment_number(values[key])
+        mod.update_dynamic_modifier(modifier_id, modifier=values)
         return f"{modifier_id}.modifier.{key}"
-    if not mod.update_dynamic_modifier(modifier_id, enable="always = yes"):
-        raise RuntimeError(f"Could not update dynamic modifier {modifier_id}")
+    mod.update_dynamic_modifier(modifier_id, enable="always = yes")
     return f"{modifier_id}.enable"
 
 
@@ -499,8 +485,7 @@ def _probe_bookmark(mod: Mod) -> str | None:
     )
     bookmark = mod.get_bookmark(name)
     picture = bookmark.picture or "GFX_select_date_1936"
-    if not mod.update_bookmark(name, picture=f"{picture}_sdk_gate"):
-        raise RuntimeError(f"Could not update bookmark {name}")
+    mod.update_bookmark(name, picture=f"{picture}_sdk_gate")
     return f"{name}.picture"
 
 
@@ -519,7 +504,7 @@ DEFAULT_PROBES: tuple[_Probe, ...] = (
 )
 
 
-def _validation_signature(issue: ValidationError) -> tuple[object, ...]:
+def _validation_signature(issue: ValidationIssue) -> tuple[object, ...]:
     return (
         issue.severity,
         issue.code,
@@ -543,7 +528,7 @@ def _run_probe(
     probe: _Probe,
     budget: DiffBudget,
     *,
-    baseline_validation: tuple[ValidationError, ...],
+    baseline_validation: tuple[ValidationIssue, ...],
     validate_icons: bool,
     strict_localization: bool,
 ) -> ProbeResult:

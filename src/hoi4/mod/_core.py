@@ -12,7 +12,8 @@ import time
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Self, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
+from collections.abc import Sequence
 
 from .._disk_cache import DiskAnalysis
 from .._file_cache import cached_file_result
@@ -507,8 +508,8 @@ class CoreLayer:
     _inherited_state_source_paths: dict[int, Path] | None
     _focus_trees: dict[str, FocusTree]
     _events: dict[str, Event]
-    _event_namespaces: dict[str, Optional[str]]
-    _event_file_namespaces: dict[Path, Optional[str]]
+    _event_namespaces: dict[str, str | None]
+    _event_file_namespaces: dict[Path, str | None]
     _on_actions: dict[str, OnAction]
     _on_action_occurrences: dict[str, list[OnAction]]
     _decisions: dict[str, Decision]
@@ -637,9 +638,9 @@ class CoreLayer:
         self._sprite_text_parse_cache: dict[str, dict[str, str]] = {}
         self._runtime_activation_parse_cache: dict[str, PdxNode | None] = {}
         self._script_trigger_index_cache: dict[str, dict[str, PdxNode]] = {}
-        self._state_index_cache: dict[bool, list[dict]] = {}
+        self._state_index_cache: dict[bool, list[dict[str, Any]]] = {}
         self._vanilla_state_loc_entries: dict[str, str] | None = None
-        self._country_context_cache: dict[str, dict] = {}
+        self._country_context_cache: dict[str, dict[str, Any]] = {}
 
     # ── Sections ─────────────────────────────────────────────────
 
@@ -1090,8 +1091,15 @@ class CoreLayer:
             else None
         )
 
-    def content_source(self, relative_path: str | Path) -> Path | None:
-        """The winning file of the game, the base mods or the mod, where it is on disk."""
+    def resolve_content_path(self, relative_path: str | Path) -> Path | None:
+        """The winning file of the game, the base mods or the mod, where it is on disk.
+
+        A path resolver, not a lookup of content: it returns ``None`` when
+        no layer has the file.
+
+        Raises:
+            ValueError: ``relative_path`` is absolute or leaves the mod.
+        """
         relative = relative_content_path(relative_path)
         if self._content_layers is not None:
             return self._content_layers.source(relative)
@@ -1108,7 +1116,11 @@ class CoreLayer:
         return None
 
     def content_files(self, directory: str | Path) -> dict[str, Path]:
-        """Map effective relative filenames to original winning source paths."""
+        """Map effective relative filenames to original winning source paths.
+
+        Raises:
+            ValueError: ``directory`` is absolute or leaves the mod.
+        """
         relative = relative_content_path(directory)
         if self._content_layers is not None:
             files = {
@@ -1142,9 +1154,19 @@ class CoreLayer:
         nothing; edits serialize a complete override into this mod on save.
         Duplicate focus IDs within an inherited tree reject the entire import
         before any trees are installed, regardless of ``strict_loading``.
+        A file the mod already holds, or one loaded before, is left alone.
+
+        Args:
+            relative_path: The file's path inside the game or a base mod,
+                such as ``"common/national_focus/germany.txt"``.
+
+        Raises:
+            FileNotFoundError: No layer has this file.
+            ValueError: The path is unsafe, the file is not a focus, event,
+                idea or on-action file, or an id in it is already defined.
         """
         relative = relative_content_path(relative_path)
-        source = self.content_source(relative)
+        source = self.resolve_content_path(relative)
         if source is None:
             raise FileNotFoundError(relative)
         if source.is_relative_to(self.mod_root):
@@ -1279,7 +1301,7 @@ class CoreLayer:
         if path.exists():
             return False
         try:
-            source = self.content_source(path.relative_to(self.mod_root))
+            source = self.resolve_content_path(path.relative_to(self.mod_root))
         except ValueError:
             return False
         return source is not None and source != path

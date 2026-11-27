@@ -9,6 +9,7 @@ package, one module per content type. Each module defines one layer class, and
 **A layer class subclasses only the layers whose methods it calls.** Its class
 header is its dependency list:
 
+<!-- doc-test: skip (class headers only, not code to run) -->
 ```python
 class EventsLayer(CoreLayer): ...                      # events need nothing else
 class CharactersLayer(CountriesLayer, LocalisationLayer): ...
@@ -54,6 +55,7 @@ Each layer module imports the helpers it uses, so the same helper (for example
 must replace it in all of them. Use the `patch_mod_helper` fixture from
 `tests/conftest.py`:
 
+<!-- doc-test: skip (a pytest test, runs under pytest only) -->
 ```python
 def test_scans_once(tmp_path, patch_mod_helper):
     patch_mod_helper(build_state_index, counting_index)
@@ -92,20 +94,20 @@ The calls, all with paths relative to the content root:
 | `relative(source)` | a source file's relative path, or `None` |
 
 `ContentLayers` adds `source(relative)` (the winner including the mod's own
-files, for `content_source()`) and `inherited(relative)` (the lower file a mod
+files, for `resolve_content_path()`) and `inherited(relative)` (the lower file a mod
 file hides, used to decide whether deleting the mod's file would expose one).
 
 What the view reads is never kept, so it always matches the disk. The
-descriptors' `replace_path` lines are read once; `reload()` builds a new view.
-The order of a listing matches what the old merged copy gave: a file keeps the
-place it got in the lowest layer that has it, and files new in a higher layer
-come after. Where order decides a duplicate (two localisation files with the
-same key), the later file wins, as before.
+descriptors' `replace_path` lines are read once; a full reload (`_reload_all()`, which `discard()` runs when a base mod
+changed) builds a new view.
+In a listing, a file keeps the place it got in the lowest layer that has it,
+and files new in a higher layer come after. Where order decides a duplicate
+(two localisation files with the same key), the later file wins.
 
 Models keep the real source path (`game/history/states/1-Berlin.txt`). Code
 that needs the path relative to the content root asks the view (`relative()`),
 because a source can be in any layer. Module-level readers that take a game
-folder (`read_country`, `load_all_tags`, `collect_character_ids`,
+folder (`read_country`, `load_vanilla_tags`,
 `build_state_index`, the map topology helpers, ...) also take a view;
 `as_view()` turns a plain folder into a `FolderView`.
 

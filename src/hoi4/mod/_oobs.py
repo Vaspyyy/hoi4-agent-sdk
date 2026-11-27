@@ -5,7 +5,8 @@ from __future__ import annotations
 import copy
 import re
 from pathlib import Path
-from typing import Literal, Protocol, Sequence, TypeVar, cast
+from typing import Any, Literal, Protocol, TypeVar, cast
+from collections.abc import Sequence
 
 from ..oob import (
     AirWing,
@@ -34,7 +35,9 @@ from ..textio import read_text
 from ..types import (
     Country,
 )
+from ..errors import AlreadyExistsError, NotFoundError, ReadOnlyError, not_found
 from ._countries import CountriesLayer
+from ._shared import MISSING, _D, _Missing, _check_model, _check_model_lists
 from ._equipment import EquipmentLayer
 
 
@@ -144,6 +147,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
     # ── Land orders of battle ───────────────────────────────────
 
     def list_oobs(self, *, include_vanilla: bool = False) -> list[str]:
+        """Return the sorted names of the mod's orders of battle, and the game's with ``include_vanilla``."""
         if include_vanilla and self._base_content is not None:
             inherited = self._base_content.glob("history/units", "*.txt")
             if inherited:
@@ -155,7 +159,20 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         name: str,
         *,
         include_vanilla: bool = True,
-    ) -> OrderOfBattle:
+        default: _D | _Missing = MISSING,
+    ) -> OrderOfBattle | _D:
+        """Return the OOB ``name`` (``history/units/<name>.txt``).
+
+        ``include_vanilla`` also looks at the game's and base mods' files.
+
+        Args:
+            default: Returned instead of raising ``NotFoundError`` when no
+                OOB file has this name.
+
+        Raises:
+            NotFoundError: No OOB file has this name and no default was given.
+            ValueError: ``name`` is not a valid OOB name.
+        """
         name = require_script_id(name, label="OOB name")
         cached = self._oobs.get(name)
         if cached is not None:
@@ -207,12 +224,14 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 self._original_files.setdefault(path, text)
                 self._note_read(path, text)
             return oob
-        raise KeyError(f"OOB '{name}' not found")
+        if default is not MISSING:
+            return default
+        raise not_found("OOB", name, self.list_oobs(include_vanilla=include_vanilla))
 
     def create_oob(
         self,
         name: str,
-        country_tag: str,
+        tag: str,
         *,
         templates: Sequence[DivisionTemplate] = (),
         divisions: Sequence[DivisionUnit] = (),
@@ -225,11 +244,47 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         overwrite: bool = False,
         path: str | Path | None = None,
     ) -> OrderOfBattle:
+        """Create an order of battle file (``history/units/<name>.txt``); staged until ``save()``.
+
+        One file holds land, naval or air content, not a mix. The mod keeps
+        copies of the given objects.
+
+        Args:
+            name: The file name without ``.txt``.
+            tag: The country it belongs to.
+            kind: ``"auto"`` takes the kind from the content (land when empty).
+            required_dlc: Assign it only when these DLCs are active.
+            excluded_dlc: Assign it only when these DLCs are not active.
+            assign: Also add it to the country's history (``oob``,
+                ``set_naval_oob`` or ``set_air_oob``).
+            overwrite: Replace an OOB of this name.
+            path: The output file. Without it, ``history/units/<name>.txt``.
+
+        Returns:
+            The new order of battle.
+
+        Raises:
+            TypeError: ``templates``, ``divisions``, ``fleets`` or ``air_wings`` holds something of another class; nothing changed.
+            AlreadyExistsError: The name exists and ``overwrite`` is false.
+            NotFoundError: With a game install configured, no one defines
+                ``tag``; or ``assign`` is true and the country is unknown.
+            ValueError: The name or tag is not valid, the content mixes
+                kinds or does not match ``kind``, a DLC is both required and
+                excluded, or the assignment conflicts with the country's
+                other OOBs.
+        """
         name = require_script_id(name, label="OOB name")
-        country_tag = require_country_tag(country_tag)
+        lists: dict[str, Any] = {
+            "templates": templates, "divisions": divisions, "fleets": fleets,
+            "air_wings": air_wings,
+        }
+        _check_model_lists("create_oob", OrderOfBattle, lists)
+        templates, divisions = lists["templates"], lists["divisions"]
+        fleets, air_wings = lists["fleets"], lists["air_wings"]
+        country_tag = self._require_country_reference(tag)
         existing = self._oobs.get(name)
         if existing is not None and not overwrite:
-            raise ValueError(
+            raise AlreadyExistsError(
                 f"OOB '{name}' already exists. Use overwrite=True only for "
                 "deliberate replacement."
             )
@@ -336,11 +391,29 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         required_dlc: Sequence[str] | None = None,
         excluded_dlc: Sequence[str] | None = None,
         assign: bool = False,
-    ) -> bool:
-        try:
-            oob = self.get_oob(name)
-        except (KeyError, ValueError):
-            return False
+    ) -> OrderOfBattle:
+        """Replace selected collections and assignment data of an OOB.
+
+        A game OOB is copied into the mod first. ``assign=True`` also adds
+        the history reference of ``country_tag``.
+
+        Returns:
+            The updated OOB.
+
+        Raises:
+            TypeError: ``templates``, ``divisions``, ``fleets`` or ``air_wings`` holds something of another class; nothing changed.
+            NotFoundError: No OOB file has this name.
+            ValueError: The update would mix land, naval and air content, or
+                the kind does not match the content.
+        """
+        oob = self.get_oob(name)
+        lists: dict[str, Any] = {
+            "templates": templates, "divisions": divisions, "fleets": fleets,
+            "air_wings": air_wings,
+        }
+        _check_model_lists("update_oob", OrderOfBattle, lists, none_is_unset=True)
+        templates, divisions = lists["templates"], lists["divisions"]
+        fleets, air_wings = lists["fleets"], lists["air_wings"]
         existing_content_kind = _oob_content_kind(
             oob.templates,
             oob.divisions,
@@ -415,7 +488,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             self.assign_country_oob(
                 oob.country_tag,
                 oob.name,
-                kind=cast(Literal["land", "naval", "air"], oob.kind),
+                kind=oob.kind,
                 required_dlc=oob.required_dlc,
                 excluded_dlc=oob.excluded_dlc,
             )
@@ -423,17 +496,30 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         if oob.path is not None:
             self._dirty_oob_files.add(oob.path)
         self._dirty.add("oobs")
-        return True
+        return oob
 
-    def delete_oob(self, name: str, *, unassign: bool = True) -> bool:
+    def delete_oob(self, name: str, *, unassign: bool = True) -> None:
+        """Stage the deletion of an OOB the mod defines.
+
+        ``unassign`` also removes every country history reference to it.
+
+        Raises:
+            NotFoundError: No OOB file has this name.
+            ReadOnlyError: Only the game or a base mod has it.
+        """
+        read_only = ReadOnlyError(f"Cannot delete game OOB '{name}'")
         try:
             oob = self.get_oob(name, include_vanilla=False)
-        except (KeyError, ValueError):
-            return False
+        except NotFoundError:
+            if self._base_content is not None and self._base_content.file(
+                f"history/units/{name}.txt"
+            ) is not None:
+                raise read_only from None
+            raise
         if oob.path is not None and not oob.path.resolve(strict=False).is_relative_to(
             self.mod_root
         ):
-            raise ValueError(f"Cannot delete vanilla OOB '{name}'")
+            raise read_only
         self._oobs.pop(oob.name, None)
         self._dirty_oobs.add(oob.name)
         if oob.path is not None:
@@ -451,7 +537,28 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                             excluded_dlc=reference.excluded_dlc,
                             date=reference.date,
                         )
-        return True
+
+    def _require_oob_reference(self, name: str) -> None:
+        """Raise ``NotFoundError`` when the SDK knows no OOB file is called ``name``.
+
+        The mod's OOBs (pending ones included) count, and with a configured
+        game install the inherited ones too. Without a game install the OOB
+        may be the game's, so it is accepted and ``validate()`` checks it.
+        """
+        if name in self._oobs or (self.mod_root / "history" / "units" / f"{name}.txt").is_file():
+            return
+        if self.hoi4_install is None or self._base_content is None:
+            return
+        inherited = self._base_content.glob("history/units", "*.txt")
+        if not inherited or any(path.stem == name for path in inherited.values()):
+            return
+        raise not_found(
+            "OOB",
+            name,
+            self.list_oobs(include_vanilla=True),
+            plural="OOBs",
+            hint="Create it with create_oob() first.",
+        )
 
     def _assign_country_oob(self, tag: str, name: str) -> None:
         if name:
@@ -478,10 +585,19 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         excluded_dlc: Sequence[str] = (),
         date: str = "",
     ) -> None:
-        """Assign an OOB with the engine's land/naval/air history effect."""
+        """Assign an OOB with the engine's land/naval/air history effect.
 
-        tag = require_country_tag(tag)
+        Raises:
+            NotFoundError: No one defines the country (its history is where
+                the assignment goes), or a game install is configured and no
+                OOB file has this name.
+            ValueError: The country already assigns another OOB of this kind
+                for the same date and DLC conditions.
+        """
+
+        tag = self._require_known_country(tag)
         name = require_script_id(name, label="OOB name")
+        self._require_oob_reference(name)
         country = self.get_country(tag)
         required = tuple(
             dict.fromkeys(value.strip() for value in required_dlc if value.strip())
@@ -546,10 +662,14 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         required_dlc: Sequence[str] = (),
         excluded_dlc: Sequence[str] = (),
         date: str = "",
-    ) -> bool:
-        """Remove one exact land, naval, or air OOB assignment."""
+    ) -> None:
+        """Remove one exact land, naval, or air OOB assignment.
 
-        tag = require_country_tag(tag)
+        Raises:
+            NotFoundError: The country, or that exact assignment, does not exist.
+        """
+
+        tag = self._require_known_country(tag)
         name = require_script_id(name, label="OOB name")
         country = self.get_country(tag)
         required = tuple(
@@ -560,7 +680,12 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         )
         reference = OOBReference(name, kind, required, excluded, date)
         if reference not in self._country_oob_references(country):
-            return False
+            raise NotFoundError(
+                f"Country '{tag}' has no {kind} OOB assignment of '{name}' with these "
+                "date and DLC conditions.",
+                kind="OOB assignment",
+                id=name,
+            )
         self._materialize_country_override(country)
         updated, removed = remove_oob_reference(country.raw_history, reference)
         if (
@@ -578,16 +703,24 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         if removed:
             self._dirty_countries.add(tag)
             self._dirty.add("countries")
-        return removed
 
     def create_equipment_variant(
         self,
-        country_tag: str,
+        tag: str,
         variant: EquipmentVariant,
     ) -> EquipmentVariant:
-        """Append a validated equipment variant to country history."""
+        """Append a validated equipment variant to country history.
 
-        country_tag = require_country_tag(country_tag)
+        Raises:
+            TypeError: ``variant`` is not an ``EquipmentVariant``; nothing changed.
+            NotFoundError: No one defines the country (its history is where
+                the variant goes).
+            ValueError: The variant is invalid or uses a chassis before it is
+                unlocked.
+        """
+
+        _check_model("create_equipment_variant", variant, "variant", (EquipmentVariant,))
+        country_tag = self._require_known_country(tag)
         if not variant.name.strip():
             raise ValueError("Equipment variant name cannot be empty")
         if not variant.equipment_type.strip():
@@ -646,7 +779,7 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 and existing.required_dlc == variant.required_dlc
                 and existing.excluded_dlc == variant.excluded_dlc
             ):
-                raise ValueError(
+                raise AlreadyExistsError(
                     f"Equipment variant '{variant.name}' for "
                     f"'{variant.equipment_type}' already exists in {country_tag} history"
                 )

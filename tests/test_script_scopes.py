@@ -370,7 +370,7 @@ def test_a_country_scope_core_effect_is_one_finding(game: Path, tmp_path: Path) 
     assert [
         item
         for item in mod.validate_effect(
-            "add_core_of = SCL", suppress_warnings=["country_scope_core_effect"]
+            "add_core_of = SCL", suppress=["country_scope_core_effect"]
         )
         if item.severity != "info"
     ] == []
@@ -716,7 +716,7 @@ def test_a_hidden_character_of_the_game_is_no_scope(
 
     if how == "delete":
         assert unknown() == []
-        assert mod.delete_character("GER_erwin_rommel")
+        mod.delete_character("GER_erwin_rommel")
     assert unknown() == [("unknown_effect_token", 7)]
     assert "ger_erwin_rommel" not in mod.game_script_vocabulary().characters
 

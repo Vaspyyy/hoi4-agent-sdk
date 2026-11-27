@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
 
 from .._disk_cache import NAMES_ON_DISK
 from ..oob import (
@@ -31,9 +31,8 @@ from ..oob import (
 from ..syntax import parse
 from ..types import (
     State,
-    ValidationError,
+    ValidationIssue,
 )
-from ._countries import CountriesLayer
 from ._equipment import EquipmentLayer, _ScriptCondition
 from ._states import StatesLayer
 
@@ -165,7 +164,7 @@ def _oob_lines(oob: OrderOfBattle) -> _OobLines:
     return lines
 
 
-class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
+class OobValidationLayer(StatesLayer, EquipmentLayer):
     """Order-of-battle validation against the effective game data."""
 
     # ── Shared game data ───────────────────────────────────────
@@ -281,11 +280,11 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
 
     # ── The validation phase ───────────────────────────────────
 
-    def _validate_country_oobs(self) -> list[ValidationError]:
+    def _validate_country_oobs(self) -> list[ValidationIssue]:
         """Check every OOB file and every country assignment of one."""
 
         data = self._oob_check_data()
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         references = {
             tag: self._country_oob_references(country)
             for tag, country in self._countries.items()
@@ -303,7 +302,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
             except (OSError, ValueError) as error:
                 unreadable.add(name)
                 errors.append(
-                    ValidationError(
+                    ValidationIssue(
                         message=(
                             f"Could not read {kind} OOB '{name}' of country "
                             f"'{tag}': {error}"
@@ -387,9 +386,9 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         *,
         active: bool,
         file_path: str | None,
-    ) -> ValidationError:
+    ) -> ValidationIssue:
         if active:
-            return ValidationError(
+            return ValidationIssue(
                 message=(
                     f"Country '{tag}' references missing {reference.kind} OOB "
                     f"'{reference.name}'"
@@ -399,7 +398,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                 country_tag=tag,
                 file_path=file_path,
             )
-        return ValidationError(
+        return ValidationIssue(
             message=(
                 f"Country '{tag}' references missing {reference.kind} OOB "
                 f"'{reference.name}'. The country owns no state at the "
@@ -437,7 +436,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         reference: OOBReference | None = None,
         *,
         structure: bool = False,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Check one OOB's contents and its use by ``country_tag``.
 
         ``structure`` also runs the file's own checks (``validate_oob``),
@@ -454,7 +453,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                 oob.excluded_dlc,
             )
         view = self._oob_assignment_copy(oob, country_tag, reference)
-        findings: list[ValidationError] = []
+        findings: list[ValidationIssue] = []
         if structure:
             known_templates = set(data.script_templates)
             country = self._countries.get(country_tag)
@@ -480,10 +479,10 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         self,
         oob: OrderOfBattle,
         data: _OobCheckData,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Checks that only depend on the file and the game data."""
 
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         lines = _oob_lines(oob)
         file_path = str(oob.path) if oob.path is not None else None
         tag = oob.country_tag or None
@@ -496,7 +495,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
             state_id: int | None = None,
         ) -> None:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"OOB '{oob.name}' {message}",
                     severity="error",
                     code=code,
@@ -644,10 +643,10 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
         country_tag: str,
         reference: OOBReference,
         data: _OobCheckData,
-    ) -> list[ValidationError]:
+    ) -> list[ValidationIssue]:
         """Checks that depend on which country loads the file, and when."""
 
-        errors: list[ValidationError] = []
+        errors: list[ValidationIssue] = []
         lines = _oob_lines(oob)
         file_path = str(oob.path) if oob.path is not None else None
         required = set(reference.required_dlc)
@@ -662,7 +661,7 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
             state_id: int | None = None,
         ) -> None:
             errors.append(
-                ValidationError(
+                ValidationIssue(
                     message=f"OOB '{oob.name}' {message}",
                     severity=severity,
                     code=code,
@@ -737,35 +736,33 @@ class OobValidationLayer(StatesLayer, CountriesLayer, EquipmentLayer):
                     label = ship.name or "<ordered name>"
                     for equipment in ship.equipment:
                         is_hull = equipment.equipment_type.startswith("ship_hull_")
-                        if not is_hull and _MAN_THE_GUNS not in excluded:
-                            if not reported_legacy:
-                                reported_legacy = True
-                                flag_use(
-                                    f"uses legacy naval equipment "
-                                    f"'{equipment.equipment_type}' when Man the "
-                                    "Guns may be active. HOI4 will skip these "
-                                    "ships because no proper equipment variant "
-                                    "exists. Assign a legacy naval OOB with "
-                                    "excluded_dlc=('Man the Guns',) and a "
-                                    "hull-based OOB with "
-                                    "required_dlc=('Man the Guns',).",
-                                    (
-                                        "mtg_naval_oob_uses_legacy_equipment"
-                                        if _MAN_THE_GUNS in required
-                                        else "legacy_naval_oob_without_dlc_fallback"
-                                    ),
-                                    line,
-                                )
-                        if is_hull and _MAN_THE_GUNS not in required:
-                            if not reported_ungated:
-                                reported_ungated = True
-                                flag_use(
-                                    "uses Man the Guns hull equipment but is not "
-                                    "gated with required_dlc=('Man the Guns',). "
-                                    "Add the gate and a legacy naval fallback.",
-                                    "ungated_mtg_naval_oob",
-                                    line,
-                                )
+                        if not is_hull and _MAN_THE_GUNS not in excluded and not reported_legacy:
+                            reported_legacy = True
+                            flag_use(
+                                f"uses legacy naval equipment "
+                                f"'{equipment.equipment_type}' when Man the "
+                                "Guns may be active. HOI4 will skip these "
+                                "ships because no proper equipment variant "
+                                "exists. Assign a legacy naval OOB with "
+                                "excluded_dlc=('Man the Guns',) and a "
+                                "hull-based OOB with "
+                                "required_dlc=('Man the Guns',).",
+                                (
+                                    "mtg_naval_oob_uses_legacy_equipment"
+                                    if _MAN_THE_GUNS in required
+                                    else "legacy_naval_oob_without_dlc_fallback"
+                                ),
+                                line,
+                            )
+                        if is_hull and _MAN_THE_GUNS not in required and not reported_ungated:
+                            reported_ungated = True
+                            flag_use(
+                                "uses Man the Guns hull equipment but is not "
+                                "gated with required_dlc=('Man the Guns',). "
+                                "Add the gate and a legacy naval fallback.",
+                                "ungated_mtg_naval_oob",
+                                line,
+                            )
                         if not is_hull:
                             continue
                         if not equipment.version_name:

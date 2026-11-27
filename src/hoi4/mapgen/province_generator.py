@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np  # type: ignore[import-not-found]
 from PIL import Image  # type: ignore[import-not-found]
-from scipy.ndimage import label as ndlabel  # type: ignore[import-not-found,import-untyped]
+from scipy.ndimage import label as ndlabel  # type: ignore[import-untyped]
 
 from . import config
 from .numb_gen import NumberSeries
@@ -121,7 +121,7 @@ def generate_provinces(
     ocean_indexes = {int(d["_pmap_index"]) for d in ocean_territories if exclude_ocean_density}
 
     unique, counts = np.unique(territory_pmap[territory_pmap >= 0], return_counts=True)
-    pixel_counts = dict(zip((int(v) for v in unique), (int(v) for v in counts)))
+    pixel_counts = dict(zip((int(v) for v in unique), (int(v) for v in counts), strict=True))
     density_weights: dict[int, float] = {}
     for raw_index in unique:
         index = int(raw_index)
@@ -133,8 +133,8 @@ def generate_provinces(
 
     land_allocations = _distribute(land_territories, land_count, pixel_counts, density_weights)
     ocean_allocations = _distribute(ocean_territories, ocean_count, pixel_counts, density_weights)
-    work = list(zip(land_territories, land_allocations)) + list(
-        zip(ocean_territories, ocean_allocations)
+    work = list(zip(land_territories, land_allocations, strict=True)) + list(
+        zip(ocean_territories, ocean_allocations, strict=True)
     )
     progress = Progress(2 + len(work) + 2, progress_fn)
     progress.report(0)
