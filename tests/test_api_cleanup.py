@@ -1409,6 +1409,9 @@ def test_conditional_texts_take_pairs_and_dicts_as_before(tmp_path) -> None:
     assert [text.text for text in mod.get_event("zz.1").conditional_titles] == ["zz.1.t.fra"]
     mod.update_event_option("zz.1", 0, conditional_names=[("zz.1.a.ger", "tag = GER")])
     assert mod.update_event("zz.1", conditional_titles=None).conditional_titles == []
+    for _ in range(2):  # the create path, then the update path
+        mod.ensure_event("zz.3", conditional_titles=[("zz.3.t.ger", "tag = GER")])
+    assert mod.ensure_event("zz.3", conditional_titles=None).conditional_titles == []
     before = mod.preview()
     for bad in ([1], ["x"], "x", 7):
         with pytest.raises(TypeError, match=r"create_event\(\): conditional_titles must"):
@@ -1416,7 +1419,7 @@ def test_conditional_texts_take_pairs_and_dicts_as_before(tmp_path) -> None:
         with pytest.raises(TypeError, match=r"update_event\(\): conditional_titles must"):
             mod.update_event("zz.1", conditional_titles=bad)  # type: ignore[arg-type]
     assert mod.preview() == before
-    assert mod.list_events() == ["zz.1"]
+    assert mod.list_events() == ["zz.1", "zz.3"]
 
 
 def test_create_oob_refuses_none_for_a_collection(tmp_path) -> None:
