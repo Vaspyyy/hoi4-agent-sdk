@@ -362,9 +362,9 @@ mod.save()
 
 ### Read Existing Mod Data and Add Focus
 
-A focus tree the game ships is not visible to the lookups until its file is
-copied into the mod with `load_inherited_content()`. The copy is staged: it is
-written by `save()`, with every other tree and focus of that file.
+Lookups can read a game focus tree. To edit it, stage its file with
+`load_inherited_content()`. The copy is written by `save()`, with every other
+tree and focus of that file.
 
 ```python
 from hoi4 import Focus, Mod

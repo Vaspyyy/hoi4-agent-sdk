@@ -17,7 +17,7 @@ from ..paths import (
 from ..script import (
     normalize_block_body,
 )
-from ..errors import AlreadyExistsError, not_found
+from ..errors import AlreadyExistsError
 from ._core import CoreLayer
 from ._shared import MISSING, _D, _Missing
 from ._shared import (
@@ -31,12 +31,12 @@ class DynamicModifiersLayer(CoreLayer):
 
     # ── Dynamic Modifiers ────────────────────────────────────────
 
-    def list_dynamic_modifiers(self) -> list[str]:
+    def list_dynamic_modifiers(self, *, include_vanilla: bool = False) -> list[str]:
         """Return the sorted ids of the mod's dynamic modifiers."""
-        return sorted(self._dynamic_modifiers)
+        return self._listed("dynamic_modifier", self._dynamic_modifiers, include_vanilla=include_vanilla)
 
     def get_dynamic_modifier(
-        self, modifier_id: str, *, default: _D | _Missing = MISSING
+        self, modifier_id: str, *, include_vanilla: bool = True, default: _D | _Missing = MISSING
     ) -> DynamicModifier | _D:
         """Return the dynamic modifier ``modifier_id``.
 
@@ -47,11 +47,7 @@ class DynamicModifiersLayer(CoreLayer):
         Raises:
             NotFoundError: No dynamic modifier has this id.
         """
-        if modifier_id not in self._dynamic_modifiers:
-            if default is not MISSING:
-                return default
-            raise not_found("dynamic modifier", modifier_id, self.list_dynamic_modifiers())
-        return self._dynamic_modifiers[modifier_id]
+        return self._lookup("dynamic_modifier", self._dynamic_modifiers, modifier_id, include_vanilla=include_vanilla, default=default)
 
     def create_dynamic_modifier(
         self,
@@ -137,7 +133,7 @@ class DynamicModifiersLayer(CoreLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        dynamic_modifier = self.get_dynamic_modifier(modifier_id)
+        dynamic_modifier = self._mod_definition("dynamic_modifier", self._dynamic_modifiers, modifier_id)
         forbidden = {"id", "path", "raw_block", "touched_fields"} & set(kwargs)
         if forbidden:
             raise ValueError(
@@ -161,7 +157,7 @@ class DynamicModifiersLayer(CoreLayer):
         Raises:
             NotFoundError: No dynamic modifier has this id.
         """
-        dynamic_modifier = self.get_dynamic_modifier(modifier_id)
+        dynamic_modifier = self._mod_definition("dynamic_modifier", self._dynamic_modifiers, modifier_id)
         del self._dynamic_modifiers[modifier_id]
         self._dynamic_modifier_sources.pop(modifier_id, None)
         if dynamic_modifier.path is not None:

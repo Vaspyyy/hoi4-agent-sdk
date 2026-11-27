@@ -6,7 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed (breaking, 0.7.0)
+## [0.7.0] - 2026-11-27
+
+### Changed (breaking)
 
 The public API of `hoi4.Mod` was cleaned up: one error hierarchy, lookups and
 changes that raise instead of returning `False` or `None`, return values that
@@ -15,6 +17,13 @@ say what you got, no duplicate entry points, and the script builders moved to
 
 | Old call (0.6) | New call (0.7) | Why |
 |---|---|---|
+| `list_characters()` | `list_characters(include_vanilla=True)` | The default lists only the mod's characters |
+| `mod.get_x(None)` answering like the id `"None"` (`NotFoundError`, or a definition really called `None`) | raises `TypeError` | `None` is never an id |
+| `list_ideologies()` | `list_ideologies(include_vanilla=True)` | The default lists only the mod's ideologies |
+| `list_definitions(kind)` | `list_definitions(kind, include_vanilla=True)` | The default lists only the mod's definitions |
+| `list_states()` after inherited lookups | `list_states(include_vanilla=True)` | The default lists the mod's state files instead of the states cached so far |
+| `list_countries()` after inherited lookups | `list_countries(include_vanilla=True)` | A lookup no longer adds an inherited country to the mod's list |
+| Lookup of a game focus, event, idea, decision, bookmark, modifier or hook raised `NotFoundError` | The lookup finds inherited content by default; pass `include_vanilla=False` for the mod only | Lookups use the same scope rule |
 | `except KeyError` / `except IndexError` around a lookup | `except hoi4.NotFoundError` (still a `KeyError`, no longer an `IndexError`) | One error for "not there"; the message names close matches instead of every id |
 | `get_on_action(..., occurrence=n)`, `update_on_action(..., occurrence=n)`, `delete_on_action(..., occurrence=n)` out of range: `IndexError` | `NotFoundError` | One error for "not there" |
 | `add_character_role(..., instance_occurrence=n)` and the other role methods with a missing instance: `IndexError` | `NotFoundError` | One error for "not there" |

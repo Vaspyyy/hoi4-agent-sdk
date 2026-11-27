@@ -313,7 +313,7 @@ def test_inherited_ideologies_with_unclosed_block_are_read(tmp_path: Path) -> No
 
     mod = Mod(mod_root, game)
 
-    assert "game_ideology" in mod.list_ideologies()
+    assert "game_ideology" in mod.list_ideologies(include_vanilla=True)
 
 
 # ── dynamic modifiers ─────────────────────────────────────────

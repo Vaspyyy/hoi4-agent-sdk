@@ -52,8 +52,7 @@ from hoi4 import Focus, Mod
 
 mod = Mod.from_config()
 
-# Inspect existing data. A focus tree the game ships is not visible to the
-# lookups until its file is copied into the mod (this stages the copy).
+# Stage the game file before editing its focus tree.
 mod.load_inherited_content("common/national_focus/germany.txt")
 anchor = mod.get_focus("german_focus", "GER_anschluss")
 
@@ -157,7 +156,7 @@ All four classes are importable from `hoi4` (`Hoi4Error` is their base). See
     Every finding has a severity: `error`, `warning` or `info` (advice). `validate()` hides advice unless you pass `advice=True`; `validate_effect()` shows it unless `advice=False`.
     Every code and its severity is listed in [`docs/validation.md`](docs/validation.md).
 
-11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `ensure_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
+11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `ensure_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`. The `ensure_*` helpers work on the mod's own content: for an id that only the game or a base mod defines they raise `ReadOnlyError` instead of putting a new definition on top of it. The exception is `ensure_on_action()`: hooks of all files add up, so it adds a hook of the mod's own.
 
 12. Use `get_country_context(tag)` before generating country-specific content. Pass `copy_states=True` before directly modifying vanilla states.
 

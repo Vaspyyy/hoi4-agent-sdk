@@ -43,10 +43,13 @@ class StatesLayer(CountriesLayer):
 
     # ── States ──────────────────────────────────────────────────
 
-    def list_states(self) -> list[int]:
-        """Return the sorted ids of the effective states: the mod's, the base mods' and the game's."""
-        all_ids = set(self._state_ids) | set(self._states.keys())
-        return sorted(all_ids)
+    def list_states(self, *, include_vanilla: bool = False) -> list[int]:
+        """Return the mod's state IDs, or all effective IDs when requested."""
+        ids = set(self._state_ids)
+        ids.update(self._dirty_states)
+        if include_vanilla and self._base_content is not None:
+            ids.update(self._inherited_state_paths())
+        return sorted(ids - set(self._deleted_state_ids))
 
     def state_index(self, *, include_vanilla: bool = True) -> list[dict[str, Any]]:
         """Return one summary per state file, sorted by id, without loading whole states.
@@ -195,7 +198,7 @@ class StatesLayer(CountriesLayer):
         )
         return entries
 
-    def get_state(self, state_id: int, *, default: _D | _Missing = MISSING) -> State | _D:
+    def get_state(self, state_id: int, *, include_vanilla: bool = True, default: _D | _Missing = MISSING) -> State | _D:
         """Load a state without changing the mod directory.
 
         Vanilla fallback states remain backed by their vanilla source until a
@@ -208,6 +211,8 @@ class StatesLayer(CountriesLayer):
         Raises:
             NotFoundError: The state does not exist and no default was given.
         """
+        if state_id is None:
+            raise TypeError("State ID cannot be None")
         if state_id in self._states:
             return self._states[state_id]
         if state_id in self._deleted_state_ids:
@@ -236,24 +241,28 @@ class StatesLayer(CountriesLayer):
         f = self._state_source_paths.get(state_id)
         if f is not None and not f.exists():
             f = None
-        if f is None and self._base_content is not None:
+        if f is None and include_vanilla and self._base_content is not None:
             f = self._inherited_state_paths().get(state_id)
         if f:
+            if not f.is_relative_to(self.mod_root):
+                state = self._inherited_copy("state", state_id, lambda: read_state(f))
+                assert state is not None
+                return state
             state = read_state(f)
             self._states[state_id] = state
             self._state_source_paths.setdefault(state_id, f)
-            if not f.is_relative_to(self.mod_root):
-                # A state of the game or a base mod, cached by this lookup:
-                # save() and discard() drop it with the section, as a full
-                # reload used to, so list_states() names the mod's again.
-                self._reload_on_discard.add("states")
             text = read_text(f)
             self._original_files.setdefault(f, text)
             self._note_read(f, text)
             return state
         if default is not MISSING:
             return default
-        raise not_found("state", state_id, self._known_state_ids())
+        known = (
+            self._known_state_ids()
+            if include_vanilla
+            else (set(self._states) | set(self._state_source_paths)) - set(self._deleted_state_ids)
+        )
+        raise not_found("state", state_id, known)
 
     def _known_state_ids(self) -> set[int]:
         """Every state id the mod or inherited content defines, minus queued deletions."""
@@ -299,6 +308,7 @@ class StatesLayer(CountriesLayer):
             # mod's own copy well formed.
             state.raw_text = repair(state.raw_text)
         state.path = target
+        self._states[state.id] = state
         self._state_source_paths[state.id] = target
         self._original_files.setdefault(target, self._read_noted_text(target))
         return True
@@ -442,7 +452,7 @@ class StatesLayer(CountriesLayer):
 
     def _effective_states(self) -> list[State]:
         result: list[State] = []
-        for state_id in sorted(set(self._state_ids) | set(self._states)):
+        for state_id in self.list_states(include_vanilla=True):
             try:
                 result.append(self.get_state(state_id))
             except (KeyError, OSError, ValueError):

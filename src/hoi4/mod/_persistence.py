@@ -115,9 +115,15 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         for path, current in sorted(rendered.items(), key=lambda item: item[0]):
             original = self._read_current_text(path)
             rel = str(path.relative_to(self.mod_root))
+            is_deletion = current is None
             if current is None:
                 current = ""
             diff = unified_diff(original, current, rel)
+            if not diff and not original and not current:
+                if not is_deletion and self._empty_file_hides(path):
+                    diff = f"--- /dev/null\n+++ b/{rel}\n"
+                elif is_deletion and path.exists():
+                    diff = f"--- a/{rel}\n+++ /dev/null\n"
             if diff:
                 diffs.append(diff)
         for path, content in sorted(self._pending_asset_writes.items()):
@@ -152,6 +158,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             OSError: Writing a file failed.
         """
         if not self._dirty:
+            self._drop_inherited_lookups()
             message = "No changes written: save() was called with no dirty changes"
             warnings.warn(message, RuntimeWarning, stacklevel=2)
             if require_changes:
@@ -165,7 +172,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             path: content
             for path, content in rendered.items()
             if (content is None and path.exists())
-            or (content is not None and self._read_current_text(path) != content)
+            or (content is not None and (self._read_current_text(path) != content
+                or self._empty_file_hides(path)))
         }
         changed_assets = {
             path: content
@@ -173,6 +181,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             if self._pending_asset_baselines[path] != content
         }
         if not changed and not changed_assets:
+            self._drop_inherited_lookups()
             message = "No files written after processing dirty sections"
             if require_changes:
                 raise SaveRefusedError(message)
@@ -186,6 +195,21 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             dirty_sections=dirty_sections,
             no_changes=False,
             message=f"Saved {len(written_files)} file(s)",
+        )
+
+    def _empty_file_hides(self, path: Path) -> bool:
+        """Whether an empty new file at ``path`` has to be written.
+
+        Only for a file copied from a lower layer (``load_inherited_content``)
+        whose definitions were all deleted: the empty file is what keeps the
+        inherited one hidden. A path that never held content of the mod gets
+        no file.
+        """
+
+        return (
+            not path.exists()
+            and path in self._original_files
+            and self._inherits_file(path.relative_to(self.mod_root))
         )
 
     def _render_dirty_files(self) -> dict[Path, str | None]:
@@ -438,7 +462,8 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
                     modifiers,
                     original=self._original_files.get(path, ""),
                 )
-                rendered[path] = dynamic_text if dynamic_text.strip() else None
+                inherited = self._inherits_file(path.relative_to(self.mod_root))
+                rendered[path] = dynamic_text if dynamic_text.strip() or inherited else None
 
         if "bookmarks" in self._dirty:
             for path in self._dirty_bookmark_files:
@@ -859,6 +884,9 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
         """
 
         self._scan_cache.clear()
+        # What lookups read from the game and the base mods: a written or
+        # changed mod file may now hide an inherited one.
+        self._drop_inherited_lookups()
         if unloaded is None:
             self._own_reference_cache.clear()
             self._sprite_text_parse_cache.clear()

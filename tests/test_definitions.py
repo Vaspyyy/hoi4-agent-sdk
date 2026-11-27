@@ -140,7 +140,7 @@ def test_inherited_definitions_are_copied_into_the_mod_before_editing(tmp_path: 
            "opinion_modifiers = {\n\tvanilla_a = { value = 10 }\n\tvanilla_b = { value = 20 }\n}\n")
     root = tmp_path / "mod"
     mod = Mod(root, hoi4_install=game)
-    assert set(mod.list_definitions("opinion_modifier")) >= {"vanilla_a", "vanilla_b"}
+    assert set(mod.list_definitions("opinion_modifier", include_vanilla=True)) >= {"vanilla_a", "vanilla_b"}
     mod.update_definition("opinion_modifier", "vanilla_a", "value = 15")
     mod.save()
     copied = (root / "common/opinion_modifiers/00_opinion.txt").read_text(encoding="utf-8")

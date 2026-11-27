@@ -1396,7 +1396,7 @@ def test_rejected_inherited_oob_assignment_does_not_materialize_country(
         else:
             mod.assign_country_oob("ABC", "ABC_new",
                                    date="invalid" if operation == "invalid_date" else "")
-    assert mod.get_country("ABC") is country
+    assert mod.get_country("ABC") == country
     assert country == before
     assert mod._original_files == originals
     assert mod.preview() == preview

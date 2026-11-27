@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..fields import CharacterFields, CharacterInstanceFields, CharacterRoleFields
 from ..characters import (
+    _infer_country_tag,
     AdvisorRole,
     Character,
     CharacterInstance,
@@ -62,7 +63,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         self,
         tag: str | None = None,
         *,
-        include_vanilla: bool = True,
+        include_vanilla: bool = False,
     ) -> list[str]:
         """Return the sorted ids of the known characters, optionally of one country.
 
@@ -75,13 +76,29 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             ValueError: ``tag`` is not a valid country tag.
         """
         normalized = require_country_tag(tag) if tag is not None else None
-        if include_vanilla and self._base_content is not None:
-            self._load_vanilla_characters(normalized)
-        return sorted(
+        own = {
             character_id
             for character_id, character in self._characters.items()
             if normalized is None or character.country_tag == normalized
-        )
+        }
+        if include_vanilla:
+            if normalized is None:
+                own |= self._inherited_ids("character")
+            else:
+                # A character's tag comes from its id, else from its file's
+                # name: no file has to be read to filter by it.
+                visible: dict[Path, bool] = {}
+                for character_id, sources in self._inherited_index_of("character").items():
+                    if character_id in self._characters:
+                        continue  # the mod's definition is the one that counts
+                    for source in sources:
+                        if source not in visible:
+                            visible[source] = self._inherited_file_visible(source)
+                        if visible[source]:
+                            if _infer_country_tag(character_id, source) == normalized:
+                                own.add(character_id)
+                            break
+        return sorted(own)
 
     def get_character(
         self,
@@ -92,8 +109,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
     ) -> Character | _D:
         """Return the character ``character_id``.
 
-        ``include_vanilla`` also loads the game's and base mods' characters
-        of the tag in the id's prefix.
+        ``include_vanilla`` also looks at the game's and base mods'
+        characters; such a result is a read-only copy.
 
         Args:
             default: Returned instead of raising ``NotFoundError`` when no
@@ -105,19 +122,14 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         """
         # Look up before validating: the game accepts ids the SDK would not
         # generate, such as ``COL_alfonso_lópez_pumarejo`` in vanilla.
-        character = self._characters.get(str(character_id))
+        if character_id is None:
+            raise TypeError("Character ID cannot be None")
+        character: Character | None = self._characters.get(str(character_id))
         if character is not None:
             return character
         character_id = _require_character_lookup_id(character_id)
         if include_vanilla and self._base_content is not None:
-            prefix = character_id.split("_", 1)[0]
-            tag = (
-                prefix
-                if len(prefix) == 3 and prefix.isalnum() and prefix.upper() == prefix
-                else None
-            )
-            self._load_vanilla_characters(tag)
-            character = self._characters.get(character_id)
+            character = self._inherited_definition("character", character_id)
         if character is None:
             if default is not MISSING:
                 return default
@@ -608,42 +620,18 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         source_text = read_text(source)
         for item in load_characters_file(source, country_tag=character.country_tag):
             cached = self._characters.get(item.id)
-            if cached is not None and cached.path == source:
+            if cached is None and item.id != character.id:
+                item.path = target
+                self._characters[item.id] = item
+            elif cached is not None and cached.path == source:
                 cached.path = target
         self._original_files.setdefault(
             target,
             self._read_noted_text(target) or source_text,
         )
         character.path = target
+        self._characters[character.id] = character
         self._dirty_character_files.add(target)
-
-    def _load_vanilla_characters(self, tag: str | None) -> None:
-        if self._base_content is None:
-            return
-        folder = "common/characters"
-        if tag is None:
-            paths = list(self._base_content.glob(folder, "*.txt").values())
-        else:
-            preferred = [
-                self._base_content.file(f"{folder}/{tag}.txt"),
-                self._base_content.file(f"{folder}/{tag}_characters.txt"),
-            ]
-            paths = [path for path in preferred if path is not None]
-            if not paths:
-                paths = list(self._base_content.glob(folder, f"{tag}*.txt").values())
-        for path in paths:
-            cache_key = f"character_file:{path}"
-            if cache_key in self._scan_cache:
-                continue
-            try:
-                for character in load_characters_file(path, country_tag=tag or ""):
-                    self._characters.setdefault(character.id, character)
-            except (OSError, ValueError):
-                pass
-            self._scan_cache[cache_key] = set()
-            # Characters of the game or a base mod, cached by this lookup:
-            # save() and discard() drop them with the section.
-            self._reload_on_discard.add("characters")
 
     @staticmethod
     def _all_character_roles(character: Character) -> tuple[CharacterRole, ...]:

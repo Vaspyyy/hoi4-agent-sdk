@@ -29,8 +29,8 @@ Usage (the quick start of ``README.md``)::
     # This dry run discards its changes on exit. After reviewing the output,
     # rerun the block with mod.transaction(save=True) to apply and save the edits.
 
-A focus tree the game ships is not visible to ``get_focus_tree()`` until its
-file is copied into the mod with ``mod.load_inherited_content(path)``.
+Lookups can read game trees. To edit one, stage its file with
+``mod.load_inherited_content(path)``.
 
 The class is assembled from layers, one module per content type. Each layer
 class subclasses only the layers whose methods it calls, so its class header

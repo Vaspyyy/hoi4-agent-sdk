@@ -81,9 +81,8 @@ with mod.transaction():
 ```
 
 `create_focus_tree()` raises `AlreadyExistsError` when the tree exists; use
-`ensure_focus_tree()` when the script may run twice. A focus tree the game
-ships is not visible to `get_focus_tree()` until you copy its file into the
-mod with `mod.load_inherited_content("common/national_focus/<file>.txt")`.
+`ensure_focus_tree()` when the script may run twice. Lookups can read game
+trees. To edit one, stage its file with `mod.load_inherited_content()`.
 
 ## Supported content
 

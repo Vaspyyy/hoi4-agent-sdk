@@ -33,12 +33,12 @@ class OnActionsLayer(CoreLayer):
 
     # ── On Actions ───────────────────────────────────────────────
 
-    def list_on_actions(self) -> list[str]:
+    def list_on_actions(self, *, include_vanilla: bool = False) -> list[str]:
         """Return the sorted ids of the on-action hooks the mod uses."""
-        return sorted(self._on_actions.keys())
+        return self._listed("on_action", self._on_actions, include_vanilla=include_vanilla)
 
     def get_on_action_occurrences(
-        self, action_id: str, *, default: _D | _Missing = MISSING
+        self, action_id: str, *, include_vanilla: bool = True, default: _D | _Missing = MISSING
     ) -> tuple[OnAction, ...] | _D:
         """Return every compositional occurrence of an on-action hook.
 
@@ -51,11 +51,17 @@ class OnActionsLayer(CoreLayer):
                 default was given.
         """
 
-        occurrences = self._on_action_occurrences.get(action_id)
+        if action_id is None:
+            raise TypeError("On-action ID cannot be None")
+        occurrences = list(self._on_action_occurrences.get(action_id, ()))
+        if include_vanilla:
+            occurrences.extend(model for _, model in self._inherited_matches("on_action", action_id))
         if not occurrences:
             if default is not MISSING:
                 return default
-            raise not_found("on-action", action_id, self.list_on_actions())
+            raise not_found(
+                "on-action", action_id, self.list_on_actions(include_vanilla=include_vanilla)
+            )
         return tuple(occurrences)
 
     def _select_on_action_occurrence(
@@ -68,6 +74,9 @@ class OnActionsLayer(CoreLayer):
     ) -> tuple[int, OnAction]:
         actions = self._on_action_occurrences.get(action_id)
         if not actions:
+            sources = self._inherited_sources("on_action", action_id)
+            if sources:
+                raise self._read_only_error("on_action", action_id, sources[0], hint="On-actions compose across files; add a hook of your own with create_on_action().")
             raise not_found("on-action", action_id, self.list_on_actions())
         candidates = list(enumerate(actions))
         if source_path is not None:
@@ -112,6 +121,7 @@ class OnActionsLayer(CoreLayer):
         *,
         occurrence: int = 0,
         source_path: str | Path | None = None,
+        include_vanilla: bool = True,
         default: _D | _Missing = MISSING,
     ) -> OnAction | _D:
         """Return one hook occurrence, defaulting to the first in load order.
@@ -125,18 +135,48 @@ class OnActionsLayer(CoreLayer):
                 and no default was given.
         """
 
-        try:
-            _, action = self._select_on_action_occurrence(
-                action_id,
-                occurrence=occurrence,
-                source_path=source_path,
-                require_unique=False,
+        actions = self.get_on_action_occurrences(action_id, include_vanilla=include_vanilla, default=())
+        if source_path is not None and actions:
+            # A path as an occurrence reports it (absolute, also of the game or
+            # a base mod), or a path inside the mod or an inherited layer.
+            wanted = Path(source_path)
+            if not wanted.is_absolute():
+                wanted = Path(str(source_path).replace("\\", "/"))
+            target = (
+                wanted.resolve(strict=False)
+                if wanted.is_absolute()
+                else resolve_mod_output_path(self.mod_root, wanted)
             )
-        except NotFoundError:
-            if default is not MISSING:
-                return default
-            raise
-        return action
+            actions = tuple(
+                action
+                for action in actions
+                if action.path is not None
+                and (
+                    action.path.resolve(strict=False) == target
+                    or (
+                        not wanted.is_absolute()
+                        and self._inherited_relatives.get(action.path) == wanted
+                    )
+                )
+            )
+            if not actions and default is MISSING:
+                raise NotFoundError(
+                    f"On-action '{action_id}' has no occurrence in {source_path}.",
+                    kind="on-action occurrence",
+                    id=action_id,
+                )
+        if 0 <= occurrence < len(actions):
+            return actions[occurrence]
+        if default is not MISSING:
+            return default
+        if actions:
+            raise NotFoundError(
+                f"On-action '{action_id}' occurrence {occurrence} is out of range "
+                f"for {len(actions)} matching occurrence(s).",
+                kind="on-action occurrence",
+                id=occurrence,
+            )
+        raise not_found("on-action", action_id, self.list_on_actions(include_vanilla=include_vanilla))
 
     def create_on_action(
         self,

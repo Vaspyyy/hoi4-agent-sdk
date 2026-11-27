@@ -64,31 +64,48 @@ class FocusLayer(ContextLayer):
 
     # ── Focus Trees ──────────────────────────────────────────────
 
-    def list_focus_trees(self) -> list[str]:
+    def list_focus_trees(self, *, include_vanilla: bool = False) -> list[str]:
         """Return the sorted ids of the mod's focus trees.
 
-        Game trees are not listed until ``load_inherited_content()`` loads
-        their file.
+        Args:
+            include_vanilla: Also list the focus trees of the base mods and
+                the game: every id that ``get_focus_tree()`` finds.
         """
-        return sorted(self._focus_trees.keys())
+        return self._listed("focus_tree", self._focus_trees, include_vanilla=include_vanilla)
 
     def get_focus_tree(
-        self, tree_id: str, *, default: _D | _Missing = MISSING
+        self,
+        tree_id: str,
+        *,
+        include_vanilla: bool = True,
+        default: _D | _Missing = MISSING,
     ) -> FocusTree | _D:
-        """Return the focus tree ``tree_id``.
+        """Return the focus tree ``tree_id``: the mod's, else a base mod's, else the game's.
+
+        A tree of a base mod or the game is a copy to read: changing it
+        changes nothing. To edit one, copy its file into the mod with
+        ``load_inherited_content()`` (the edit's ``ReadOnlyError`` names it).
 
         Args:
+            include_vanilla: Look at the base mods and the game too. With
+                ``False`` only the mod's trees count.
             default: Returned instead of raising ``NotFoundError`` when it
                 does not exist. Without it, a missing id raises.
 
         Raises:
             NotFoundError: No focus tree has this id.
         """
-        if tree_id not in self._focus_trees:
-            if default is not MISSING:
-                return default
-            raise not_found("focus tree", tree_id, self.list_focus_trees())
-        return self._focus_trees[tree_id]
+        return self._lookup(
+            "focus_tree",
+            self._focus_trees,
+            tree_id,
+            include_vanilla=include_vanilla,
+            default=default,
+        )
+
+    def _mod_focus_tree(self, tree_id: str) -> FocusTree:
+        """The mod's focus tree ``tree_id``, which an edit may change."""
+        return self._mod_definition("focus_tree", self._focus_trees, tree_id)
 
     def create_focus_tree(
         self, tree_id: str, tag: str, *, overwrite: bool = False
@@ -138,7 +155,9 @@ class FocusLayer(ContextLayer):
             ValueError: The tree exists for another country.
         """
         kwargs: dict[str, Any] = dict(fields)
-        existing = self.get_focus_tree(tree_id, default=None)
+        existing = self.get_focus_tree(tree_id, include_vanilla=False, default=None)
+        if existing is None:
+            self._refuse_inherited("focus_tree", tree_id)
         tag = require_country_tag(tag)
         _check_fields(
             "ensure_focus_tree",
@@ -163,7 +182,7 @@ class FocusLayer(ContextLayer):
         Raises:
             NotFoundError: No focus tree has this id.
         """
-        tree = self.get_focus_tree(tree_id)
+        tree = self._mod_focus_tree(tree_id)
         del self._focus_trees[tree_id]
         if tree.path:
             self._dirty_focus_files.add(tree.path)
@@ -181,7 +200,7 @@ class FocusLayer(ContextLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        tree = self.get_focus_tree(tree_id)
+        tree = self._mod_focus_tree(tree_id)
         if "country_tag" in kwargs:
             raise TypeError(
                 "update_focus_tree() cannot update country_tag, even to the existing tag. "
@@ -226,7 +245,7 @@ class FocusLayer(ContextLayer):
                 use ``update_focus()`` or ``ensure_focus()``.
         """
         _check_model("add_focus", focus, "focus", (Focus,))
-        tree = self.get_focus_tree(tree_id)
+        tree = self._mod_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
         _require_new_focus_ids(tree, [focus])
         focus.touched = True
@@ -242,26 +261,40 @@ class FocusLayer(ContextLayer):
         Raises:
             NotFoundError: The tree or the focus does not exist.
         """
-        tree = self.get_focus_tree(tree_id)
+        tree = self._mod_focus_tree(tree_id)
         tree.focuses.remove(self._require_focus(tree, focus_id))
         tree.touched = True
         self._dirty.add("focus")
         self._dirty_focus_trees.add(tree_id)
 
     def get_focus(
-        self, tree_id: str, focus_id: str, *, default: _D | _Missing = MISSING
+        self,
+        tree_id: str,
+        focus_id: str,
+        *,
+        include_vanilla: bool = True,
+        default: _D | _Missing = MISSING,
     ) -> Focus | _D:
         """Return the focus ``focus_id`` of the tree ``tree_id``.
 
+        The tree is found like ``get_focus_tree()`` finds it: a focus of a
+        base mod's or the game's tree is a copy to read.
+
         Args:
+            include_vanilla: Look at the trees of the base mods and the game
+                too. With ``False`` only the mod's trees count.
             default: Returned instead of raising ``NotFoundError`` when it
                 does not exist. Without it, a missing id raises.
 
         Raises:
             NotFoundError: The tree or the focus does not exist.
         """
+        if focus_id is None:
+            raise TypeError("Focus ID cannot be None")
         try:
-            return self._require_focus(self.get_focus_tree(tree_id), focus_id)
+            return self._require_focus(
+                self.get_focus_tree(tree_id, include_vanilla=include_vanilla), focus_id
+            )
         except NotFoundError:
             if default is not MISSING:
                 return default
@@ -278,7 +311,7 @@ class FocusLayer(ContextLayer):
             TypeError: A field name is unknown; nothing changed.
         """
         kwargs: dict[str, Any] = dict(fields)
-        tree = self.get_focus_tree(tree_id)
+        tree = self._mod_focus_tree(tree_id)
         focus = self._require_focus(tree, focus_id)
         if "id" in kwargs:
             raise ValueError("Focus IDs are immutable; create a new focus instead")
@@ -321,7 +354,7 @@ class FocusLayer(ContextLayer):
             NotFoundError: No focus tree has this id.
         """
         _check_model("ensure_focus", focus, "focus", (Focus,))
-        existing = self._require_focus_or_none(self.get_focus_tree(tree_id), focus.id)
+        existing = self._require_focus_or_none(self._mod_focus_tree(tree_id), focus.id)
         if existing is None:
             return self.add_focus(tree_id, focus)
         updates = {
@@ -473,7 +506,7 @@ class FocusLayer(ContextLayer):
             AlreadyExistsError: The tree already has a focus with this id.
         """
         _check_model("insert_focus_after", focus, "focus", (Focus,))
-        tree = self.get_focus_tree(tree_id)
+        tree = self._mod_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
         anchor = self._require_focus(tree, anchor_focus_id)
         _require_new_focus_ids(tree, [focus])
@@ -507,7 +540,7 @@ class FocusLayer(ContextLayer):
                 in ``focuses``; nothing is inserted.
         """
         focuses = _require_items("insert_branch", "focuses", focuses, (Focus,))
-        tree = self.get_focus_tree(tree_id)
+        tree = self._mod_focus_tree(tree_id)
         self._require_focus(tree, anchor_focus_id)
         for focus in focuses:
             _require_focus_kind(tree, focus.kind)
@@ -531,7 +564,7 @@ class FocusLayer(ContextLayer):
         Raises:
             NotFoundError: The tree or the focus does not exist.
         """
-        tree = self.get_focus_tree(tree_id)
+        tree = self._mod_focus_tree(tree_id)
         focus = self._require_focus(tree, focus_id)
         focus.completion_reward = "\n".join(
             part for part in [focus.completion_reward.strip(), effect.strip()] if part
@@ -549,7 +582,7 @@ class FocusLayer(ContextLayer):
         Raises:
             NotFoundError: The tree or one of the focuses does not exist.
         """
-        tree = self.get_focus_tree(tree_id)
+        tree = self._mod_focus_tree(tree_id)
         focus_a = self._require_focus(tree, focus_a_id)
         focus_b = self._require_focus(tree, focus_b_id)
         if [focus_b_id] not in focus_a.mutually_exclusive:
@@ -612,6 +645,8 @@ class FocusLayer(ContextLayer):
         # Check everything before the first change, so a call that raises
         # leaves nothing staged (no new tree, no localisation).
         existing = self.get_focus_tree(tree_id) if tree_id in self._focus_trees else None
+        if existing is None:
+            self._refuse_inherited("focus_tree", tree_id)
         if anchor_focus_id:
             if existing is None:
                 raise not_found(

@@ -53,7 +53,7 @@ the script builders.
 | `discard() -> None` | Drop every unsaved edit and pick up files changed on disk. Only content that had edits or whose files changed loads again; everything else stays in memory. When a base mod's file changed, everything loads again. |
 | `reload() -> None` | Drop every unsaved edit and read the whole mod again, not only what changed. Use it when a file changed on disk that `discard()` does not notice (one the SDK is not writing). |
 | `transaction(*, save=False) -> Iterator[Self]` | Context manager. On a normal exit the edits made inside are thrown away (a dry run) unless `save=True`, which saves them. On an exception the edits are thrown away and the exception goes on. |
-| `load_inherited_content(relative_path) -> None` | Load one focus, event, idea or on-action file of the game or a base mod so the usual methods can edit it. Loading writes nothing; the first edit queues a complete copy in the mod. Loading the same file again does nothing. Raises `FileNotFoundError` when no layer has the file and `ValueError` when an id in it is one the mod already has. |
+| `load_inherited_content(relative_path) -> None` | Load one focus, event, idea, on-action, decision, decision category, bookmark or dynamic modifier file of the game or a base mod so the usual methods can edit it. Loading writes nothing; the first edit queues a complete copy in the mod. Loading the same file again does nothing. Raises `FileNotFoundError` when no layer has the file and `ValueError` when an id in it is one the mod already has. |
 | `resolve_content_path(relative_path) -> Path \| None` | The winning file (mod, then base mods, then game) for a relative path, or `None` when no layer has it. A path resolver, not a lookup: it does not raise. |
 | `content_files(directory) -> dict[str, Path]` | Every effective file of a directory, as relative name to winning source path. |
 
@@ -128,14 +128,13 @@ field name) and `ValueError` (a value the call cannot use, such as an invalid
 tag) are raised as Python's own classes. So is `RuntimeError` when an
 optional extra is not installed (the map renderer needs the `map` extra).
 
-What is not visible to lookups: a focus tree, event, idea, decision, decision
-category, bookmark, dynamic modifier or on-action that
-only the game or a base mod defines is not loaded, so `get_focus_tree()`,
-`get_event()` and the other lookups raise `NotFoundError` for it. A focus,
-event, idea or on-action file can be copied into the mod first with
-`mod.load_inherited_content(relative_path)`. Countries,
-states, characters, OOBs, ideologies, localisation and definitions read the
-game's content directly.
+Lookups read the mod first, then base mods and the game. Pass
+`include_vanilla=False` to restrict a lookup to the mod. Lists normally show
+the mod's content; pass `include_vanilla=True` to include inherited content.
+Map lists describe the effective map. Inherited objects are read-only copies.
+To edit a focus, event, idea, decision, bookmark or dynamic modifier defined
+only in inherited content, stage its file with `load_inherited_content()`.
+On-actions compose across files; add a hook with `create_on_action()`.
 
 ### Return values and field checks
 
@@ -200,11 +199,11 @@ history, characters, and localization.
 
 | Method | Description |
 |--------|-------------|
-| `list_countries() -> list[str]` | All loaded country tags |
+| `list_countries(*, include_vanilla=False) -> list[str]` | All loaded country tags |
 | `is_country_tag_available(tag) -> bool` | False if the tag exists in the mod or vanilla install |
 | `country_tag_conflicts(tag) -> list[str]` | Returns conflict details such as `"mod: TAG (Name)"` or `"vanilla: TAG (Name)"` |
 | `suggest_tags(name, *, count=5) -> list[str]` | Return available tag candidates |
-| `get_country(tag, *, default=...) -> Country` | Cached or reads from disk. Tries mod then vanilla install. A tag no one defines raises `NotFoundError` (or returns `default`); it is never invented. |
+| `get_country(tag, *, include_vanilla=True, default=...) -> Country` | Cached or reads from disk. Tries mod then vanilla install. A tag no one defines raises `NotFoundError` (or returns `default`); it is never invented. |
 | `create_country(tag, name, *, adjective="", color=(128, 128, 128), capital=1, research_slots=None, ruling_party="democratic", elections_allowed=True, popularities=None, leader_name="Leader", leader_ideology=None, ideas=None, stability=None, war_support=None, technologies=None, oob="", overwrite=False, overwrite_vanilla=False) -> Country` | Creates country with leader and history setup. `research_slots`, stability, war support, technologies, and OOB write their corresponding history entries. If omitted, `leader_ideology` is picked from `ruling_party`. A tag the mod has, or a character `<TAG>_leader_1` the mod has, raises `AlreadyExistsError` unless `overwrite=True` (nothing is staged then); a tag the game uses raises `ValueError` unless `overwrite_vanilla=True`; an invalid tag raises `ValueError`. |
 | `update_country(tag, **fields) -> Country` | Update modeled country fields, including `color`. `color_ui` can be set for a country in the colour table `colors.txt` (a game country); for a country the mod adds it raises `ValueError`, because its own file has no UI colour. Use `leader_name`, `leader_ideology`, and `leader_portrait_slug` for the selected leader; character IDs are immutable. |
 | `delete_country(tag) -> None` | Stage deletion of a mod-owned country and its generated localization. Raises `NotFoundError` for an unknown tag and `ReadOnlyError` for a game or base-mod country (that needs an explicit total-conversion strategy). |
@@ -269,7 +268,7 @@ ordering, and untouched variants.
 
 | Method | Description |
 |--------|-------------|
-| `list_characters(tag=None, *, include_vanilla=True) -> list[str]` | List character IDs, optionally limited to one country |
+| `list_characters(tag=None, *, include_vanilla=False) -> list[str]` | List character IDs, optionally limited to one country |
 | `get_character(character_id, *, include_vanilla=True, default=...) -> Character` | Load a mod or vanilla character |
 | `create_character(tag, character, *, recruit=True, overwrite=False, path=None) -> Character` | Define a character, create localization, and normally add `recruit_character` to country history. `recruit=False` is for source-managed recruitment, never a runtime event effect. |
 | `update_character(character_id, **fields) -> Character` | Patch top-level `name` or `portraits` |
@@ -477,11 +476,11 @@ states for copying, use `get_country_context(tag, copy_states=True)` or
 
 | Method | Description |
 |--------|-------------|
-| `list_states() -> list[int]` | All loaded state IDs |
+| `list_states(*, include_vanilla=False) -> list[int]` | All loaded state IDs |
 | `state_index(*, include_vanilla=True) -> list[dict[str, Any]]` | Cached state metadata with `id`, raw loc `name`, localized `display_name`, `file_name`, `owner`, `path`, and `source` |
 | `get_state_name_map(*, include_vanilla=True) -> dict[int, str]` | State ID to display name |
 | `find_state(query, *, include_vanilla=True, limit=10) -> list[dict[str, Any]]` | Search by ID or localized state name, with stale filename fallback. Each result includes `matched`. |
-| `get_state(state_id, *, default=...) -> State` | Cached or reads from mod/vanilla without writing. Raises `NotFoundError`. |
+| `get_state(state_id, *, include_vanilla=True, default=...) -> State` | Cached or reads from mod/vanilla without writing. Raises `NotFoundError`. |
 | `set_state_owner(state_ids, tag, *, add_core=True) -> None` | Change the owner of one state or several, optionally add a core. A missing state raises `NotFoundError` before anything changes. |
 | `update_state(state_id, *, add_cores=(), remove_cores=(), **fields) -> State` | Set any State field. List fields such as `cores` and `provinces` are replaced; `add_cores` / `remove_cores` change single cores (a core to remove that is not there raises `NotFoundError`). |
 | `add_state_core(state_id, tag) -> State` | Append a core without replacing existing cores; a core the state has raises `AlreadyExistsError` and nothing is copied into the mod; with a game install, an undefined tag raises `NotFoundError` |
@@ -532,7 +531,7 @@ Province-list edits remove or append the affected IDs in place.
 | `move_provinces(provinces, to_state, *, allow_empty_source=False, delete_empty_states=False, reassign_map_buildings=True) -> MapEditReport` | Same data-moving rules. Emptying a source raises `ValueError` unless `delete_empty_states=True` (the file is deleted, or shadowed by an empty override when inherited) or `allow_empty_source=True` (kept empty, with a warning). |
 | `split_state(state_id, provinces, /, **fields) -> State` | `create_state()` for provinces that must all belong to `state_id` |
 | `list_strategic_regions() -> list[int]` | Sorted ids of the effective strategic regions |
-| `get_strategic_region(region_id, *, default=...) -> StrategicRegion` | One region: `id`, `name`, `provinces`, `path`, `has_weather`. Raises `NotFoundError` (or returns `default`). |
+| `get_strategic_region(region_id, *, include_vanilla=True, default=...) -> StrategicRegion` | One region: `id`, `name`, `provinces`, `path`, `has_weather`. Raises `NotFoundError` (or returns `default`). |
 | `move_provinces_to_strategic_region(provinces, region_id) -> StrategicRegion` | Moves land or sea provinces; refuses to empty a region |
 | `create_strategic_region(name, provinces, *, region_id=None, weather=None, loc_path=None) -> StrategicRegion` | New `map/strategicregions/<id>-<name>.txt` and `STRATEGICREGION_<id>` localisation. `weather=None` copies the weather block of the region holding most of the provinces. |
 | `list_supply_nodes() -> list[int]` | Provinces with a supply node, sorted, each once |
@@ -582,10 +581,10 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 
 | Method | Description |
 |--------|-------------|
-| `list_events() -> list[str]` | All loaded events |
-| `get_event(event_id, *, default=...) -> Event` | Raises `NotFoundError` with close matches if not found |
+| `list_events(*, include_vanilla=False) -> list[str]` | All loaded events |
+| `get_event(event_id, *, include_vanilla=True, default=...) -> Event` | Raises `NotFoundError` with close matches if not found |
 | `create_event(event_id, *, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer the namespace: the text before the last dot. Conditional titles and descriptions are written before the plain fallback. |
-| `ensure_event(event_id, **fields) -> Event` | Idempotent create-or-update wrapper |
+| `ensure_event(event_id, **fields) -> Event` | Idempotent create-or-update wrapper. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
 | `update_event(event_id, **fields) -> Event` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
 | `update_event_option(event_id, option, **fields) -> EventOption` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |
 | `delete_event(event_id) -> None` | Remove event and its namespace mapping; raises `NotFoundError` |
@@ -681,9 +680,9 @@ once in one file. The SDK retains every occurrence.
 
 | Method | Description |
 |--------|-------------|
-| `list_on_actions() -> list[str]` | Loaded on-action IDs |
-| `get_on_action(action_id, *, occurrence=0, source_path=None, default=...) -> OnAction` | Returns one occurrence in deterministic load order; optionally filter by source file. |
-| `get_on_action_occurrences(action_id, *, default=...) -> tuple[OnAction, ...]` | Returns every compositional occurrence |
+| `list_on_actions(*, include_vanilla=False) -> list[str]` | Loaded on-action IDs |
+| `get_on_action(action_id, *, occurrence=0, source_path=None, include_vanilla=True, default=...) -> OnAction` | Returns one occurrence in deterministic load order; optionally filter by source file. |
+| `get_on_action_occurrences(action_id, *, include_vanilla=True, default=...) -> tuple[OnAction, ...]` | Returns every compositional occurrence |
 | `create_on_action(action_id, *, effect="", events=None, random_events=None, path=None, overwrite=False) -> OnAction` | Creates an occurrence. The same hook may be extended in another file; an existing occurrence in the target file requires `overwrite=True`. |
 | `ensure_on_action(action_id, **fields) -> OnAction` | Ensures the only occurrence or the one identified by `path`. |
 | `update_on_action(action_id, *, occurrence=None, source_path=None, **fields) -> OnAction` | Patches one occurrence; ambiguous calls must provide an occurrence or source file. |
@@ -700,9 +699,10 @@ mod.create_on_action(
 
 This writes `common/on_actions/mod_on_actions.txt`.
 
-The game's own on-actions are not loaded, so `get_on_action("on_startup")`
-sees only the mod's occurrences. To inspect or patch a hook that has several
-extensions:
+`get_on_action("on_startup")` sees the mod's occurrences first, then those of
+the base mods and the game (`include_vanilla=False` leaves them out). Only the
+mod's own occurrences can be edited. To inspect or patch a hook that has
+several extensions:
 
 ```python
 mod.create_on_action(
@@ -760,14 +760,14 @@ patches those files separately.
 
 | Method | Description |
 |--------|-------------|
-| `list_decision_categories() -> list[str]` | Loaded decision categories |
-| `list_decisions() -> list[str]` | Loaded decisions |
-| `get_decision(decision_id, *, default=...) -> Decision` | Get a decision |
-| `get_decision_category(category_id, *, default=...) -> DecisionCategory` | Get a category |
+| `list_decision_categories(*, include_vanilla=False) -> list[str]` | Loaded decision categories |
+| `list_decisions(*, include_vanilla=False) -> list[str]` | Loaded decisions |
+| `get_decision(decision_id, *, include_vanilla=True, default=...) -> Decision` | Get a decision |
+| `get_decision_category(category_id, *, include_vanilla=True, default=...) -> DecisionCategory` | Get a category |
 | `create_decision_category(category_id, *, icon="", allowed="", visible="", path=None, category_path=None, overwrite=False) -> DecisionCategory` | Create or route a category. `path` targets decision content; optional `category_path` must be under `common/decisions/categories`. Raises if it exists unless `overwrite=True`. |
 | `create_decision(category_id, decision_id, *, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, days_mission_timeout=None, activation="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", allowed="", days_re_enable=None, war_with_on_remove="", custom_cost_trigger="", custom_cost_text="", cancel_if_not_visible=None, modifier="", remove_trigger="", highlight_states="", priority=None) -> Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. A category the mod does not define is extended in the mod's decisions file without writing a category definition (that would replace the game's); with a game install, a category that no one defines raises `NotFoundError` (create it with `create_decision_category()` first). Also accepts every mission, targeted, and general field listed below by keyword. |
-| `ensure_decision_category(category_id, **fields) -> DecisionCategory` | Idempotent create-or-update wrapper |
-| `ensure_decision(category_id, decision_id, **fields) -> Decision` | Idempotent create-or-update wrapper; an existing decision in another category raises `ValueError` |
+| `ensure_decision_category(category_id, **fields) -> DecisionCategory` | Idempotent create-or-update wrapper. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
+| `ensure_decision(category_id, decision_id, **fields) -> Decision` | Idempotent create-or-update wrapper; an existing decision in another category raises `ValueError`. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
 | `create_decision_chain(category_id, steps, *, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Build staged decisions with generated completion flags, event calls, localization, and final event. A category of the game or a base mod only gets the decisions added (its definition is left alone unless `category_icon` is passed); a misspelled step key raises `TypeError`, an id that is in `steps` twice raises `AlreadyExistsError`. Every step is checked first (an id, a decision of that id in another category raises `ValueError`), so a call that raises stages nothing. With `path`, an existing decision moves with its category and is updated in place |
 | `create_mission(category_id, decision_id, *, days_mission_timeout, activation="", available="", complete_effect="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, loc_name="", loc_desc="", **fields) -> Decision` | Create a mission: it starts when `activation` holds, completes with `complete_effect` once `available` holds, otherwise runs `timeout_effect` after the timeout. Rejects a positive `cost`/`custom_cost_trigger` and non-positive timeouts. |
 | `create_targeted_decision(category_id, decision_id, *, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", loc_name="", loc_desc="", **fields) -> Decision` | Create a decision with one instance per target country or state. Requires at least one of `target_trigger`, `targets`, `target_array`, or `state_target=True`. |
@@ -888,10 +888,10 @@ SDK output as an error and removes it when the idea is edited.
 
 | Method | Description |
 |--------|-------------|
-| `list_ideas() -> list[str]` | All loaded ideas |
-| `get_idea(idea_id, *, default=...) -> Idea` | Raises `NotFoundError` if not found |
+| `list_ideas(*, include_vanilla=False) -> list[str]` | All loaded ideas |
+| `get_idea(idea_id, *, include_vanilla=True, default=...) -> Idea` | Raises `NotFoundError` if not found |
 | `create_idea(idea_id, *, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, removal_cost=None) -> Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
-| `ensure_idea(idea_id, *, merge_modifier=False, **fields) -> Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
+| `ensure_idea(idea_id, *, merge_modifier=False, **fields) -> Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
 | `update_idea(idea_id, *, merge_modifier=False, **fields) -> Idea` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |
 | `delete_idea(idea_id) -> None` | Stage the deletion; raises `NotFoundError` |
 | `suggest_idea_icons(query, *, count=5) -> list[str]` | Rank loaded `GFX_idea_` sprites and return canonical bare stems. Prefixed queries remain accepted. |
@@ -949,8 +949,8 @@ block's key. The game has no tree with that ID, so never use it in
 `load_focus_tree` or a country selector. The usual focus methods edit these
 focuses with the same guarantees, and `add_focus()` with
 `Focus(..., kind="shared_focus")` adds a new top-level block. A file the game
-ships is copied into the mod first, because the game's focus files are not
-loaded:
+ships is copied into the mod first, because the game's focus files are read
+only:
 
 ```python
 from hoi4 import Focus
@@ -974,16 +974,16 @@ static checks do not establish the layout displayed by the game.
 
 | Method | Description |
 |--------|-------------|
-| `list_focus_trees() -> list[str]` | All loaded tree IDs |
-| `get_focus_tree(tree_id, *, default=...) -> FocusTree` | Raises `NotFoundError` if not found |
+| `list_focus_trees(*, include_vanilla=False) -> list[str]` | All loaded tree IDs |
+| `get_focus_tree(tree_id, *, include_vanilla=True, default=...) -> FocusTree` | Raises `NotFoundError` if not found |
 | `create_focus_tree(tree_id, tag, *, overwrite=False) -> FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
-| `ensure_focus_tree(tree_id, tag, **fields) -> FocusTree` | Idempotent create-or-update for tree-level fields; an existing tree of another country raises `ValueError` |
+| `ensure_focus_tree(tree_id, tag, **fields) -> FocusTree` | Idempotent create-or-update for tree-level fields; an existing tree of another country raises `ValueError`. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
 | `update_focus_tree(tree_id, **fields) -> FocusTree` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id) -> None` | Remove tree; raises `NotFoundError` |
 | `add_focus(tree_id, focus) -> Focus` | Append focus to tree; an id the tree has raises `AlreadyExistsError` |
 | `ensure_focus(tree_id, focus) -> Focus` | Add a new focus or replace modeled fields on an existing focus |
 | `remove_focus(tree_id, focus_id) -> None` | Remove focus by ID; raises `NotFoundError` |
-| `get_focus(tree_id, focus_id, *, default=...) -> Focus` | Find focus in tree; a missing tree or focus raises `NotFoundError` (or returns `default`) |
+| `get_focus(tree_id, focus_id, *, include_vanilla=True, default=...) -> Focus` | Find focus in tree; a missing tree or focus raises `NotFoundError` (or returns `default`) |
 | `update_focus(tree_id, focus_id, **fields) -> Focus` | Update any Focus field |
 | `focus_tree_bounds(tree_id) -> dict[str, int]` | `min_x`, `max_x`, `min_y`, `max_y`, `width`, `height` |
 | `place_continuous_focus_below_tree(tree_id, *, padding=400, x=50) -> str` | Sets `continuous_focus_position` below the lowest focus row |
@@ -1088,7 +1088,7 @@ uncovers the game's text again).
 
 | Method | Description |
 |--------|-------------|
-| `get_loc(key, *, language="english", default=...) -> str` | Get one language's localized string: the mod's entry, else the game's. A key with no text raises `NotFoundError`; pass `default=None` to get `None` instead |
+| `get_loc(key, *, language="english", include_vanilla=True, default=...) -> str` | Get one language's localized string: the mod's entry, else the game's. A key with no text raises `NotFoundError`; pass `default=None` to get `None` instead |
 | `set_loc(key, value, *, path=None, language="english", overwrite_vanilla=False) -> None` | Set entry. Routes to its existing file, an explicit `path`, or the language's default file (`localisation/<language>/mod_l_<language>.yml`; `default_loc_file` for English) for new entries. Custom paths must be `.yml` files under `localisation/<language>`; unsupported paths raise `ValueError` before modifying the entry. `overwrite_vanilla=True` moves the entry to `localisation/<language>/replace/` (`mod_replace_l_<language>.yml`, or a `path` inside `replace/`), which is how a mod overrides base-game keys. |
 | `delete_loc(key, *, language="english") -> None` | Remove one language's entry; raises `NotFoundError`, or `ReadOnlyError` for a key only the game defines |
 | `search_loc(query, *, language="english") -> dict[str, str]` | Case-insensitive substring search in one language's keys and values, the game's included |
@@ -1539,7 +1539,7 @@ atomic-save lifecycle as the original content model:
 
 | Method | Description |
 |--------|-------------|
-| `list_ideologies(*, include_vanilla=True) -> list[str]` | Lists mod ideologies and, by default, configured vanilla ideologies. |
+| `list_ideologies(*, include_vanilla=False) -> list[str]` | Lists the mod's ideologies, and with `include_vanilla=True` also the game's. |
 | `get_ideology(ideology_id, *, include_vanilla=True, default=...) -> Ideology` | Gets a mod or vanilla ideology definition. |
 | `create_ideology(ideology_id, *, color=(128, 128, 128), types=None, rules=None, modifiers=None, hidden_modifiers=None, faction_modifiers=None, dynamic_faction_names=None, ai_behavior="", can_host_government_in_exile=False, can_collaborate=False, effects=None, path=None, overwrite=False) -> Ideology` | Creates a mod ideology definition. |
 | `update_ideology(ideology_id, **fields) -> Ideology` | Source-patches a mod ideology or materializes a vanilla definition as a mod override. |
@@ -1557,8 +1557,8 @@ hidden by the saved override.
 
 | Method | Description |
 |--------|-------------|
-| `list_dynamic_modifiers() -> list[str]` | Lists loaded dynamic modifiers. |
-| `get_dynamic_modifier(modifier_id, *, default=...) -> DynamicModifier` | Gets one dynamic modifier. |
+| `list_dynamic_modifiers(*, include_vanilla=False) -> list[str]` | Lists loaded dynamic modifiers. |
+| `get_dynamic_modifier(modifier_id, *, include_vanilla=True, default=...) -> DynamicModifier` | Gets one dynamic modifier. |
 | `create_dynamic_modifier(modifier_id, *, icon="", enable="", remove_trigger="", attacker_modifier=None, modifier=None, path=None, overwrite=False) -> DynamicModifier` | Creates a native top-level entry under `common/dynamic_modifiers`. |
 | `update_dynamic_modifier(modifier_id, **fields) -> DynamicModifier` | Source-patches modeled fields or the direct modifier mapping. |
 | `delete_dynamic_modifier(modifier_id) -> None` | Stages deletion while preserving unrelated file content; raises `NotFoundError`. |
@@ -1576,8 +1576,8 @@ sibling definitions. All non-reserved scalar assignments belong to the modeled
 
 | Method | Description |
 |--------|-------------|
-| `list_bookmarks() -> list[str]` | The names of the loaded bookmarks, sorted, each once. |
-| `get_bookmark(name, *, default=...) -> Bookmark` | Gets one bookmark by name. |
+| `list_bookmarks(*, include_vanilla=False) -> list[str]` | The names of the loaded bookmarks, sorted, each once. |
+| `get_bookmark(name, *, include_vanilla=True, default=...) -> Bookmark` | Gets one bookmark by name. |
 | `create_bookmark(name, *, description="", date="1936.1.1.12", picture="GFX_select_date_1936", default_country="", default=None, filters="", effect="randomize_weather = 22345", countries=None, path=None, overwrite=False) -> Bookmark` | Creates a bookmark; its default effect randomizes weather. |
 | `update_bookmark(name, **fields) -> Bookmark` | Source-patches modeled bookmark fields. `countries=[...]` replaces the country entries (use `add_bookmark_country()`, `update_bookmark_country()` and `delete_bookmark_country()` to change one). |
 | `add_bookmark_country(bookmark_name, country) -> BookmarkCountry` | Appends one ordered country entry; a second entry for the same tag and DLC raises `AlreadyExistsError`. |
@@ -2104,16 +2104,18 @@ this does not infer filesystem paths or replacement policy.
 - Country/state/OOB fallback, localization in every language, asset resolution, province checks, and their
   validators use the effective content. Game script documentation remains tied
   to the actual installed game.
-- Focus/event/idea/on-action files retain opt-in inherited loading:
-  `mod.load_inherited_content("events/example.txt")` loads a complete effective
-  file into the facade. Then use normal `update_event`, focus, idea, or on-action
-  methods, validate, preview, and save. Sibling definitions are retained; loading
-  alone writes nothing. Conflicting already-loaded IDs are rejected.
-- Inherited decisions, bookmarks, and dynamic modifiers are discoverable with
-  the file inventory but do not yet have an inherited-file editing adapter.
-  These and unrequested inherited scripts are not automatically loaded into the
-  writable facade's model lists. A clean facade validation is therefore not a
-  full audit of all inherited base script files.
+- Lookups (`get_event`, `get_idea`, ...) see inherited focus trees, events,
+  ideas, on-actions, decisions, decision categories, bookmarks, dynamic
+  modifiers and characters as read-only copies. To edit one,
+  `mod.load_inherited_content("events/example.txt")` loads the complete
+  effective file into the facade (focus, event, idea, on-action, decision,
+  decision category, bookmark and dynamic modifier files). Then use the normal
+  update methods, validate, preview, and save. Sibling definitions are
+  retained; loading alone writes nothing. Conflicting already-loaded IDs are
+  rejected.
+- Inherited scripts that were not loaded this way are not in the writable
+  facade's model lists. A clean facade validation is therefore not a full
+  audit of all inherited base script files.
 
 The fallback copies nothing: every read goes to the winning file in the game
 or base mod folder, where it is (`hoi4.layers.ContentLayers`). Only the runtime
@@ -2191,8 +2193,8 @@ identifier is a field (for example `defined_text = { name = GetFoo ... }`).
 | Method | Description |
 |--------|-------------|
 | `definition_kinds() -> dict[str, DefinitionKind]` | Supported domains. |
-| `list_definitions(kind) -> list[str]` | Sorted ids of the effective definitions from the mod, base mods and the game, including pending edits. |
-| `get_definition(kind, definition_id, *, default=...) -> ScriptDefinition` | One definition (missing raises `NotFoundError`, or returns `default`); `body` omits outer braces and entry identifier fields. |
+| `list_definitions(kind, *, include_vanilla=False) -> list[str]` | Sorted ids of the mod's definitions, including pending edits; with `include_vanilla=True` also those of the base mods and the game. |
+| `get_definition(kind, definition_id, *, include_vanilla=True, default=...) -> ScriptDefinition` | One definition (missing raises `NotFoundError`, or returns `default`); `body` omits outer braces and entry identifier fields. |
 | `create_definition(kind, definition_id, body, *, path=None, overwrite=False) -> ScriptDefinition` | Queue a definition and return it (`source_path` is the file it goes to). Containers are created or reused; identifiers must be unique across the effective domain (`AlreadyExistsError` otherwise). `overwrite=True` patches an existing definition in its current file. |
 | `update_definition(kind, definition_id, body) -> ScriptDefinition` | Replace an existing body in place and return the definition; raises `NotFoundError`. Inherited files are copied into the mod first. |
 | `delete_definition(kind, definition_id) -> None` | Remove one definition and keep every sibling; raises `NotFoundError`. |

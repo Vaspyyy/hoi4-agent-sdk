@@ -1,7 +1,7 @@
 {
   "name": "hoi4-agent-sdk-website",
   "private": true,
-  "version": "0.6.5",
+  "version": "0.7.0",
   "type": "module",
   "scripts": {
     "extract": "python3 scripts/extract_sdk_data.py",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import re
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar, cast
@@ -150,9 +151,19 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         """Return the sorted names of the mod's orders of battle, and the game's with ``include_vanilla``."""
         if include_vanilla and self._base_content is not None:
             inherited = self._base_content.glob("history/units", "*.txt")
-            if inherited:
-                return sorted(set(self._oobs) | {path.stem for path in inherited.values()})
+            return sorted(set(self._oobs) | {
+                path.stem
+                for relative, path in inherited.items()
+                if not self._oob_file_hidden(Path(relative))
+            })
         return sorted(self._oobs)
+
+    def _oob_file_hidden(self, relative: Path) -> bool:
+        """Whether the mod hides an inherited OOB file (on disk, staged or by replace_path)."""
+
+        return self._mod_hides_inherited(relative) or (
+            bool(self._dirty) and self._file_is_staged(self.mod_root / relative)
+        )
 
     def get_oob(
         self,
@@ -173,14 +184,17 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             NotFoundError: No OOB file has this name and no default was given.
             ValueError: ``name`` is not a valid OOB name.
         """
+        if name is None:
+            raise TypeError("OOB name cannot be None")
         name = require_script_id(name, label="OOB name")
         cached = self._oobs.get(name)
         if cached is not None:
             return cached
         candidates = [self.mod_root / "history" / "units" / f"{name}.txt"]
         if include_vanilla and self._base_content is not None:
-            inherited = self._base_content.file(f"history/units/{name}.txt")
-            if inherited is not None:
+            relative = Path("history/units") / f"{name}.txt"
+            inherited = self._base_content.file(relative)
+            if inherited is not None and not self._oob_file_hidden(relative):
                 candidates.append(inherited)
         country_tag = next(
             (
@@ -205,6 +219,18 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         for path in candidates:
             if not path.is_file():
                 continue
+            if not path.resolve(strict=False).is_relative_to(self.mod_root):
+                inherited_oob = self._inherited_copy(
+                    "oob", name,
+                    functools.partial(load_oob_file,
+                        path, name=name, country_tag=country_tag,
+                        kind=reference.kind if reference is not None else None,
+                        required_dlc=reference.required_dlc if reference is not None else (),
+                        excluded_dlc=reference.excluded_dlc if reference is not None else (),
+                    ),
+                )
+                assert inherited_oob is not None
+                return inherited_oob
             oob = load_oob_file(
                 path,
                 name=name,
@@ -214,8 +240,8 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 excluded_dlc=(reference.excluded_dlc if reference is not None else ()),
             )
             self._oobs[name] = oob
-            # Not one of the OOBs the section loaded: a file of the game or a
-            # base mod, or a mod file that is new or that the loader refused.
+            # Not one of the OOBs the section loaded: a mod file that is new
+            # or that the loader refused.
             # It is only this lookup's cache, so save() and discard() load
             # the section again (and with it the loader's diagnostics).
             self._reload_on_discard.add("oobs")
@@ -817,4 +843,5 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             # the mod's own copy is patched and written out well formed.
             oob.raw_text = repair(oob.raw_text)
         oob.path = target
+        self._oobs[oob.name] = oob
         self._dirty_oob_files.add(target)

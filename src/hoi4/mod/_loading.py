@@ -542,6 +542,7 @@ class LoadingLayer(CountriesLayer):
                         category.definition_path = _decision_category_definition_path(
                             self.mod_root, category.path or f, self._shadows_inherited
                         )
+                        self._inherit_category_presentation(category)
                     self._decision_categories[category.id] = category
                     content_categories[category.id] = category
                 self._original_files[f] = self._keep_source(f, text)

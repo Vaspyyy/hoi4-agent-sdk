@@ -7,7 +7,6 @@ from pathlib import Path
 from collections.abc import Sequence
 
 from ..countries import (
-    country_file_paths,
     read_country,
     serialize_country_files,
 )
@@ -29,7 +28,6 @@ from ..script import (
     pdx_value,
 )
 from ..syntax import repair, require_entry
-from ..textio import read_text
 from ..types import (
     Country,
 )
@@ -47,14 +45,9 @@ class CountriesLayer(CoreLayer):
 
     # ── Countries ────────────────────────────────────────────────
 
-    def list_countries(self) -> list[str]:
-        """Return the sorted tags of the countries loaded so far.
-
-        That is every country the mod defines, plus each game or base-mod
-        country a lookup has loaded; use ``is_country_tag_available()`` to
-        ask about a tag.
-        """
-        return sorted(self._countries.keys())
+    def list_countries(self, *, include_vanilla: bool = False) -> list[str]:
+        """Return mod tags, or all known tags when requested."""
+        return sorted(set(self._countries) | (self._vanilla_tags if include_vanilla else set()))
 
     def is_country_tag_available(self, tag: str) -> bool:
         """Whether no one (the mod, a base mod or the game) defines ``tag`` yet."""
@@ -128,7 +121,7 @@ class CountriesLayer(CoreLayer):
                         return candidates[:count]
         return candidates[:count]
 
-    def get_country(self, tag: str, *, default: _D | _Missing = MISSING) -> Country | _D:
+    def get_country(self, tag: str, *, include_vanilla: bool = True, default: _D | _Missing = MISSING) -> Country | _D:
         """Return the country ``tag`` of the mod, a base mod or the game.
 
         A country of the game or a base mod is read on first use. A tag that
@@ -142,30 +135,22 @@ class CountriesLayer(CoreLayer):
             NotFoundError: No one defines ``tag`` and no default was given.
             ValueError: ``tag`` is not a valid tag.
         """
+        if tag is None:
+            raise TypeError("Country tag cannot be None")
         tag = require_country_tag(tag)
         if tag in self._countries:
             return self._countries[tag]
-        if not self._is_known_country_tag(tag):
+        if not include_vanilla or not self._is_known_country_tag(tag):
             if default is not MISSING:
                 return default
-            raise not_found("country", tag, self._country_tag_candidates(), plural="countries")
-        country = read_country(
-            self.mod_root,
-            tag,
-            self._base_content,
+            known = self._country_tag_candidates() if include_vanilla else set(self._countries)
+            raise not_found("country", tag, known, plural="countries")
+        country = self._inherited_copy("country", tag, lambda: read_country(
+            self.mod_root, tag, self._base_content,
             _tag_mappings=self._country_tag_mappings,
             _color_sources=self._country_color_sources,
-        )
-        self._countries[tag] = country
-        # Not one of the mod's loaded countries: a country of the game, a
-        # base mod, or a new file. It is only a lookup's cache, so save() and
-        # discard() drop it with the section, as a full reload used to.
-        self._reload_on_discard.add("countries")
-        for path in country_file_paths(self.mod_root, country):
-            if path.exists():
-                text = read_text(path)
-                self._original_files.setdefault(path, text)
-                self._note_read(path, text)
+        ))
+        assert country is not None
         return country
 
     def set_country_name_pool(
@@ -301,6 +286,8 @@ class CountriesLayer(CoreLayer):
 
     def _materialize_country_override(self, country: Country) -> None:
         """Retarget vanilla-backed country files into equivalent mod paths."""
+
+        self._countries[country.tag] = country
 
         path_fields = (
             ("definition_path", "raw_definition", Path("common/countries") / f"{country.tag}.txt"),

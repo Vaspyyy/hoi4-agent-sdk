@@ -9,7 +9,7 @@ import inspect
 import os
 import threading
 import time
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
@@ -17,15 +17,24 @@ from collections.abc import Sequence
 
 from .._disk_cache import DiskAnalysis
 from .._file_cache import cached_file_result
+from .._inherited import INHERITED_IDS_ON_DISK, INHERITED_KINDS, InheritedKind
 from ..bookmarks import (
     Bookmark,
+    load_bookmarks_file,
 )
 from ..characters import (
     Character,
 )
+from ..decisions import (
+    load_decision_categories_file,
+    load_decisions_file,
+    merge_decision_category,
+)
 from ..dynamic_modifiers import (
     DynamicModifier,
+    load_dynamic_modifiers_text,
 )
+from ..errors import Hoi4Error, ReadOnlyError, not_found
 from ..events import load_events_file
 from ..focus import load_focus_trees
 from ..ideas import read_ideas_file
@@ -51,6 +60,7 @@ from ..tags import (
     load_vanilla_tags,
 )
 from ..textio import read_text
+from ._shared import MISSING, _D, _decision_category_definition_path, _Missing
 
 if TYPE_CHECKING:
     from ..script_references import FileReferences
@@ -96,8 +106,15 @@ def _path_under(path: Path, root: Path) -> bool:
     return text == base or text.startswith(os.path.join(base, ""))
 
 
-_InheritedModel = TypeVar("_InheritedModel", FocusTree, Event, Idea)
+_InheritedModel = TypeVar("_InheritedModel", FocusTree, Event, Idea, DynamicModifier)
 _Built = TypeVar("_Built")
+_Model = TypeVar("_Model")
+
+
+def _inherited_ids_of(kind: InheritedKind, source: Path, text: str) -> list[str]:
+    """The ids one inherited file defines, read by the kind's own loader."""
+
+    return [kind.key(model) for model in kind.read(source, text)]
 
 
 @dataclass(frozen=True)
@@ -458,6 +475,14 @@ def _is_edit_name(name: str) -> bool:
     )
 
 
+def _table_values(table: Any) -> Iterable[Any]:
+    """The entries of a section table, which is a dict or a list (or not loaded)."""
+
+    if not table:
+        return ()
+    return table.values() if isinstance(table, dict) else table
+
+
 def _noting_failure(method: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap an edit method so that a call of it that raises is remembered."""
 
@@ -468,6 +493,7 @@ def _noting_failure(method: Callable[..., Any]) -> Callable[..., Any]:
             # may catch the error and finish properly.
             return method(self, *args, **kwargs)
         self._edit_depth = 1
+        self.__dict__.pop("_staged_scans", None)
         try:
             return method(self, *args, **kwargs)
         except BaseException:
@@ -641,6 +667,19 @@ class CoreLayer:
         self._state_index_cache: dict[bool, list[dict[str, Any]]] = {}
         self._vanilla_state_loc_entries: dict[str, str] | None = None
         self._country_context_cache: dict[str, dict[str, Any]] = {}
+        # What lookups read from the game and the base mods (see
+        # ``_inherited_definition``). None of it is the mod's: it never
+        # reaches a section, a list, validate(), preview() or save(), and
+        # every save(), discard() and reload() drops it.
+        # ``kind -> id -> inherited files that define it``, highest layer first:
+        self._inherited_index: dict[str, dict[str, list[Path]]] = {}
+        # ``source file -> its content-relative path``, for the files indexed:
+        self._inherited_relatives: dict[Path, Path] = {}
+        # ``(kind, source file) -> its definitions``, read on first use:
+        self._inherited_files: dict[tuple[str, Path], list[Any]] = {}
+        # ``(kind, id) -> definition`` for kinds read by their own finder
+        # (countries, states, orders of battle), ``None`` when none has it:
+        self._inherited_found: dict[tuple[str, object], Any] = {}
 
     # ── Sections ─────────────────────────────────────────────────
 
@@ -861,11 +900,11 @@ class CoreLayer:
         """Load diagnostics of the sections loaded so far, in load order."""
 
         order = self._sections.order
-        return [
+        return copy.deepcopy([
             diagnostic
             for name in sorted(self._section_diagnostics, key=lambda key: order.get(key, len(order)))
             for diagnostic in self._section_diagnostics[name]
-        ]
+        ])
 
     def _add_load_diagnostic(self, diagnostic: LoadDiagnostic) -> None:
         """File a diagnostic under the section being loaded."""
@@ -1147,14 +1186,23 @@ class CoreLayer:
         return dict(sorted(files.items()))
 
     def load_inherited_content(self, relative_path: str | Path) -> None:
-        """Load one effective inherited script file for facade editing.
+        """Copy one inherited script file into the mod, so its content can be edited.
 
-        Focus, event, idea and on-action files are opt-in, like vanilla country
-        reads. All siblings in the file are retained. Reading alone writes
-        nothing; edits serialize a complete override into this mod on save.
-        Duplicate focus IDs within an inherited tree reject the entire import
-        before any trees are installed, regardless of ``strict_loading``.
-        A file the mod already holds, or one loaded before, is left alone.
+        This is the call that the ``ReadOnlyError`` of an edit names: the
+        game replaces a focus tree, event, idea, decision, decision category,
+        bookmark or dynamic modifier of the game or a base mod only together
+        with its whole file. After this call the file's definitions are the
+        mod's: lookups and lists show them as the mod's, and edits work.
+
+        Focus, event, idea, on-action, decision, decision category, bookmark
+        and dynamic modifier files are supported. Every definition of the
+        file is kept. Reading alone writes nothing; the first edit makes
+        ``save()`` write the whole file into the mod, under the same name, so
+        that it replaces the inherited one. ``discard()`` forgets a file that
+        was loaded but not saved. Duplicate focus IDs within an inherited tree
+        reject the entire import before any trees are installed, regardless
+        of ``strict_loading``. A file the mod already holds, or one loaded
+        before, is left alone.
 
         Args:
             relative_path: The file's path inside the game or a base mod,
@@ -1162,8 +1210,8 @@ class CoreLayer:
 
         Raises:
             FileNotFoundError: No layer has this file.
-            ValueError: The path is unsafe, the file is not a focus, event,
-                idea or on-action file, or an id in it is already defined.
+            ValueError: The path is unsafe, the file is not one of the kinds
+                above, or an id in it is already defined by the mod.
         """
         relative = relative_content_path(relative_path)
         source = self.resolve_content_path(relative)
@@ -1215,13 +1263,501 @@ class CoreLayer:
                 action.path = target
                 self._on_action_occurrences.setdefault(action.id, []).append(action)
                 self._on_actions.setdefault(action.id, action)
+        elif directory == "common/dynamic_modifiers":
+            modifiers = load_dynamic_modifiers_text(original, target)
+            install(modifiers, self._dynamic_modifiers)
+            for modifier in modifiers:
+                self._dynamic_modifier_sources[modifier.id] = target
+        elif directory == "common/bookmarks":
+            bookmarks = load_bookmarks_file(target, text=original)
+            names = {bookmark.name for bookmark in self._bookmarks}
+            for bookmark in bookmarks:
+                if bookmark.name in names:
+                    raise ValueError(
+                        f"Inherited bookmark {bookmark.name!r} conflicts with another definition"
+                    )
+            self._bookmarks.extend(bookmarks)
+        elif directory == "common/decisions/categories":
+            self._install_inherited_decision_categories(
+                load_decision_categories_file(target, text=original)
+            )
+        elif directory == "common/decisions":
+            self._install_inherited_decisions(load_decisions_file(target, text=original))
         else:
-            raise ValueError("Inherited loading supports focus, event, idea and on-action files")
+            raise ValueError(
+                "Inherited loading supports focus, event, idea, on-action, decision, "
+                "decision category, bookmark and dynamic modifier files"
+            )
         self._original_files[target] = original
         # Not a saved edit, but not on disk either: discard() drops it.
         section = self._section_owning(target)
         if section is not None:
             self._reload_on_discard.add(section)
+
+    def _install_inherited_decision_categories(self, definitions: Sequence[DecisionCategory]) -> None:
+        """Make the category definitions of a copied ``categories`` file the mod's."""
+
+        for definition in definitions:
+            existing = self._decision_categories.get(definition.id)
+            if existing is not None and existing.definition_raw_block:
+                raise ValueError(
+                    f"Inherited ID {definition.id!r} conflicts with another definition"
+                )
+        for definition in definitions:
+            existing = self._decision_categories.get(definition.id)
+            if existing is None:
+                self._decision_categories[definition.id] = definition
+                continue
+            existing.icon = definition.icon
+            existing.allowed = definition.allowed
+            existing.visible = definition.visible
+            existing.definition_path = definition.definition_path
+            existing.definition_raw_block = definition.definition_raw_block
+
+    def _install_inherited_decisions(self, categories: Sequence[DecisionCategory]) -> None:
+        """Make the categories and decisions of a copied decisions file the mod's.
+
+        A category the mod already has blocks of gets this file's block too,
+        the way the game joins the blocks of one category from every file.
+        """
+
+        seen: set[str] = set()
+        for category in categories:
+            for decision in category.decisions:
+                if decision.id in self._decisions or decision.id in seen:
+                    raise ValueError(
+                        f"Inherited ID {decision.id!r} conflicts with another definition"
+                    )
+                seen.add(decision.id)
+        for category in categories:
+            for decision in category.decisions:
+                self._decisions[decision.id] = decision
+            existing = self._decision_categories.get(category.id)
+            if existing is not None:
+                merge_decision_category(
+                    existing, category, presentation=not existing.definition_raw_block
+                )
+                continue
+            assert category.path is not None
+            category.definition_path = _decision_category_definition_path(
+                self.mod_root, category.path, self._shadows_inherited
+            )
+            self._inherit_category_presentation(category)
+            self._decision_categories[category.id] = category
+
+    def _inherit_category_presentation(self, category: DecisionCategory) -> None:
+        """Show a lower layer's icon and conditions on the mod's part of its category.
+
+        The mod's block only adds decisions; the game still reads the
+        presentation from the inherited definition, so a lookup reports that
+        one. Nothing is written for it: a definition goes into the mod only
+        when the category itself is edited, and then it starts from these
+        values instead of dropping them.
+        """
+
+        if category.definition_raw_block or category.icon or category.allowed or category.visible:
+            return
+        definition = self._inherited_category_definition(category.id)
+        if definition is not None:
+            category.icon = definition.icon
+            category.allowed = definition.allowed
+            category.visible = definition.visible
+
+    def _inherited_category_definition(self, category_id: str) -> DecisionCategory | None:
+        """What ``common/decisions/categories`` of a lower layer defines as ``category_id``.
+
+        Reads only that folder (a few small files), not the decisions files
+        that add to the category: the mod's own loader asks this for every
+        game category the mod has decisions in. Do not change the result.
+        """
+
+        cache_key = ("category_definitions", "")
+        definitions: list[tuple[Path, DecisionCategory]] | None = self._inherited_found.get(cache_key)
+        if definitions is None:
+            definitions = []
+            base = self._base_content
+            if base is not None:
+                files = [
+                    (Path(relative), source)
+                    for relative, source in base.glob("common/decisions/categories", "*.txt").items()
+                    if not self._mod_hides_inherited(Path(relative))
+                ]
+                # Stable: the file name order stays within one layer.
+                files.sort(key=lambda item: -self._inherited_layer(item[1]))
+                for relative, source in files:
+                    self._inherited_relatives.setdefault(source, relative)
+                    definitions.extend(
+                        (source, model)
+                        for model in self._inherited_file_models("decision_category", source)
+                    )
+            self._inherited_found[cache_key] = definitions
+        return next(
+            (
+                model
+                for source, model in definitions
+                if model.id == category_id and self._inherited_file_visible(source)
+            ),
+            None,
+        )
+
+    # ── Inherited content: read-only lookups ─────────────────────
+    #
+    # One mechanism for every kind that a lookup finds in the game or a base
+    # mod (``hoi4._inherited`` lists them). The mod's own table is asked
+    # first and, when it has the id, nothing inherited is touched. Otherwise
+    # an index of the ids each inherited file defines (kept on disk) names
+    # the file, only that file is read with the kind's own loader, and the
+    # caller gets a copy: changing it changes nothing else. Countries,
+    # states and orders of battle find their files their own way and share
+    # the cache and the copy (``_inherited_copy``).
+
+    def _inherited_index_of(self, kind_name: str) -> dict[str, list[Path]]:
+        """``id -> inherited files that define it``, the highest layer first.
+
+        Built once until the next save(), discard() or reload(), from the
+        ids per file that ``hoi4._disk_cache`` keeps between processes.
+        Files the mod hides (its own file of the same name, a
+        ``replace_path``) are left out.
+        """
+
+        index = self._inherited_index.get(kind_name)
+        if index is not None:
+            return index
+        kind = INHERITED_KINDS[kind_name]
+        index = {}
+        base = self._base_content
+        if base is not None:
+            files: list[tuple[Path, Path]] = []
+            for folder in kind.folders:
+                for relative, source in base.glob(folder, "*.txt").items():
+                    if not self._mod_hides_inherited(relative):
+                        files.append((relative, source))
+            # Stable: the file name order stays within one layer.
+            files.sort(key=lambda item: -self._inherited_layer(item[1]))
+            purpose = f"inherited_ids:{kind_name}"
+            for relative, source in files:
+                self._inherited_relatives[source] = relative
+                try:
+                    ids = self._cached_result(
+                        purpose,
+                        source,
+                        functools.partial(_inherited_ids_of, kind, source),
+                        INHERITED_IDS_ON_DISK,
+                    )
+                except Exception:
+                    # Inherited files are reference data: one the loader
+                    # cannot read defines nothing for a lookup.
+                    continue
+                for item in ids:
+                    sources = index.setdefault(item, [])
+                    if source not in sources:
+                        sources.append(source)
+        self._inherited_index[kind_name] = index
+        return index
+
+    def _inherited_layer(self, source: Path) -> int:
+        """How high the layer of an inherited file is: the game 0, base mods above."""
+
+        if self._content_layers is None:
+            return 0
+        rank = 0
+        for index, root in enumerate(self._content_layers.roots):
+            if _path_under(source, root):
+                rank = index
+        return rank
+
+    def _inherits_file(self, relative: Path) -> bool:
+        """Whether a mod file at ``relative`` would hide a file of a lower layer."""
+
+        if self._mod_hides_inherited(relative) and not (self.mod_root / relative).is_file():
+            # A replace_path of the mod hides the folder already.
+            return False
+        if self._content_layers is not None:
+            return self._content_layers.inherited(relative) is not None
+        return self._base_content is not None and self._base_content.file(relative) is not None
+
+    def _inherited_file_visible(self, source: Path) -> bool:
+        """Whether no mod file (on disk or about to be written) hides an indexed file."""
+
+        relative = self._inherited_relatives.get(source)
+        if relative is None:
+            return True
+        target = self.mod_root / relative
+        if target in self._original_files or target.is_file():
+            return False
+        return not self._dirty or not self._file_is_staged(target)
+
+    # The tables whose definitions live in the files of each dirty set.
+    _LIVE_TABLES: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("_dirty_focus_files", ("_focus_trees",)),
+        ("_dirty_event_files", ("_events",)),
+        ("_dirty_idea_files", ("_ideas",)),
+        ("_dirty_decision_files", ("_decisions", "_decision_categories")),
+        ("_dirty_decision_category_files", ("_decision_categories",)),
+        ("_dirty_dynamic_modifier_files", ("_dynamic_modifiers",)),
+        ("_dirty_on_action_files", ("_on_action_occurrences",)),
+        ("_dirty_character_files", ("_characters",)),
+        ("_dirty_bookmark_files", ("_bookmarks",)),
+        ("_dirty_oob_files", ("_oobs",)),
+    )
+
+    def _file_is_staged(self, target: Path) -> bool:
+        """Whether save() will write content of the mod to ``target``.
+
+        A dirty file that no definition lives in any more (created and
+        deleted again before a save) is not one: save() writes nothing there.
+        """
+
+        if target in self._staged_file_paths():
+            return True
+        state = self.__dict__
+        tables = {
+            table_name
+            for dirty_name, table_names in self._LIVE_TABLES
+            if target in state.get(dirty_name, ())
+            for table_name in table_names
+        }
+        if any(
+            isinstance(item, tuple) and item and item[0] == target
+            for item in state.get("_dirty_bookmarks", ())
+        ):
+            tables.add("_bookmarks")
+        if not tables:
+            return False
+        # The scan reads every definition of the kind: remembered until the
+        # next edit, save(), discard() or reload().
+        scans: dict[Path, bool] = state.setdefault("_staged_scans", {})
+        if target not in scans:
+            scans[target] = any(
+                target in (getattr(model, "path", None), getattr(model, "definition_path", None))
+                for table_name in tables
+                for found in _table_values(state.get(table_name))
+                for model in (found if isinstance(found, list) else (found,))
+            )
+        return scans[target]
+
+    _STAGED_TABLES: tuple[tuple[str, str], ...] = (
+        ("_dirty_focus_trees", "_focus_trees"),
+        ("_dirty_events", "_events"),
+        ("_dirty_ideas", "_ideas"),
+        ("_dirty_decision_categories", "_decision_categories"),
+        ("_dirty_dynamic_modifiers", "_dynamic_modifiers"),
+        ("_dirty_on_actions", "_on_action_occurrences"),
+        ("_dirty_characters", "_characters"),
+    )
+
+    def _staged_file_paths(self) -> set[Path]:
+        """The files of the mod's changed definitions, which save() will write.
+
+        A file about to be written hides the inherited file of the same name
+        just as a file on disk does, so a lookup answers the same before and
+        after save(). Reads only what is loaded: it never loads a section.
+        """
+
+        state = self.__dict__
+        paths: set[Path] = set()
+        for dirty_name, table_name in self._STAGED_TABLES:
+            table = state.get(table_name) or {}
+            for key in state.get(dirty_name, ()):
+                found = table.get(key)
+                for model in found if isinstance(found, list) else (found,):
+                    path = getattr(model, "path", None)
+                    if isinstance(path, Path):
+                        paths.add(path)
+        # A new event has no path until save() gives it its namespace's file.
+        events = state.get("_events") or {}
+        namespaces = state.get("_event_namespaces") or {}
+        for event_id in state.get("_dirty_events", ()):
+            if event_id in events and events[event_id].path is None:
+                paths.add(
+                    self.mod_root / "events" / f"{namespaces.get(event_id) or 'mod'}_events.txt"
+                )
+        return paths
+
+    def _inherited_sources(self, kind_name: str, key: str) -> list[Path]:
+        """The inherited files that define ``key``, the highest layer first."""
+
+        return [
+            source
+            for source in self._inherited_index_of(kind_name).get(key, ())
+            if self._inherited_file_visible(source)
+        ]
+
+    def _inherited_file_models(self, kind_name: str, source: Path) -> list[Any]:
+        """Every definition of one inherited file, read once (never hand these out)."""
+
+        cache_key = (kind_name, source)
+        models = self._inherited_files.get(cache_key)
+        if models is None:
+            kind = INHERITED_KINDS[kind_name]
+            try:
+                models = list(kind.read(source, read_text(source)))
+            except Exception:
+                models = []
+            self._inherited_files[cache_key] = models
+        return models
+
+    def _inherited_matches(self, kind_name: str, key: str) -> list[tuple[Path, Any]]:
+        """Copies of every inherited definition of ``key``, the highest layer first."""
+
+        kind = INHERITED_KINDS[kind_name]
+        return copy.deepcopy([
+            (source, model)
+            for source in self._inherited_sources(kind_name, key)
+            for model in self._inherited_file_models(kind_name, source)
+            if kind.key(model) == key
+        ])
+
+    def _inherited_definition(self, kind_name: str, key: str) -> Any:
+        """A copy of what the base mods or the game define as ``key``, or ``None``."""
+
+        matches = self._inherited_matches(kind_name, key)
+        if not matches:
+            return None
+        return INHERITED_KINDS[kind_name].combine(matches)
+
+    def _inherited_ids(self, kind_name: str) -> set[str]:
+        """Every id of one kind that the base mods or the game define, minus hidden files."""
+
+        visible: dict[Path, bool] = {}
+        result: set[str] = set()
+        for key, sources in self._inherited_index_of(kind_name).items():
+            for source in sources:
+                if source not in visible:
+                    visible[source] = self._inherited_file_visible(source)
+                if visible[source]:
+                    result.add(key)
+                    break
+        return result
+
+    def _inherited_copy(
+        self, kind_name: str, key: object, build: Callable[[], _Model | None]
+    ) -> _Model | None:
+        """A copy of what ``build()`` finds for ``key``; it runs once per key.
+
+        For kinds that find their inherited files their own way (countries,
+        states, orders of battle). Kept until the next save(), discard() or
+        reload(), like the rest of the inherited lookups.
+        """
+
+        cache_key = (kind_name, key)
+        if cache_key in self._inherited_found:
+            found: _Model | None = self._inherited_found[cache_key]
+        else:
+            found = build()
+            self._inherited_found[cache_key] = found
+        return copy.deepcopy(found)
+
+    def _drop_inherited_lookups(self) -> None:
+        """Forget what lookups read from the game and the base mods."""
+
+        self._inherited_index.clear()
+        self._inherited_relatives.clear()
+        self._inherited_files.clear()
+        self._inherited_found.clear()
+        self.__dict__.pop("_staged_scans", None)
+
+    def _lookup(
+        self,
+        kind_name: str,
+        table: Mapping[str, _Model],
+        key: str,
+        *,
+        include_vanilla: bool,
+        default: _D | _Missing,
+    ) -> _Model | _D:
+        """The rule of every ``get_x``: the mod first, then the base mods, then the game.
+
+        A mod id never touches an inherited file. An inherited result is a
+        copy (see ``_inherited_definition``).
+        """
+
+        if key is None:
+            raise TypeError("Lookup ID cannot be None")
+        value = table.get(key)
+        if value is not None:
+            return value
+        if include_vanilla:
+            inherited: _Model | None = self._inherited_definition(kind_name, key)
+            if inherited is not None:
+                return inherited
+        if default is not MISSING:
+            return default
+        kind = INHERITED_KINDS[kind_name]
+        known = set(table) | (self._inherited_ids(kind_name) if include_vanilla else set())
+        raise not_found(kind.name, key, known, plural=kind.plural)
+
+    def _listed(self, kind_name: str, own: Iterable[str], *, include_vanilla: bool) -> list[str]:
+        """The rule of every ``list_x``: the mod's ids, or with ``include_vanilla`` all of them."""
+
+        ids = set(own)
+        if include_vanilla:
+            ids |= self._inherited_ids(kind_name)
+        return sorted(ids)
+
+    def _mod_definition(self, kind_name: str, table: Mapping[str, _Model], key: str) -> _Model:
+        """The definition an edit changes: the mod's own, else an error that says why.
+
+        Raises:
+            ReadOnlyError: Only the game or a base mod defines ``key``, and
+                the game replaces it only with its whole file.
+            NotFoundError: No one defines ``key``.
+        """
+
+        value = table.get(key)
+        if value is not None:
+            return value
+        raise self._not_in_mod(kind_name, key, table)
+
+    def _not_in_mod(self, kind_name: str, key: str, mod_ids: Iterable[str]) -> Hoi4Error:
+        """The error of an edit whose target the mod does not define."""
+
+        kind = INHERITED_KINDS[kind_name]
+        sources = self._inherited_sources(kind_name, key) if kind.whole_file else []
+        if sources:
+            return self._read_only_error(kind_name, key, sources[0])
+        return not_found(kind.name, key, mod_ids, plural=kind.plural)
+
+    def _refuse_inherited(self, kind_name: str, key: str, *, hint: str = "") -> None:
+        """Raise ``ReadOnlyError`` when only the game or a base mod defines ``key``.
+
+        For the ``ensure_x`` helpers: one that finds nothing in the mod would
+        create the definition, and so put a new one of the same id on top of
+        the inherited one without saying so.
+        """
+
+        sources = self._inherited_sources(kind_name, key)
+        if sources:
+            raise self._read_only_error(kind_name, key, sources[0], hint=hint)
+
+    def _inherited_origin(self, source: Path) -> str:
+        """Who defines an inherited file, in words."""
+
+        if self.hoi4_install is not None and _path_under(source, self.hoi4_install):
+            return "the game"
+        for root in reversed(self.base_mod_paths):
+            if _path_under(source, root):
+                return f"the base mod {root.name!r}"
+        return "an inherited layer"
+
+    def _read_only_error(
+        self, kind_name: str, key: str, source: Path, *, hint: str = ""
+    ) -> ReadOnlyError:
+        """``ReadOnlyError`` for an edit of an inherited definition, naming the call that helps."""
+
+        kind = INHERITED_KINDS[kind_name]
+        relative = self._inherited_relatives.get(source)
+        shown = relative.as_posix() if relative is not None else str(source)
+        call = f'mod.load_inherited_content("{shown}")'
+        message = (
+            f"{kind.name[:1].upper()}{kind.name[1:]} {key!r} is defined by "
+            f"{self._inherited_origin(source)} in {shown}, not by the mod. "
+        )
+        message += (hint or (
+            "The game replaces such a definition only together with its whole file. "
+            "Copy the file into the mod first with {call}, then edit it."
+        )).format(call=call)
+        return ReadOnlyError(message, kind=kind.name, id=key, path=shown, call=call)
 
     def _is_shadowed_by_mod(self, base: ContentView, path: Path) -> bool:
         relative = base.relative(path)
@@ -1360,6 +1896,7 @@ class CoreLayer:
         # Derived catalogs may reflect imports or localization rolled back above.
         self._state_index_cache.clear()
         self._scan_cache.clear()
+        self._drop_inherited_lookups()
         self._equipment_unlock_cache = None
 
     def _display_path(self, path: Path) -> str:
