@@ -764,7 +764,7 @@ def _patch_existing_state(state: State) -> str:
                 history_body, "buildings", state.buildings or None, history_layout,
                 before_dated=True,
             )
-        if state.is_demilitarized_zone != original.is_demilitarized_zone:
+        if history_replaced or state.is_demilitarized_zone != original.is_demilitarized_zone:
             history_body = _set_direct_scalar(
                 history_body,
                 "set_demilitarized_zone",

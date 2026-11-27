@@ -18,6 +18,7 @@ from ..countries import (
     country_color_tags,
     country_file_paths,
     country_history_target,
+    has_start_politics,
     remove_legacy_leader,
     serialize_country_colors_file,
 )
@@ -129,7 +130,8 @@ class CountryAuthoringLayer(CharactersLayer):
                 The new country takes the place of their files (the same
                 definition and history file names) and starts from nothing:
                 their history (technology per DLC, doctrines, old leader
-                blocks) is not carried over. To change such a country and
+                blocks) is not carried over, only the colour and the
+                graphical culture are. To change such a country and
                 keep the rest, use ``update_country()``.
 
         Returns:
@@ -180,6 +182,7 @@ class CountryAuthoringLayer(CharactersLayer):
                 f"Country tag '{tag}' is already used by vanilla HOI4. "
                 "Choose an unused tag or pass overwrite_vanilla=True intentionally."
             )
+        inherited_cultures: tuple[str, str] | None = None
         if existing is None and overwrite_vanilla and tag in self._vanilla_tags:
             # The game finds the country through the files its tag file and
             # history folder name: the new country takes their places, or it
@@ -187,6 +190,7 @@ class CountryAuthoringLayer(CharactersLayer):
             existing = self.get_country(tag)
             if color is None:
                 color = existing.color
+            inherited_cultures = (existing.graphical_culture, existing.graphical_culture_2d)
         if color is None:
             color = (128, 128, 128)
         leader_id = f"{tag}_leader_1"
@@ -247,6 +251,10 @@ class CountryAuthoringLayer(CharactersLayer):
             ),
             touched_fields={"*"},
         )
+        if inherited_cultures is not None:
+            # How the country's units and cities look is not politics: it
+            # stays what the game gives the tag.
+            country.graphical_culture, country.graphical_culture_2d = inherited_cultures
         self._countries[tag] = country
         self._note_country_files(country)
         self._created_country_tags.add(tag)
@@ -357,12 +365,24 @@ class CountryAuthoringLayer(CharactersLayer):
                 "A country the mod adds takes its map colour from its own file, which "
                 "has no color_ui."
             )
+        if (
+            {"last_election", "election_frequency"} & set(other_kwargs)
+            and "ruling_party" not in other_kwargs
+            and country.raw_history
+            and not has_start_politics(country.raw_history)
+        ):
+            raise ValueError(
+                f"update_country(): '{tag}' has no set_politics block at the start date "
+                "to put the election in. Pass ruling_party (and elections_allowed) in "
+                "the same call to create one."
+            )
         self._materialize_country_override(country)
         if other_kwargs:
             _set_fields(country, other_kwargs)
             if "color" in other_kwargs and "color_ui" not in other_kwargs:
                 # A new map colour without its own UI colour: the UI follows it.
                 country.color_ui = None
+        converted_leader = False
         if leader_kwargs:
             if country.leader is None:
                 country.leader = Leader(name="Leader", character_id=f"{tag}_leader_1")
@@ -378,7 +398,27 @@ class CountryAuthoringLayer(CharactersLayer):
                 if country.leader.character_id not in country.recruited_characters:
                     country.recruited_characters.append(country.leader.character_id)
                 country.touched_fields.add("recruited_characters")
+                converted_leader = True
             _set_fields(country.leader, leader_kwargs, method="update_country")
+            if converted_leader and country.leader.character_id not in self._characters:
+                # The character itself, so a save writes it whoever writes
+                # the character file (the country or other characters in it).
+                self.create_character(
+                    tag,
+                    Character(
+                        id=country.leader.character_id,
+                        country_tag=tag,
+                        name=country.leader.name,
+                        portraits=[
+                            CharacterPortrait(
+                                channel="civilian",
+                                large=f"GFX_portrait_{tag}_{country.leader.portrait_slug}",
+                            )
+                        ],
+                        roles=[CountryLeaderRole(ideology=country.leader.ideology)],
+                    ),
+                    recruit=False,
+                )
         country.touched_fields.update(other_kwargs)
         country.touched_fields.update(f"leader_{key}" for key in leader_kwargs)
         if "technologies" in other_kwargs:
@@ -389,7 +429,8 @@ class CountryAuthoringLayer(CharactersLayer):
         ) or leader_kwargs:
             self._sync_country_loc(
                 country,
-                names=bool({"name", "adjective"} & set(other_kwargs)),
+                names="name" in other_kwargs,
+                adjective=bool({"name", "adjective"} & set(other_kwargs)),
                 leader=bool(leader_kwargs),
             )
         if leader_kwargs and country.leader is not None:

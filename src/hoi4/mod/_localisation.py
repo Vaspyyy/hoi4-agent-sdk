@@ -480,11 +480,16 @@ class LocalisationLayer(CoreLayer):
             self._delete_loc_entry(key, language)
 
     def _sync_country_loc(
-        self, country: Country, *, names: bool = True, leader: bool = True
+        self,
+        country: Country,
+        *,
+        names: bool = True,
+        adjective: bool = True,
+        leader: bool = True,
     ) -> None:
         """Write the country's name keys and its leader's.
 
-        ``names`` and ``leader`` say which texts the caller changed: those
+        ``names``, ``adjective`` and ``leader`` say which texts the caller changed: those
         are written. The others are only filled in where no layer has a text
         yet, so a change of the politics of a game country does not replace
         its ideology names ("German Reich") with the plain name.
@@ -505,7 +510,7 @@ class LocalisationLayer(CoreLayer):
             k = f"{country.tag}{suffix}"
             put(k, name, names)
             put(f"{k}_DEF", name, names)
-        put(f"{country.tag}_ADJ", adj, names)
+        put(f"{country.tag}_ADJ", adj, adjective)
         if country.leader and country.leader.character_id:
             put(country.leader.character_id, country.leader.name, leader)
             put(f"{country.leader.character_id}_desc", f"{country.leader.name} (leader)", leader)

@@ -8,6 +8,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Unpack
 
+from ..patching import top_level_assignments
 from ..fields import StateFields
 from ..localisation import (
     parse_localization_files,
@@ -396,6 +397,14 @@ class StatesLayer(CountriesLayer):
             return state
         self._materialize_state_override(state)
         _set_fields(state, values, method="update_state")
+        if "history" in values and "is_demilitarized_zone" not in values:
+            # A new history says for itself whether the state is a zone.
+            state.is_demilitarized_zone = any(
+                span.key == "set_demilitarized_zone"
+                and not span.is_block
+                and state.history[span.value_start : span.value_end].strip() == "yes"
+                for span in top_level_assignments(state.history)
+            )
         if removed:
             state.cores = [core for core in state.cores if core.upper() not in removed]
         for tag in added:

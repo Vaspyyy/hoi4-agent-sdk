@@ -148,7 +148,8 @@ def test_politics_change_keeps_the_game_names_of_the_country(mod: Mod) -> None:
     mod.save()
     assert mod.get_loc("DNZ_fascism") == "Free City of Danzig"
     assert mod.get_loc("DNZ_ADJ") == "Danziger"
-    assert mod.get_loc("DNZ_democratic") == "DNZ" or mod.get_loc("DNZ_democratic")
+    # A key no layer had a text for is filled with the plain name.
+    assert mod.get_loc("DNZ_democratic") == mod.get_country("DNZ").name
     mod.update_country("DNZ", name="Danzig")
     assert mod.get_loc("DNZ_fascism") == "Danzig"
 
@@ -234,7 +235,7 @@ def test_decision_icons_are_checked_with_validate_icons(mod: Mod) -> None:
     fresh.create_decision_category("cat", icon="generic_political_actions")
     fresh.create_decision("cat", "good", icon="generic_industry")
     fresh.create_decision("cat", "also_good", icon="GFX_decision_generic_industry")
-    fresh.create_decision("cat", "bad", icon="generic_political_actions")
+    fresh.create_decision("cat", "bad", icon="no_such_icon")
     found = [i for i in fresh.validate(validate_icons=True) if i.code == "unknown_decision_icon"]
     assert [i.decision_id for i in found] == ["bad"]
     assert "unknown_decision_icon" not in [i.code for i in fresh.validate()]
@@ -283,3 +284,141 @@ def test_release_gate_on_action_probe_counts_the_mods_own_occurrences(mod: Mod) 
     fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
     fresh.create_on_action("on_startup", effect="log = mine")
     assert _probe_on_action(fresh) == "on_startup[0].effect"
+
+
+# ── Found by the review of these fixes ──────────────────────────────
+
+
+def _advisor() -> object:
+    from hoi4 import AdvisorRole, Character, CharacterPortrait
+
+    return Character(
+        id="DNZ_advisor",
+        country_tag="DNZ",
+        name="Advisor",
+        portraits=[CharacterPortrait(channel="civilian", large="GFX_l", small="GFX_s")],
+        roles=[AdvisorRole(slot="political_advisor", idea_token="DNZ_advisor")],
+    )
+
+
+@pytest.mark.parametrize("advisor_on_disk", [False, True])
+def test_converted_leader_is_written_next_to_other_characters(mod: Mod, advisor_on_disk: bool) -> None:
+    mod.create_character("DNZ", _advisor())
+    if advisor_on_disk:
+        mod.save()
+        mod = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    mod.update_country("DNZ", leader_name="Arthur Greiser")
+    mod.preview()
+    mod.save()
+    characters = (mod.mod_root / "common/characters/DNZ_characters.txt").read_text(encoding="utf-8")
+    assert "DNZ_advisor" in characters and "DNZ_leader_1" in characters
+    assert "Arthur Greiser" in characters and "ideology = nazism" in characters
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    codes = {f.code for f in fresh.validate_country_package("DNZ").findings}
+    assert "undefined_recruited_character" not in codes and "missing_country_leader" not in codes
+
+
+@pytest.mark.parametrize("with_base", [False, True])
+def test_mod_file_replacing_a_game_definition_is_the_definition(tmp_path: Path, game: Path, with_base: bool) -> None:
+    root, base = tmp_path / "mod", tmp_path / "base"
+    base.mkdir()
+    write(root, "common/countries/Danzig.txt", "graphical_culture = asian_gfx\ncolor = { 4 5 6 }\nkept = yes\n")
+    bases = [base] if with_base else []
+    mod = Mod(root, hoi4_install=game, base_mod_paths=bases)
+    country = mod.get_country("DNZ")
+    assert (country.color, country.graphical_culture) == ((4, 5, 6), "asian_gfx")
+    assert country.definition_path == (root / "common/countries/Danzig.txt").resolve()
+    mod.update_country("DNZ", graphical_culture="eastern_european_gfx")
+    mod.save()
+    text = (root / "common/countries/Danzig.txt").read_text(encoding="utf-8")
+    assert "eastern_european_gfx" in text and "4 5 6" in text and "kept = yes" in text
+    again = Mod(root, hoi4_install=game, base_mod_paths=bases)
+    again.create_country("DNZ", "Danzig", overwrite=True, overwrite_vanilla=True)
+    assert "common/countries/Danzig.txt" in staged(again)
+    assert "common/countries/DNZ.txt" not in staged(again)
+
+
+def test_replacing_a_game_country_keeps_its_graphical_culture(mod: Mod) -> None:
+    write(mod.hoi4_install, "common/countries/Danzig.txt", "graphical_culture = asian_gfx\ngraphical_culture_2d = asian_2d\ncolor = { 78 129 151 }\n")
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    country = fresh.create_country("DNZ", "Danzig", overwrite_vanilla=True)
+    assert (country.graphical_culture, country.graphical_culture_2d) == ("asian_gfx", "asian_2d")
+
+
+def test_new_history_and_the_zone_flag(mod: Mod) -> None:
+    mod.update_state(85, history="owner = POL\nadd_core_of = POL", is_demilitarized_zone=True)
+    mod.save()
+    assert Mod(mod.mod_root, hoi4_install=mod.hoi4_install).get_state(85).is_demilitarized_zone is True
+    mod.update_state(85, history="owner = POL\nadd_core_of = POL")
+    assert mod.get_state(85).is_demilitarized_zone is False
+    mod.save()
+    assert "demilitarized" not in (mod.mod_root / "history/states/85-Danzig.txt").read_text(encoding="utf-8")
+
+
+def test_election_date_never_invents_politics(mod: Mod) -> None:
+    write(mod.hoi4_install, "history/countries/POL - Poland.txt", "capital = 10\n1939.1.1 = {\n\tset_politics = {\n\t\truling_party = fascism\n\t\telections_allowed = no\n\t}\n}\n")
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    with pytest.raises(ValueError, match="set_politics"):
+        fresh.update_country("POL", last_election="1933.2.2")
+    assert fresh.preview() == ""
+    fresh.update_country("DNZ", last_election="1933.2.2")
+    fresh.save()
+    history = (fresh.mod_root / "history/countries/DNZ - Danzig.txt").read_text(encoding="utf-8")
+    assert history.count("set_politics") == 1 and "ruling_party = fascism" in history
+
+
+def test_leader_block_inside_a_condition_is_converted_too(mod: Mod) -> None:
+    write(mod.hoi4_install, "history/countries/POL - Poland.txt", 'capital = 10\nif = {\n\tlimit = { has_war = no }\n\tcreate_country_leader = {\n\t\tname = "Nested"\n\t\tideology = nazism\n\t}\n}\n')
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    leader = fresh.get_country("POL").leader
+    assert leader is not None and (leader.name, leader.character_id) == ("Nested", "")
+    fresh.update_country("POL", leader_name="New Leader")
+    fresh.save()
+    history = (fresh.mod_root / "history/countries/POL - Poland.txt").read_text(encoding="utf-8")
+    assert "create_country_leader" not in history and "has_war = no" in history
+    assert history.count("recruit_character = POL_leader_1") == 1
+
+
+def test_library_writers_skip_a_leader_without_a_character(tmp_path: Path, mod: Mod) -> None:
+    from hoi4.countries import write_all_country_files
+
+    country = mod.get_country("DNZ")
+    out = tmp_path / "out"
+    out.mkdir()
+    country.definition_path = country.history_path = country.character_path = None
+    written = write_all_country_files(out, country)
+    assert not any("characters" in path.parts for path in written)
+
+
+def test_adjective_change_keeps_the_game_names(mod: Mod) -> None:
+    mod.update_country("DNZ", adjective="Danzig")
+    assert mod.get_loc("DNZ_ADJ") == "Danzig"
+    assert mod.get_loc("DNZ_fascism") == "Free City of Danzig"
+
+
+def test_conditional_event_text_key_shared_with_an_option(mod: Mod) -> None:
+    from hoi4 import EventOption, EventText
+
+    mod.create_event("zz.2", title="zz.2.t", description="zz.2.desc",
+                     conditional_descriptions=[EventText(text="zz.2.b", trigger="always = yes")])
+    mod.add_event_option("zz.2", EventOption(name="zz.2.b", effect="add_political_power = 1"))
+    assert [i.code for i in mod.validate() if i.event_id == "zz.2"].count("event_text_key_clash") == 1
+
+
+def test_decision_icons_may_use_either_sprite_prefix(mod: Mod) -> None:
+    write(
+        mod.hoi4_install,
+        "interface/decisions.gfx",
+        'spriteTypes = {\n\tspriteType = { name = "GFX_decision_generic_research" texturefile = "gfx/a.dds" }\n'
+        '\tspriteType = { name = "GFX_decision_category_generic_formable_nations" texturefile = "gfx/b.dds" }\n}\n',
+    )
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    fresh.create_decision_category("cat", icon="generic_research")
+    assert fresh.validate(validate_icons=True) == [] or "unknown_decision_icon" not in [
+        i.code for i in fresh.validate(validate_icons=True)
+    ]
+    fresh.update_decision_category("cat", icon="nope")
+    assert [i.code for i in fresh.validate(validate_icons=True)].count("unknown_decision_icon") == 1
+    fresh.update_decision_category("cat", icon="generic_research")
+    fresh.create_decision("cat", "d", icon="generic_formable_nations")
+    assert "unknown_decision_icon" not in [i.code for i in fresh.validate(validate_icons=True)]

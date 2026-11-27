@@ -295,9 +295,9 @@ HOI4 accepts `recruit_character` only from scenario history. To unlock a role
 later, recruit the character at startup and express the unlock in the role's
 `available`/`visible` trigger; validation rejects runtime recruitment effects.
 Advisor roles require a small portrait sprite in addition to any large
-portrait used elsewhere: `portraits.civilian.small` for a political advisor,
-`portraits.army.small` or `portraits.navy.small` for a military one, as in
-the game's own files.
+portrait used elsewhere, on any channel (`portraits.civilian.small`,
+`portraits.army.small` or `portraits.navy.small`): the game's own files use
+all three.
 
 ### Land, naval, and air OOB methods
 

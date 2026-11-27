@@ -502,8 +502,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                 if sprite
             }
             roles = self._all_character_roles(character)
-            # The game's own files put it on the civilian channel for political
-            # advisors and on the army or navy channel for military ones.
+            # The game's own files use every channel for it.
             if any(isinstance(role, AdvisorRole) for role in roles) and not any(
                 portrait.small for portrait in portraits
             ):
@@ -511,10 +510,9 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                     "missing_character_small_portrait",
                     (
                         f"Advisor character '{character.id}' has no small portrait. "
-                        "Advisor cards require a small sprite (portraits.civilian.small "
-                        "for a political advisor, portraits.army.small or "
-                        "portraits.navy.small for a military one) that an "
-                        "interface/*.gfx file declares."
+                        "Advisor cards require a small sprite on one channel "
+                        "(portraits.civilian.small, portraits.army.small or "
+                        "portraits.navy.small) that an interface/*.gfx file declares."
                     ),
                     file_path=str(character.path) if character.path else None,
                 )

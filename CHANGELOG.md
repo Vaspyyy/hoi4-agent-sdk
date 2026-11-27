@@ -16,7 +16,7 @@ Found by three models that each built the same mod with 0.7.0.
 - `validate(validate_icons=True)` reports `unknown_decision_icon` for a
   decision or decision category icon without a sprite.
 - `Country.last_election` and `Country.election_frequency`, settable with
-  `update_country()`.
+  `update_country()` for a country that sets its politics at the start date.
 - `BookmarkCountry.minor` for the row of minor countries.
 - `import_portrait_to_mod(..., crop=(left, upper, right, lower))`.
 - `write_mod_descriptors(mod_root, None, name)` writes only `descriptor.mod`.
@@ -26,7 +26,8 @@ Found by three models that each built the same mod with 0.7.0.
 - `create_country(tag, ..., overwrite_vanilla=True)` writes the new country
   to the files the game's tag already uses (for example
   `common/countries/Danzig.txt` and `history/countries/DNZ - Danzig.txt`)
-  and keeps the tag's colour unless one is passed. Before, it could write
+  and keeps the tag's colour (unless one is passed) and its graphical
+  culture. Before, it could write
   files the game never reads, or a second history file for the tag.
   `color` now defaults to `None` (grey for a new tag).
 - `common/countries/colors.txt` is only written when an entry of it really
@@ -36,11 +37,13 @@ Found by three models that each built the same mod with 0.7.0.
   that leader (name and ideology) with an empty `character_id`. No character
   `<TAG>_leader_1` is invented and no `recruit_character` line is written
   for it. `update_country(leader_...=)` turns the block into a character and
-  removes the block.
-- `update_country(popularities=...)` or `ruling_party=` no longer replaces
-  the country names the game has per ideology. Only missing keys are filled.
-- An advisor's small portrait may be on the army or navy channel, as in the
-  game's own files.
+  removes the block. With such a block, a recruited advisor is no longer
+  taken for the leader.
+- `update_country(popularities=...)`, `ruling_party=` or `adjective=` no
+  longer replaces the country names the game has per ideology. Only missing
+  keys are filled; a new `name` still sets them all.
+- An advisor's small portrait may be on any channel, as in the game's own
+  files.
 
 ### Fixed
 
@@ -49,8 +52,10 @@ Found by three models that each built the same mod with 0.7.0.
   state scope that does not exist, so turning the zone off did nothing.
 - `validate_country_package()` no longer reports `missing_country_flag` for a
   tag whose flag the game or a base mod ships.
-- A colour written to a mod file that replaces a game country's definition
-  is read back.
+- A mod file that replaces a game country's definition file (same file
+  name, no tag file of the mod's own) is read as the country's definition,
+  with and without base mods. Its colour and graphical culture used to be
+  ignored, and an edit wrote the game's text over it.
 - The on-action probe of the release gate counted the game's occurrences
   and failed for a mod that extends `on_startup`.
 - The docs of `effects.add_dynamic_modifier()` and

@@ -1544,8 +1544,13 @@ def validate_event(
 
     # ``<id>.d`` is the usual key of a description and also the name a fourth
     # option gets when options are lettered a, b, c, d: both then show one text.
-    option_keys = {option.name for option in event.options if option.name}
-    for label, key in (("title", event.title), ("description", event.description)):
+    option_keys = {option.name for option in event.options if option.name} | {
+        entry.text for option in event.options for entry in option.conditional_names
+    }
+    own_keys = [("title", event.title), ("description", event.description)]
+    own_keys += [("title", entry.text) for entry in event.conditional_titles]
+    own_keys += [("description", entry.text) for entry in event.conditional_descriptions]
+    for label, key in dict.fromkeys(own_keys):
         if not hidden and key and key in option_keys:
             errors.append(
                 ValidationIssue(

@@ -582,6 +582,20 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 # Keep what was read from the game's files for later processes.
                 _disk_cache.flush()
 
+    @staticmethod
+    def _decision_icon_known(icon: str, sprites: set[str]) -> bool:
+        """Whether a decision or category icon names a sprite.
+
+        The game's own files use both prefixes for both kinds (a category
+        with a decision sprite and the other way round), and full names.
+        """
+
+        return (
+            icon in sprites
+            or f"GFX_decision_{icon}" in sprites
+            or f"GFX_decision_category_{icon}" in sprites
+        )
+
     def _validate_once(
         self,
         validate_icons: bool = False,
@@ -737,7 +751,8 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         )
         known_focus_icons = (
             self._known_focus_icons()
-            if validate_icons and (self._focus_trees or self._ideas or self._decisions)
+            if validate_icons
+            and (self._focus_trees or self._ideas or self._decisions or self._decision_categories)
             else set()
         )
         known_state_ids = {entry["id"] for entry in self.state_index()}
@@ -842,15 +857,15 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 validate_icons
                 and known_focus_icons
                 and icon
-                and icon not in known_focus_icons
-                and f"GFX_decision_{icon}" not in known_focus_icons
+                and not self._decision_icon_known(icon, known_focus_icons)
             ):
                 errors.append(
                     ValidationIssue(
                         message=(
-                            f"Decision '{decision.id}' icon '{icon}' has no sprite: neither "
-                            f"'GFX_decision_{icon}' nor '{icon}' is in the interface files. "
-                            "A decision icon is the sprite name without 'GFX_decision_'."
+                            f"Decision '{decision.id}' icon '{icon}' has no sprite: "
+                            f"'GFX_decision_{icon}', 'GFX_decision_category_{icon}' and "
+                            f"'{icon}' are not in the interface files. A decision icon "
+                            "is the sprite name without 'GFX_decision_'."
                         ),
                         severity="warning",
                         code="unknown_decision_icon",
@@ -866,15 +881,15 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 if (
                     icon
                     and (category.touched or category.definition_raw_block)
-                    and icon not in known_focus_icons
-                    and f"GFX_decision_category_{icon}" not in known_focus_icons
+                    and not self._decision_icon_known(icon, known_focus_icons)
                 ):
                     errors.append(
                         ValidationIssue(
                             message=(
                                 f"Decision category '{category.id}' icon '{icon}' has no "
-                                f"sprite: neither 'GFX_decision_category_{icon}' nor "
-                                f"'{icon}' is in the interface files."
+                                f"sprite: 'GFX_decision_category_{icon}', "
+                                f"'GFX_decision_{icon}' and '{icon}' are not in the "
+                                "interface files."
                             ),
                             severity="warning",
                             code="unknown_decision_icon",

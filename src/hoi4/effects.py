@@ -363,7 +363,7 @@ def remove_dynamic_modifier(
     *,
     scope: str | int | None = None,
 ) -> str:
-    """Return ``remove_dynamic_modifier = { ... }``..
+    """Return ``remove_dynamic_modifier = { ... }``.
 
     ``scope`` is the effect's own ``scope = ...`` field: the country or state
     the modifier's variables are read from. It is not where the effect runs.
