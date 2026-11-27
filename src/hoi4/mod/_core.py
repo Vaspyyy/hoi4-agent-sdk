@@ -1402,6 +1402,11 @@ class CoreLayer:
         return rank
 
     def _inherits_file(self, relative: Path) -> bool:
+        """Whether a mod file at ``relative`` would hide a file of a lower layer."""
+
+        if self._mod_hides_inherited(relative) and not (self.mod_root / relative).is_file():
+            # A replace_path of the mod hides the folder already.
+            return False
         if self._content_layers is not None:
             return self._content_layers.inherited(relative) is not None
         return self._base_content is not None and self._base_content.file(relative) is not None
@@ -1421,7 +1426,6 @@ class CoreLayer:
         ("_dirty_focus_trees", "_focus_trees"),
         ("_dirty_events", "_events"),
         ("_dirty_ideas", "_ideas"),
-        ("_dirty_decisions", "_decisions"),
         ("_dirty_decision_categories", "_decision_categories"),
         ("_dirty_dynamic_modifiers", "_dynamic_modifiers"),
         ("_dirty_on_actions", "_on_action_occurrences"),
@@ -1452,6 +1456,14 @@ class CoreLayer:
                     path = getattr(model, "path", None)
                     if isinstance(path, Path):
                         paths.add(path)
+        # A new event has no path until save() gives it its namespace's file.
+        events = state.get("_events") or {}
+        namespaces = state.get("_event_namespaces") or {}
+        for event_id in state.get("_dirty_events", ()):
+            if event_id in events and events[event_id].path is None:
+                paths.add(
+                    self.mod_root / "events" / f"{namespaces.get(event_id) or 'mod'}_events.txt"
+                )
         return paths
 
     def _inherited_sources(self, kind_name: str, key: str) -> list[Path]:
@@ -1596,6 +1608,18 @@ class CoreLayer:
         if sources:
             return self._read_only_error(kind_name, key, sources[0])
         return not_found(kind.name, key, mod_ids, plural=kind.plural)
+
+    def _refuse_inherited(self, kind_name: str, key: str, *, hint: str = "") -> None:
+        """Raise ``ReadOnlyError`` when only the game or a base mod defines ``key``.
+
+        For the ``ensure_x`` helpers: one that finds nothing in the mod would
+        create the definition, and so put a new one of the same id on top of
+        the inherited one without saying so.
+        """
+
+        sources = self._inherited_sources(kind_name, key)
+        if sources:
+            raise self._read_only_error(kind_name, key, sources[0], hint=hint)
 
     def _inherited_origin(self, source: Path) -> str:
         """Who defines an inherited file, in words."""
@@ -1763,6 +1787,7 @@ class CoreLayer:
         # Derived catalogs may reflect imports or localization rolled back above.
         self._state_index_cache.clear()
         self._scan_cache.clear()
+        self._drop_inherited_lookups()
         self._equipment_unlock_cache = None
 
     def _display_path(self, path: Path) -> str:

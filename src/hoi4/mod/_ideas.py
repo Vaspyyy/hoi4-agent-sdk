@@ -147,6 +147,8 @@ class IdeasLayer(CountriesLayer):
         """
         kwargs: dict[str, Any] = dict(fields)
         existing = self.get_idea(idea_id, include_vanilla=False, default=None)
+        if existing is None:
+            self._refuse_inherited("idea", idea_id)
         if existing is not None:
             _refuse_desc("ensure_idea", idea_id, kwargs)
             if kwargs.get("modifier", ...) is None:

@@ -1036,3 +1036,88 @@ def test_list_characters_with_vanilla_makes_no_copies(tmp_path: Path, monkeypatc
     assert mod.list_characters(include_vanilla=True) == ["GER_a", "GER_b", "ITA_a"]
     assert mod.list_characters(tag="GER", include_vanilla=True) == expected_ger == ["GER_a", "GER_b"]
     assert mod.list_characters() == []
+
+
+@pytest.fixture
+def game_content(tmp_path: Path) -> Mod:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "events/own_events.txt", "add_namespace = game\ncountry_event = { id = game.1 title = t }\n")
+    write(game, "common/ideas/game.txt", "ideas = { country = { game_idea = { picture = game_picture } } }\n")
+    write(game, "common/decisions/categories/c.txt", "game_category = { icon = game_icon }\n")
+    write(game, "common/decisions/g.txt", "game_category = { game_decision = { cost = 1 } }\n")
+    return Mod(root, hoi4_install=game)
+
+
+@pytest.mark.parametrize("kind", ["idea", "event", "category", "decision"])
+def test_ensure_helpers_refuse_inherited_only_content(game_content: Mod, kind: str) -> None:
+    mod = game_content
+    calls = {
+        "idea": lambda: mod.ensure_idea("game_idea", cost=5),
+        "event": lambda: mod.ensure_event("game.1", title="mine"),
+        "category": lambda: mod.ensure_decision_category("game_category"),
+        "decision": lambda: mod.ensure_decision("game_category", "game_decision", cost=5),
+    }
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError, match="create_decision" if kind == "category" else "load_inherited_content"):
+        calls[kind]()
+    assert mod.preview() == before == ""
+    assert mod.get_idea("game_idea").path.parent.parent.parent.name == "game"
+    # A decision of the mod's own in the game's category needs no definition.
+    assert mod.ensure_decision("game_category", "mine", cost=2).cost == 2
+    assert mod.get_decision_category("game_category", include_vanilla=False).icon == ""
+
+
+def test_new_event_in_its_namespace_file_hides_the_inherited_file_before_save(game_content: Mod) -> None:
+    mod = game_content
+    assert mod.get_event("game.1").title == "t"
+    mod.create_event("own.1")
+    before = (mod.get_event("game.1", default=None), mod.list_events(include_vanilla=True))
+    assert before == (None, ["own.1"])
+    mod.save()
+    assert (mod.get_event("game.1", default=None), mod.list_events(include_vanilla=True)) == before
+    mod.delete_event("own.1")
+    mod.save()
+    assert (mod.mod_root / "events/own_events.txt").is_file()
+    assert mod.get_event("game.1", default=None) is None
+
+
+def test_transaction_rollback_drops_inherited_lookup_answers(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "events/germany.txt", "add_namespace = germany\ncountry_event = { id = germany.1 title = vanilla }\n")
+    mod = Mod(root, hoi4_install=game)
+    with pytest.raises(RuntimeError), mod.transaction():
+        mod.create_event("own.1")
+        mod.update_event("own.1", path="events/germany.txt")
+        assert mod.get_event("germany.1", default=None) is None
+        raise RuntimeError("roll back")
+    assert mod.get_event("germany.1").title == "vanilla"
+    assert mod.list_events(include_vanilla=True) == ["germany.1"]
+
+
+def test_no_empty_file_under_a_replaced_folder(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/dynamic_modifiers/game_mod.txt", "game_mod = { icon = i }\n")
+    write(root, "descriptor.mod", 'name = "m"\nreplace_path = "common/dynamic_modifiers"\n')
+    mod = Mod(root, hoi4_install=game)
+    mod.create_dynamic_modifier("mine", path="common/dynamic_modifiers/game_mod.txt")
+    mod.delete_dynamic_modifier("mine")
+    assert mod.preview() == ""
+    mod.save(require_changes=False)
+    assert not (root / "common/dynamic_modifiers/game_mod.txt").exists()
+
+
+def test_on_action_source_path_takes_backslashes_and_tag_filter_follows_the_mod(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/on_actions/game.txt", "on_actions = { on_startup = { effect = { log = game } } }\n")
+    write(game, "common/characters/GER.txt", "characters = { leader_one = { name = A } }")
+    write(root, "common/characters/ITA.txt", "characters = { leader_one = { name = B } }")
+    mod = Mod(root, hoi4_install=game)
+    assert "game" in mod.get_on_action("on_startup", source_path="common\\on_actions\\game.txt").effect
+    tag = mod.get_character("leader_one").country_tag
+    other = "GER" if tag == "ITA" else "ITA"
+    assert mod.list_characters(tag=tag, include_vanilla=True) == ["leader_one"]
+    assert mod.list_characters(tag=other, include_vanilla=True) == []

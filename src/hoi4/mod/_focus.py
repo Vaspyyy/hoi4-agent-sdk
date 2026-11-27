@@ -107,16 +107,6 @@ class FocusLayer(ContextLayer):
         """The mod's focus tree ``tree_id``, which an edit may change."""
         return self._mod_definition("focus_tree", self._focus_trees, tree_id)
 
-    def _refuse_inherited_tree(self, tree_id: str) -> None:
-        """Raise ``ReadOnlyError`` when only the game or a base mod defines the tree.
-
-        A helper that would otherwise create the tree must not put an empty
-        tree of the same id on top of the inherited one.
-        """
-        sources = self._inherited_sources("focus_tree", tree_id)
-        if sources:
-            raise self._read_only_error("focus_tree", tree_id, sources[0])
-
     def create_focus_tree(
         self, tree_id: str, tag: str, *, overwrite: bool = False
     ) -> FocusTree:
@@ -167,7 +157,7 @@ class FocusLayer(ContextLayer):
         kwargs: dict[str, Any] = dict(fields)
         existing = self.get_focus_tree(tree_id, include_vanilla=False, default=None)
         if existing is None:
-            self._refuse_inherited_tree(tree_id)
+            self._refuse_inherited("focus_tree", tree_id)
         tag = require_country_tag(tag)
         _check_fields(
             "ensure_focus_tree",
@@ -656,7 +646,7 @@ class FocusLayer(ContextLayer):
         # leaves nothing staged (no new tree, no localisation).
         existing = self.get_focus_tree(tree_id) if tree_id in self._focus_trees else None
         if existing is None:
-            self._refuse_inherited_tree(tree_id)
+            self._refuse_inherited("focus_tree", tree_id)
         if anchor_focus_id:
             if existing is None:
                 raise not_found(

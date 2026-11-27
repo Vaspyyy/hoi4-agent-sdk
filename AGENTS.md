@@ -156,7 +156,7 @@ All four classes are importable from `hoi4` (`Hoi4Error` is their base). See
     Every finding has a severity: `error`, `warning` or `info` (advice). `validate()` hides advice unless you pass `advice=True`; `validate_effect()` shows it unless `advice=False`.
     Every code and its severity is listed in [`docs/validation.md`](docs/validation.md).
 
-11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `ensure_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`.
+11. Use idempotent/patch-style helpers when editing existing content: `ensure_idea()`, `ensure_event()`, `ensure_focus_tree()`, `ensure_focus()`, `insert_focus_after()`, `insert_branch()`, `append_to_focus_reward()`, `set_focuses_mutually_exclusive()`. The `ensure_*` helpers work on the mod's own content: for an id that only the game or a base mod defines they raise `ReadOnlyError` instead of putting a new definition on top of it.
 
 12. Use `get_country_context(tag)` before generating country-specific content. Pass `copy_states=True` before directly modifying vanilla states.
 

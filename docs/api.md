@@ -584,7 +584,7 @@ mod.create_event("sic.2", mean_time_to_happen="{ days = 1 }")  # normalized to d
 | `list_events(*, include_vanilla=False) -> list[str]` | All loaded events |
 | `get_event(event_id, *, include_vanilla=True, default=...) -> Event` | Raises `NotFoundError` with close matches if not found |
 | `create_event(event_id, *, title="", description="", event_type="country_event", picture="GFX_report_event_generic", is_triggered_only=False, fire_only_once=None, trigger="", immediate="", mean_time_to_happen="", options=None, overwrite=False, conditional_titles=None, conditional_descriptions=None) -> Event` | Creates event. Raises if the event exists unless `overwrite=True`. Default option auto-generated if none provided. Dotted IDs infer the namespace: the text before the last dot. Conditional titles and descriptions are written before the plain fallback. |
-| `ensure_event(event_id, **fields) -> Event` | Idempotent create-or-update wrapper |
+| `ensure_event(event_id, **fields) -> Event` | Idempotent create-or-update wrapper. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
 | `update_event(event_id, **fields) -> Event` | Update any Event field, including `conditional_titles` and `conditional_descriptions` |
 | `update_event_option(event_id, option, **fields) -> EventOption` | Update one option by zero-based index or option name. Supports `name`, `conditional_names`, `effect`, `trigger`, and `ai_chance`. |
 | `delete_event(event_id) -> None` | Remove event and its namespace mapping; raises `NotFoundError` |
@@ -766,8 +766,8 @@ patches those files separately.
 | `get_decision_category(category_id, *, include_vanilla=True, default=...) -> DecisionCategory` | Get a category |
 | `create_decision_category(category_id, *, icon="", allowed="", visible="", path=None, category_path=None, overwrite=False) -> DecisionCategory` | Create or route a category. `path` targets decision content; optional `category_path` must be under `common/decisions/categories`. Raises if it exists unless `overwrite=True`. |
 | `create_decision(category_id, decision_id, *, icon="", cost=None, days_remove=None, fire_only_once=None, available="", visible="", complete_effect="", remove_effect="", ai_will_do="", path=None, overwrite=False, days_mission_timeout=None, activation="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", allowed="", days_re_enable=None, war_with_on_remove="", custom_cost_trigger="", custom_cost_text="", cancel_if_not_visible=None, modifier="", remove_trigger="", highlight_states="", priority=None) -> Decision` | Create a decision in a category. Raises if it exists unless `overwrite=True`. A category the mod does not define is extended in the mod's decisions file without writing a category definition (that would replace the game's); with a game install, a category that no one defines raises `NotFoundError` (create it with `create_decision_category()` first). Also accepts every mission, targeted, and general field listed below by keyword. |
-| `ensure_decision_category(category_id, **fields) -> DecisionCategory` | Idempotent create-or-update wrapper |
-| `ensure_decision(category_id, decision_id, **fields) -> Decision` | Idempotent create-or-update wrapper; an existing decision in another category raises `ValueError` |
+| `ensure_decision_category(category_id, **fields) -> DecisionCategory` | Idempotent create-or-update wrapper. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
+| `ensure_decision(category_id, decision_id, **fields) -> Decision` | Idempotent create-or-update wrapper; an existing decision in another category raises `ValueError`. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
 | `create_decision_chain(category_id, steps, *, prefix=None, icon="", category_icon="", path=None, final_event=None, overwrite=False) -> list[Decision]` | Build staged decisions with generated completion flags, event calls, localization, and final event. A category of the game or a base mod only gets the decisions added (its definition is left alone unless `category_icon` is passed); a misspelled step key raises `TypeError`, an id that is in `steps` twice raises `AlreadyExistsError`. Every step is checked first (an id, a decision of that id in another category raises `ValueError`), so a call that raises stages nothing. With `path`, an existing decision moves with its category and is updated in place |
 | `create_mission(category_id, decision_id, *, days_mission_timeout, activation="", available="", complete_effect="", timeout_effect="", cancel_trigger="", cancel_effect="", is_good=None, selectable_mission=None, loc_name="", loc_desc="", **fields) -> Decision` | Create a mission: it starts when `activation` holds, completes with `complete_effect` once `available` holds, otherwise runs `timeout_effect` after the timeout. Rejects a positive `cost`/`custom_cost_trigger` and non-positive timeouts. |
 | `create_targeted_decision(category_id, decision_id, *, target_trigger="", targets=(), target_array="", target_root_trigger="", state_target=None, targets_dynamic=None, target_non_existing=None, on_map_mode="", loc_name="", loc_desc="", **fields) -> Decision` | Create a decision with one instance per target country or state. Requires at least one of `target_trigger`, `targets`, `target_array`, or `state_target=True`. |
@@ -891,7 +891,7 @@ SDK output as an error and removes it when the idea is edited.
 | `list_ideas(*, include_vanilla=False) -> list[str]` | All loaded ideas |
 | `get_idea(idea_id, *, include_vanilla=True, default=...) -> Idea` | Raises `NotFoundError` if not found |
 | `create_idea(idea_id, *, icon="generic_political_support", modifier=None, category="country", path=None, overwrite=False, removal_cost=None) -> Idea` | Creates idea. `icon` is the compatibility name for the bare `picture` stem; an input `GFX_idea_` prefix is accepted and stripped. Raises if the idea exists unless `overwrite=True`. `desc` is retained only for source compatibility and, when supplied, must equal `{idea_id}_desc`; it is not serialized. Use `set_loc()` for the text. |
-| `ensure_idea(idea_id, *, merge_modifier=False, **fields) -> Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. |
+| `ensure_idea(idea_id, *, merge_modifier=False, **fields) -> Idea` | Idempotent create-or-update wrapper using the same modifier semantics as `update_idea()`. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
 | `update_idea(idea_id, *, merge_modifier=False, **fields) -> Idea` | Updates fields. A supplied `modifier` replaces the full mapping, so `modifier={}` removes the block. Pass `merge_modifier=True` for key-by-key merging. Saving rewrites only the values that differ and keeps repeated keys such as `custom_modifier_tooltip`. |
 | `delete_idea(idea_id) -> None` | Stage the deletion; raises `NotFoundError` |
 | `suggest_idea_icons(query, *, count=5) -> list[str]` | Rank loaded `GFX_idea_` sprites and return canonical bare stems. Prefixed queries remain accepted. |
@@ -949,8 +949,8 @@ block's key. The game has no tree with that ID, so never use it in
 `load_focus_tree` or a country selector. The usual focus methods edit these
 focuses with the same guarantees, and `add_focus()` with
 `Focus(..., kind="shared_focus")` adds a new top-level block. A file the game
-ships is copied into the mod first, because the game's focus files are not
-loaded:
+ships is copied into the mod first, because the game's focus files are read
+only:
 
 ```python
 from hoi4 import Focus
@@ -977,7 +977,7 @@ static checks do not establish the layout displayed by the game.
 | `list_focus_trees(*, include_vanilla=False) -> list[str]` | All loaded tree IDs |
 | `get_focus_tree(tree_id, *, include_vanilla=True, default=...) -> FocusTree` | Raises `NotFoundError` if not found |
 | `create_focus_tree(tree_id, tag, *, overwrite=False) -> FocusTree` | Creates empty tree linked to tag. Raises if it exists unless `overwrite=True`. |
-| `ensure_focus_tree(tree_id, tag, **fields) -> FocusTree` | Idempotent create-or-update for tree-level fields; an existing tree of another country raises `ValueError` |
+| `ensure_focus_tree(tree_id, tag, **fields) -> FocusTree` | Idempotent create-or-update for tree-level fields; an existing tree of another country raises `ValueError`. Raises `ReadOnlyError` when only the game or a base mod defines the id. |
 | `update_focus_tree(tree_id, **fields) -> FocusTree` | Update tree-level properties like `continuous_focus_position`, `default`, or `shared_focuses` |
 | `delete_focus_tree(tree_id) -> None` | Remove tree; raises `NotFoundError` |
 | `add_focus(tree_id, focus) -> Focus` | Append focus to tree; an id the tree has raises `AlreadyExistsError` |

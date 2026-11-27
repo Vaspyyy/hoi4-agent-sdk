@@ -88,6 +88,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 # without the copy a lookup hands out.
                 by_file: dict[Path, dict[str, Character]] = {}
                 for character_id, sources in self._inherited_index_of("character").items():
+                    if character_id in self._characters:
+                        continue  # the mod's definition is the one that counts
                     source = next(
                         (item for item in sources if self._inherited_file_visible(item)), None
                     )
@@ -635,34 +637,6 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         character.path = target
         self._characters[character.id] = character
         self._dirty_character_files.add(target)
-
-    def _load_vanilla_characters(self, tag: str | None) -> None:
-        if self._base_content is None:
-            return
-        folder = "common/characters"
-        if tag is None:
-            paths = list(self._base_content.glob(folder, "*.txt").values())
-        else:
-            preferred = [
-                self._base_content.file(f"{folder}/{tag}.txt"),
-                self._base_content.file(f"{folder}/{tag}_characters.txt"),
-            ]
-            paths = [path for path in preferred if path is not None]
-            if not paths:
-                paths = list(self._base_content.glob(folder, f"{tag}*.txt").values())
-        for path in paths:
-            cache_key = f"character_file:{path}"
-            if cache_key in self._scan_cache:
-                continue
-            try:
-                for character in load_characters_file(path, country_tag=tag or ""):
-                    self._characters.setdefault(character.id, character)
-            except (OSError, ValueError):
-                pass
-            self._scan_cache[cache_key] = set()
-            # Characters of the game or a base mod, cached by this lookup:
-            # save() and discard() drop them with the section.
-            self._reload_on_discard.add("characters")
 
     @staticmethod
     def _all_character_roles(character: Character) -> tuple[CharacterRole, ...]:

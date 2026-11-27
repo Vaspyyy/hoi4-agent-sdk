@@ -236,6 +236,8 @@ class EventsLayer(CoreLayer):
         """
         kwargs: dict[str, Any] = dict(fields)
         existing = self.get_event(event_id, include_vanilla=False, default=None)
+        if existing is None:
+            self._refuse_inherited("event", event_id)
         if existing is not None:
             _normalize_conditional_texts("ensure_event", kwargs, _EVENT_TEXT_LISTS)
             _check_fields("ensure_event", existing, kwargs, allow_path=True)

@@ -278,6 +278,13 @@ class DecisionsLayer(LocalisationLayer):
         """
         kwargs: dict[str, Any] = dict(fields)
         existing = self.get_decision_category(category_id, include_vanilla=False, default=None)
+        if existing is None:
+            self._refuse_inherited(
+                "decision_category",
+                category_id,
+                hint="To add decisions to this category, call create_decision() with its id: "
+                "that needs no definition of the category in the mod.",
+            )
         if existing is not None:
             _check_fields(
                 "ensure_decision_category", existing, kwargs, extra={"path", "category_path"}
@@ -602,6 +609,8 @@ class DecisionsLayer(LocalisationLayer):
         """
         kwargs: dict[str, Any] = dict(fields)
         existing = self.get_decision(decision_id, include_vanilla=False, default=None)
+        if existing is None:
+            self._refuse_inherited("decision", decision_id)
         if existing is not None:
             if existing.category != category_id:
                 raise ValueError(

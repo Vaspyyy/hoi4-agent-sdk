@@ -29,8 +29,9 @@ Usage (the quick start of ``README.md``)::
     # This dry run discards its changes on exit. After reviewing the output,
     # rerun the block with mod.transaction(save=True) to apply and save the edits.
 
-A focus tree the game ships is not visible to ``get_focus_tree()`` until its
-file is copied into the mod with ``mod.load_inherited_content(path)``.
+``get_focus_tree()`` also reads the focus trees the game ships, as read-only
+copies. To edit one, copy its file into the mod first with
+``mod.load_inherited_content(path)``.
 """
 
 import importlib.metadata as _metadata

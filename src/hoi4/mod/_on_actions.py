@@ -140,6 +140,8 @@ class OnActionsLayer(CoreLayer):
             # A path as an occurrence reports it (absolute, also of the game or
             # a base mod), or a path inside the mod or an inherited layer.
             wanted = Path(source_path)
+            if not wanted.is_absolute():
+                wanted = Path(str(source_path).replace("\\", "/"))
             target = (
                 wanted.resolve(strict=False)
                 if wanted.is_absolute()
