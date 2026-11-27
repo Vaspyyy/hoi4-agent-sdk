@@ -34,9 +34,11 @@ jobs:
             pyproject.toml
             requirements/*.txt
       - run: python -m pip install pip -c requirements/ci.txt
-      - run: python -m pip install -e '.[dev]' -c requirements/ci.txt
+      - run: python -m pip install -e '.[dev,assets,map]' -c requirements/ci.txt
       - run: python -m ruff check src/ examples/ scripts/ tests/
       - run: python -m mypy --no-site-packages src/
+      # The docs' examples need the optional packages, which the core jobs lack.
+      - run: python -m pytest tests/test_doc_blocks.py tests/test_errors.py -q
       - run: python -m pip_audit --local --skip-editable
       - run: git diff --check
       - name: Validate package/runtime/changelog identity

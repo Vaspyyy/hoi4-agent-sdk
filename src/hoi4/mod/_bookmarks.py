@@ -208,7 +208,7 @@ class BookmarksLayer(CoreLayer):
             AlreadyExistsError: The bookmark already has an entry for this tag
                 with the same ``required_dlc``; use ``update_bookmark_country()``.
         """
-        _check_model("add_bookmark_country", country, "country")
+        _check_model("add_bookmark_country", country, "country", (BookmarkCountry,))
         bookmark = self._mod_bookmark(bookmark_name)
         tag = require_bookmark_country_key(country.tag)
         required_dlc = normalize_required_dlc(country.required_dlc)

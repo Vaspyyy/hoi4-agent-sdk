@@ -1225,14 +1225,14 @@ def test_a_model_handed_over_whole_is_checked_too(tmp_path) -> None:
     mod.create_country("ABC", "Abcland")
     with pytest.raises(TypeError, match=r"create_character\(\): character.portraits must"):
         mod.create_character("ABC", hoi4.Character(id="ABC_x", name="X", portraits=["x"]))  # type: ignore[list-item]
-    with pytest.raises(TypeError, match=r"create_character\(\): character must be a model"):
+    with pytest.raises(TypeError, match=r"create_character\(\): character must be a "):
         mod.create_character("ABC", "ABC_x")  # type: ignore[arg-type]
     assert mod.list_characters(include_vanilla=False) == ["ABC_leader_1"]  # only the country's own
     mod.create_character("ABC", hoi4.Character(id="ABC_x", name="X"))
-    with pytest.raises(TypeError, match=r"add_character_instance\(\): instance must be a model"):
+    with pytest.raises(TypeError, match=r"add_character_instance\(\): instance must be a "):
         mod.add_character_instance("ABC_x", "x")  # type: ignore[arg-type]
     mod.create_event("zz.1")
-    with pytest.raises(TypeError, match=r"add_event_option\(\): option must be a model"):
+    with pytest.raises(TypeError, match=r"add_event_option\(\): option must be a "):
         mod.add_event_option("zz.1", "zz.1.b")  # type: ignore[arg-type]
     mod.preview()
 
@@ -1272,16 +1272,16 @@ def test_a_whole_model_of_the_wrong_class_is_refused_at_the_call(tmp_path) -> No
     mod.add_focus("zz_tree", hoi4.Focus(id="ABC_a", x=0, y=0))
     mod.create_bookmark("ZZ")
     for call, pattern in [
-        (lambda: mod.add_character_role("ABC_x", "advisor"), r"add_character_role\(\): role must be a model"),  # type: ignore[arg-type]
-        (lambda: mod.add_focus("zz_tree", "x"), r"add_focus\(\): focus must be a model"),  # type: ignore[arg-type]
-        (lambda: mod.ensure_focus("zz_tree", "x"), r"ensure_focus\(\): focus must be a model"),  # type: ignore[arg-type]
+        (lambda: mod.add_character_role("ABC_x", "advisor"), r"add_character_role\(\): role must be a "),  # type: ignore[arg-type]
+        (lambda: mod.add_focus("zz_tree", "x"), r"add_focus\(\): focus must be a "),  # type: ignore[arg-type]
+        (lambda: mod.ensure_focus("zz_tree", "x"), r"ensure_focus\(\): focus must be a "),  # type: ignore[arg-type]
         (
             lambda: mod.insert_focus_after("zz_tree", "ABC_a", "x"),  # type: ignore[arg-type]
-            r"insert_focus_after\(\): focus must be a model",
+            r"insert_focus_after\(\): focus must be a ",
         ),
         (lambda: mod.insert_branch("zz_tree", "ABC_a", ["x"]), r"insert_branch\(\): focuses must hold Focus"),  # type: ignore[list-item]
-        (lambda: mod.create_equipment_variant("ABC", "x"), r"create_equipment_variant\(\): variant must be a model"),  # type: ignore[arg-type]
-        (lambda: mod.add_bookmark_country("ZZ", "GER"), r"add_bookmark_country\(\): country must be a model"),  # type: ignore[arg-type]
+        (lambda: mod.create_equipment_variant("ABC", "x"), r"create_equipment_variant\(\): variant must be a "),  # type: ignore[arg-type]
+        (lambda: mod.add_bookmark_country("ZZ", "GER"), r"add_bookmark_country\(\): country must be a "),  # type: ignore[arg-type]
     ]:
         before = mod.preview()
         with pytest.raises(TypeError, match=pattern):
@@ -1307,7 +1307,6 @@ def test_a_model_handed_over_whole_is_not_rewritten(tmp_path) -> None:
         ("update_event", ("zz.1",), "trigger"),
         ("update_event", ("zz.1",), "event_type"),
         ("update_idea", ("zz_idea",), "traits"),
-        ("update_idea", ("zz_idea",), "modifier"),
         ("update_decision_category", ("zz_cat",), "decisions"),
         ("update_focus_tree", ("zz_tree",), "focuses"),
         ("update_focus", ("zz_tree", "ABC_a"), "x"),
@@ -1350,3 +1349,83 @@ def test_none_still_clears_a_field_that_can_be_empty(tmp_path) -> None:
     mod.create_oob("ABC_o", "ABC")
     mod.update_oob("ABC_o", templates=None)  # a keyword that means "not given"
     mod.preview()
+
+
+# ── Round 5 of the review ──
+
+
+def test_a_model_of_another_class_is_refused_at_the_call(tmp_path) -> None:
+    """Before, only "is it a model" was asked: a ``Focus`` passed as a role."""
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    mod.create_character("ABC", hoi4.Character(id="ABC_x", name="X"))
+    mod.create_focus_tree("zz_tree", "ABC")
+    mod.create_event("zz.1")
+    mod.create_bookmark("ZZ")
+    wrong = hoi4.Focus(id="ABC_f", x=0, y=0)
+    other = hoi4.EventOption(name="zz.1.b")
+    for call in (
+        lambda: mod.add_character_role("ABC_x", wrong),  # type: ignore[arg-type]
+        lambda: mod.create_character("ABC", wrong),  # type: ignore[arg-type]
+        lambda: mod.add_character_instance("ABC_x", wrong),  # type: ignore[arg-type]
+        lambda: mod.add_event_option("zz.1", wrong),  # type: ignore[arg-type]
+        lambda: mod.add_focus("zz_tree", other),  # type: ignore[arg-type]
+        lambda: mod.ensure_focus("zz_tree", other),  # type: ignore[arg-type]
+        lambda: mod.add_bookmark_country("ZZ", wrong),  # type: ignore[arg-type]
+        lambda: mod.create_equipment_variant("ABC", wrong),  # type: ignore[arg-type]
+    ):
+        before = mod.preview()
+        with pytest.raises(TypeError, match=r"\(\): \w+ must be a .* object, got (Focus|EventOption)"):
+            call()
+        assert mod.preview() == before
+
+
+def test_update_country_checks_the_leader_fields_before_it_changes_anything(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    mod.save()
+    mod = Mod(tmp_path)
+    with pytest.raises(TypeError, match=r"update_country\(\): leader_name cannot be None"):
+        mod.update_country("ABC", name="Renamed", leader_name=None)  # type: ignore[arg-type]
+    assert mod.get_country("ABC").name == "Abcland"
+    assert mod.preview() == ""
+
+
+def test_none_still_means_not_given_where_it_did(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    for _ in range(2):  # the create path, then the update path
+        idea = mod.ensure_idea("zz_idea", modifier=None)
+    mod.update_idea("zz_idea", modifier={"stability_factor": 0.1})
+    assert mod.update_idea("zz_idea", modifier=None).modifier == {"stability_factor": 0.1}
+    assert idea.id == "zz_idea"
+    for _ in range(2):
+        mod.ensure_decision_category("zz_cat", category_path=None)
+
+
+def test_conditional_texts_take_pairs_and_dicts_as_before(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_event("zz.1", conditional_titles=[("zz.1.t.ger", "tag = GER")])
+    mod.update_event("zz.1", conditional_titles=[{"text": "zz.1.t.fra", "trigger": "tag = FRA"}])
+    assert [text.text for text in mod.get_event("zz.1").conditional_titles] == ["zz.1.t.fra"]
+    mod.update_event_option("zz.1", 0, conditional_names=[("zz.1.a.ger", "tag = GER")])
+    assert mod.update_event("zz.1", conditional_titles=None).conditional_titles == []
+    for _ in range(2):  # the create path, then the update path
+        mod.ensure_event("zz.3", conditional_titles=[("zz.3.t.ger", "tag = GER")])
+    assert mod.ensure_event("zz.3", conditional_titles=None).conditional_titles == []
+    before = mod.preview()
+    for bad in ([1], ["x"], "x", 7):
+        with pytest.raises(TypeError, match=r"create_event\(\): conditional_titles must"):
+            mod.create_event("zz.2", conditional_titles=bad)  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match=r"update_event\(\): conditional_titles must"):
+            mod.update_event("zz.1", conditional_titles=bad)  # type: ignore[arg-type]
+    assert mod.preview() == before
+    assert mod.list_events() == ["zz.1", "zz.3"]
+
+
+def test_create_oob_refuses_none_for_a_collection(tmp_path) -> None:
+    mod = Mod(tmp_path)
+    mod.create_country("ABC", "Abcland")
+    for field in ("templates", "divisions", "fleets", "air_wings"):
+        with pytest.raises(TypeError, match=rf"create_oob\(\): {field} cannot be None"):
+            mod.create_oob("ABC_o", "ABC", **{field: None})
+    assert mod.list_oobs() == []

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Unpack
 
 from ..fields import EnsureEventFields, EventFields, EventOptionFields
@@ -51,12 +52,36 @@ def _normalize_event_option(option: EventOption) -> EventOption:
 _EVENT_TEXT_LISTS = ("conditional_titles", "conditional_descriptions")
 
 
-def _normalize_conditional_texts(kwargs: dict[str, Any], lists: tuple[str, ...]) -> None:
-    """Turn the entries of a conditional text list into ``EventText`` objects."""
+def _normalize_conditional_texts(
+    method: str, kwargs: dict[str, Any], lists: tuple[str, ...]
+) -> None:
+    """Turn the entries of a conditional text list into ``EventText`` objects.
+
+    An entry is an ``EventText``, a ``(text, trigger)`` pair or a dict with
+    ``text``; ``None`` for the list clears it. Call it before the field
+    check, which wants ``EventText`` objects.
+    """
 
     for conditional in lists:
         if conditional in kwargs:
-            kwargs[conditional] = [_event_text(entry) for entry in kwargs[conditional] or ()]
+            kwargs[conditional] = _event_texts(method, conditional, kwargs[conditional])
+
+
+def _event_texts(method: str, name: str, entries: object) -> list[EventText]:
+    if entries is None:
+        return []
+    if isinstance(entries, (str, bytes, dict)) or not isinstance(entries, Iterable):
+        raise TypeError(f"{method}(): {name} must be a list, got {type(entries).__name__}")
+    texts: list[EventText] = []
+    for entry in entries:
+        pair = isinstance(entry, (tuple, list)) and len(entry) == 2
+        if not (isinstance(entry, EventText) or pair or (isinstance(entry, dict) and "text" in entry)):
+            raise TypeError(
+                f"{method}(): {name} must hold EventText objects, (text, trigger) pairs "
+                f"or dicts with 'text', got {type(entry).__name__}"
+            )
+        texts.append(_event_text(entry))
+    return texts
 
 
 def _event_text(entry: EventText | tuple[str, str] | dict[str, str]) -> EventText:
@@ -159,6 +184,10 @@ class EventsLayer(CoreLayer):
         event_id = require_script_id(event_id, label="event ID")
         if options is not None:
             options = _require_items("create_event", "options", options, (EventOption,))
+        titles = _event_texts("create_event", "conditional_titles", conditional_titles)
+        descriptions = _event_texts(
+            "create_event", "conditional_descriptions", conditional_descriptions
+        )
         existing = self._events.get(event_id)
         if existing is not None and not overwrite:
             raise AlreadyExistsError(
@@ -183,10 +212,8 @@ class EventsLayer(CoreLayer):
             ],
             path=existing.path if existing is not None else None,
             touched=True,
-            conditional_titles=[_event_text(entry) for entry in conditional_titles or ()],
-            conditional_descriptions=[
-                _event_text(entry) for entry in conditional_descriptions or ()
-            ],
+            conditional_titles=titles,
+            conditional_descriptions=descriptions,
         )
         self._events[event_id] = event
         self._event_namespaces[event_id] = (
@@ -210,6 +237,7 @@ class EventsLayer(CoreLayer):
         kwargs: dict[str, Any] = dict(fields)
         existing = self.get_event(event_id, include_vanilla=False, default=None)
         if existing is not None:
+            _normalize_conditional_texts("ensure_event", kwargs, _EVENT_TEXT_LISTS)
             _check_fields("ensure_event", existing, kwargs, allow_path=True)
             return self.update_event(event_id, **kwargs)
         _check_field_names(
@@ -236,6 +264,7 @@ class EventsLayer(CoreLayer):
         event = self._mod_event(event_id)
         if "id" in kwargs:
             raise ValueError("Event IDs are immutable; create a new event instead")
+        _normalize_conditional_texts("update_event", kwargs, _EVENT_TEXT_LISTS)
         _check_fields("update_event", event, kwargs, allow_path=True)
         old_path = (
             event.path
@@ -250,7 +279,6 @@ class EventsLayer(CoreLayer):
                 kwargs[key] = normalize_block_body(kwargs[key])
         if "options" in kwargs and isinstance(kwargs["options"], list):
             kwargs["options"] = [_normalize_event_option(option) for option in kwargs["options"]]
-        _normalize_conditional_texts(kwargs, _EVENT_TEXT_LISTS)
         _set_fields(event, kwargs, allow_path=True)
         event.touched_fields.update(kwargs)
         event.touched = True
@@ -318,7 +346,7 @@ class EventsLayer(CoreLayer):
             AlreadyExistsError: The event already has an option with this name.
         """
         event = self._mod_event(event_id)
-        _check_model("add_event_option", option, "option")
+        _check_model("add_event_option", option, "option", (EventOption,))
         if option.name and any(existing.name == option.name for existing in event.options):
             raise already_exists(
                 "event option",
@@ -366,11 +394,11 @@ class EventsLayer(CoreLayer):
                     (candidate.name for candidate in event.options if candidate.name),
                     where=f"event '{event_id}'",
                 )
+        _normalize_conditional_texts("update_event_option", kwargs, ("conditional_names",))
         _check_fields("update_event_option", event_option, kwargs)
         for key in ("trigger", "ai_chance"):
             if key in kwargs and isinstance(kwargs[key], str):
                 kwargs[key] = normalize_block_body(kwargs[key])
-        _normalize_conditional_texts(kwargs, ("conditional_names",))
         assert event_option is not None
         _set_fields(event_option, kwargs)
         _normalize_event_option(event_option)

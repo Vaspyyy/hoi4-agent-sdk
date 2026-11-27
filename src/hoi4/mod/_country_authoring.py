@@ -33,6 +33,7 @@ from ._characters import CharactersLayer
 from ._shared import (
     _check_field_names,
     _check_fields,
+    _nullable_fields,
     _set_fields,
     _settable_fields,
 )
@@ -326,6 +327,13 @@ class CountryAuthoringLayer(CharactersLayer):
             leader_fields,
         )
         _check_country_values("update_country", other_kwargs, allow_none=False)
+        leader_can_be_none = _nullable_fields(Leader) or frozenset()
+        for key, value in leader_kwargs.items():
+            if value is None and key not in leader_can_be_none:
+                raise TypeError(
+                    f"update_country(): leader_{key} cannot be None. Pass an empty value "
+                    "of the field's own type to clear it."
+                )
         if other_kwargs.get("color_ui") is not None and not self._has_color_table_entry(tag):
             raise ValueError(
                 f"update_country(): color_ui of '{tag}' cannot be set: a save would not "
@@ -343,7 +351,7 @@ class CountryAuthoringLayer(CharactersLayer):
         if leader_kwargs:
             if country.leader is None:
                 country.leader = Leader(name="Leader", character_id=f"{tag}_leader_1")
-            _set_fields(country.leader, leader_kwargs)
+            _set_fields(country.leader, leader_kwargs, method="update_country")
         country.touched_fields.update(other_kwargs)
         country.touched_fields.update(f"leader_{key}" for key in leader_kwargs)
         if "technologies" in other_kwargs:

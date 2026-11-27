@@ -242,7 +242,7 @@ class FocusLayer(ContextLayer):
             AlreadyExistsError: The tree already has a focus with this id;
                 use ``update_focus()`` or ``ensure_focus()``.
         """
-        _check_model("add_focus", focus, "focus")
+        _check_model("add_focus", focus, "focus", (Focus,))
         tree = self._mod_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
         _require_new_focus_ids(tree, [focus])
@@ -351,7 +351,7 @@ class FocusLayer(ContextLayer):
             TypeError: ``focus`` is not a ``Focus``; nothing changed.
             NotFoundError: No focus tree has this id.
         """
-        _check_model("ensure_focus", focus, "focus")
+        _check_model("ensure_focus", focus, "focus", (Focus,))
         existing = self._require_focus_or_none(self._mod_focus_tree(tree_id), focus.id)
         if existing is None:
             return self.add_focus(tree_id, focus)
@@ -503,7 +503,7 @@ class FocusLayer(ContextLayer):
             NotFoundError: The tree or the anchor focus does not exist.
             AlreadyExistsError: The tree already has a focus with this id.
         """
-        _check_model("insert_focus_after", focus, "focus")
+        _check_model("insert_focus_after", focus, "focus", (Focus,))
         tree = self._mod_focus_tree(tree_id)
         _require_focus_kind(tree, focus.kind)
         anchor = self._require_focus(tree, anchor_focus_id)
