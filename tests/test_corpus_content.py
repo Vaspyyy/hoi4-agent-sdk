@@ -48,6 +48,11 @@ FOLDERS = ("events", "common/national_focus", "common/ideas", "common/decisions"
 #: Real mistakes in the game's files (HOI4 1.19), as ``(code, file name,
 #: text in the message)``. Each is explained in the comment above it.
 KNOWN_GAME_MISTAKES = {
+    # ``prerequisite = { focus = ROM_reaffirm_the_little_entente focus =
+    # ROM_align_with_germany focus = ROM_cooperate_against_communism }`` on
+    # ROM_cooperate_against_communism itself: the focus lists itself as one of
+    # its own alternatives (since the game update of 2026-11-27).
+    ("focus_cycle", "romania_ttbe.txt", "ROM_cooperate_against_communism"),
     # ``search_filters = { FOCUS_FILTER_INDUSTRIAL }``: no such sprite; every
     # other focus uses FOCUS_FILTER_INDUSTRY.
     ("unknown_focus_search_filter", "paraguay_uruguay_shared_branch.txt", "FOCUS_FILTER_INDUSTRIAL"),

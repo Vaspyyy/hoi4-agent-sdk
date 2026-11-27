@@ -69,7 +69,8 @@ KNOWN_GAME_MISTAKES = {
     # THIS is a state in an any_state limit; states have no civilian factory count.
     ("events/BFTB_Turkey.txt", 4880, "unsupported_trigger_scope", "num_of_civilian_factories"),
     # An option's ``name = ...`` pasted into an ``immediate`` block.
-    ("events/TTBE_Romania.txt", 3311, "unknown_effect_token", "name"),
+    # (Line 3311 before the game update of 2026-11-27.)
+    ("events/TTBE_Romania.txt", 3413, "unknown_effect_token", "name"),
 }
 
 
