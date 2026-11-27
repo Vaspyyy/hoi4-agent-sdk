@@ -1413,7 +1413,46 @@ class CoreLayer:
         if relative is None:
             return True
         target = self.mod_root / relative
-        return target not in self._original_files and not target.is_file()
+        if target in self._original_files or target.is_file():
+            return False
+        return not self._dirty or target not in self._staged_file_paths()
+
+    _STAGED_TABLES: tuple[tuple[str, str], ...] = (
+        ("_dirty_focus_trees", "_focus_trees"),
+        ("_dirty_events", "_events"),
+        ("_dirty_ideas", "_ideas"),
+        ("_dirty_decisions", "_decisions"),
+        ("_dirty_decision_categories", "_decision_categories"),
+        ("_dirty_dynamic_modifiers", "_dynamic_modifiers"),
+        ("_dirty_on_actions", "_on_action_occurrences"),
+        ("_dirty_characters", "_characters"),
+    )
+
+    def _staged_file_paths(self) -> set[Path]:
+        """The mod files the staged changes will write (or empty) on save().
+
+        A file about to be written hides the inherited file of the same name
+        just as a file on disk does, so a lookup answers the same before and
+        after save(). Reads only what is loaded: it never loads a section.
+        """
+
+        state = self.__dict__
+        paths: set[Path] = set()
+        for name, value in state.items():
+            if name.startswith("_dirty_") and name.endswith("_files"):
+                paths.update(path for path in value if isinstance(path, Path))
+        for item in state.get("_dirty_bookmarks", ()):
+            if isinstance(item, tuple) and item and isinstance(item[0], Path):
+                paths.add(item[0])
+        for dirty_name, table_name in self._STAGED_TABLES:
+            table = state.get(table_name) or {}
+            for key in state.get(dirty_name, ()):
+                found = table.get(key)
+                for model in found if isinstance(found, list) else (found,):
+                    path = getattr(model, "path", None)
+                    if isinstance(path, Path):
+                        paths.add(path)
+        return paths
 
     def _inherited_sources(self, kind_name: str, key: str) -> list[Path]:
         """The inherited files that define ``key``, the highest layer first."""

@@ -81,10 +81,26 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             if normalized is None or character.country_tag == normalized
         }
         if include_vanilla:
-            for character_id in self._inherited_ids("character"):
-                character = self._inherited_definition("character", character_id)
-                if character is not None and (normalized is None or character.country_tag == normalized):
-                    own.add(character_id)
+            if normalized is None:
+                own |= self._inherited_ids("character")
+            else:
+                # Only the tag is needed: read the files' models as they are,
+                # without the copy a lookup hands out.
+                by_file: dict[Path, dict[str, Character]] = {}
+                for character_id, sources in self._inherited_index_of("character").items():
+                    source = next(
+                        (item for item in sources if self._inherited_file_visible(item)), None
+                    )
+                    if source is None:
+                        continue
+                    if source not in by_file:
+                        by_file[source] = {
+                            model.id: model
+                            for model in reversed(self._inherited_file_models("character", source))
+                        }
+                    found = by_file[source].get(character_id)
+                    if found is not None and found.country_tag == normalized:
+                        own.add(character_id)
         return sorted(own)
 
     def get_character(
@@ -96,8 +112,8 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
     ) -> Character | _D:
         """Return the character ``character_id``.
 
-        ``include_vanilla`` also loads the game's and base mods' characters
-        of the tag in the id's prefix.
+        ``include_vanilla`` also looks at the game's and base mods'
+        characters; such a result is a read-only copy.
 
         Args:
             default: Returned instead of raising ``NotFoundError`` when no

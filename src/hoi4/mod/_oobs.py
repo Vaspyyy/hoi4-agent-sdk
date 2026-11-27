@@ -151,8 +151,11 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
         """Return the sorted names of the mod's orders of battle, and the game's with ``include_vanilla``."""
         if include_vanilla and self._base_content is not None:
             inherited = self._base_content.glob("history/units", "*.txt")
-            if inherited:
-                return sorted(set(self._oobs) | {path.stem for path in inherited.values()})
+            return sorted(set(self._oobs) | {
+                path.stem
+                for relative, path in inherited.items()
+                if not self._mod_hides_inherited(Path(relative))
+            })
         return sorted(self._oobs)
 
     def get_oob(
@@ -182,8 +185,9 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
             return cached
         candidates = [self.mod_root / "history" / "units" / f"{name}.txt"]
         if include_vanilla and self._base_content is not None:
-            inherited = self._base_content.file(f"history/units/{name}.txt")
-            if inherited is not None:
+            relative = Path("history/units") / f"{name}.txt"
+            inherited = self._base_content.file(relative)
+            if inherited is not None and not self._mod_hides_inherited(relative):
                 candidates.append(inherited)
         country_tag = next(
             (
@@ -229,8 +233,8 @@ class OobsLayer(CountriesLayer, EquipmentLayer):
                 excluded_dlc=(reference.excluded_dlc if reference is not None else ()),
             )
             self._oobs[name] = oob
-            # Not one of the OOBs the section loaded: a file of the game or a
-            # base mod, or a mod file that is new or that the loader refused.
+            # Not one of the OOBs the section loaded: a mod file that is new
+            # or that the loader refused.
             # It is only this lookup's cache, so save() and discard() load
             # the section again (and with it the loader's diagnostics).
             self._reload_on_discard.add("oobs")

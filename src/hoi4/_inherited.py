@@ -114,8 +114,8 @@ def _combine_categories(matches: Sequence[tuple[Path, Any]]) -> Any:
     definition: DecisionCategory | None = definitions[0] if definitions else None
     if not contents:
         return definition
-    # The contents in load order (the file name order of the merged folder).
-    contents.sort(key=lambda category: category.path.name if category.path else "")
+    # The contents come in load order: the highest layer first, and the file
+    # name order within one layer.
     category: DecisionCategory = contents[0]
     for later in contents[1:]:
         merge_decision_category(category, later, presentation=definition is None)

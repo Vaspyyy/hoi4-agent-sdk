@@ -53,7 +53,7 @@ the script builders.
 | `discard() -> None` | Drop every unsaved edit and pick up files changed on disk. Only content that had edits or whose files changed loads again; everything else stays in memory. When a base mod's file changed, everything loads again. |
 | `reload() -> None` | Drop every unsaved edit and read the whole mod again, not only what changed. Use it when a file changed on disk that `discard()` does not notice (one the SDK is not writing). |
 | `transaction(*, save=False) -> Iterator[Self]` | Context manager. On a normal exit the edits made inside are thrown away (a dry run) unless `save=True`, which saves them. On an exception the edits are thrown away and the exception goes on. |
-| `load_inherited_content(relative_path) -> None` | Load one focus, event, idea or on-action file of the game or a base mod so the usual methods can edit it. Loading writes nothing; the first edit queues a complete copy in the mod. Loading the same file again does nothing. Raises `FileNotFoundError` when no layer has the file and `ValueError` when an id in it is one the mod already has. |
+| `load_inherited_content(relative_path) -> None` | Load one focus, event, idea, on-action, decision, decision category, bookmark or dynamic modifier file of the game or a base mod so the usual methods can edit it. Loading writes nothing; the first edit queues a complete copy in the mod. Loading the same file again does nothing. Raises `FileNotFoundError` when no layer has the file and `ValueError` when an id in it is one the mod already has. |
 | `resolve_content_path(relative_path) -> Path \| None` | The winning file (mod, then base mods, then game) for a relative path, or `None` when no layer has it. A path resolver, not a lookup: it does not raise. |
 | `content_files(directory) -> dict[str, Path]` | Every effective file of a directory, as relative name to winning source path. |
 
@@ -699,9 +699,10 @@ mod.create_on_action(
 
 This writes `common/on_actions/mod_on_actions.txt`.
 
-The game's own on-actions are not loaded, so `get_on_action("on_startup")`
-sees only the mod's occurrences. To inspect or patch a hook that has several
-extensions:
+`get_on_action("on_startup")` sees the mod's occurrences first, then those of
+the base mods and the game (`include_vanilla=False` leaves them out). Only the
+mod's own occurrences can be edited. To inspect or patch a hook that has
+several extensions:
 
 ```python
 mod.create_on_action(
@@ -1538,7 +1539,7 @@ atomic-save lifecycle as the original content model:
 
 | Method | Description |
 |--------|-------------|
-| `list_ideologies(*, include_vanilla=False) -> list[str]` | Lists mod ideologies and, by default, configured vanilla ideologies. |
+| `list_ideologies(*, include_vanilla=False) -> list[str]` | Lists the mod's ideologies, and with `include_vanilla=True` also the game's. |
 | `get_ideology(ideology_id, *, include_vanilla=True, default=...) -> Ideology` | Gets a mod or vanilla ideology definition. |
 | `create_ideology(ideology_id, *, color=(128, 128, 128), types=None, rules=None, modifiers=None, hidden_modifiers=None, faction_modifiers=None, dynamic_faction_names=None, ai_behavior="", can_host_government_in_exile=False, can_collaborate=False, effects=None, path=None, overwrite=False) -> Ideology` | Creates a mod ideology definition. |
 | `update_ideology(ideology_id, **fields) -> Ideology` | Source-patches a mod ideology or materializes a vanilla definition as a mod override. |
@@ -2103,16 +2104,18 @@ this does not infer filesystem paths or replacement policy.
 - Country/state/OOB fallback, localization in every language, asset resolution, province checks, and their
   validators use the effective content. Game script documentation remains tied
   to the actual installed game.
-- Focus/event/idea/on-action files retain opt-in inherited loading:
-  `mod.load_inherited_content("events/example.txt")` loads a complete effective
-  file into the facade. Then use normal `update_event`, focus, idea, or on-action
-  methods, validate, preview, and save. Sibling definitions are retained; loading
-  alone writes nothing. Conflicting already-loaded IDs are rejected.
-- Inherited decisions, bookmarks, and dynamic modifiers are discoverable with
-  the file inventory but do not yet have an inherited-file editing adapter.
-  These and unrequested inherited scripts are not automatically loaded into the
-  writable facade's model lists. A clean facade validation is therefore not a
-  full audit of all inherited base script files.
+- Lookups (`get_event`, `get_idea`, ...) see inherited focus trees, events,
+  ideas, on-actions, decisions, decision categories, bookmarks, dynamic
+  modifiers and characters as read-only copies. To edit one,
+  `mod.load_inherited_content("events/example.txt")` loads the complete
+  effective file into the facade (focus, event, idea, on-action, decision,
+  decision category, bookmark and dynamic modifier files). Then use the normal
+  update methods, validate, preview, and save. Sibling definitions are
+  retained; loading alone writes nothing. Conflicting already-loaded IDs are
+  rejected.
+- Inherited scripts that were not loaded this way are not in the writable
+  facade's model lists. A clean facade validation is therefore not a full
+  audit of all inherited base script files.
 
 The fallback copies nothing: every read goes to the winning file in the game
 or base mod folder, where it is (`hoi4.layers.ContentLayers`). Only the runtime
@@ -2190,7 +2193,7 @@ identifier is a field (for example `defined_text = { name = GetFoo ... }`).
 | Method | Description |
 |--------|-------------|
 | `definition_kinds() -> dict[str, DefinitionKind]` | Supported domains. |
-| `list_definitions(kind, *, include_vanilla=False) -> list[str]` | Sorted ids of the effective definitions from the mod, base mods and the game, including pending edits. |
+| `list_definitions(kind, *, include_vanilla=False) -> list[str]` | Sorted ids of the mod's definitions, including pending edits; with `include_vanilla=True` also those of the base mods and the game. |
 | `get_definition(kind, definition_id, *, include_vanilla=True, default=...) -> ScriptDefinition` | One definition (missing raises `NotFoundError`, or returns `default`); `body` omits outer braces and entry identifier fields. |
 | `create_definition(kind, definition_id, body, *, path=None, overwrite=False) -> ScriptDefinition` | Queue a definition and return it (`source_path` is the file it goes to). Containers are created or reused; identifiers must be unique across the effective domain (`AlreadyExistsError` otherwise). `overwrite=True` patches an existing definition in its current file. |
 | `update_definition(kind, definition_id, body) -> ScriptDefinition` | Replace an existing body in place and return the definition; raises `NotFoundError`. Inherited files are copied into the mod first. |

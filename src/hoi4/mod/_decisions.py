@@ -135,7 +135,14 @@ class DecisionsLayer(LocalisationLayer):
     def get_decision_category(
         self, category_id: str, *, include_vanilla: bool = True, default: _D | _Missing = MISSING
     ) -> DecisionCategory | _D:
-        """Return the decision category ``category_id`` that the mod holds.
+        """Return the decision category ``category_id``.
+
+        When the mod has blocks of the category (its own decisions in a game
+        category, or a copied definition file), the result is the mod's part:
+        the object an edit changes. Its ``decisions`` are then the mod's
+        only; ``list_decisions(include_vanilla=True)`` and ``get_decision()``
+        reach the ones other layers add. A category only the game or a base
+        mod has comes back as a merged copy.
 
         Args:
             default: Returned instead of raising ``NotFoundError`` when it

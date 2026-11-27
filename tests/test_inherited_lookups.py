@@ -925,3 +925,114 @@ def test_discarded_new_event_path_is_not_written(mod: Mod, move: bool) -> None:
     result = mod.save(require_changes=False)
     assert mod.mod_root / "events/own_events.txt" not in result.written_files
     assert not (mod.mod_root / "events/own_events.txt").exists()
+
+
+def test_staged_file_hides_the_inherited_file_before_save(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "events/germany.txt", "add_namespace = germany\ncountry_event = { id = germany.1 title = vanilla }\n")
+    write(game, "common/ideas/game.txt", "ideas = { country = { game_idea = { } } }\n")
+    mod = Mod(root, hoi4_install=game)
+    assert mod.get_event("germany.1").title == "vanilla"
+    mod.create_event("own.1")
+    mod.update_event("own.1", path="events/germany.txt")
+    mod.create_idea("own_idea", path="common/ideas/game.txt")
+
+    def answers(current: Mod) -> tuple[object, ...]:
+        return (
+            current.get_event("germany.1", default=None),
+            current.list_events(include_vanilla=True),
+            current.get_idea("game_idea", default=None),
+            current.list_ideas(include_vanilla=True),
+        )
+
+    before = answers(mod)
+    assert before == (None, ["own.1"], None, ["own_idea"])
+    mod.save()
+    assert answers(mod) == before
+    assert answers(Mod(root, hoi4_install=game)) == before
+
+
+@pytest.mark.parametrize("with_base", [False, True])
+def test_emptied_dynamic_modifier_file_keeps_hiding_the_inherited_one(tmp_path: Path, with_base: bool) -> None:
+    game, base, root = tmp_path / "game", tmp_path / "base", tmp_path / "mod"
+    root.mkdir()
+    base.mkdir()
+    write(game, "common/dynamic_modifiers/x.txt", "game_mod = { icon = game_icon }\n")
+    write(root, "common/dynamic_modifiers/x.txt", "mine = { icon = mine_icon }\n")
+    bases = [base] if with_base else []
+    mod = Mod(root, hoi4_install=game, base_mod_paths=bases)
+    mod.delete_dynamic_modifier("mine")
+    mod.save()
+    assert (root / "common/dynamic_modifiers/x.txt").exists()
+    reloaded = Mod(root, hoi4_install=game, base_mod_paths=bases)
+    assert reloaded.get_dynamic_modifier("game_mod", default=None) is None
+    assert reloaded.list_dynamic_modifiers(include_vanilla=True) == []
+
+
+def test_oob_lookups_respect_replace_path(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "history/units/GER_1936.txt", 'division_template = { name = "Inf" regiments = { infantry = { x = 0 y = 0 } } }')
+    assert Mod(root, hoi4_install=game).list_oobs(include_vanilla=True) == ["GER_1936"]
+    write(root, "descriptor.mod", 'name = "m"\nreplace_path = "history/units"\n')
+    mod = Mod(root, hoi4_install=game)
+    assert mod.get_oob("GER_1936", default=None) is None
+    assert mod.list_oobs(include_vanilla=True) == []
+
+
+@pytest.mark.parametrize("helper", ["ensure", "branch"])
+def test_tree_helpers_refuse_an_inherited_tree(mod: Mod, helper: str) -> None:
+    before = mod.preview()
+    with pytest.raises(ReadOnlyError, match="load_inherited_content"):
+        if helper == "ensure":
+            mod.ensure_focus_tree("tree", "GER")
+        else:
+            mod.create_industrial_branch("tree", "GER")
+    assert mod.preview() == before
+    assert mod.list_focus_trees() == []
+    assert [focus.id for focus in mod.get_focus_tree("tree").focuses] == ["one"]
+
+
+def test_inherited_category_blocks_keep_layer_order(tmp_path: Path) -> None:
+    game, base, root = tmp_path / "game", tmp_path / "base", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/decisions/a.txt", "cat = { d_game = { } }\n")
+    write(base, "common/decisions/z.txt", "cat = { d_base = { } }\n")
+    mod = Mod(root, hoi4_install=game, base_mod_paths=[base])
+    assert [d.id for d in mod.get_decision_category("cat").decisions] == ["d_base", "d_game"]
+
+
+def test_on_action_source_path_takes_an_inherited_occurrence_path(tmp_path: Path) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(root, "common/on_actions/mod.txt", "on_actions = { on_startup = { effect = { log = own } } }\n")
+    write(game, "common/on_actions/game.txt", "on_actions = { on_startup = { effect = { log = game } } }\n")
+    mod = Mod(root, hoi4_install=game)
+    inherited = mod.get_on_action_occurrences("on_startup")[1]
+    assert mod.get_on_action("on_startup", source_path=inherited.path).effect == inherited.effect
+    assert mod.get_on_action("on_startup", source_path="common/on_actions/game.txt").effect == inherited.effect
+    assert "own" in mod.get_on_action("on_startup", source_path="common/on_actions/mod.txt").effect
+    with pytest.raises(NotFoundError, match=r"has no occurrence in common/on_actions/none\.txt"):
+        mod.get_on_action("on_startup", source_path="common/on_actions/none.txt")
+    assert mod.get_on_action("on_startup", source_path="common/on_actions/none.txt", default=None) is None
+    with pytest.raises(NotFoundError, match="Did you mean: on_startup"):
+        Mod(tmp_path / "other", hoi4_install=game).get_on_action_occurrences("on_startap")
+
+
+def test_list_characters_with_vanilla_makes_no_copies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    game, root = tmp_path / "game", tmp_path / "mod"
+    root.mkdir()
+    write(game, "common/characters/GER.txt", "characters = { GER_a = { name = A } GER_b = { name = B } }")
+    write(game, "common/characters/ITA.txt", "characters = { ITA_a = { name = A } }")
+    mod = Mod(root, hoi4_install=game)
+    expected_ger = sorted(c for c in ("GER_a", "GER_b") if mod.get_character(c).country_tag == "GER")
+    import hoi4.mod._core as core
+
+    def no_copy(value: object) -> object:
+        raise AssertionError("list_characters copied models")
+
+    monkeypatch.setattr(core.copy, "deepcopy", no_copy)
+    assert mod.list_characters(include_vanilla=True) == ["GER_a", "GER_b", "ITA_a"]
+    assert mod.list_characters(tag="GER", include_vanilla=True) == expected_ger == ["GER_a", "GER_b"]
+    assert mod.list_characters() == []

@@ -59,7 +59,9 @@ class OnActionsLayer(CoreLayer):
         if not occurrences:
             if default is not MISSING:
                 return default
-            raise not_found("on-action", action_id, self.list_on_actions())
+            raise not_found(
+                "on-action", action_id, self.list_on_actions(include_vanilla=include_vanilla)
+            )
         return tuple(occurrences)
 
     def _select_on_action_occurrence(
@@ -134,9 +136,33 @@ class OnActionsLayer(CoreLayer):
         """
 
         actions = self.get_on_action_occurrences(action_id, include_vanilla=include_vanilla, default=())
-        if source_path is not None:
-            target = resolve_mod_output_path(self.mod_root, source_path)
-            actions = tuple(action for action in actions if action.path and action.path.resolve(strict=False) == target)
+        if source_path is not None and actions:
+            # A path as an occurrence reports it (absolute, also of the game or
+            # a base mod), or a path inside the mod or an inherited layer.
+            wanted = Path(source_path)
+            target = (
+                wanted.resolve(strict=False)
+                if wanted.is_absolute()
+                else resolve_mod_output_path(self.mod_root, wanted)
+            )
+            actions = tuple(
+                action
+                for action in actions
+                if action.path is not None
+                and (
+                    action.path.resolve(strict=False) == target
+                    or (
+                        not wanted.is_absolute()
+                        and self._inherited_relatives.get(action.path) == wanted
+                    )
+                )
+            )
+            if not actions and default is MISSING:
+                raise NotFoundError(
+                    f"On-action '{action_id}' has no occurrence in {source_path}.",
+                    kind="on-action occurrence",
+                    id=action_id,
+                )
         if 0 <= occurrence < len(actions):
             return actions[occurrence]
         if default is not MISSING:
