@@ -46,6 +46,7 @@ def test_the_older_error_classes_derive_from_hoi4error(name: str) -> None:
 
 
 def test_generation_cancelled_derives_from_hoi4error() -> None:
+    pytest.importorskip("numpy")  # the map generator needs the `map` extra
     from hoi4.mapgen.progress import GenerationCancelled
 
     assert issubclass(GenerationCancelled, Hoi4Error)

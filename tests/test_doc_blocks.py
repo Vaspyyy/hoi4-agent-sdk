@@ -53,6 +53,12 @@ from pathlib import Path
 
 import pytest
 
+# The examples in the docs import flags and render maps: without the optional
+# packages (the `assets` and `map` extras) there is nothing to run them with.
+pytest.importorskip("PIL")
+pytest.importorskip("numpy")
+pytest.importorskip("scipy")
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).resolve().parent / "doc_fixtures"
 DOC_FILES = (
