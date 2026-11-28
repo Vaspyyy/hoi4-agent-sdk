@@ -136,6 +136,28 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             raise not_found("character", character_id, self._characters)
         return character
 
+    def _default_character_file(self, tag: str) -> Path:
+        """The mod-relative file a new character of ``tag`` goes to.
+
+        ``common/characters/<TAG>_characters.txt``, unless the game or a base
+        mod has a file of that name that the mod does not have: a new mod
+        file there would replace their whole roster with the one character.
+        """
+
+        relative = Path("common") / "characters" / f"{tag}_characters.txt"
+        target = self.mod_root / relative
+        # A path that is only noted (a country of the game was prepared for
+        # an edit) is not a file of the mod.
+        if (
+            not target.exists()
+            and not any(
+                character.path == target for character in self._characters.values()
+            )
+            and self._inherits_file(relative)
+        ):
+            return Path("common") / "characters" / f"{tag}_mod_characters.txt"
+        return relative
+
     def create_character(
         self,
         tag: str,
@@ -198,7 +220,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 if existing is not None
                 and existing.path is not None
                 and existing.path.resolve(strict=False).is_relative_to(self.mod_root)
-                else Path("common") / "characters" / f"{tag}_characters.txt"
+                else self._default_character_file(tag)
             ),
         )
         replacement = copy.deepcopy(character)
@@ -580,7 +602,11 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
         country = self.get_country(tag)
         self._materialize_country_override(country)
         values = list(country.recruited_characters)
-        if country.leader and country.leader.character_id not in values:
+        if (
+            country.leader
+            and country.leader.character_id
+            and country.leader.character_id not in values
+        ):
             values.append(country.leader.character_id)
         if recruited and character_id not in values:
             values.append(character_id)

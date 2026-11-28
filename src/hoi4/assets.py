@@ -240,8 +240,14 @@ def import_portrait_to_mod(
     resize_mode: Literal["stretch", "cover", "contain"] = "cover",
     dds_compression: Literal["DXT1", "DXT3", "DXT5"] = "DXT5",
     overwrite: bool = True,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> Path:
     """Import a leader portrait at the standard 156x210 size by default.
+
+    ``crop`` is a ``(left, upper, right, lower)`` box in pixels of the source
+    image, cut out before the resize: for a face in a group photo, or for the
+    square of a small advisor portrait. Without it ``"cover"`` keeps the
+    centre of the image.
 
     DDS output is encoded directly with Pillow; ImageMagick is not used.  See
     :data:`DDS_LIMITATION` for the intentional codec/mipmap limitations.  TGA is
@@ -256,7 +262,16 @@ def import_portrait_to_mod(
         raise ValueError("Portrait dimensions must be positive")
 
     root = _require_mod_root(mod_root)
-    image = _resize_image(_open_raster(src_image), size, resize_mode)
+    source = _open_raster(src_image)
+    if crop is not None:
+        left, upper, right, lower = crop
+        if not (0 <= left < right <= source.width and 0 <= upper < lower <= source.height):
+            raise ValueError(
+                f"Portrait crop {crop!r} is not a box inside the "
+                f"{source.width}x{source.height} image (left, upper, right, lower)"
+            )
+        source = source.crop((left, upper, right, lower))
+    image = _resize_image(source, size, resize_mode)
     target = resolve_mod_output_path(
         root, f"gfx/leaders/{normalized_tag}/{normalized_slug}.{output_format}"
     )

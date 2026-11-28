@@ -80,7 +80,9 @@ Country(tag: str, name: str = "", adjective: str = "",
         technologies: dict[str,int] = {},
         oob: str = "",
         recruited_characters: list[str] = [],
-        color_ui: tuple[int,int,int] | None = None)
+        color_ui: tuple[int,int,int] | None = None,
+        last_election: str = "1936.1.1",
+        election_frequency: int | None = None)
 ```
 
 `color` is read from the country definition and from `colors.txt`, in any of
@@ -605,7 +607,8 @@ not HOI4 constructs.
 ```text
 BookmarkCountry(tag: str, history: str = "", ideology: str = "",
                 available: str = "", required_dlc: list[str] = [],
-                ideas: list[str] = [], focuses: list[str] = [])
+                ideas: list[str] = [], focuses: list[str] = [],
+                minor: bool = False)
 
 Bookmark(name: str, description: str = "", date: str = "1936.1.1.12",
          picture: str = "GFX_select_date_1936", default_country: str = "",

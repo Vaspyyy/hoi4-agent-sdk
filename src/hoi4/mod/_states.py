@@ -17,6 +17,7 @@ from ..paths import (
 )
 from ..states import (
     build_state_index,
+    history_text_sets_zone,
     read_state,
 )
 from ..syntax import parse, repair
@@ -396,6 +397,9 @@ class StatesLayer(CountriesLayer):
             return state
         self._materialize_state_override(state)
         _set_fields(state, values, method="update_state")
+        if "history" in values and "is_demilitarized_zone" not in values:
+            # A new history says for itself whether the state is a zone.
+            state.is_demilitarized_zone = history_text_sets_zone(state.history)
         if removed:
             state.cores = [core for core in state.cores if core.upper() not in removed]
         for tag in added:

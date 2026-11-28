@@ -79,6 +79,7 @@ class BookmarkCountryFields(TypedDict, total=False):
     required_dlc: list[str]
     ideas: list[str]
     focuses: list[str]
+    minor: bool
 
 
 class CharacterFields(TypedDict, total=False):
@@ -142,6 +143,8 @@ class CountryFields(TypedDict, total=False):
     oob: str
     recruited_characters: list[str]
     color_ui: tuple[int, int, int] | None
+    last_election: str
+    election_frequency: int | None
     leader_name: str
     leader_ideology: str
     leader_portrait_slug: str

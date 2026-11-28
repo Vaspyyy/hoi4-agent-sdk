@@ -582,6 +582,22 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
                 # Keep what was read from the game's files for later processes.
                 _disk_cache.flush()
 
+    @staticmethod
+    def _decision_icon_known(icon: str, sprites: set[str]) -> bool:
+        """Whether a decision or category icon names a sprite.
+
+        The game's own files use both prefixes for both kinds (a category
+        with a decision sprite and the other way round), full names, and
+        names that only lack the ``GFX_`` (``decision_generic_nationalism``).
+        """
+
+        return (
+            icon in sprites
+            or f"GFX_{icon}" in sprites
+            or f"GFX_decision_{icon}" in sprites
+            or f"GFX_decision_category_{icon}" in sprites
+        )
+
     def _validate_once(
         self,
         validate_icons: bool = False,
@@ -737,7 +753,8 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         )
         known_focus_icons = (
             self._known_focus_icons()
-            if validate_icons and (self._focus_trees or self._ideas)
+            if validate_icons
+            and (self._focus_trees or self._ideas or self._decisions or self._decision_categories)
             else set()
         )
         known_state_ids = {entry["id"] for entry in self.state_index()}
@@ -837,6 +854,54 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
 
         for decision in self._decisions.values():
             errors.extend(validate_decision(decision))
+            icon = decision.icon.strip('"')
+            if (
+                validate_icons
+                and known_focus_icons
+                and icon
+                and not self._decision_icon_known(icon, known_focus_icons)
+            ):
+                errors.append(
+                    ValidationIssue(
+                        message=(
+                            f"Decision '{decision.id}' icon '{icon}' has no sprite: "
+                            f"'GFX_decision_{icon}', 'GFX_decision_category_{icon}' and "
+                            f"'{icon}' are not in the interface files. A decision icon "
+                            "is the sprite name without 'GFX_decision_'."
+                        ),
+                        severity="warning",
+                        code="unknown_decision_icon",
+                        decision_id=decision.id,
+                        file_path=str(decision.path) if decision.path else None,
+                    )
+                )
+        if validate_icons and known_focus_icons:
+            for category in self._decision_categories.values():
+                icon = category.icon.strip('"')
+                # Only a category the mod defines: the mod's part of a game
+                # category shows the game's icon.
+                if (
+                    icon
+                    and (category.touched or category.definition_raw_block)
+                    and not self._decision_icon_known(icon, known_focus_icons)
+                ):
+                    errors.append(
+                        ValidationIssue(
+                            message=(
+                                f"Decision category '{category.id}' icon '{icon}' has no "
+                                f"sprite: 'GFX_decision_category_{icon}', "
+                                f"'GFX_decision_{icon}' and '{icon}' are not in the "
+                                "interface files."
+                            ),
+                            severity="warning",
+                            code="unknown_decision_icon",
+                            file_path=(
+                                str(category.definition_path)
+                                if category.definition_path
+                                else None
+                            ),
+                        )
+                    )
 
         begin_phase("ideas", "Validating ideas and assignments")
         idea_categories = self._known_idea_categories() if self._ideas else set()

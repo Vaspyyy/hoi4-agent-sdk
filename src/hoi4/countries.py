@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import colorsys
 import re
+from typing import Any
 from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -45,6 +46,7 @@ from .syntax import (
 from .tags import (
     add_country_tag,
     resolve_country_filename,
+    tag_file_mapping,
 )
 from .tags import (
     remove_country_tag as _remove_country_tag,
@@ -215,6 +217,34 @@ def read_country(
     return country
 
 
+def _mod_definition_file(
+    tag: str,
+    mod_root: ContentView,
+    hoi4_install: ContentView | None,
+    tag_mappings: dict[ContentView, dict[str, str]] | None = None,
+) -> Path | None:
+    """The mod's definition file of ``tag``, or ``None``.
+
+    Named by the mod's own tag file, else by the tag file of the game or a
+    base mod: a mod file of the name they give replaces their definition
+    without a tag file of the mod's own.
+    """
+
+    own = (tag_mappings or {}).get(mod_root)
+    if own is None:
+        own = tag_file_mapping(mod_root)
+    if tag not in own and hoi4_install is not None:
+        mapping = (tag_mappings or {}).get(hoi4_install)
+        if mapping is None:
+            mapping = tag_file_mapping(hoi4_install)
+        relative = mapping.get(tag)
+        if relative:
+            found = mod_root.file(Path("common") / "countries" / Path(relative).name)
+            if found is not None:
+                return found
+    return resolve_country_filename(mod_root, tag, own)
+
+
 def _read_definition(
     country: Country,
     mod_root: ContentView,
@@ -224,7 +254,11 @@ def _read_definition(
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
-        p = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
+        p = (
+            _mod_definition_file(country.tag, mod_root, hoi4_install, tag_mappings)
+            if base is mod_root
+            else resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
+        )
         if p is not None:
             txt = read_text(p)
             country.definition_path = p.resolve()
@@ -251,14 +285,27 @@ def _read_color(
 
     resolved: RGB | None = None
     resolved_ui: RGB | None = None
+    # First the definition files, then the colour table: an entry of
+    # ``colors.txt`` wins over the colour of a definition file, also over
+    # one of a higher layer.
     for base in (hoi4_install, mod_root):
         if base is None:
             continue
-        definition = resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
+        definition = (
+            _mod_definition_file(country.tag, mod_root, hoi4_install, tag_mappings)
+            if base is mod_root
+            else resolve_country_filename(base, country.tag, (tag_mappings or {}).get(base))
+        )
         if definition is not None:
             color = read_color(_root(read_text(definition)))
             if color is not None:
                 resolved = color
+    # Only the table of the highest layer that has one: the game replaces
+    # ``colors.txt`` as a whole, so a mod's table hides every entry of the
+    # game's, also those it does not repeat.
+    for base in (mod_root, hoi4_install):
+        if base is None:
+            continue
         colors_path = base.file("common/countries/colors.txt")
         if colors_path is None:
             continue
@@ -269,12 +316,11 @@ def _read_color(
         else:
             text = read_text(colors_path)
         entry = _first_block(_root(text), country.tag)
-        if entry is None:
-            continue
-        color = read_color(entry)
-        if color is not None:
+        color = read_color(entry) if entry is not None else None
+        if entry is not None and color is not None:
             resolved = color
             resolved_ui = read_color(entry, "color_ui")
+        break
     if resolved is not None:
         country.color = resolved
     country.color_ui = resolved_ui
@@ -329,6 +375,12 @@ def _read_history(
             country.popularities = pops
 
         ruling_party, elections_allowed = _read_politics(txt)
+        politics = _first_block(_root(txt), "set_politics")
+        if politics is not None:
+            country.last_election = _last_scalar(politics, "last_election") or country.last_election
+            country.election_frequency = _int_or_none(
+                _last_scalar(politics, "election_frequency")
+            )
         if ruling_party:
             country.ruling_party = ruling_party
             country.elections_allowed = (
@@ -339,20 +391,23 @@ def _read_history(
 
         country.ideas = _read_assigned_ideas(txt)
 
-        leader_name = _extract_leader_name(txt)
+        legacy_leader = _legacy_leader(txt)
+        leader_name = legacy_leader[0] if legacy_leader else None
         recruited_ids = _read_recruited_character_ids(txt)
         country.recruited_characters = recruited_ids
-        if recruited_ids:
+        if legacy_leader:
+            # An old ``create_country_leader`` block: the leader has a name
+            # and an ideology, but no character id (one is only made when a
+            # call changes the leader). A recruited character with a leader
+            # role takes its place when the character file is read.
+            country.leader = Leader(
+                name=legacy_leader[0], character_id="", ideology=legacy_leader[1] or "liberalism",
+            )
+        elif recruited_ids:
             country.leader = Leader(
                 name=leader_name or "",
                 character_id=recruited_ids[0],
                 portrait_slug=recruited_ids[0].removeprefix(f"{country.tag}_"),
-            )
-        elif leader_name:
-            country.leader = Leader(
-                name=leader_name,
-                character_id=f"{country.tag}_leader_1",
-                portrait_slug="leader_1",
             )
 
         return
@@ -445,6 +500,52 @@ def _read_loc_from_cache(country: Country, cache: dict[str, dict[str, str]]) -> 
 def _read_character(
     country: Country, mod_root: ContentView, hoi4_install: ContentView | None
 ) -> None:
+    _read_roster_file(country, mod_root, hoi4_install)
+    # The mod's characters of a tag whose roster file belongs to the game or
+    # a base mod live in a file of their own: a recruited leader in it is
+    # the country's leader.
+    extra = mod_root.file(f"common/characters/{country.tag}_mod_characters.txt")
+    if extra is None:
+        return
+    recruited = _read_recruited_character_ids(country.raw_history)
+    for character_id, body in _character_definitions(read_text(extra)):
+        if character_id in recruited and _leader_role(body) is not None:
+            country.leader = _leader_from_character(country, character_id, body)
+            return
+
+
+def _leader_from_character(country: Country, selected_id: str, character_body: Block) -> Leader:
+    """The country's ``Leader`` as the character ``selected_id`` defines it."""
+
+    role = _leader_role(character_body)
+    name = character_body.scalar("name") or ""
+    ideology = (role.scalar("ideology") if role is not None else None) or "liberalism"
+    portrait_prefix = f"GFX_portrait_{country.tag}_"
+    portraits = sorted(
+        (
+            item
+            for item, _ in character_body.walk()
+            if item.name == "large"
+            and (item.scalar or "").startswith(portrait_prefix)
+        ),
+        key=lambda item: item.start,
+    )
+    portrait_slug = (
+        (portraits[0].scalar or "").removeprefix(portrait_prefix)
+        if portraits
+        else selected_id.removeprefix(f"{country.tag}_")
+    )
+    return Leader(
+        name=name or (country.leader.name if country.leader else "") or selected_id,
+        character_id=selected_id,
+        ideology=ideology,
+        portrait_slug=portrait_slug,
+    )
+
+
+def _read_roster_file(
+    country: Country, mod_root: ContentView, hoi4_install: ContentView | None
+) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
@@ -470,36 +571,15 @@ def _read_character(
             selected_id = country.leader.character_id
         if not selected_id and leader_ids:
             selected_id = leader_ids[0]
-        if not selected_id:
+        legacy = country.leader is not None and not country.leader.character_id
+        if not selected_id and not legacy:
+            # Without any leader role: the first recruited character stands
+            # in, unless an old-style leader block names the leader.
             selected_id = next((item for item in recruited if item in by_id), "")
         if not selected_id:
             return
 
-        character_body = by_id[selected_id]
-        role = _leader_role(character_body)
-        name = character_body.scalar("name") or ""
-        ideology = (role.scalar("ideology") if role is not None else None) or "liberalism"
-        portrait_prefix = f"GFX_portrait_{country.tag}_"
-        portraits = sorted(
-            (
-                item
-                for item, _ in character_body.walk()
-                if item.name == "large"
-                and (item.scalar or "").startswith(portrait_prefix)
-            ),
-            key=lambda item: item.start,
-        )
-        portrait_slug = (
-            (portraits[0].scalar or "").removeprefix(portrait_prefix)
-            if portraits
-            else selected_id.removeprefix(f"{country.tag}_")
-        )
-        country.leader = Leader(
-            name=name or (country.leader.name if country.leader else "") or selected_id,
-            character_id=selected_id,
-            ideology=ideology,
-            portrait_slug=portrait_slug,
-        )
+        country.leader = _leader_from_character(country, selected_id, by_id[selected_id])
         return
 
 
@@ -674,6 +754,15 @@ def _country_entry_span(text: str, tag: str) -> AssignmentSpan | None:
     return next((item for item in top_level_assignments(text) if item.key == tag), None)
 
 
+def country_table_colors(text: str, tag: str) -> tuple[RGB | None, RGB | None] | None:
+    """``(color, color_ui)`` of ``tag`` in a ``colors.txt`` text, or ``None`` without an entry."""
+
+    entry = _first_block(_root(text), tag)
+    if entry is None:
+        return None
+    return read_color(entry), read_color(entry, "color_ui")
+
+
 def country_color_tags(text: str) -> set[str]:
     """Return country tags defined by a ``common/countries/colors.txt`` source."""
 
@@ -716,8 +805,8 @@ def _find_history_file(base: ContentView, tag: str) -> Path | None:
     return None
 
 
-def _extract_leader_name(txt: str) -> str | None:
-    """Return the name of the first legacy ``create_country_leader`` block."""
+def _legacy_leader(txt: str) -> tuple[str, str] | None:
+    """``(name, ideology)`` of the first legacy ``create_country_leader`` block with a name."""
 
     leaders = sorted(
         (
@@ -731,8 +820,78 @@ def _extract_leader_name(txt: str) -> str | None:
         assert type(leader.value) is Block
         name = leader.value.scalar("name")
         if name:
-            return name
+            return name, leader.value.scalar("ideology") or ""
     return None
+
+
+def legacy_leader_details(history: str, name: str) -> dict[str, Any]:
+    """What the ``create_country_leader`` block of ``name`` says besides name and ideology.
+
+    ``picture`` (a sprite name or a texture path), ``expire`` and ``traits``,
+    each only when the block has it: the character that takes the block's
+    place keeps them.
+    """
+
+    for item, _ in sorted(_root(history).walk(), key=lambda pair: pair[0].start):
+        if item.name != "create_country_leader" or type(item.value) is not Block:
+            continue
+        if item.value.scalar("name") != name:
+            continue
+        details: dict[str, Any] = {}
+        for key in ("picture", "expire"):
+            value = item.value.scalar(key)
+            if value:
+                details[key] = value
+        traits = item.value.block("traits")
+        if traits is not None:
+            details["traits"] = [scalar.value for scalar in traits.values()]
+        return details
+    return {}
+
+
+def remove_legacy_leader(
+    history: str, name: str, *, recruit: str = "", _nested: bool = False
+) -> str:
+    """Take the first ``create_country_leader`` block of the leader ``name`` out.
+
+    For the moment a character takes the place of an old-style leader: the
+    game would otherwise create both. A block at the top of the history is
+    removed (the country recruits the character there). A block inside
+    ``if = { }`` or a dated block is replaced by ``recruit_character =
+    <recruit>`` in the same place, so the condition it stands under keeps
+    deciding whether the country gets this leader. Blocks of other leaders
+    stay.
+    """
+
+    for span in top_level_assignments(history):
+        if not span.is_block or span.body_start is None or span.body_end is None:
+            continue
+        body = history[span.body_start : span.body_end]
+        if span.key == "create_country_leader":
+            if _root(history[span.start : span.end]).block(span.key).scalar("name") == name:  # type: ignore[union-attr]
+                replacement = f"recruit_character = {quote(recruit)}" if _nested and recruit else None
+                return replace_assignment(history, span, replacement)
+            continue
+        inner = remove_legacy_leader(body, name, recruit=recruit, _nested=True)
+        if inner != body:
+            return replace_assignment_body(history, span, inner)
+    return history
+
+
+def legacy_leader_is_conditional(history: str, name: str) -> bool:
+    """Whether the first block of the leader ``name`` sits inside another block."""
+
+    for item, _ in sorted(_root(history).walk(), key=lambda pair: pair[0].start):
+        if (
+            item.name == "create_country_leader"
+            and type(item.value) is Block
+            and item.value.scalar("name") == name
+        ):
+            return not any(
+                span.key == "create_country_leader" and span.start == item.start
+                for span in top_level_assignments(history)
+            )
+    return False
 
 
 def write_country_tag(mod_root: Path, tag: str) -> Path:
@@ -778,7 +937,7 @@ def write_country_localisation(mod_root: Path, country: Country) -> None:
 
 
 def write_character_file(mod_root: Path, country: Country) -> None:
-    if not country.leader:
+    if not country.leader or not country.leader.character_id:
         return
     serialized = serialize_country_files(mod_root, country)
     tag = country.tag
@@ -794,7 +953,7 @@ def write_all_country_files(mod_root: Path, country: Country) -> list[Path]:
     write_country_history(mod_root, country)
     written.append(country_history_target(mod_root, country))
     write_character_file(mod_root, country)
-    if country.leader:
+    if country.leader and country.leader.character_id:
         written.append(
             country.character_path or mod_root / f"common/characters/{country.tag}_characters.txt"
         )
@@ -810,9 +969,16 @@ def country_file_paths(mod_root: Path, country: Country) -> list[Path]:
         country.definition_path or mod_root / f"common/countries/{tag}.txt",
         country.history_path or mod_root / f"history/countries/{tag} - {safe_name}.txt",
     ]
-    if country.leader:
+    if country.character_path is not None and _is_under(country.character_path, mod_root):
+        # The mod's own character file of the country, whoever its leader is.
+        paths.append(country.character_path)
+    elif country.leader and country.leader.character_id:
         paths.append(country.character_path or mod_root / f"common/characters/{tag}_characters.txt")
     return paths
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    return path.resolve(strict=False).is_relative_to(root.resolve(strict=False))
 
 
 def country_history_target(
@@ -874,12 +1040,12 @@ def serialize_country_files(
     files[def_path] = definition
 
     hist_path = country_history_target(mod_root, country, keep_history_path=keep_history_path)
-    leader = country.leader or Leader(name="Leader", character_id=f"{tag}_leader_1")
+    leader = country.leader
     recruited_characters = list(
         dict.fromkeys(
             [
                 *(country.recruited_characters or []),
-                *([leader.character_id] if leader.character_id else []),
+                *([leader.character_id] if leader is not None and leader.character_id else []),
             ]
         )
     )
@@ -888,6 +1054,11 @@ def serialize_country_files(
         for character_id in recruited_characters
     )
     elections = "yes" if country.elections_allowed else "no"
+    election_frequency_line = (
+        f" election_frequency = {int(country.election_frequency)}\n"
+        if country.election_frequency is not None
+        else ""
+    )
     pops = country.popularities
     ideas_block = ""
     if country.ideas:
@@ -938,7 +1109,8 @@ def serialize_country_files(
         f"\n"
         f"set_politics = {{\n"
         f" ruling_party = {quote(country.ruling_party)}\n"
-        f' last_election = "1936.1.1"\n'
+        f" last_election = {pdx_string(country.last_election)}\n"
+        f"{election_frequency_line}"
         f" elections_allowed = {elections}\n"
         f"}}\n"
         f"\n"
@@ -992,6 +1164,8 @@ def serialize_country_files(
             history = set_block(history, "set_popularities", _popularity_body(pops))
         if "*" in touched or {"ruling_party", "elections_allowed"} & touched:
             history = _patch_politics(history, country.ruling_party, elections)
+        if {"last_election", "election_frequency"} & touched:
+            history = _patch_election(history, country, touched)
         if "*" in touched or "ideas" in touched:
             history = set_block(
                 history, "add_ideas", "\n".join(quote(idea) for idea in country.ideas) if country.ideas else None
@@ -999,7 +1173,7 @@ def serialize_country_files(
             history = set_block(history, "remove_ideas", None)
     files[hist_path] = history
 
-    if country.leader:
+    if country.leader and country.leader.character_id:
         char_path = country.character_path or mod_root / f"common/characters/{tag}_characters.txt"
         ld = country.leader
         portrait_key = ld.portrait_slug or ld.character_id.removeprefix(f"{tag}_")
@@ -1026,13 +1200,57 @@ def serialize_country_files(
         # Existing character files may define advisors/generals alongside the leader.
         # Preserve them byte-for-byte unless a leader field was explicitly changed.
         character = country.raw_character
-        if character and any(
-            field.startswith("leader_") or field == "*" for field in country.touched_fields
+        if (
+            character
+            and any(
+                field.startswith("leader_") or field == "*" for field in country.touched_fields
+            )
+            # A leader that just became a character is not in the file yet:
+            # the character itself is written with the file's other characters.
+            and _has_character(character, ld.character_id)
         ):
             character = _patch_character(character, ld, country.touched_fields, tag)
         files[char_path] = character or generated_character
 
     return files
+
+
+def _start_politics(history: str) -> AssignmentSpan | None:
+    """The ``set_politics`` block of the start date (not one in a dated block)."""
+
+    return next(
+        (
+            item
+            for item in top_level_assignments(history)
+            if item.key == "set_politics" and item.is_block and item.tag is None
+        ),
+        None,
+    )
+
+
+def has_start_politics(history: str) -> bool:
+    """Whether the history sets politics at the start date."""
+
+    return _start_politics(history) is not None
+
+
+def _patch_election(history: str, country: Country, touched: set[str]) -> str:
+    """Set ``last_election`` and ``election_frequency`` of ``set_politics`` when they changed."""
+
+    span = _start_politics(history)
+    if span is None or span.body_start is None or span.body_end is None:
+        return history
+    body = history[span.body_start : span.body_end]
+    patched = body
+    if "last_election" in touched:
+        patched = set_scalar(patched, "last_election", pdx_string(country.last_election))
+    if "election_frequency" in touched:
+        patched = set_scalar(
+            patched,
+            "election_frequency",
+            str(int(country.election_frequency)) if country.election_frequency is not None else None,
+        )
+    return history if patched == body else replace_assignment_body(history, span, patched)
 
 
 def _patch_politics(history: str, ruling_party: str, elections: str) -> str:
@@ -1134,6 +1352,13 @@ def _coerce_history_scalar(value: str) -> str | int | float:
             return float(text)
         except ValueError:
             return text
+
+
+def _has_character(text: str, character_id: str) -> bool:
+    """Whether a characters file defines ``character_id``."""
+
+    block = _root(text).block("characters")
+    return block is not None and block.block(character_id) is not None
 
 
 def _patch_character(

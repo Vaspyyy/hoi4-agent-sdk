@@ -71,6 +71,12 @@ VALIDATION_CODES: dict[str, str] = {
     "unknown_equipment_reference": "Effect script references an equipment ID not found in configured data.",
     "unknown_focus_icon": "Focus icon GFX key was not found in interface files.",
     "unknown_idea_icon": "Idea picture stem did not resolve to a GFX_idea_ sprite.",
+    "event_text_key_clash": (
+        "An event's title or description uses the same localisation key as one of its options."
+    ),
+    "unknown_decision_icon": (
+        "Decision or decision category icon did not resolve to a sprite (the game's own decisions have about 20 such names)."
+    ),
     "invalid_idea_icon_key": (
         "Idea definitions must use a bare picture stem, not an icon assignment."
     ),
@@ -281,7 +287,7 @@ VALIDATION_CODES: dict[str, str] = {
     "bookmark_default_country_missing": "The default country has no bookmark entry.",
     "duplicate_bookmark_country_variant": "A bookmark repeats an indistinguishable country variant.",
     "missing_country_name_pool": "A country that needs generated names has no common/names entry.",
-    "missing_character_small_portrait": "An advisor character has no civilian small portrait.",
+    "missing_character_small_portrait": "An advisor character has no small portrait.",
     "runtime_recruit_character": (
         "recruit_character runs outside country history, where the game ignores it."
     ),
@@ -1535,6 +1541,30 @@ def validate_event(
                 file_path=file_path,
             )
         )
+
+    # ``<id>.d`` is the usual key of a description and also the name a fourth
+    # option gets when options are lettered a, b, c, d: both then show one text.
+    option_keys = {option.name for option in event.options if option.name} | {
+        entry.text for option in event.options for entry in option.conditional_names
+    }
+    own_keys = [("title", event.title), ("description", event.description)]
+    own_keys += [("title", entry.text) for entry in event.conditional_titles]
+    own_keys += [("description", entry.text) for entry in event.conditional_descriptions]
+    for label, key in dict.fromkeys(own_keys):
+        if not hidden and key and key in option_keys:
+            errors.append(
+                ValidationIssue(
+                    message=(
+                        f"Event '{event.id}' uses the localisation key '{key}' for its "
+                        f"{label} and for an option: both show the same text. Give the "
+                        "option a key of its own."
+                    ),
+                    severity="warning",
+                    code="event_text_key_clash",
+                    event_id=event.id,
+                    file_path=file_path,
+                )
+            )
 
     conditional_texts = [
         ("title", entry) for entry in event.conditional_titles

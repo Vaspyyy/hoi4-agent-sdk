@@ -479,24 +479,43 @@ class LocalisationLayer(CoreLayer):
         for language in self._shipped_loc_languages():
             self._delete_loc_entry(key, language)
 
-    def _sync_country_loc(self, country: Country) -> None:
+    def _sync_country_loc(
+        self,
+        country: Country,
+        *,
+        names: bool = True,
+        adjective: bool = True,
+        leader: bool = True,
+    ) -> None:
+        """Write the country's name keys and its leader's.
+
+        ``names``, ``adjective`` and ``leader`` say which texts the caller changed: those
+        are written. The others are only filled in where no layer has a text
+        yet, so a change of the politics of a game country does not replace
+        its ideology names ("German Reich") with the plain name.
+        """
+
         name = country.name or country.tag
         adj = country.adjective or name
         dirty_keys: list[str] = []
         target = self.mod_root / "localisation" / "english" / f"{country.tag}_country_l_english.yml"
+
+        def put(key: str, text: str, overwrite: bool) -> None:
+            if not overwrite and self.get_loc(key, default=None) is not None:
+                return
+            self._loc_entries[key] = text
+            dirty_keys.append(key)
+
         for suffix in _country_localisation_suffixes(country):
             k = f"{country.tag}{suffix}"
-            self._loc_entries[k] = name
-            self._loc_entries[f"{k}_DEF"] = name
-            dirty_keys.extend([k, f"{k}_DEF"])
-        self._loc_entries[f"{country.tag}_ADJ"] = adj
-        dirty_keys.append(f"{country.tag}_ADJ")
-        if country.leader:
-            self._loc_entries[country.leader.character_id] = country.leader.name
-            self._loc_entries[f"{country.leader.character_id}_desc"] = (
-                f"{country.leader.name} (leader)"
-            )
-            dirty_keys.extend([country.leader.character_id, f"{country.leader.character_id}_desc"])
+            put(k, name, names)
+            put(f"{k}_DEF", name, names)
+        put(f"{country.tag}_ADJ", adj, adjective)
+        if country.leader and country.leader.character_id:
+            put(country.leader.character_id, country.leader.name, leader)
+            put(f"{country.leader.character_id}_desc", f"{country.leader.name} (leader)", leader)
+        if not dirty_keys:
+            return
         for key in dirty_keys:
             # Existing country localization may intentionally live in a shared
             # file. Keep that routing instead of creating a second definition

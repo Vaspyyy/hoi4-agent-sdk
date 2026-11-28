@@ -6,6 +6,89 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Found by three models that each built the same mod with 0.7.0.
+
+### Added
+
+- `validate()` reports `event_text_key_clash`: an event whose title or
+  description uses the same localisation key as one of its options (the
+  classic case is a fourth option named `<id>.d`).
+- `validate(validate_icons=True)` reports `unknown_decision_icon` for a
+  decision or decision category icon without a sprite.
+- `Country.last_election` and `Country.election_frequency`, settable with
+  `update_country()` for a country that sets its politics at the start date.
+- `BookmarkCountry.minor` for the row of minor countries.
+- `import_portrait_to_mod(..., crop=(left, upper, right, lower))`.
+- `write_mod_descriptors(mod_root, None, name)` writes only `descriptor.mod`.
+
+### Changed
+
+- `create_country(tag, ..., overwrite_vanilla=True)` writes the new country
+  to the files the game's tag already uses (for example
+  `common/countries/Danzig.txt` and `history/countries/DNZ - Danzig.txt`)
+  and keeps the tag's colour (unless one is passed) and its graphical
+  culture. Before, it could write
+  files the game never reads, or a second history file for the tag.
+  `color` now defaults to `None` (grey for a new tag).
+- `common/countries/colors.txt` is only written when an entry of it really
+  changes. A country that is not in the table keeps its colour in its own
+  definition file.
+- A country whose leader is an old `create_country_leader` block is read as
+  that leader (name and ideology) with an empty `character_id`. No character
+  `<TAG>_leader_1` is invented and no `recruit_character` line is written
+  for it. When such a block is the leader, `update_country(leader_...=)`
+  turns it into a character that keeps the block's picture, traits and
+  expiry, under the first `<TAG>_leader_<n>` id no one uses. A block at the
+  top of the history is removed; a block under a condition (`if`, a dated
+  block) is replaced by `recruit_character` in the same place.
+- A change of a leader's name or ideology leaves the leader's portraits as
+  they are. Only a new `leader_portrait_slug` replaces them. With such a block, a recruited advisor is no longer
+  taken for the leader.
+- `update_country(popularities=...)`, `ruling_party=` or `adjective=` no
+  longer replaces the country names the game has per ideology. Only missing
+  keys are filled; a new `name` still sets them all.
+- An advisor's small portrait may be on any channel, as in the game's own
+  files.
+
+### Fixed
+
+- `State.is_demilitarized_zone` reads and writes `set_demilitarized_zone` in
+  the state's history, where the game keeps it (also inside an `if` block
+  there; a zone set only in a dated block is not the start value). It used to look for a key at
+  state scope that does not exist, so turning the zone off did nothing.
+- `validate_country_package()` no longer reports `missing_country_flag` for a
+  tag whose flag the game or a base mod ships, as one file or as one flag
+  per ideology.
+- After a first edit of a game country (for example a new character for
+  it), the game's own characters of the tag stay visible to lookups before
+  the save too. They used to vanish until the mod was saved.
+- A recruited leader in the mod's `<TAG>_mod_characters.txt` is read as the
+  country's leader.
+- `delete_country()` removes the mod's character file of a country with an
+  old-style leader, and of a country that got a character in the same
+  session.
+- With a `colors.txt` of the mod's own, a colour is no longer read from the
+  game's table, which the mod's file replaces as a whole, and a colour edit
+  no longer copies the game's table into the mod's.
+- `update_country(leader_...=)` on a game country without a leader creates
+  the leader's character and recruits it. It used to raise, since the
+  inherited character file has no such character.
+- `delete_country()` also removes the names of the characters in the
+  country's own character file.
+- A new character of a tag whose roster the game or a base mod keeps in
+  `common/characters/<TAG>_characters.txt` goes to
+  `<TAG>_mod_characters.txt`. A mod file of the inherited name used to
+  replace the whole roster with the one new character.
+- A mod file that replaces a game country's definition file (same file
+  name, no tag file of the mod's own) is read as the country's definition,
+  with and without base mods. Its colour and graphical culture used to be
+  ignored, and an edit wrote the game's text over it.
+- The on-action probe of the release gate counted the game's occurrences
+  and failed for a mod that extends `on_startup`.
+- The docs of `effects.add_dynamic_modifier()` and
+  `remove_dynamic_modifier()` say what `scope=` is (the modifier's variable
+  scope, not where the effect runs).
+
 ## [0.7.0] - 2026-11-27
 
 ### Changed (breaking)

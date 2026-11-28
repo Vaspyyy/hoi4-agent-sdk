@@ -21,6 +21,7 @@ from ..parser import (
     PdxNode,
     parse_pdx,
 )
+from ..countries import STANDARD_IDEOLOGY_GROUPS
 from ..types import (
     Country,
     ValidationIssue,
@@ -285,6 +286,21 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
             for key in transferred.keys() | cored.keys() | activated.keys()
         }
 
+    def _inherits_flag(self, relative: Path) -> bool:
+        """Whether the game or a base mod brings the flag of this size.
+
+        Either the file itself or, as the game ships it for most of its
+        tags, one flag per ideology group (``<TAG>_fascism.tga`` ...).
+        """
+
+        if self.resolve_content_path(relative) is not None:
+            return True
+        return all(
+            self.resolve_content_path(relative.with_name(f"{relative.stem}_{group}.tga"))
+            is not None
+            for group in STANDARD_IDEOLOGY_GROUPS
+        )
+
     def validate_country_package(
         self,
         tag: str,
@@ -365,7 +381,9 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
         missing_flags = [
             path.relative_to(self.mod_root).as_posix()
             for path in flag_paths
-            if not path.is_file() and path not in self._pending_asset_writes
+            if not path.is_file()
+            and path not in self._pending_asset_writes
+            and not self._inherits_flag(path.relative_to(self.mod_root))
         ]
         if missing_flags:
             issue(
@@ -499,16 +517,17 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
                 if sprite
             }
             roles = self._all_character_roles(character)
+            # The game's own files use every channel for it.
             if any(isinstance(role, AdvisorRole) for role in roles) and not any(
-                portrait.channel == "civilian" and portrait.small
-                for portrait in portraits
+                portrait.small for portrait in portraits
             ):
                 issue(
                     "missing_character_small_portrait",
                     (
-                        f"Advisor character '{character.id}' has no civilian small "
-                        "portrait. Advisor cards require portraits.civilian.small "
-                        "and a resolvable interface/*.gfx sprite."
+                        f"Advisor character '{character.id}' has no small portrait. "
+                        "Advisor cards require a small sprite on one channel "
+                        "(portraits.civilian.small, portraits.army.small or "
+                        "portraits.navy.small) that an interface/*.gfx file declares."
                     ),
                     file_path=str(character.path) if character.path else None,
                 )
