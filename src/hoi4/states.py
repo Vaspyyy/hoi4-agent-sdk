@@ -650,8 +650,9 @@ def _render_new_state(state: State) -> str:
             history.children.append(vp_block)
     if state.buildings:
         _replace_block(history, "buildings", state.buildings)
-    history.remove("set_demilitarized_zone")
-    if state.is_demilitarized_zone:
+    # A history that sets the zone itself is kept as written; the flag only
+    # adds the effect where it is missing.
+    if state.is_demilitarized_zone and not history_text_sets_zone(state.history):
         history.children.append(PdxNode(key="set_demilitarized_zone", value="yes"))
     state_block.children.append(history)
 

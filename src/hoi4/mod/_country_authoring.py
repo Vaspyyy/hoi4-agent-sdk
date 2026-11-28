@@ -19,6 +19,7 @@ from ..countries import (
     country_file_paths,
     country_history_target,
     has_start_politics,
+    legacy_leader_details,
     remove_legacy_leader,
     serialize_country_colors_file,
 )
@@ -408,6 +409,7 @@ class CountryAuthoringLayer(CharactersLayer):
             if "color" in other_kwargs and "color_ui" not in other_kwargs:
                 # A new map colour without its own UI colour: the UI follows it.
                 country.color_ui = None
+        legacy: dict[str, Any] = {}
         if leader_kwargs:
             if country.leader is None:
                 country.leader = Leader(name="Leader", character_id=f"{tag}_leader_1")
@@ -415,6 +417,7 @@ class CountryAuthoringLayer(CharactersLayer):
                 # An old-style ``create_country_leader`` block becomes a
                 # character: the block goes, the character is recruited.
                 self._materialize_country_history(country)
+                legacy = legacy_leader_details(country.raw_history, country.leader.name)
                 country.raw_history = remove_legacy_leader(
                     country.raw_history, country.leader.name
                 )
@@ -441,13 +444,25 @@ class CountryAuthoringLayer(CharactersLayer):
                         id=country.leader.character_id,
                         country_tag=tag,
                         name=country.leader.name,
+                        # An old-style block keeps its picture, traits and
+                        # expiry; a portrait slug passed in this call wins.
                         portraits=[
                             CharacterPortrait(
                                 channel="civilian",
-                                large=f"GFX_portrait_{tag}_{country.leader.portrait_slug}",
+                                large=(
+                                    legacy["picture"]
+                                    if "picture" in legacy and "portrait_slug" not in leader_kwargs
+                                    else f"GFX_portrait_{tag}_{country.leader.portrait_slug}"
+                                ),
                             )
                         ],
-                        roles=[CountryLeaderRole(ideology=country.leader.ideology)],
+                        roles=[
+                            CountryLeaderRole(
+                                ideology=country.leader.ideology,
+                                traits=list(legacy.get("traits", [])),
+                                **({"expire": legacy["expire"]} if "expire" in legacy else {}),
+                            )
+                        ],
                     ),
                     recruit=False,
                 )
@@ -466,7 +481,9 @@ class CountryAuthoringLayer(CharactersLayer):
                 leader=bool(leader_kwargs),
             )
         if leader_kwargs and country.leader is not None:
-            self._sync_leader_character_model(country)
+            self._sync_leader_character_model(
+                country, portrait="portrait_slug" in leader_kwargs
+            )
         self._note_country_files(country)
         self._dirty.add("countries")
         self._dirty_countries.add(tag)
@@ -491,7 +508,7 @@ class CountryAuthoringLayer(CharactersLayer):
         for target in targets:
             self._note_target(target)
 
-    def _sync_leader_character_model(self, country: Country) -> None:
+    def _sync_leader_character_model(self, country: Country, *, portrait: bool = True) -> None:
         leader = country.leader
         if leader is None:
             return
@@ -504,13 +521,17 @@ class CountryAuthoringLayer(CharactersLayer):
             leader.portrait_slug
             or leader.character_id.removeprefix(country.tag + "_")
         )
-        character.portraits = [
-            CharacterPortrait(
-                channel="civilian",
-                large=f"GFX_portrait_{country.tag}_{portrait_slug}",
-            )
-        ]
-        character.touched_fields.update({"name", "portraits"})
+        character.touched_fields.add("name")
+        # The portraits follow a new portrait slug; a change of the name or
+        # the ideology leaves the leader's pictures as they are.
+        if portrait or not character.portraits:
+            character.portraits = [
+                CharacterPortrait(
+                    channel="civilian",
+                    large=f"GFX_portrait_{country.tag}_{portrait_slug}",
+                )
+            ]
+            character.touched_fields.add("portraits")
         roles = [
             role
             for role in character.roles

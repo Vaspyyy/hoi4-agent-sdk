@@ -671,3 +671,43 @@ def test_deleting_a_country_removes_the_names_of_its_characters(tmp_path: Path) 
     mod.delete_country("ZZZ")
     mod.save()
     assert [p for p in root.rglob("*") if p.is_file() and "ZZZ" in p.read_text(encoding="utf-8", errors="ignore")] == []
+
+
+# ── Found by the readiness review ───────────────────────────────────
+
+
+def test_converted_leader_keeps_picture_traits_and_expiry(mod: Mod) -> None:
+    write(
+        mod.hoi4_install,
+        "history/countries/POL - Poland.txt",
+        'capital = 10\ncreate_country_leader = {\n\tname = "Old Leader"\n\tpicture = "gfx/leaders/POL/old.dds"\n'
+        '\texpire = "1953.3.1"\n\tideology = nazism\n\ttraits = {\n\t\tcharismatic war_hero\n\t}\n}\n',
+    )
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    fresh.update_country("POL", leader_name="New Name")
+    fresh.save()
+    text = (fresh.mod_root / "common/characters/POL_characters.txt").read_text(encoding="utf-8")
+    assert "New Name" in text and "gfx/leaders/POL/old.dds" in text
+    assert "charismatic" in text and "war_hero" in text and "1953.3.1" in text
+    assert "GFX_portrait_POL_leader_1" not in text
+    # A later rename keeps the picture too; a new portrait slug replaces it.
+    again = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    again.update_country("POL", leader_name="Third Name")
+    again.save()
+    assert "gfx/leaders/POL/old.dds" in (again.mod_root / "common/characters/POL_characters.txt").read_text(encoding="utf-8")
+    again.update_country("POL", leader_portrait_slug="fresh")
+    again.save()
+    text = (again.mod_root / "common/characters/POL_characters.txt").read_text(encoding="utf-8")
+    assert "GFX_portrait_POL_fresh" in text and "old.dds" not in text
+
+
+def test_new_state_keeps_the_zone_effect_of_its_history(tmp_path: Path) -> None:
+    from hoi4.states import serialize_state
+    from hoi4.types import State
+
+    written = serialize_state(State(id=900, provinces=[1], history="owner = POL\nset_demilitarized_zone = yes"))
+    assert written.count("set_demilitarized_zone = yes") == 1
+    flagged = serialize_state(State(id=901, provinces=[1], history="owner = POL", is_demilitarized_zone=True))
+    assert flagged.count("set_demilitarized_zone = yes") == 1
+    plain = serialize_state(State(id=902, provinces=[1], history="owner = POL"))
+    assert "demilitarized" not in plain

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import colorsys
 import re
+from typing import Any
 from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -821,6 +822,31 @@ def _legacy_leader(txt: str) -> tuple[str, str] | None:
         if name:
             return name, leader.value.scalar("ideology") or ""
     return None
+
+
+def legacy_leader_details(history: str, name: str) -> dict[str, Any]:
+    """What the ``create_country_leader`` block of ``name`` says besides name and ideology.
+
+    ``picture`` (a sprite name or a texture path), ``expire`` and ``traits``,
+    each only when the block has it: the character that takes the block's
+    place keeps them.
+    """
+
+    for item, _ in sorted(_root(history).walk(), key=lambda pair: pair[0].start):
+        if item.name != "create_country_leader" or type(item.value) is not Block:
+            continue
+        if item.value.scalar("name") != name:
+            continue
+        details: dict[str, Any] = {}
+        for key in ("picture", "expire"):
+            value = item.value.scalar(key)
+            if value:
+                details[key] = value
+        traits = item.value.block("traits")
+        if traits is not None:
+            details["traits"] = [scalar.value for scalar in traits.values()]
+        return details
+    return {}
 
 
 def remove_legacy_leader(history: str, name: str) -> str:
