@@ -136,6 +136,25 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
             raise not_found("character", character_id, self._characters)
         return character
 
+    def _default_character_file(self, tag: str) -> Path:
+        """The mod-relative file a new character of ``tag`` goes to.
+
+        ``common/characters/<TAG>_characters.txt``, unless the game or a base
+        mod has a file of that name that the mod does not have: a new mod
+        file there would replace their whole roster with the one character.
+        """
+
+        relative = Path("common") / "characters" / f"{tag}_characters.txt"
+        target = self.mod_root / relative
+        if (
+            not target.exists()
+            and target not in self._original_files
+            and target not in self._dirty_character_files
+            and self._inherits_file(relative)
+        ):
+            return Path("common") / "characters" / f"{tag}_mod_characters.txt"
+        return relative
+
     def create_character(
         self,
         tag: str,
@@ -198,7 +217,7 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
                 if existing is not None
                 and existing.path is not None
                 and existing.path.resolve(strict=False).is_relative_to(self.mod_root)
-                else Path("common") / "characters" / f"{tag}_characters.txt"
+                else self._default_character_file(tag)
             ),
         )
         replacement = copy.deepcopy(character)

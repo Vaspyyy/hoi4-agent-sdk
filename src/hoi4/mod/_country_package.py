@@ -21,6 +21,7 @@ from ..parser import (
     PdxNode,
     parse_pdx,
 )
+from ..countries import STANDARD_IDEOLOGY_GROUPS
 from ..types import (
     Country,
     ValidationIssue,
@@ -285,6 +286,21 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
             for key in transferred.keys() | cored.keys() | activated.keys()
         }
 
+    def _inherits_flag(self, relative: Path) -> bool:
+        """Whether the game or a base mod brings the flag of this size.
+
+        Either the file itself or, as the game ships it for most of its
+        tags, one flag per ideology group (``<TAG>_fascism.tga`` ...).
+        """
+
+        if self.resolve_content_path(relative) is not None:
+            return True
+        return all(
+            self.resolve_content_path(relative.with_name(f"{relative.stem}_{group}.tga"))
+            is not None
+            for group in STANDARD_IDEOLOGY_GROUPS
+        )
+
     def validate_country_package(
         self,
         tag: str,
@@ -367,8 +383,7 @@ class CountryPackageLayer(OobValidationLayer, ContextLayer, OobsLayer, Character
             for path in flag_paths
             if not path.is_file()
             and path not in self._pending_asset_writes
-            # A tag of the game or a base mod brings its flag with it.
-            and self.resolve_content_path(path.relative_to(self.mod_root)) is None
+            and not self._inherits_flag(path.relative_to(self.mod_root))
         ]
         if missing_flags:
             issue(

@@ -896,9 +896,16 @@ def country_file_paths(mod_root: Path, country: Country) -> list[Path]:
         country.definition_path or mod_root / f"common/countries/{tag}.txt",
         country.history_path or mod_root / f"history/countries/{tag} - {safe_name}.txt",
     ]
-    if country.leader and country.leader.character_id:
+    if country.character_path is not None and _is_under(country.character_path, mod_root):
+        # The mod's own character file of the country, whoever its leader is.
+        paths.append(country.character_path)
+    elif country.leader and country.leader.character_id:
         paths.append(country.character_path or mod_root / f"common/characters/{tag}_characters.txt")
     return paths
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    return path.resolve(strict=False).is_relative_to(root.resolve(strict=False))
 
 
 def country_history_target(

@@ -501,3 +501,64 @@ def test_replacing_a_game_country_of_the_colour_table_writes_no_table(mod: Mod) 
     mod.discard()
     mod.create_country("POL", "Poland", overwrite_vanilla=True, color=(1, 2, 3))
     assert "common/countries/colors.txt" in staged(mod)
+
+
+# ── Found by the third review ───────────────────────────────────────
+
+
+ISTANBUL = (
+    "state = {\n\tid = 797\n\tname = \"STATE_797\"\n\tmanpower = 1\n\tstate_category = city\n\thistory = {\n"
+    "\t\towner = POL\n\t\tif = {\n\t\t\tlimit = { has_dlc = \"Battle for the Bosporus\" }\n"
+    "\t\t\tset_demilitarized_zone = yes\n\t\t}\n\t}\n\tprovinces = {\n\t\t9\n\t}\n}\n"
+)
+
+
+def test_new_history_keeps_its_conditional_zone(mod: Mod) -> None:
+    write(mod.hoi4_install, "history/states/797-Istanbul.txt", ISTANBUL)
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    state = fresh.get_state(797)
+    fresh.update_state(797, history=state.history + "\nadd_claim_by = POL")
+    assert fresh.get_state(797).is_demilitarized_zone is True
+    fresh.save()
+    text = (fresh.mod_root / "history/states/797-Istanbul.txt").read_text(encoding="utf-8")
+    assert "has_dlc" in text and text.count("set_demilitarized_zone = yes") == 1
+    assert "add_claim_by = POL" in text
+    assert Mod(mod.mod_root, hoi4_install=mod.hoi4_install).get_state(797).is_demilitarized_zone is True
+
+
+def test_package_accepts_the_ideology_flags_the_game_ships(mod: Mod) -> None:
+    for size in ("", "medium/", "small/"):
+        for group in ("democratic", "fascism", "communism", "neutrality"):
+            write(mod.hoi4_install, f"gfx/flags/{size}POL_{group}.tga", "x")
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    assert "missing_country_flag" not in {f.code for f in fresh.validate_country_package("POL").findings}
+    (mod.hoi4_install / "gfx/flags/medium/POL_fascism.tga").unlink()
+    again = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    assert "missing_country_flag" in {f.code for f in again.validate_country_package("POL").findings}
+
+
+def test_deleting_a_country_with_an_old_style_leader_removes_its_character_file(tmp_path: Path) -> None:
+    root = tmp_path / "own"
+    write(root, "common/country_tags/00_tags.txt", 'ZZZ = "countries/ZZZ.txt"\n')
+    write(root, "common/countries/ZZZ.txt", "color = { 1 2 3 }\n")
+    write(root, "history/countries/ZZZ - Zed.txt", 'capital = 1\ncreate_country_leader = {\n\tname = "Old"\n\tideology = nazism\n}\n')
+    write(root, "common/characters/ZZZ_characters.txt", "characters = {\n\tZZZ_adv = { name = Adv }\n}\n")
+    mod = Mod(root)
+    mod.delete_country("ZZZ")
+    mod.save()
+    assert sorted(p.name for p in root.rglob("*.txt")) == []
+
+
+def test_new_character_does_not_replace_an_inherited_roster_file(mod: Mod) -> None:
+    write(mod.hoi4_install, "common/characters/DNZ_characters.txt", "characters = {\n\tDNZ_old = { name = Old }\n}\n")
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    fresh.create_character("DNZ", _advisor())
+    assert "common/characters/DNZ_characters.txt" not in staged(fresh)
+    assert "common/characters/DNZ_mod_characters.txt" in staged(fresh)
+    fresh.save()
+    again = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    assert again.get_character("DNZ_old").name == "Old" and again.get_character("DNZ_advisor").name == "Advisor"
+    again.create_country("DNZ", "Danzig", overwrite=True, overwrite_vanilla=True)
+    assert "common/characters/DNZ_characters.txt" not in staged(again)
+    again.save()
+    assert Mod(mod.mod_root, hoi4_install=mod.hoi4_install).get_character("DNZ_old").name == "Old"

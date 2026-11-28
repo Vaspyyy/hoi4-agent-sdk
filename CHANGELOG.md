@@ -48,10 +48,16 @@ Found by three models that each built the same mod with 0.7.0.
 ### Fixed
 
 - `State.is_demilitarized_zone` reads and writes `set_demilitarized_zone` in
-  the state's history, where the game keeps it. It used to look for a key at
+  the state's history, where the game keeps it (also inside an `if` block
+  there; a zone set only in a dated block is not the start value). It used to look for a key at
   state scope that does not exist, so turning the zone off did nothing.
 - `validate_country_package()` no longer reports `missing_country_flag` for a
-  tag whose flag the game or a base mod ships.
+  tag whose flag the game or a base mod ships, as one file or as one flag
+  per ideology.
+- A new character of a tag whose roster the game or a base mod keeps in
+  `common/characters/<TAG>_characters.txt` goes to
+  `<TAG>_mod_characters.txt`. A mod file of the inherited name used to
+  replace the whole roster with the one new character.
 - A mod file that replaces a game country's definition file (same file
   name, no tag file of the mod's own) is read as the country's definition,
   with and without base mods. Its colour and graphical culture used to be

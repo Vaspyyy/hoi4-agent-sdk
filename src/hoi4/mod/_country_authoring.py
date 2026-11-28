@@ -252,9 +252,11 @@ class CountryAuthoringLayer(CharactersLayer):
             # the tag: a file of the game holds its whole roster, and a file
             # of that name in the mod would replace all of it.
             character_path=(
-                preserved_mod_path(existing.character_path)
-                if existing is not None and inherited_cultures is None
-                else None
+                existing.character_path.resolve(strict=False)
+                if existing is not None
+                and existing.character_path is not None
+                and existing.character_path.resolve(strict=False).is_relative_to(self.mod_root)
+                else self._output_path(self._default_character_file(tag))
             ),
             touched_fields={"*"},
         )

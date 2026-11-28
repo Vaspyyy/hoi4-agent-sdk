@@ -166,11 +166,7 @@ def read_state(state_file: Path, text: str | None = None) -> State:
 
         # The game sets the zone with this effect in the history block (dated
         # blocks have their own). There is no key for it at state scope.
-        # Some game files put it inside ``if = { limit = { has_dlc = ... } }``.
-        state_obj.is_demilitarized_zone = history.scalar("set_demilitarized_zone") == "yes" or any(
-            item.block is not None and item.block.scalar("set_demilitarized_zone") == "yes"
-            for item in history.assignments("if")
-        )
+        state_obj.is_demilitarized_zone = _history_sets_zone(history)
 
         state_obj.cores = [
             item.scalar for item in history.assignments("add_core_of") if item.scalar
@@ -768,7 +764,12 @@ def _patch_existing_state(state: State) -> str:
                 history_body, "buildings", state.buildings or None, history_layout,
                 before_dated=True,
             )
-        if history_replaced or state.is_demilitarized_zone != original.is_demilitarized_zone:
+        # Compared with what the history says now (a replaced one included),
+        # so a history that already agrees with the flag is left as written.
+        history_block = parse(f"history = {{\n{history_body}\n}}").root.block("history")
+        if history_block is not None and (
+            _history_sets_zone(history_block) != state.is_demilitarized_zone
+        ):
             if not state.is_demilitarized_zone:
                 history_body = _clear_conditional_zone(history_body, history_layout)
             history_body = _set_direct_scalar(
@@ -783,6 +784,27 @@ def _patch_existing_state(state: State) -> str:
     if state_body == state_block.body:
         return raw
     return raw[: state_block.body_start] + state_body + raw[state_block.body_end :]
+
+
+def _history_sets_zone(history: Block) -> bool:
+    """Whether a state's history makes it a demilitarized zone at the start.
+
+    The game sets the zone with ``set_demilitarized_zone = yes`` in the
+    history block; some of its files put that inside
+    ``if = { limit = { has_dlc = ... } }``. Dated blocks have their own.
+    """
+
+    return history.scalar("set_demilitarized_zone") == "yes" or any(
+        item.block is not None and item.block.scalar("set_demilitarized_zone") == "yes"
+        for item in history.assignments("if")
+    )
+
+
+def history_text_sets_zone(history: str) -> bool:
+    """The same for the text inside ``history = { }``."""
+
+    block = parse(f"history = {{\n{history}\n}}").root.block("history")
+    return block is not None and _history_sets_zone(block)
 
 
 def _clear_conditional_zone(history_body: str, layout: _Layout) -> str:
