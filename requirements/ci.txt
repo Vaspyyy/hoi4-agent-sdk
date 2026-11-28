@@ -1,8 +1,8 @@
 pip==26.3
 pytest==9.2.0
 pytest-cov==7.1.0
-hypothesis==6.170.15
-ruff==0.17.5
+hypothesis==6.170.17
+ruff==0.17.6
 mypy==2.4.1
 build==1.6.1
 twine==7.0.0
