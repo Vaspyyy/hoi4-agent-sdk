@@ -63,7 +63,13 @@ Found by three models that each built the same mod with 0.7.0.
   old-style leader, and of a country that got a character in the same
   session.
 - With a `colors.txt` of the mod's own, a colour is no longer read from the
-  game's table, which the mod's file replaces as a whole.
+  game's table, which the mod's file replaces as a whole, and a colour edit
+  no longer copies the game's table into the mod's.
+- `update_country(leader_...=)` on a game country without a leader creates
+  the leader's character and recruits it. It used to raise, since the
+  inherited character file has no such character.
+- `delete_country()` also removes the names of the characters in the
+  country's own character file.
 - A new character of a tag whose roster the game or a base mod keeps in
   `common/characters/<TAG>_characters.txt` goes to
   `<TAG>_mod_characters.txt`. A mod file of the inherited name used to

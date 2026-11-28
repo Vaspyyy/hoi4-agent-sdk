@@ -630,3 +630,44 @@ def test_deleting_a_country_with_a_character_added_in_the_session(tmp_path: Path
     mod.delete_country("ZZZ")
     mod.save()
     assert list((root / "common").rglob("ZZZ*")) == []
+
+
+# ── Found by the fifth review ───────────────────────────────────────
+
+
+def test_a_colour_edit_leaves_the_mods_own_table_alone(tmp_path: Path, game: Path) -> None:
+    root = tmp_path / "mod"
+    write(root, "common/countries/colors.txt", "ZZZ = {\n\tcolor = rgb { 20 20 20 }\n}\n")
+    mod = Mod(root, hoi4_install=game)
+    mod.update_country("POL", color=(9, 9, 9))
+    mod.save()
+    assert (root / "common/countries/colors.txt").read_text(encoding="utf-8") == "ZZZ = {\n\tcolor = rgb { 20 20 20 }\n}\n"
+    assert "9 9 9" in (root / "common/countries/Poland.txt").read_text(encoding="utf-8")
+    assert Mod(root, hoi4_install=game).get_country("POL").color == (9, 9, 9)
+
+
+def test_leader_of_a_country_without_one_is_created(mod: Mod) -> None:
+    write(mod.hoi4_install, "common/characters/POL.txt", "characters = {\n\tPOL_general = { name = General }\n}\n")
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    assert fresh.get_country("POL").leader is None
+    fresh.update_country("POL", leader_name="Test Leader")
+    fresh.save()
+    again = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    leader = again.get_country("POL").leader
+    assert leader is not None and (leader.name, leader.character_id) == ("Test Leader", "POL_leader_1")
+    assert again.get_character("POL_leader_1").name == "Test Leader"
+    assert again.get_character("POL_general").name == "General"
+    assert "undefined_recruited_character" not in {f.code for f in again.validate_country_package("POL").findings}
+
+
+def test_deleting_a_country_removes_the_names_of_its_characters(tmp_path: Path) -> None:
+    root = tmp_path / "own"
+    root.mkdir()
+    mod = Mod(root)
+    mod.create_country("ZZZ", "Zed")
+    mod.save()
+    mod = Mod(root)
+    mod.list_characters()
+    mod.delete_country("ZZZ")
+    mod.save()
+    assert [p for p in root.rglob("*") if p.is_file() and "ZZZ" in p.read_text(encoding="utf-8", errors="ignore")] == []

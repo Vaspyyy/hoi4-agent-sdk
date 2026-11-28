@@ -277,9 +277,13 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             colors_path = self.mod_root / "common" / "countries" / "colors.txt"
             colors_original = self._read_current_text(colors_path)
             existing_color_tags = country_color_tags(colors_original)
+            # A table of the mod's own replaces the inherited one as a whole:
+            # the inherited entries are then no part of "the table", and are
+            # not copied into the mod's.
+            own_table = bool(colors_original.strip()) or colors_path in self._script_file_updates
             inherited_colors_path = (
                 self._base_content.file("common/countries/colors.txt")
-                if self._base_content is not None
+                if self._base_content is not None and not own_table
                 else None
             )
             inherited_colors = (
@@ -314,7 +318,7 @@ class PersistenceLayer(PreviewLayer, LoadingLayer, SourcesLayer):
             }
             deleted_color_tags = set(self._deleted_countries) & existing_color_tags
             colors_base = self._script_file_updates.get(colors_path, colors_original)
-            if (color_updates or deleted_color_tags) and self._base_content is not None and colors_path not in self._script_file_updates:
+            if (color_updates or deleted_color_tags) and self._base_content is not None and not own_table:
                 vanilla_colors_path = self._base_content.file("common/countries/colors.txt")
                 if vanilla_colors_path is not None:
                     colors_base = seed_country_colors_file(

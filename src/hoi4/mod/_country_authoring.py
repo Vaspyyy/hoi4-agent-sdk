@@ -408,7 +408,6 @@ class CountryAuthoringLayer(CharactersLayer):
             if "color" in other_kwargs and "color_ui" not in other_kwargs:
                 # A new map colour without its own UI colour: the UI follows it.
                 country.color_ui = None
-        converted_leader = False
         if leader_kwargs:
             if country.leader is None:
                 country.leader = Leader(name="Leader", character_id=f"{tag}_leader_1")
@@ -424,11 +423,18 @@ class CountryAuthoringLayer(CharactersLayer):
                 if country.leader.character_id not in country.recruited_characters:
                     country.recruited_characters.append(country.leader.character_id)
                 country.touched_fields.add("recruited_characters")
-                converted_leader = True
             _set_fields(country.leader, leader_kwargs, method="update_country")
-            if converted_leader and country.leader.character_id not in self._characters:
-                # The character itself, so a save writes it whoever writes
-                # the character file (the country or other characters in it).
+            leader_id = country.leader.character_id
+            if leader_id and self.get_character(leader_id, default=None) is None:
+                # No one defines the leader's character yet (an old-style
+                # block, or a country without a leader): the character
+                # itself is created, so a save writes it whoever writes the
+                # character file, and the country recruits it.
+                if leader_id not in country.recruited_characters:
+                    country.recruited_characters.append(leader_id)
+                country.touched_fields.add("recruited_characters")
+                if not country.leader.portrait_slug:
+                    country.leader.portrait_slug = leader_id.removeprefix(f"{tag}_")
                 self.create_character(
                     tag,
                     Character(
@@ -542,13 +548,16 @@ class CountryAuthoringLayer(CharactersLayer):
         del self._countries[tag]
         self._deleted_countries[tag] = country
         self._created_country_tags.discard(tag)
-        # Unsaved characters of the country's own file go with it: the save
-        # would otherwise write the file again right after deleting it.
+        # The characters of the country's own file go with it (the save
+        # would otherwise write the file again right after deleting it),
+        # and so do their names.
+        removed_characters: list[str] = []
         if country.character_path is not None:
             for character_id, character in list(self._characters.items()):
                 if character.path == country.character_path:
                     del self._characters[character_id]
                     self._dirty_characters.discard(character_id)
+                    removed_characters.append(character_id)
             self._dirty_character_files.discard(country.character_path)
             self._reload_on_discard.add("characters")
         loc_keys: list[str] = []
@@ -556,8 +565,10 @@ class CountryAuthoringLayer(CharactersLayer):
             key = f"{tag}{suffix}"
             loc_keys.extend((key, f"{key}_DEF"))
         loc_keys.append(f"{tag}_ADJ")
-        if country.leader:
+        if country.leader and country.leader.character_id:
             loc_keys.extend((country.leader.character_id, f"{country.leader.character_id}_desc"))
+        for character_id in removed_characters:
+            loc_keys.extend((character_id, f"{character_id}_desc"))
         for key in set(loc_keys):
             self._delete_loc_all_languages(key)
         self._dirty.add("countries")
