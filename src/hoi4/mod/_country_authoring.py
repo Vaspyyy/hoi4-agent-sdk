@@ -20,6 +20,7 @@ from ..countries import (
     country_history_target,
     has_start_politics,
     legacy_leader_details,
+    legacy_leader_is_conditional,
     remove_legacy_leader,
     serialize_country_colors_file,
 )
@@ -410,22 +411,29 @@ class CountryAuthoringLayer(CharactersLayer):
                 # A new map colour without its own UI colour: the UI follows it.
                 country.color_ui = None
         legacy: dict[str, Any] = {}
+        recruit_leader = True
         if leader_kwargs:
             if country.leader is None:
-                country.leader = Leader(name="Leader", character_id=f"{tag}_leader_1")
+                slug = self._free_leader_slug(tag)
+                country.leader = Leader(
+                    name="Leader", character_id=f"{tag}_{slug}", portrait_slug=slug
+                )
             elif not country.leader.character_id:
                 # An old-style ``create_country_leader`` block becomes a
-                # character: the block goes, the character is recruited.
+                # character under an id no one uses yet. A block at the top
+                # of the history goes and the country recruits the
+                # character; a block under a condition is replaced by the
+                # recruitment in the same place.
                 self._materialize_country_history(country)
-                legacy = legacy_leader_details(country.raw_history, country.leader.name)
+                slug = self._free_leader_slug(tag)
+                old_name = country.leader.name
+                legacy = legacy_leader_details(country.raw_history, old_name)
+                recruit_leader = not legacy_leader_is_conditional(country.raw_history, old_name)
                 country.raw_history = remove_legacy_leader(
-                    country.raw_history, country.leader.name
+                    country.raw_history, old_name, recruit=f"{tag}_{slug}"
                 )
-                country.leader.character_id = f"{tag}_leader_1"
-                country.leader.portrait_slug = "leader_1"
-                if country.leader.character_id not in country.recruited_characters:
-                    country.recruited_characters.append(country.leader.character_id)
-                country.touched_fields.add("recruited_characters")
+                country.leader.character_id = f"{tag}_{slug}"
+                country.leader.portrait_slug = slug
             _set_fields(country.leader, leader_kwargs, method="update_country")
             leader_id = country.leader.character_id
             if leader_id and self.get_character(leader_id, default=None) is None:
@@ -433,9 +441,10 @@ class CountryAuthoringLayer(CharactersLayer):
                 # block, or a country without a leader): the character
                 # itself is created, so a save writes it whoever writes the
                 # character file, and the country recruits it.
-                if leader_id not in country.recruited_characters:
-                    country.recruited_characters.append(leader_id)
-                country.touched_fields.add("recruited_characters")
+                if recruit_leader:
+                    if leader_id not in country.recruited_characters:
+                        country.recruited_characters.append(leader_id)
+                    country.touched_fields.add("recruited_characters")
                 if not country.leader.portrait_slug:
                     country.leader.portrait_slug = leader_id.removeprefix(f"{tag}_")
                 self.create_character(
@@ -507,6 +516,14 @@ class CountryAuthoringLayer(CharactersLayer):
         )
         for target in targets:
             self._note_target(target)
+
+    def _free_leader_slug(self, tag: str) -> str:
+        """``leader_1``, or the first ``leader_<n>`` no character of ``tag`` uses."""
+
+        number = 1
+        while self.get_character(f"{tag}_leader_{number}", default=None) is not None:
+            number += 1
+        return f"leader_{number}"
 
     def _sync_leader_character_model(self, country: Country, *, portrait: bool = True) -> None:
         leader = country.leader

@@ -849,12 +849,18 @@ def legacy_leader_details(history: str, name: str) -> dict[str, Any]:
     return {}
 
 
-def remove_legacy_leader(history: str, name: str) -> str:
-    """Remove the first ``create_country_leader`` block of the leader ``name``.
+def remove_legacy_leader(
+    history: str, name: str, *, recruit: str = "", _nested: bool = False
+) -> str:
+    """Take the first ``create_country_leader`` block of the leader ``name`` out.
 
     For the moment a character takes the place of an old-style leader: the
-    game would otherwise create both. The block may sit inside ``if = { }``
-    or a dated block. Blocks of other leaders stay.
+    game would otherwise create both. A block at the top of the history is
+    removed (the country recruits the character there). A block inside
+    ``if = { }`` or a dated block is replaced by ``recruit_character =
+    <recruit>`` in the same place, so the condition it stands under keeps
+    deciding whether the country gets this leader. Blocks of other leaders
+    stay.
     """
 
     for span in top_level_assignments(history):
@@ -863,12 +869,29 @@ def remove_legacy_leader(history: str, name: str) -> str:
         body = history[span.body_start : span.body_end]
         if span.key == "create_country_leader":
             if _root(history[span.start : span.end]).block(span.key).scalar("name") == name:  # type: ignore[union-attr]
-                return replace_assignment(history, span, None)
+                replacement = f"recruit_character = {quote(recruit)}" if _nested and recruit else None
+                return replace_assignment(history, span, replacement)
             continue
-        inner = remove_legacy_leader(body, name)
+        inner = remove_legacy_leader(body, name, recruit=recruit, _nested=True)
         if inner != body:
             return replace_assignment_body(history, span, inner)
     return history
+
+
+def legacy_leader_is_conditional(history: str, name: str) -> bool:
+    """Whether the first block of the leader ``name`` sits inside another block."""
+
+    for item, _ in sorted(_root(history).walk(), key=lambda pair: pair[0].start):
+        if (
+            item.name == "create_country_leader"
+            and type(item.value) is Block
+            and item.value.scalar("name") == name
+        ):
+            return not any(
+                span.key == "create_country_leader" and span.start == item.start
+                for span in top_level_assignments(history)
+            )
+    return False
 
 
 def write_country_tag(mod_root: Path, tag: str) -> Path:

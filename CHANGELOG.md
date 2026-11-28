@@ -38,7 +38,9 @@ Found by three models that each built the same mod with 0.7.0.
   `<TAG>_leader_1` is invented and no `recruit_character` line is written
   for it. When such a block is the leader, `update_country(leader_...=)`
   turns it into a character that keeps the block's picture, traits and
-  expiry, and removes the block.
+  expiry, under the first `<TAG>_leader_<n>` id no one uses. A block at the
+  top of the history is removed; a block under a condition (`if`, a dated
+  block) is replaced by `recruit_character` in the same place.
 - A change of a leader's name or ideology leaves the leader's portraits as
   they are. Only a new `leader_portrait_slug` replaces them. With such a block, a recruited advisor is no longer
   taken for the leader.

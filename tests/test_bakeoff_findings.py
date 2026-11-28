@@ -711,3 +711,40 @@ def test_new_state_keeps_the_zone_effect_of_its_history(tmp_path: Path) -> None:
     assert flagged.count("set_demilitarized_zone = yes") == 1
     plain = serialize_state(State(id=902, provinces=[1], history="owner = POL"))
     assert "demilitarized" not in plain
+
+
+def test_converted_conditional_leader_stays_under_its_condition(mod: Mod) -> None:
+    write(
+        mod.hoi4_install,
+        "history/countries/POL - Poland.txt",
+        'capital = 10\nif = {\n\tlimit = { has_dlc = "X" }\n\tcreate_country_leader = {\n\t\tname = "Dlc Leader"\n\t\tideology = nazism\n\t}\n}\n',
+    )
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    fresh.update_country("POL", leader_name="New Name")
+    fresh.save()
+    history = (fresh.mod_root / "history/countries/POL - Poland.txt").read_text(encoding="utf-8")
+    inside = history[history.index("if = {") : history.rindex("}")]
+    assert "recruit_character = POL_leader_1" in inside and 'has_dlc = "X"' in inside
+    assert history.count("recruit_character") == 1 and "create_country_leader" not in history
+    again = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    leader = again.get_country("POL").leader
+    assert leader is not None and (leader.name, leader.character_id) == ("New Name", "POL_leader_1")
+
+
+def test_converted_leader_takes_an_unused_character_id(mod: Mod) -> None:
+    from hoi4 import AdvisorRole, Character, CharacterPortrait
+
+    mod.create_character("DNZ", Character(
+        id="DNZ_leader_1", country_tag="DNZ", name="An Advisor",
+        portraits=[CharacterPortrait(channel="civilian", large="GFX_l", small="GFX_s")],
+        roles=[AdvisorRole(slot="political_advisor", idea_token="DNZ_leader_1")],
+    ))
+    mod.save()
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    fresh.update_country("DNZ", leader_name="Arthur Greiser")
+    fresh.save()
+    again = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    assert again.get_character("DNZ_leader_1").name == "An Advisor"
+    assert again.get_character("DNZ_leader_2").name == "Arthur Greiser"
+    leader = again.get_country("DNZ").leader
+    assert leader is not None and leader.character_id == "DNZ_leader_2"
