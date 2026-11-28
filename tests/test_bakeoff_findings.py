@@ -562,3 +562,71 @@ def test_new_character_does_not_replace_an_inherited_roster_file(mod: Mod) -> No
     assert "common/characters/DNZ_characters.txt" not in staged(again)
     again.save()
     assert Mod(mod.mod_root, hoi4_install=mod.hoi4_install).get_character("DNZ_old").name == "Old"
+
+
+# ── Found by the fourth review ──────────────────────────────────────
+
+
+def _named(character_id: str) -> object:
+    from hoi4 import AdvisorRole, Character, CharacterPortrait
+
+    return Character(
+        id=character_id,
+        country_tag="DNZ",
+        name=character_id,
+        portraits=[CharacterPortrait(channel="civilian", large="GFX_l", small="GFX_s")],
+        roles=[AdvisorRole(slot="political_advisor", idea_token=character_id)],
+    )
+
+
+@pytest.mark.parametrize("roster_in", ["game", "base"])
+def test_every_new_character_stays_out_of_an_inherited_roster_file(tmp_path: Path, game: Path, roster_in: str) -> None:
+    root, base = tmp_path / "mod", tmp_path / "base"
+    root.mkdir()
+    write(base, "descriptor.mod", 'name = "base"\n')
+    holder = game if roster_in == "game" else base
+    write(holder, "common/characters/DNZ_characters.txt", "characters = {\n\tDNZ_old = { name = Old }\n}\n")
+    bases = [base] if roster_in == "base" else []
+    mod = Mod(root, hoi4_install=game, base_mod_paths=bases)
+    mod.create_character("DNZ", _named("DNZ_first"))
+    # The inherited roster stays visible while the new characters are staged.
+    assert mod.get_character("DNZ_old").name == "Old"
+    assert mod.list_characters(include_vanilla=True) == ["DNZ_first", "DNZ_old"]
+    mod.create_character("DNZ", _named("DNZ_second"))
+    mod.update_country("DNZ", leader_name="Arthur Greiser")
+    assert "common/characters/DNZ_characters.txt" not in staged(mod)
+    mod.save()
+    assert sorted(p.name for p in (root / "common/characters").glob("*.txt")) == ["DNZ_mod_characters.txt"]
+    fresh = Mod(root, hoi4_install=game, base_mod_paths=bases)
+    for character_id in ("DNZ_old", "DNZ_first", "DNZ_second", "DNZ_leader_1"):
+        assert fresh.get_character(character_id).id == character_id
+    leader = fresh.get_country("DNZ").leader
+    assert leader is not None and leader.character_id == "DNZ_leader_1"
+
+
+def test_a_table_of_the_mod_replaces_the_games_table(tmp_path: Path, game: Path) -> None:
+    root = tmp_path / "mod"
+    write(root, "common/countries/colors.txt", "ZZZ = {\n\tcolor = rgb { 1 1 1 }\n}\n")
+    country = Mod(root, hoi4_install=game).get_country("POL")
+    assert (country.color, country.color_ui) == ((197, 92, 106), None)
+    write(root, "common/countries/Poland.txt", "color = { 30 30 30 }\n")
+    assert Mod(root, hoi4_install=game).get_country("POL").color == (30, 30, 30)
+
+
+def test_deleting_a_country_with_a_character_added_in_the_session(tmp_path: Path) -> None:
+    from hoi4 import AdvisorRole, Character, CharacterPortrait
+
+    root = tmp_path / "own"
+    root.mkdir()
+    mod = Mod(root)
+    mod.create_country("ZZZ", "Zed")
+    mod.save()
+    mod = Mod(root)
+    mod.create_character("ZZZ", Character(
+        id="ZZZ_adv", country_tag="ZZZ", name="Adv",
+        portraits=[CharacterPortrait(channel="civilian", large="GFX_l", small="GFX_s")],
+        roles=[AdvisorRole(slot="political_advisor", idea_token="ZZZ_adv")],
+    ))
+    mod.delete_country("ZZZ")
+    mod.save()
+    assert list((root / "common").rglob("ZZZ*")) == []

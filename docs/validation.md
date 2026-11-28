@@ -352,7 +352,7 @@ without it. See [internals/disk_cache.md](internals/disk_cache.md).
 | `unknown_assigned_idea` | warning | Country history assigns an idea ID not loaded by the SDK. |
 | `unknown_character_trait` | warning | A character uses a trait no trait file defines. |
 | `unknown_country_scope` | warning | Script scopes into a tag that no country tag, tag alias or dynamic tag of the game, a base mod or the mod declares. |
-| `unknown_decision_icon` | warning | Decision or decision category icon did not resolve to a GFX_decision_ sprite. |
+| `unknown_decision_icon` | warning | Decision or decision category icon did not resolve to a sprite (the game's own decisions have about 20 such names). |
 | `unknown_effect_token` | warning | Effect token is absent from installed-game documentation. |
 | `unknown_equipment_reference` | warning | Effect script references an equipment ID not found in configured data. |
 | `unknown_event_reference` | warning | Effect script references an event ID not loaded from the mod or configured HOI4 install. |

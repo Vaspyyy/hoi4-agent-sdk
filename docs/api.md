@@ -444,8 +444,9 @@ ideology variants, every custom group present in `popularities` or
 names. Define party text separately with `TAG_<ideology>_party` and
 `TAG_<ideology>_party_long` when the country needs custom party names.
 Country color reads follow game precedence: vanilla definition, mod
-definition, vanilla `colors.txt`, then mod `colors.txt` (an entry of the
-colour table wins over a definition file, also over one of a higher layer). Colours may be written as
+definition, then the colour table (`colors.txt` of the mod when it has one,
+else the game's: the game replaces that file as a whole). An entry of the
+table wins over a definition file. Colours may be written as
 `rgb { }`, a plain `{ r g b }`, `hsv { }`/`HSV { }` or `hsv360 { }`; HSV is
 converted to RGB. `Country.color_ui` comes from `colors.txt` (`None` follows
 `color`), and changing `color` without `color_ui` makes the UI colour follow

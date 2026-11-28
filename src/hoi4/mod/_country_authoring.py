@@ -542,6 +542,15 @@ class CountryAuthoringLayer(CharactersLayer):
         del self._countries[tag]
         self._deleted_countries[tag] = country
         self._created_country_tags.discard(tag)
+        # Unsaved characters of the country's own file go with it: the save
+        # would otherwise write the file again right after deleting it.
+        if country.character_path is not None:
+            for character_id, character in list(self._characters.items()):
+                if character.path == country.character_path:
+                    del self._characters[character_id]
+                    self._dirty_characters.discard(character_id)
+            self._dirty_character_files.discard(country.character_path)
+            self._reload_on_discard.add("characters")
         loc_keys: list[str] = []
         for suffix in _country_localisation_suffixes(country):
             key = f"{tag}{suffix}"

@@ -75,7 +75,7 @@ VALIDATION_CODES: dict[str, str] = {
         "An event's title or description uses the same localisation key as one of its options."
     ),
     "unknown_decision_icon": (
-        "Decision or decision category icon did not resolve to a GFX_decision_ sprite."
+        "Decision or decision category icon did not resolve to a sprite (the game's own decisions have about 20 such names)."
     ),
     "invalid_idea_icon_key": (
         "Idea definitions must use a bare picture stem, not an icon assignment."

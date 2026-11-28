@@ -146,10 +146,13 @@ class CharactersLayer(CountriesLayer, LocalisationLayer):
 
         relative = Path("common") / "characters" / f"{tag}_characters.txt"
         target = self.mod_root / relative
+        # A path that is only noted (a country of the game was prepared for
+        # an edit) is not a file of the mod.
         if (
             not target.exists()
-            and target not in self._original_files
-            and target not in self._dirty_character_files
+            and not any(
+                character.path == target for character in self._characters.values()
+            )
             and self._inherits_file(relative)
         ):
             return Path("common") / "characters" / f"{tag}_mod_characters.txt"

@@ -284,7 +284,7 @@ def _read_color(
 
     resolved: RGB | None = None
     resolved_ui: RGB | None = None
-    # First the definition files, then the colour tables: an entry of
+    # First the definition files, then the colour table: an entry of
     # ``colors.txt`` wins over the colour of a definition file, also over
     # one of a higher layer.
     for base in (hoi4_install, mod_root):
@@ -299,7 +299,10 @@ def _read_color(
             color = read_color(_root(read_text(definition)))
             if color is not None:
                 resolved = color
-    for base in (hoi4_install, mod_root):
+    # Only the table of the highest layer that has one: the game replaces
+    # ``colors.txt`` as a whole, so a mod's table hides every entry of the
+    # game's, also those it does not repeat.
+    for base in (mod_root, hoi4_install):
         if base is None:
             continue
         colors_path = base.file("common/countries/colors.txt")
@@ -312,12 +315,11 @@ def _read_color(
         else:
             text = read_text(colors_path)
         entry = _first_block(_root(text), country.tag)
-        if entry is None:
-            continue
-        color = read_color(entry)
-        if color is not None:
+        color = read_color(entry) if entry is not None else None
+        if entry is not None and color is not None:
             resolved = color
             resolved_ui = read_color(entry, "color_ui")
+        break
     if resolved is not None:
         country.color = resolved
     country.color_ui = resolved_ui
@@ -497,6 +499,52 @@ def _read_loc_from_cache(country: Country, cache: dict[str, dict[str, str]]) -> 
 def _read_character(
     country: Country, mod_root: ContentView, hoi4_install: ContentView | None
 ) -> None:
+    _read_roster_file(country, mod_root, hoi4_install)
+    # The mod's characters of a tag whose roster file belongs to the game or
+    # a base mod live in a file of their own: a recruited leader in it is
+    # the country's leader.
+    extra = mod_root.file(f"common/characters/{country.tag}_mod_characters.txt")
+    if extra is None:
+        return
+    recruited = _read_recruited_character_ids(country.raw_history)
+    for character_id, body in _character_definitions(read_text(extra)):
+        if character_id in recruited and _leader_role(body) is not None:
+            country.leader = _leader_from_character(country, character_id, body)
+            return
+
+
+def _leader_from_character(country: Country, selected_id: str, character_body: Block) -> Leader:
+    """The country's ``Leader`` as the character ``selected_id`` defines it."""
+
+    role = _leader_role(character_body)
+    name = character_body.scalar("name") or ""
+    ideology = (role.scalar("ideology") if role is not None else None) or "liberalism"
+    portrait_prefix = f"GFX_portrait_{country.tag}_"
+    portraits = sorted(
+        (
+            item
+            for item, _ in character_body.walk()
+            if item.name == "large"
+            and (item.scalar or "").startswith(portrait_prefix)
+        ),
+        key=lambda item: item.start,
+    )
+    portrait_slug = (
+        (portraits[0].scalar or "").removeprefix(portrait_prefix)
+        if portraits
+        else selected_id.removeprefix(f"{country.tag}_")
+    )
+    return Leader(
+        name=name or (country.leader.name if country.leader else "") or selected_id,
+        character_id=selected_id,
+        ideology=ideology,
+        portrait_slug=portrait_slug,
+    )
+
+
+def _read_roster_file(
+    country: Country, mod_root: ContentView, hoi4_install: ContentView | None
+) -> None:
     for base in [mod_root, hoi4_install]:
         if base is None:
             continue
@@ -530,31 +578,7 @@ def _read_character(
         if not selected_id:
             return
 
-        character_body = by_id[selected_id]
-        role = _leader_role(character_body)
-        name = character_body.scalar("name") or ""
-        ideology = (role.scalar("ideology") if role is not None else None) or "liberalism"
-        portrait_prefix = f"GFX_portrait_{country.tag}_"
-        portraits = sorted(
-            (
-                item
-                for item, _ in character_body.walk()
-                if item.name == "large"
-                and (item.scalar or "").startswith(portrait_prefix)
-            ),
-            key=lambda item: item.start,
-        )
-        portrait_slug = (
-            (portraits[0].scalar or "").removeprefix(portrait_prefix)
-            if portraits
-            else selected_id.removeprefix(f"{country.tag}_")
-        )
-        country.leader = Leader(
-            name=name or (country.leader.name if country.leader else "") or selected_id,
-            character_id=selected_id,
-            ideology=ideology,
-            portrait_slug=portrait_slug,
-        )
+        country.leader = _leader_from_character(country, selected_id, by_id[selected_id])
         return
 
 

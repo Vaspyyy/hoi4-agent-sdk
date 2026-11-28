@@ -54,6 +54,16 @@ Found by three models that each built the same mod with 0.7.0.
 - `validate_country_package()` no longer reports `missing_country_flag` for a
   tag whose flag the game or a base mod ships, as one file or as one flag
   per ideology.
+- After a first edit of a game country (for example a new character for
+  it), the game's own characters of the tag stay visible to lookups before
+  the save too. They used to vanish until the mod was saved.
+- A recruited leader in the mod's `<TAG>_mod_characters.txt` is read as the
+  country's leader.
+- `delete_country()` removes the mod's character file of a country with an
+  old-style leader, and of a country that got a character in the same
+  session.
+- With a `colors.txt` of the mod's own, a colour is no longer read from the
+  game's table, which the mod's file replaces as a whole.
 - A new character of a tag whose roster the game or a base mod keeps in
   `common/characters/<TAG>_characters.txt` goes to
   `<TAG>_mod_characters.txt`. A mod file of the inherited name used to

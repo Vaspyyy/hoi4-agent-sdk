@@ -1483,7 +1483,9 @@ class CoreLayer:
         if relative is None:
             return True
         target = self.mod_root / relative
-        if target in self._original_files or target.is_file():
+        # An empty note is a path that was only prepared for an edit (a game
+        # country's files): nothing of the mod is there yet.
+        if self._original_files.get(target) or target.is_file():
             return False
         return not self._dirty or not self._file_is_staged(target)
 
