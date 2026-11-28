@@ -587,11 +587,13 @@ class ValidationLayer(CountryPackageLayer, ScriptValidationLayer, DefinitionsLay
         """Whether a decision or category icon names a sprite.
 
         The game's own files use both prefixes for both kinds (a category
-        with a decision sprite and the other way round), and full names.
+        with a decision sprite and the other way round), full names, and
+        names that only lack the ``GFX_`` (``decision_generic_nationalism``).
         """
 
         return (
             icon in sprites
+            or f"GFX_{icon}" in sprites
             or f"GFX_decision_{icon}" in sprites
             or f"GFX_decision_category_{icon}" in sprites
         )

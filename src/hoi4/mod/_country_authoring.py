@@ -183,6 +183,7 @@ class CountryAuthoringLayer(CharactersLayer):
                 "Choose an unused tag or pass overwrite_vanilla=True intentionally."
             )
         inherited_cultures: tuple[str, str] | None = None
+        inherited_color_ui: tuple[int, int, int] | None = None
         if existing is None and overwrite_vanilla and tag in self._vanilla_tags:
             # The game finds the country through the files its tag file and
             # history folder name: the new country takes their places, or it
@@ -190,6 +191,7 @@ class CountryAuthoringLayer(CharactersLayer):
             existing = self.get_country(tag)
             if color is None:
                 color = existing.color
+                inherited_color_ui = existing.color_ui
             inherited_cultures = (existing.graphical_culture, existing.graphical_culture_2d)
         if color is None:
             color = (128, 128, 128)
@@ -246,8 +248,13 @@ class CountryAuthoringLayer(CharactersLayer):
             history_path=(
                 preserved_mod_path(existing.history_path) if existing is not None else None
             ),
+            # The leader's character goes to the mod's own character file of
+            # the tag: a file of the game holds its whole roster, and a file
+            # of that name in the mod would replace all of it.
             character_path=(
-                preserved_mod_path(existing.character_path) if existing is not None else None
+                preserved_mod_path(existing.character_path)
+                if existing is not None and inherited_cultures is None
+                else None
             ),
             touched_fields={"*"},
         )
@@ -255,6 +262,7 @@ class CountryAuthoringLayer(CharactersLayer):
             # How the country's units and cities look is not politics: it
             # stays what the game gives the tag.
             country.graphical_culture, country.graphical_culture_2d = inherited_cultures
+            country.color_ui = inherited_color_ui
         self._countries[tag] = country
         self._note_country_files(country)
         self._created_country_tags.add(tag)
@@ -365,11 +373,27 @@ class CountryAuthoringLayer(CharactersLayer):
                 "A country the mod adds takes its map colour from its own file, which "
                 "has no color_ui."
             )
+        frequency = other_kwargs.get("election_frequency")
+        if frequency is not None and (isinstance(frequency, bool) or not isinstance(frequency, int)):
+            raise TypeError(
+                "update_country(): election_frequency is a number of months (an int) or "
+                f"None, not {type(frequency).__name__}."
+            )
+        if "last_election" in other_kwargs and not isinstance(other_kwargs["last_election"], str):
+            raise TypeError(
+                'update_country(): last_election is a date string such as "1935.4.7", not '
+                f"{type(other_kwargs['last_election']).__name__}."
+            )
         if (
             {"last_election", "election_frequency"} & set(other_kwargs)
             and "ruling_party" not in other_kwargs
-            and country.raw_history
-            and not has_start_politics(country.raw_history)
+            and (
+                not has_start_politics(country.raw_history)
+                if country.raw_history
+                # No history file at all (a dynamic tag of the game): a new
+                # country of this session has politics in the file it gets.
+                else tag not in self._created_country_tags
+            )
         ):
             raise ValueError(
                 f"update_country(): '{tag}' has no set_politics block at the start date "

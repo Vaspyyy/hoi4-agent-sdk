@@ -414,11 +414,90 @@ def test_decision_icons_may_use_either_sprite_prefix(mod: Mod) -> None:
     )
     fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
     fresh.create_decision_category("cat", icon="generic_research")
-    assert fresh.validate(validate_icons=True) == [] or "unknown_decision_icon" not in [
-        i.code for i in fresh.validate(validate_icons=True)
-    ]
+    assert "unknown_decision_icon" not in [i.code for i in fresh.validate(validate_icons=True)]
     fresh.update_decision_category("cat", icon="nope")
     assert [i.code for i in fresh.validate(validate_icons=True)].count("unknown_decision_icon") == 1
     fresh.update_decision_category("cat", icon="generic_research")
     fresh.create_decision("cat", "d", icon="generic_formable_nations")
     assert "unknown_decision_icon" not in [i.code for i in fresh.validate(validate_icons=True)]
+
+
+# ── Found by the second review ──────────────────────────────────────
+
+
+def test_replacing_a_game_country_leaves_its_character_file_alone(mod: Mod) -> None:
+    write(mod.hoi4_install, "common/characters/DNZ.txt", "characters = {\n\tDNZ_one = { name = One }\n\tDNZ_two = { name = Two }\n}\n")
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    fresh.create_country("DNZ", "Danzig", overwrite_vanilla=True)
+    assert "common/characters/DNZ.txt" not in staged(fresh)
+    fresh.save()
+    files = sorted(p.name for p in (fresh.mod_root / "common/characters").glob("*.txt"))
+    assert files == ["DNZ_characters.txt"]
+    assert (fresh.mod_root / "common/characters/DNZ_characters.txt").read_text(encoding="utf-8").count("DNZ_leader_1 =") == 1
+
+
+def test_zone_flag_inside_a_dlc_condition(mod: Mod) -> None:
+    write(
+        mod.hoi4_install,
+        "history/states/797-Istanbul.txt",
+        "state = {\n\tid = 797\n\tname = \"STATE_797\"\n\tmanpower = 1\n\tstate_category = city\n\thistory = {\n"
+        "\t\towner = POL\n\t\tif = {\n\t\t\tlimit = { has_dlc = \"Battle for the Bosporus\" }\n"
+        "\t\t\tset_demilitarized_zone = yes\n\t\t}\n\t\t1936.11.9 = {\n\t\t\tset_demilitarized_zone = no\n\t\t}\n\t}\n"
+        "\tprovinces = {\n\t\t9\n\t}\n}\n",
+    )
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    assert fresh.get_state(797).is_demilitarized_zone is True
+    fresh.update_state(797, is_demilitarized_zone=False)
+    fresh.save()
+    text = (fresh.mod_root / "history/states/797-Istanbul.txt").read_text(encoding="utf-8")
+    assert "set_demilitarized_zone = yes" not in text and "has_dlc" not in text
+    assert "1936.11.9" in text and "set_demilitarized_zone = no" in text
+    assert Mod(mod.mod_root, hoi4_install=mod.hoi4_install).get_state(797).is_demilitarized_zone is False
+
+
+def test_decision_icon_that_only_lacks_the_gfx_prefix(mod: Mod) -> None:
+    write(mod.hoi4_install, "interface/decisions.gfx", 'spriteTypes = {\n\tspriteType = { name = "GFX_decision_generic_nationalism" texturefile = "gfx/a.dds" }\n}\n')
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    fresh.create_decision_category("cat")
+    fresh.create_decision("cat", "d", icon="decision_generic_nationalism")
+    assert "unknown_decision_icon" not in [i.code for i in fresh.validate(validate_icons=True)]
+
+
+def test_election_values_are_checked_before_anything_changes(mod: Mod) -> None:
+    write(mod.hoi4_install, "common/country_tags/zz_dynamic.txt", 'D01 = "countries/Danzig.txt"\n')
+    fresh = Mod(mod.mod_root, hoi4_install=mod.hoi4_install)
+    with pytest.raises(TypeError, match="election_frequency"):
+        fresh.update_country("DNZ", election_frequency="sixty")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="last_election"):
+        fresh.update_country("DNZ", last_election=1935)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="set_politics"):
+        fresh.update_country("D01", last_election="1933.2.2")
+    assert fresh.preview() == ""
+
+
+def test_definition_file_renamed_by_a_base_mod(tmp_path: Path, game: Path) -> None:
+    root, base = tmp_path / "mod", tmp_path / "base"
+    write(base, "descriptor.mod", 'name = "base"\n')
+    write(base, "common/country_tags/00_countries.txt", 'DNZ = "countries/Dee.txt"\nPOL = "countries/Poland.txt"\n')
+    write(base, "common/countries/Dee.txt", "color = { 7 7 7 }\n")
+    write(root, "common/countries/Dee.txt", "graphical_culture = asian_gfx\ncolor = { 3 3 3 }\n")
+    write(root, "common/countries/DNZ.txt", "color = { 9 9 9 }\n")
+    country = Mod(root, hoi4_install=game, base_mod_paths=[base]).get_country("DNZ")
+    assert country.definition_path == (root / "common/countries/Dee.txt").resolve()
+    assert (country.color, country.graphical_culture) == ((3, 3, 3), "asian_gfx")
+
+
+def test_colour_table_wins_over_a_replaced_definition(tmp_path: Path, game: Path) -> None:
+    root = tmp_path / "mod"
+    write(root, "common/countries/Poland.txt", "color = { 11 22 33 }\n")
+    country = Mod(root, hoi4_install=game).get_country("POL")
+    assert (country.color, country.color_ui) == ((197, 92, 106), (255, 120, 138))
+
+
+def test_replacing_a_game_country_of_the_colour_table_writes_no_table(mod: Mod) -> None:
+    country = mod.create_country("POL", "Poland", overwrite_vanilla=True)
+    assert (country.color, country.color_ui) == ((197, 92, 106), (255, 120, 138))
+    assert "common/countries/colors.txt" not in staged(mod)
+    mod.discard()
+    mod.create_country("POL", "Poland", overwrite_vanilla=True, color=(1, 2, 3))
+    assert "common/countries/colors.txt" in staged(mod)

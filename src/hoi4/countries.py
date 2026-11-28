@@ -229,16 +229,19 @@ def _mod_definition_file(
     without a tag file of the mod's own.
     """
 
-    found = resolve_country_filename(mod_root, tag, (tag_mappings or {}).get(mod_root))
-    if found is not None or hoi4_install is None:
-        return found
-    mapping = (tag_mappings or {}).get(hoi4_install)
-    if mapping is None:
-        mapping = tag_file_mapping(hoi4_install)
-    relative = mapping.get(tag)
-    if not relative:
-        return None
-    return mod_root.file(Path("common") / "countries" / Path(relative).name)
+    own = (tag_mappings or {}).get(mod_root)
+    if own is None:
+        own = tag_file_mapping(mod_root)
+    if tag not in own and hoi4_install is not None:
+        mapping = (tag_mappings or {}).get(hoi4_install)
+        if mapping is None:
+            mapping = tag_file_mapping(hoi4_install)
+        relative = mapping.get(tag)
+        if relative:
+            found = mod_root.file(Path("common") / "countries" / Path(relative).name)
+            if found is not None:
+                return found
+    return resolve_country_filename(mod_root, tag, own)
 
 
 def _read_definition(
@@ -281,6 +284,9 @@ def _read_color(
 
     resolved: RGB | None = None
     resolved_ui: RGB | None = None
+    # First the definition files, then the colour tables: an entry of
+    # ``colors.txt`` wins over the colour of a definition file, also over
+    # one of a higher layer.
     for base in (hoi4_install, mod_root):
         if base is None:
             continue
@@ -293,6 +299,9 @@ def _read_color(
             color = read_color(_root(read_text(definition)))
             if color is not None:
                 resolved = color
+    for base in (hoi4_install, mod_root):
+        if base is None:
+            continue
         colors_path = base.file("common/countries/colors.txt")
         if colors_path is None:
             continue

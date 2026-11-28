@@ -166,7 +166,11 @@ def read_state(state_file: Path, text: str | None = None) -> State:
 
         # The game sets the zone with this effect in the history block (dated
         # blocks have their own). There is no key for it at state scope.
-        state_obj.is_demilitarized_zone = history.scalar("set_demilitarized_zone") == "yes"
+        # Some game files put it inside ``if = { limit = { has_dlc = ... } }``.
+        state_obj.is_demilitarized_zone = history.scalar("set_demilitarized_zone") == "yes" or any(
+            item.block is not None and item.block.scalar("set_demilitarized_zone") == "yes"
+            for item in history.assignments("if")
+        )
 
         state_obj.cores = [
             item.scalar for item in history.assignments("add_core_of") if item.scalar
@@ -765,6 +769,8 @@ def _patch_existing_state(state: State) -> str:
                 before_dated=True,
             )
         if history_replaced or state.is_demilitarized_zone != original.is_demilitarized_zone:
+            if not state.is_demilitarized_zone:
+                history_body = _clear_conditional_zone(history_body, history_layout)
             history_body = _set_direct_scalar(
                 history_body,
                 "set_demilitarized_zone",
@@ -777,6 +783,26 @@ def _patch_existing_state(state: State) -> str:
     if state_body == state_block.body:
         return raw
     return raw[: state_block.body_start] + state_body + raw[state_block.body_end :]
+
+
+def _clear_conditional_zone(history_body: str, layout: _Layout) -> str:
+    """Remove ``set_demilitarized_zone`` from the ``if`` blocks of a history body.
+
+    An ``if`` that only held the effect (and its ``limit``) goes with it.
+    """
+
+    for span in reversed(list(top_level_assignments(history_body))):
+        if span.key != "if" or not span.is_block or span.body_start is None or span.body_end is None:
+            continue
+        body = history_body[span.body_start : span.body_end]
+        cleared = _set_direct_scalar(body, "set_demilitarized_zone", None, layout)
+        if cleared == body:
+            continue
+        if all(item.key == "limit" for item in top_level_assignments(cleared)):
+            history_body = replace_assignment(history_body, span, None)
+        else:
+            history_body = history_body[: span.body_start] + cleared + history_body[span.body_end :]
+    return history_body
 
 
 def _set_state_provinces(

@@ -36,8 +36,8 @@ Found by three models that each built the same mod with 0.7.0.
 - A country whose leader is an old `create_country_leader` block is read as
   that leader (name and ideology) with an empty `character_id`. No character
   `<TAG>_leader_1` is invented and no `recruit_character` line is written
-  for it. `update_country(leader_...=)` turns the block into a character and
-  removes the block. With such a block, a recruited advisor is no longer
+  for it. When such a block is the leader, `update_country(leader_...=)`
+  turns it into a character and removes the block. With such a block, a recruited advisor is no longer
   taken for the leader.
 - `update_country(popularities=...)`, `ruling_party=` or `adjective=` no
   longer replaces the country names the game has per ideology. Only missing
